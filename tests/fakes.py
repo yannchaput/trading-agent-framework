@@ -8,14 +8,19 @@ several lines of mock configuration.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import threading
+from collections.abc import Callable, Iterable
+from datetime import UTC, date, datetime, time, timedelta
 from types import SimpleNamespace
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 from alpaca.common.exceptions import APIError
 from alpaca.trading.requests import OrderRequest
+
+from trading_agent_framework.clock import MarketClock, MarketSession
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -135,3 +140,70 @@ class FakeTradingClient:
 
     def get_all_positions(self) -> list[alpaca_models.Position]:
         return self.positions_response
+
+
+ET = ZoneInfo("America/New_York")
+
+
+def et(
+    year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0
+) -> datetime:
+    """A tz-aware datetime in market (Eastern) time."""
+    return datetime(year, month, day, hour, minute, second, tzinfo=ET)
+
+
+def make_session(
+    day: date, open_at: time = time(9, 30), close_at: time = time(16, 0)
+) -> MarketSession:
+    return MarketSession(
+        open=datetime.combine(day, open_at, tzinfo=ET),
+        close=datetime.combine(day, close_at, tzinfo=ET),
+    )
+
+
+def weekday_sessions(first_day: date, count: int) -> list[MarketSession]:
+    """`count` regular 09:30-16:00 sessions on consecutive weekdays from
+    `first_day`."""
+    sessions: list[MarketSession] = []
+    day = first_day
+    while len(sessions) < count:
+        if day.weekday() < 5:
+            sessions.append(make_session(day))
+        day += timedelta(days=1)
+    return sessions
+
+
+class FakeClock(MarketClock):
+    """Manual `MarketClock`: `wait` advances fake time instantly unless `wake`
+    is set.
+
+    `on_wait` runs at the start of every `wait` call -- tests use it to inject
+    order events or call `stop()` from "outside" the executor loop.
+    `next_session_errors` are raised (in order) by `next_session` before any
+    session is returned.
+    """
+
+    def __init__(self, now: datetime, sessions: Iterable[MarketSession] = ()) -> None:
+        self._now = now
+        self.sessions = list(sessions)
+        self.waits: list[float] = []
+        self.on_wait: Callable[[], None] | None = None
+        self.next_session_errors: list[BaseException] = []
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, seconds: float) -> None:
+        self._now += timedelta(seconds=seconds)
+
+    def wait(self, seconds: float, wake: threading.Event) -> None:
+        self.waits.append(seconds)
+        if self.on_wait is not None:
+            self.on_wait()
+        if not wake.is_set():
+            self.advance(seconds)
+
+    def next_session(self) -> MarketSession | None:
+        if self.next_session_errors:
+            raise self.next_session_errors.pop(0)
+        return next((s for s in self.sessions if s.close > self._now), None)
