@@ -80,6 +80,7 @@ class OrderTracker:
         self.canceled: SafeList[Order] = SafeList()
         self.error: SafeList[Order] = SafeList()
         self.listeners: list[Callable[[Order, OrderEvent], None]] = []
+        self._transition_lock = threading.RLock()
 
     def _buckets(self) -> tuple[SafeList[Order], ...]:
         return (
@@ -170,29 +171,30 @@ class OrderTracker:
         PARTIALLY_FILLED event missing `price` or `filled_quantity` raises
         `OrderEventError` and leaves all bucket state untouched.
         """
-        if event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED) and (
-            price is None or filled_quantity is None
-        ):
-            raise OrderEventError(
-                f"{event} event for order {order.identifier} requires both "
-                "price and filled_quantity"
-            )
+        with self._transition_lock:
+            if event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED) and (
+                price is None or filled_quantity is None
+            ):
+                raise OrderEventError(
+                    f"{event} event for order {order.identifier} requires both "
+                    "price and filled_quantity"
+                )
 
-        if event == OrderEvent.MODIFIED:
-            logger.info("Order %s modified; no bucket change", order.identifier)
-            return
+            if event == OrderEvent.MODIFIED:
+                logger.info("Order %s modified; no bucket change", order.identifier)
+                return
 
-        if event == OrderEvent.NEW:
-            self._process_new(order)
-        elif event == OrderEvent.PARTIALLY_FILLED:
-            self._process_partial_fill(order, price, filled_quantity)
-        elif event == OrderEvent.FILLED:
-            self._process_fill(order, price, filled_quantity)
-        elif event == OrderEvent.CANCELED:
-            self._process_canceled(order)
-        elif event == OrderEvent.ERROR:
-            self._process_error(order)
-        else:
-            raise ValueError(f"Unhandled order event: {event}")
+            if event == OrderEvent.NEW:
+                self._process_new(order)
+            elif event == OrderEvent.PARTIALLY_FILLED:
+                self._process_partial_fill(order, price, filled_quantity)
+            elif event == OrderEvent.FILLED:
+                self._process_fill(order, price, filled_quantity)
+            elif event == OrderEvent.CANCELED:
+                self._process_canceled(order)
+            elif event == OrderEvent.ERROR:
+                self._process_error(order)
+            else:
+                raise OrderEventError(f"Unhandled order event: {event}")
 
-        self._notify_listeners(order, event)
+            self._notify_listeners(order, event)

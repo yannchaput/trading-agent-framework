@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from decimal import Decimal
 
 import pytest
@@ -227,6 +228,68 @@ def test_listener_that_raises_is_logged_and_does_not_propagate(
 
     assert calls == [order.identifier]
     assert any("listener boom" in record.message or record.exc_info for record in caplog.records)
+
+
+def test_concurrent_processing_of_same_order_lands_in_exactly_one_bucket() -> None:
+    """Two threads race PARTIALLY_FILLED/FILLED events for the SAME order.
+
+    A `threading.Barrier` lines both threads up before each call so they enter
+    `process_trade_event` at (as close to) the same instant as possible on
+    every iteration. To reliably widen the "remove from every bucket, then
+    append to destination bucket" window that the tracker-level lock closes
+    (a natural, unassisted race is too rare on the GIL to trigger in a fast
+    test), the order's `add_transaction` is wrapped with a short sleep: this
+    forces whichever thread reaches it first to hold the destination-bucket
+    decision open long enough for the other thread's own remove-then-append
+    sequence to interleave, if nothing is serializing the two calls.
+    """
+    tracker = OrderTracker()
+    order = make_order()
+    tracker.track_unprocessed(order)
+    tracker.process_trade_event(order, OrderEvent.NEW)
+
+    original_add_transaction = order.add_transaction
+
+    def slow_add_transaction(
+        price: Decimal, filled_quantity: Decimal, timestamp: object = None
+    ) -> None:
+        original_add_transaction(price, filled_quantity, timestamp)
+        time.sleep(0.002)
+
+    order.add_transaction = slow_add_transaction  # type: ignore[method-assign]
+
+    iterations = 30
+    barrier = threading.Barrier(2)
+
+    def partial_fill_worker() -> None:
+        for _ in range(iterations):
+            barrier.wait()
+            tracker.process_trade_event(
+                order,
+                OrderEvent.PARTIALLY_FILLED,
+                price=Decimal("10"),
+                filled_quantity=Decimal("1"),
+            )
+
+    def fill_worker() -> None:
+        for _ in range(iterations):
+            barrier.wait()
+            tracker.process_trade_event(
+                order,
+                OrderEvent.FILLED,
+                price=Decimal("10"),
+                filled_quantity=Decimal("1"),
+            )
+
+    thread_a = threading.Thread(target=partial_fill_worker)
+    thread_b = threading.Thread(target=fill_worker)
+    thread_a.start()
+    thread_b.start()
+    thread_a.join()
+    thread_b.join()
+
+    membership_count = sum(1 for bucket in tracker._buckets() if order in bucket.snapshot())
+    assert membership_count == 1
 
 
 def test_get_tracked_order_searches_all_buckets() -> None:
