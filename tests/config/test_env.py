@@ -18,6 +18,11 @@ def test_strategy_file_present_is_used_and_loaded_into_environ(tmp_path, monkeyp
     strategy_path = tmp_path / "env" / ".env.momentum.paper"
     _write_env(strategy_path, "ALPACA_API_KEY=strategy-key\n")
 
+    # Register a pre-call value with monkeypatch so its teardown restores/removes
+    # ALPACA_API_KEY afterward, even though load_dotenv (called inside
+    # load_strategy_env) writes directly to the real os.environ and bypasses
+    # monkeypatch's own tracking.
+    monkeypatch.setenv("ALPACA_API_KEY", "unset")
     result = load_strategy_env("momentum", "paper", project_root=tmp_path)
 
     assert result == strategy_path
@@ -29,6 +34,10 @@ def test_strategy_file_absent_falls_back_to_env_dot_env(tmp_path, monkeypatch) -
     fallback_path = tmp_path / "env" / ".env"
     _write_env(fallback_path, "ALPACA_API_KEY=fallback-key\n")
 
+    # See comment in test_strategy_file_present_is_used_and_loaded_into_environ:
+    # this registers a pre-call value so monkeypatch's teardown restores/removes
+    # ALPACA_API_KEY after load_dotenv writes to the real os.environ.
+    monkeypatch.setenv("ALPACA_API_KEY", "unset")
     result = load_strategy_env("momentum", "paper", project_root=tmp_path)
 
     assert result == fallback_path
@@ -40,6 +49,10 @@ def test_both_absent_falls_back_to_root_dot_env(tmp_path, monkeypatch) -> None:
     root_path = tmp_path / ".env"
     _write_env(root_path, "ALPACA_API_KEY=root-key\n")
 
+    # See comment in test_strategy_file_present_is_used_and_loaded_into_environ:
+    # this registers a pre-call value so monkeypatch's teardown restores/removes
+    # ALPACA_API_KEY after load_dotenv writes to the real os.environ.
+    monkeypatch.setenv("ALPACA_API_KEY", "unset")
     result = load_strategy_env("momentum", "paper", project_root=tmp_path)
 
     assert result == root_path
