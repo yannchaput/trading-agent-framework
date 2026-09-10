@@ -317,7 +317,7 @@ def build_order_request(order: Order) -> OrderRequest:
         # static checker can't verify that dynamic spread against a specific
         # constructor's signature; pydantic validates it at runtime instead,
         # and any mismatch surfaces as the ValidationError caught below.
-        return request_cls(**kwargs)  # ty: ignore[invalid-argument-type]
+        return request_cls(**kwargs)  # ty: ignore[invalid-argument-type]  # pyright: ignore[reportArgumentType]
     except (ValidationError, ValueError) as exc:
         raise OrderValidationError(str(exc)) from exc
 

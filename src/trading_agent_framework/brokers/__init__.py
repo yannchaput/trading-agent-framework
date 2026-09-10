@@ -9,8 +9,22 @@ that `import trading_agent_framework.brokers` alone stays import-light.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
+
+if TYPE_CHECKING:
+    from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
+    from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
+
+from importlib.metadata import PackageNotFoundError, version
+
+try:
+    __version__ = version("trading_agent_framework")
+except PackageNotFoundError:
+    # Package is not installed (e.g., running from local source)
+    __version__ = "unknown"
 
 __all__ = [
     "AlpacaBroker",
