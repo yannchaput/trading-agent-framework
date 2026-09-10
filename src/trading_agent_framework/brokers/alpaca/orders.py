@@ -20,8 +20,10 @@ from types import MappingProxyType
 from uuid import uuid4
 
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
+from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.enums import TimeInForce as AlpacaTimeInForce
 from alpaca.trading.requests import (
+    GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
     OrderRequest,
@@ -89,6 +91,13 @@ ALPACA_EVENT_MAP: MappingProxyType[str, OrderEvent | None] = MappingProxyType(
         "pending_cancel": None,
         "pending_replace": None,
         "restated": None,
+        # matches ALPACA_STATUS_MAP's treatment of the same wire value
+        "done_for_day": OrderEvent.CANCELED,
+        "stopped": None,
+        "suspended": None,
+        "calculated": None,
+        "order_replace_rejected": None,
+        "order_cancel_rejected": None,
     }
 )
 
@@ -276,6 +285,11 @@ def build_order_request(order: Order) -> OrderRequest:
         return request_cls(**kwargs)
     except (ValidationError, ValueError) as exc:
         raise OrderValidationError(str(exc)) from exc
+
+
+def build_get_orders_request(limit: int = 100) -> GetOrdersRequest:
+    """Build a GetOrdersRequest for pulling all orders (open, closed, and canceled)."""
+    return GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
 
 
 # --- Task 11: parsing broker responses ---------------------------------------

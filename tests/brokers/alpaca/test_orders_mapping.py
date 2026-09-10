@@ -90,3 +90,37 @@ def test_alpaca_status_upgrade_tripwire() -> None:
 def test_map_event_covers_every_alpaca_trade_event(member: alpaca_enums.TradeEvent) -> None:
     expected = EXPECTED_EVENT_BY_ALPACA_VALUE[member.value]
     assert map_event(member) == expected
+
+
+# Finding 3: Alpaca-documented wire events missing from TradeEvent enum coverage
+def test_map_event_done_for_day_maps_to_canceled() -> None:
+    assert map_event("done_for_day") == OrderEvent.CANCELED
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        "stopped",
+        "suspended",
+        "calculated",
+        "order_replace_rejected",
+        "order_cancel_rejected",
+    ],
+)
+def test_map_event_recognised_but_ignored_events_return_none_without_warning(
+    event: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        result = map_event(event)
+    assert result is None
+    assert len(caplog.records) == 0
+
+
+def test_map_event_truly_unknown_event_still_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        result = map_event("totally_made_up_event")
+    assert result is None
+    assert any(record.levelname == "WARNING" for record in caplog.records)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -79,8 +79,8 @@ def load_strategy_env(
 
 @dataclass(frozen=True, slots=True)
 class AlpacaCredentials:
-    api_key: str
-    api_secret: str
+    api_key: str = field(repr=False)
+    api_secret: str = field(repr=False)
     is_paper: bool = True
 
     @classmethod

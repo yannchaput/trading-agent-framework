@@ -5,6 +5,7 @@ from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
+from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 from tests.fakes import FakeTradingClient, make_alpaca_order, make_alpaca_position, make_api_error
@@ -19,6 +20,7 @@ from trading_agent_framework.entities.enums import (
     TimeInForce,
 )
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.errors import BrokerError
 
 _BROKER_ORDER_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -145,7 +147,7 @@ def test_pull_order_returns_none_on_404_and_reraises_on_500() -> None:
     assert broker.pull_order("missing") is None
 
     client.get_order_by_id_raises = make_api_error(500)
-    with pytest.raises(Exception):  # noqa: B017 - alpaca APIError, re-raised as-is
+    with pytest.raises(APIError):
         broker.pull_order("broken")
 
 
@@ -215,3 +217,11 @@ def test_stop_stream_before_start_does_not_raise() -> None:
     broker = AlpacaBroker("momentum", client, stream=stream)
 
     broker.stop_stream()
+
+
+def test_start_stream_without_configured_stream_raises_broker_error() -> None:
+    client = FakeTradingClient()
+    broker = AlpacaBroker("momentum", client, stream=None)
+
+    with pytest.raises(BrokerError, match="no TradingStream configured"):
+        broker.start_stream()

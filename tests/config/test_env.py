@@ -120,3 +120,13 @@ def test_from_env_missing_or_blank_secret_raises_configuration_error(secret_valu
 
     with pytest.raises(ConfigurationError):
         AlpacaCredentials.from_env(env)
+
+
+def test_repr_does_not_leak_api_key_or_secret() -> None:
+    creds = AlpacaCredentials(api_key="supersecretkey", api_secret="supersecret")
+
+    text = repr(creds)
+
+    assert "supersecretkey" not in text
+    assert "supersecret" not in text
+    assert "AlpacaCredentials" in text

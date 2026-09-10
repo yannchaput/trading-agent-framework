@@ -13,8 +13,6 @@ import logging
 from typing import TYPE_CHECKING, ClassVar
 
 from alpaca.common.exceptions import APIError
-from alpaca.trading.enums import QueryOrderStatus
-from alpaca.trading.requests import GetOrdersRequest
 
 from trading_agent_framework.brokers.alpaca import orders
 from trading_agent_framework.brokers.alpaca.client import build_trading_client, build_trading_stream
@@ -23,6 +21,7 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.trading.client import TradingClient
@@ -97,7 +96,7 @@ class AlpacaBroker(Broker):
         return orders.parse_broker_order(response, self.strategy_name)
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
-        request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
+        request = orders.build_get_orders_request(limit)
         responses = self._client.get_orders(filter=request)
         return orders.parse_broker_orders(responses, self.strategy_name)
 
@@ -113,6 +112,11 @@ class AlpacaBroker(Broker):
         return self._alpaca_stream
 
     def start_stream(self) -> None:
+        if self._stream is None:
+            raise BrokerError(
+                "no TradingStream configured; construct the broker with a stream "
+                "or use AlpacaBroker.from_credentials(..., with_stream=True)"
+            )
         self._ensure_alpaca_stream().start()
 
     def stop_stream(self, timeout: float = 5.0) -> None:
