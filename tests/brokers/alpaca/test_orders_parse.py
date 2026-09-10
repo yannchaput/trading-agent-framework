@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
 
 import alpaca.trading.enums as alpaca_enums
-import alpaca.trading.models as alpaca_models
 import pytest
+from tests.fakes import _NOW, make_alpaca_order, make_alpaca_position
 
 from trading_agent_framework.brokers.alpaca.orders import (
     parse_broker_order,
@@ -21,51 +19,6 @@ from trading_agent_framework.entities.enums import (
     PositionSide,
     TimeInForce,
 )
-
-_NOW = datetime(2024, 1, 1, tzinfo=UTC)
-
-
-def make_alpaca_order(**overrides: object) -> alpaca_models.Order:
-    defaults: dict[str, object] = {
-        "id": uuid4(),
-        "client_order_id": "cid-1",
-        "created_at": _NOW,
-        "updated_at": _NOW,
-        "submitted_at": _NOW,
-        "symbol": "AAPL",
-        "asset_class": alpaca_enums.AssetClass.US_EQUITY,
-        "qty": "10",
-        "notional": None,
-        "filled_qty": "0",
-        "filled_avg_price": None,
-        "type": alpaca_enums.OrderType.MARKET,
-        "side": alpaca_enums.OrderSide.BUY,
-        "time_in_force": alpaca_enums.TimeInForce.DAY,
-        "limit_price": None,
-        "stop_price": None,
-        "status": alpaca_enums.OrderStatus.NEW,
-        "extended_hours": False,
-    }
-    defaults.update(overrides)
-    return alpaca_models.Order(**defaults)  # type: ignore[arg-type]
-
-
-def make_alpaca_position(**overrides: object) -> alpaca_models.Position:
-    defaults: dict[str, object] = {
-        "asset_id": uuid4(),
-        "symbol": "AAPL",
-        "exchange": alpaca_enums.AssetExchange.NASDAQ,
-        "asset_class": alpaca_enums.AssetClass.US_EQUITY,
-        "avg_entry_price": "100.00",
-        "qty": "10",
-        "side": alpaca_enums.PositionSide.LONG,
-        "market_value": "1010.00",
-        "cost_basis": "1000.00",
-        "unrealized_pl": "10.00",
-        "current_price": "101.00",
-    }
-    defaults.update(overrides)
-    return alpaca_models.Position(**defaults)  # type: ignore[arg-type]
 
 
 # Test 61
