@@ -17,6 +17,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.brokers.alpaca import orders
+from trading_agent_framework.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.trading.stream import TradingStream
@@ -30,9 +31,8 @@ class AlpacaTradeStream:
     """Bridges Alpaca's `TradingStream` trade updates into an `OrderTracker`.
 
     `stream` may be `None` so `handle_trade_update` is testable with no real
-    `TradingStream` at all; `start()`/`stop()` require a real (or mocked)
-    stream to have been supplied, which every caller of the lifecycle methods
-    does.
+    `TradingStream` at all; `start()` raises `BrokerError` if no stream was
+    supplied, and `stop()` is a safe no-op in that case.
     """
 
     def __init__(self, tracker: OrderTracker, stream: TradingStream | None = None) -> None:
@@ -76,10 +76,14 @@ class AlpacaTradeStream:
 
     def start(self) -> None:
         """Subscribe the handler and run the websocket loop in a daemon thread."""
-        self._stream.subscribe_trade_updates(self.handle_trade_update)
-        self._thread = threading.Thread(
-            target=self._stream.run, daemon=True, name="alpaca-trade-stream"
-        )
+        stream = self._stream
+        if stream is None:
+            raise BrokerError(
+                "no TradingStream configured; construct AlpacaTradeStream with a "
+                "real (or mocked) stream before calling start()"
+            )
+        stream.subscribe_trade_updates(self.handle_trade_update)
+        self._thread = threading.Thread(target=stream.run, daemon=True, name="alpaca-trade-stream")
         self._thread.start()
 
     @property
@@ -96,10 +100,10 @@ class AlpacaTradeStream:
         once, and any exception from the underlying `stream.stop()` is
         logged, never propagated.
         """
-        loop = getattr(self._stream, "_loop", None)
-        if loop is not None:
+        stream = self._stream
+        if stream is not None and getattr(stream, "_loop", None) is not None:
             try:
-                self._stream.stop()
+                stream.stop()
             except Exception:
                 logger.exception("error stopping alpaca trade stream")
         if self._thread is not None:

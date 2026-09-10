@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import threading
 from decimal import Decimal
+from typing import cast
 from unittest.mock import MagicMock
 
 import pytest
 from alpaca.common.exceptions import APIError
 from alpaca.trading.enums import QueryOrderStatus
-from alpaca.trading.requests import GetOrdersRequest
+from alpaca.trading.requests import GetOrdersRequest, LimitOrderRequest
 from tests.fakes import FakeTradingClient, make_alpaca_order, make_alpaca_position, make_api_error
 
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
@@ -35,7 +36,7 @@ def _make_order(**overrides: object) -> Order:
         "time_in_force": TimeInForce.DAY,
     }
     defaults.update(overrides)
-    return Order(**defaults)
+    return Order(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 # Test 71
@@ -51,7 +52,8 @@ def test_submit_order_conforms_before_building_request() -> None:
     broker.submit_order(order)
 
     assert len(client.submitted) == 1
-    assert client.submitted[0].limit_price == 1.01
+    submitted = cast(LimitOrderRequest, client.submitted[0])
+    assert submitted.limit_price == 1.01
 
 
 # Test 72

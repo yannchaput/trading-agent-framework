@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import threading
 from decimal import Decimal
@@ -152,7 +153,12 @@ def test_handle_trade_update_fill_missing_price_raises_order_event_error() -> No
 def test_handle_trade_update_is_coroutine_function() -> None:
     stream = AlpacaTradeStream(OrderTracker())
 
-    assert asyncio.iscoroutinefunction(stream.handle_trade_update)
+    # inspect.iscoroutinefunction is the forward-compatible spelling (asyncio's version
+    # is deprecated since 3.14). For a plain `async def` like handle_trade_update, both
+    # agree -- so this still guards what matters: alpaca-py's internal
+    # _ensure_coroutine() (stream.py) calls asyncio.iscoroutinefunction(handler) and
+    # would reject handle_trade_update the same way if it weren't a coroutine function.
+    assert inspect.iscoroutinefunction(stream.handle_trade_update)
 
 
 # --- Task 16: thread lifecycle -----------------------------------------------

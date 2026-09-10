@@ -19,7 +19,7 @@ def test_asset_is_hashable_and_usable_in_a_set() -> None:
 def test_asset_rejects_mutation() -> None:
     a = Asset(symbol="AAPL")
     with pytest.raises(FrozenInstanceError):
-        a.symbol = "MSFT"
+        a.symbol = "MSFT"  # ty: ignore[invalid-assignment]
 
 
 def test_asset_default_type_and_str() -> None:

@@ -19,7 +19,7 @@ def make_order(**overrides: object) -> Order:
         "quantity": Decimal("10"),
     }
     defaults.update(overrides)
-    return Order(**defaults)  # type: ignore[arg-type]
+    return Order(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 # Rule 1: notional set and order_type is not MARKET.

@@ -112,8 +112,9 @@ class Order:
         quantity: Decimal,
         timestamp: datetime | None = None,
     ) -> None:
-        price = _to_decimal(price)
-        quantity = _to_decimal(quantity)
+        # price/quantity are already Decimal per this method's signature -- callers
+        # (AlpacaTradeStream, OrderTracker) convert at the broker-response boundary
+        # via _to_decimal before reaching here.
         self.transactions.append(
             Transaction(
                 quantity=quantity,

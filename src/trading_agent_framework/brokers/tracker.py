@@ -187,8 +187,14 @@ class OrderTracker:
             if event == OrderEvent.NEW:
                 self._process_new(order)
             elif event == OrderEvent.PARTIALLY_FILLED:
+                # Guaranteed non-None by the guard above (FILLED/PARTIALLY_FILLED events
+                # with a missing price or filled_quantity raise before reaching here).
+                assert price is not None
+                assert filled_quantity is not None
                 self._process_partial_fill(order, price, filled_quantity)
             elif event == OrderEvent.FILLED:
+                assert price is not None
+                assert filled_quantity is not None
                 self._process_fill(order, price, filled_quantity)
             elif event == OrderEvent.CANCELED:
                 self._process_canceled(order)

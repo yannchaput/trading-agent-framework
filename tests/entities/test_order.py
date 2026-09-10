@@ -20,7 +20,7 @@ def make_order(**overrides: object) -> Order:
         "quantity": Decimal("1"),
     }
     defaults.update(overrides)
-    return Order(**defaults)  # type: ignore[arg-type]
+    return Order(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 def test_fresh_order_gets_a_32_char_hex_identifier_and_differs() -> None:
@@ -133,4 +133,4 @@ def test_transaction_is_frozen() -> None:
 
     txn = Transaction(quantity=Decimal("1"), price=Decimal("1"), timestamp=datetime.now(UTC))
     with pytest.raises(FrozenInstanceError):
-        txn.quantity = Decimal("2")
+        txn.quantity = Decimal("2")  # ty: ignore[invalid-assignment]

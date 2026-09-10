@@ -15,6 +15,7 @@ from uuid import uuid4
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 from alpaca.common.exceptions import APIError
+from alpaca.trading.requests import OrderRequest
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -43,7 +44,7 @@ def make_alpaca_order(**overrides: object) -> alpaca_models.Order:
         "extended_hours": False,
     }
     defaults.update(overrides)
-    return alpaca_models.Order(**defaults)  # type: ignore[arg-type]
+    return alpaca_models.Order(**defaults)
 
 
 def make_alpaca_position(**overrides: object) -> alpaca_models.Position:
@@ -63,7 +64,7 @@ def make_alpaca_position(**overrides: object) -> alpaca_models.Position:
         "current_price": "101.00",
     }
     defaults.update(overrides)
-    return alpaca_models.Position(**defaults)  # type: ignore[arg-type]
+    return alpaca_models.Position(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 def make_api_error(status_code: int | None) -> APIError:
@@ -86,42 +87,51 @@ class FakeTradingClient:
     Records every `submit_order` call and returns canned responses for the
     other methods `AlpacaBroker` calls. Not a general-purpose alpaca client
     fake -- only what `AlpacaBroker`'s tests need.
+
+    Response fields are typed as the real alpaca models (never `None` at the
+    point a test's code path actually reaches them) so this class structurally
+    satisfies `orders.AlpacaTradingClient` -- every test sets the relevant
+    `*_response` field before triggering the call that returns it; the asserts
+    below turn a forgotten setup into a clear failure instead of a `None`
+    silently flowing downstream.
     """
 
     def __init__(self) -> None:
-        self.submitted: list[object] = []
+        self.submitted: list[OrderRequest] = []
         self.raise_on_submit: BaseException | type[BaseException] | None = None
-        self.submit_response: object = None
+        self.submit_response: alpaca_models.Order | None = None
 
         self.canceled: list[str] = []
 
-        self.orders_response: list[object] = []
+        self.orders_response: list[alpaca_models.Order] = []
         self.last_orders_request: object = None
 
-        self.order_by_id_response: object = None
+        self.order_by_id_response: alpaca_models.Order | None = None
         self.get_order_by_id_raises: BaseException | type[BaseException] | None = None
         self.get_order_by_id_calls: list[str] = []
 
-        self.positions_response: list[object] = []
+        self.positions_response: list[alpaca_models.Position] = []
 
-    def submit_order(self, order_data: object) -> object:
+    def submit_order(self, order_data: OrderRequest) -> alpaca_models.Order:
         self.submitted.append(order_data)
         if self.raise_on_submit is not None:
             raise self.raise_on_submit
+        assert self.submit_response is not None, "test must set client.submit_response"
         return self.submit_response
 
     def cancel_order_by_id(self, order_id: str) -> None:
         self.canceled.append(order_id)
 
-    def get_orders(self, filter: object = None) -> list[object]:
+    def get_orders(self, filter: object = None) -> list[alpaca_models.Order]:
         self.last_orders_request = filter
         return self.orders_response
 
-    def get_order_by_id(self, order_id: str) -> object:
+    def get_order_by_id(self, order_id: str) -> alpaca_models.Order:
         self.get_order_by_id_calls.append(order_id)
         if self.get_order_by_id_raises is not None:
             raise self.get_order_by_id_raises
+        assert self.order_by_id_response is not None, "test must set client.order_by_id_response"
         return self.order_by_id_response
 
-    def get_all_positions(self) -> list[object]:
+    def get_all_positions(self) -> list[alpaca_models.Position]:
         return self.positions_response

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime
 from decimal import Decimal
 
 import pytest
@@ -21,7 +22,7 @@ def make_order(**overrides: object) -> Order:
         "quantity": Decimal("10"),
     }
     defaults.update(overrides)
-    return Order(**defaults)  # type: ignore[arg-type]
+    return Order(**defaults)  # ty: ignore[invalid-argument-type]
 
 
 # --- Task 5: SafeList -------------------------------------------------------
@@ -251,12 +252,12 @@ def test_concurrent_processing_of_same_order_lands_in_exactly_one_bucket() -> No
     original_add_transaction = order.add_transaction
 
     def slow_add_transaction(
-        price: Decimal, filled_quantity: Decimal, timestamp: object = None
+        price: Decimal, filled_quantity: Decimal, timestamp: datetime | None = None
     ) -> None:
         original_add_transaction(price, filled_quantity, timestamp)
         time.sleep(0.002)
 
-    order.add_transaction = slow_add_transaction  # type: ignore[method-assign]
+    order.add_transaction = slow_add_transaction  # ty: ignore[invalid-assignment]
 
     iterations = 30
     barrier = threading.Barrier(2)

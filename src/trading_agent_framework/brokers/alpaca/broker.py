@@ -10,7 +10,7 @@ the I/O calls against a `TradingClient` plus the bookkeeping (`tracker`,
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from alpaca.common.exceptions import APIError
 
@@ -24,7 +24,6 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import BrokerError
 
 if TYPE_CHECKING:
-    from alpaca.trading.client import TradingClient
     from alpaca.trading.stream import TradingStream
 
     from trading_agent_framework.config.env import AlpacaCredentials
@@ -40,7 +39,7 @@ class AlpacaBroker(Broker):
     def __init__(
         self,
         strategy_name: str,
-        client: TradingClient,
+        client: orders.AlpacaTradingClient,
         tracker: OrderTracker | None = None,
         stream: TradingStream | None = None,
     ) -> None:
@@ -56,7 +55,11 @@ class AlpacaBroker(Broker):
         creds: AlpacaCredentials,
         with_stream: bool = True,
     ) -> AlpacaBroker:
-        client = build_trading_client(creds)
+        # TradingClient's own signatures declare `T | RawData` (a dict) because
+        # the SDK supports a raw_data mode; this project never enables it, so
+        # every call actually returns the parsed model. Narrow once, here, at
+        # the single point a real client is constructed.
+        client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
         stream = build_trading_stream(creds) if with_stream else None
         return cls(strategy_name, client, stream=stream)
 

@@ -154,7 +154,6 @@ activemq-data/
 env/
 !/env/
 /env/*
-!/env/README.md
 !/env/.env.example
 venv/
 ENV/

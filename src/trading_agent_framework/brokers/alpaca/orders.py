@@ -14,9 +14,10 @@ enum member duck-typed via `.value`.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from decimal import ROUND_HALF_UP, Decimal
 from types import MappingProxyType
+from typing import TYPE_CHECKING, Protocol, cast
 from uuid import uuid4
 
 from alpaca.trading.enums import OrderSide as AlpacaOrderSide
@@ -47,7 +48,35 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import OrderValidationError
 
+if TYPE_CHECKING:
+    from datetime import datetime
+
+    from alpaca.trading.models import Order as AlpacaOrderModel
+    from alpaca.trading.models import Position as AlpacaPositionModel
+
 logger = logging.getLogger(__name__)
+
+
+class AlpacaTradingClient(Protocol):
+    """Structural contract for what `AlpacaBroker` actually calls on a
+    `alpaca.trading.client.TradingClient` (or a hand-written test double).
+
+    A real `TradingClient` satisfies this automatically (structural typing);
+    a fake only needs to implement these five methods, not inherit anything.
+
+    Narrower than `TradingClient`'s own `submit_order`/`get_order_by_id`
+    signatures in one respect: both are typed here as always returning a
+    parsed `Order` model, since this project never passes `raw_data=True` and
+    therefore never receives the `RawData` (dict) half of alpaca-py's real
+    `Order | RawData` return type.
+    """
+
+    def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel: ...
+    def cancel_order_by_id(self, order_id: str) -> None: ...
+    def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]: ...
+    def get_order_by_id(self, order_id: str) -> AlpacaOrderModel: ...
+    def get_all_positions(self) -> list[AlpacaPositionModel]: ...
+
 
 # --- Task 7: status / event maps --------------------------------------------
 
@@ -282,7 +311,13 @@ def build_order_request(order: Order) -> OrderRequest:
             kwargs["trail_percent"] = _to_api_number(order.trail_percent)
 
     try:
-        return request_cls(**kwargs)
+        # kwargs is heterogeneous by construction -- it's built once per order
+        # type from a shared dict and splatted into whichever of the 5 request
+        # classes _REQUEST_BY_TYPE selected, each with different fields. A
+        # static checker can't verify that dynamic spread against a specific
+        # constructor's signature; pydantic validates it at runtime instead,
+        # and any mismatch surfaces as the ValidationError caught below.
+        return request_cls(**kwargs)  # ty: ignore[invalid-argument-type]
     except (ValidationError, ValueError) as exc:
         raise OrderValidationError(str(exc)) from exc
 
@@ -358,7 +393,7 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 
     return Order(
         strategy_name=strategy_name,
-        asset=Asset(symbol=_field(response, "symbol"), asset_type=AssetType.STOCK),
+        asset=Asset(symbol=cast(str, _field(response, "symbol")), asset_type=AssetType.STOCK),
         side=OrderSide(_normalize_key(_field(response, "side"))),
         order_type=order_type,
         quantity=_to_decimal(qty),
@@ -371,16 +406,16 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
         trail_percent=_to_decimal(_field(response, "trail_percent")),
         status=map_status(_field(response, "status")),
         identifier=str(raw_id) if raw_id is not None else uuid4().hex,
-        client_order_id=_field(response, "client_order_id"),
+        client_order_id=cast("str | None", _field(response, "client_order_id")),
         filled_quantity=filled_quantity if filled_quantity is not None else Decimal(0),
         avg_fill_price=_to_decimal(_field(response, "filled_avg_price")),
-        created_at=_field(response, "created_at"),
-        updated_at=_field(response, "updated_at"),
+        created_at=cast("datetime | None", _field(response, "created_at")),
+        updated_at=cast("datetime | None", _field(response, "updated_at")),
         raw=response,
     )
 
 
-def parse_broker_orders(responses: object, strategy_name: str) -> list[Order]:
+def parse_broker_orders(responses: Iterable[object], strategy_name: str) -> list[Order]:
     """Parse an iterable of broker order responses, dropping any that
     `parse_broker_order` returns None for."""
     return [
@@ -393,10 +428,14 @@ def parse_broker_orders(responses: object, strategy_name: str) -> list[Order]:
 def parse_broker_position(response: object, strategy_name: str) -> Position:
     """Parse an Alpaca position response (a real `alpaca.trading.models.Position`
     instance or an equivalent raw dict) into our `Position` entity."""
+    quantity = _to_decimal(_field(response, "qty"))
+    # alpaca.trading.models.Position.qty is a required field -- unlike an Order,
+    # which can be notional-only, a position always has a share quantity.
+    assert quantity is not None, "Alpaca position response is missing qty"
     return Position(
         strategy_name=strategy_name,
-        asset=Asset(symbol=_field(response, "symbol"), asset_type=AssetType.STOCK),
-        quantity=_to_decimal(_field(response, "qty")),
+        asset=Asset(symbol=cast(str, _field(response, "symbol")), asset_type=AssetType.STOCK),
+        quantity=quantity,
         side=PositionSide(_normalize_key(_field(response, "side"))),
         avg_fill_price=_to_decimal(_field(response, "avg_entry_price")),
         current_price=_to_decimal(_field(response, "current_price")),
