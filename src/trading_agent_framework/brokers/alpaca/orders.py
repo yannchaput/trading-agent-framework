@@ -14,12 +14,35 @@ enum member duck-typed via `.value`.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from decimal import ROUND_HALF_UP, Decimal
 from types import MappingProxyType
+from uuid import uuid4
 
-from trading_agent_framework.entities.enums import OrderEvent, OrderStatus, OrderType, TimeInForce
+from alpaca.trading.enums import OrderSide as AlpacaOrderSide
+from alpaca.trading.enums import TimeInForce as AlpacaTimeInForce
+from alpaca.trading.requests import (
+    LimitOrderRequest,
+    MarketOrderRequest,
+    OrderRequest,
+    StopLimitOrderRequest,
+    StopOrderRequest,
+    TrailingStopOrderRequest,
+)
+from pydantic import ValidationError
+
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import (
+    AssetType,
+    OrderEvent,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    PositionSide,
+    TimeInForce,
+)
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import OrderValidationError
 
 logger = logging.getLogger(__name__)
@@ -190,3 +213,180 @@ def validate_order(order: Order) -> None:
             f"time_in_force={order.time_in_force} requires order_type MARKET or LIMIT "
             f"(order_type={order.order_type})"
         )
+
+
+# --- Task 10: build_order_request --------------------------------------------
+
+_REQUEST_BY_TYPE: MappingProxyType[OrderType, type[OrderRequest]] = MappingProxyType(
+    {
+        OrderType.MARKET: MarketOrderRequest,
+        OrderType.LIMIT: LimitOrderRequest,
+        OrderType.STOP: StopOrderRequest,
+        OrderType.STOP_LIMIT: StopLimitOrderRequest,
+        OrderType.TRAIL: TrailingStopOrderRequest,
+    }
+)
+
+
+def _to_api_number(value: Decimal | None) -> float | None:
+    """Convert a Decimal to the float alpaca-py's pydantic requests expect.
+
+    The only place in the codebase where Decimal becomes float -- see
+    global constraint 5.
+    """
+    return None if value is None else float(value)
+
+
+def build_order_request(order: Order) -> OrderRequest:
+    """Build the alpaca-py request object matching `order.order_type`.
+
+    Pure translation: no I/O, no validation beyond what alpaca-py's own
+    pydantic models enforce. Any ValidationError or ValueError raised while
+    constructing the request is wrapped in OrderValidationError so callers
+    never see a raw pydantic exception (global constraint 8).
+    """
+    request_cls = _REQUEST_BY_TYPE[order.order_type]
+
+    kwargs: dict[str, object] = {
+        "symbol": order.asset.symbol,
+        "side": AlpacaOrderSide(order.side.value),
+        "time_in_force": AlpacaTimeInForce(order.time_in_force.value),
+        "extended_hours": order.extended_hours,
+        "client_order_id": order.client_order_id,
+    }
+    if order.quantity is not None:
+        kwargs["qty"] = _to_api_number(order.quantity)
+    else:
+        kwargs["notional"] = _to_api_number(order.notional)
+
+    if order.order_type is OrderType.LIMIT:
+        kwargs["limit_price"] = _to_api_number(order.limit_price)
+    elif order.order_type is OrderType.STOP:
+        kwargs["stop_price"] = _to_api_number(order.stop_price)
+    elif order.order_type is OrderType.STOP_LIMIT:
+        kwargs["stop_price"] = _to_api_number(order.stop_price)
+        kwargs["limit_price"] = _to_api_number(order.stop_limit_price)
+    elif order.order_type is OrderType.TRAIL:
+        if order.trail_price is not None:
+            kwargs["trail_price"] = _to_api_number(order.trail_price)
+        if order.trail_percent is not None:
+            kwargs["trail_percent"] = _to_api_number(order.trail_percent)
+
+    try:
+        return request_cls(**kwargs)
+    except (ValidationError, ValueError) as exc:
+        raise OrderValidationError(str(exc)) from exc
+
+
+# --- Task 11: parsing broker responses ---------------------------------------
+
+_SENTINEL = object()
+
+
+def _field(response: object, name: str, default: object = None) -> object:
+    """Read `name` off `response`, whether it's an attribute-bearing object
+    (a real alpaca-py model) or a plain Mapping (a raw dict payload).
+
+    getattr's own default only kicks in when the attribute is genuinely
+    missing, never when it is present but None -- so a present-but-None
+    attribute is returned as None, not silently swapped for the Mapping path.
+    """
+    value = getattr(response, name, _SENTINEL)
+    if value is not _SENTINEL:
+        return value
+    if isinstance(response, Mapping):
+        return response.get(name, default)
+    return default
+
+
+def _to_decimal(value: object) -> Decimal | None:
+    """Coerce a raw Alpaca numeric (str | float | None) to Decimal.
+
+    Never Decimal(float) directly -- always via str -- to avoid binary float
+    noise leaking into our authoritative Decimal fields.
+    """
+    return None if value is None else Decimal(str(value))
+
+
+def parse_broker_order(response: object, strategy_name: str) -> Order | None:
+    """Parse an Alpaca order response (a real `alpaca.trading.models.Order`
+    instance or an equivalent raw dict) into our `Order` entity.
+
+    Returns None -- logging a warning -- only when both `qty` and `notional`
+    are absent, which shouldn't happen for a real order. This deliberately
+    diverges from a naive lumibot-style port that returns None whenever `qty`
+    alone is None: Alpaca returns `qty: null, notional: "500"` for notional
+    orders, and a naive `qty is None` check would silently drop them.
+    """
+    qty = _field(response, "qty")
+    notional = _field(response, "notional")
+    if qty is None and notional is None:
+        logger.warning(
+            "parse_broker_order: response has neither qty nor notional, skipping: %r",
+            response,
+        )
+        return None
+
+    raw_type = _field(response, "type")
+    if raw_type is None:
+        raw_type = _field(response, "order_type")
+    order_type = OrderType(_normalize_key(raw_type))
+
+    stop_price = _to_decimal(_field(response, "stop_price"))
+    limit_price = _to_decimal(_field(response, "limit_price"))
+    stop_limit_price = None
+    if order_type is OrderType.STOP_LIMIT:
+        stop_limit_price = limit_price
+        limit_price = None
+
+    raw_id = _field(response, "id")
+    filled_quantity = _to_decimal(_field(response, "filled_qty"))
+
+    return Order(
+        strategy_name=strategy_name,
+        asset=Asset(symbol=_field(response, "symbol"), asset_type=AssetType.STOCK),
+        side=OrderSide(_normalize_key(_field(response, "side"))),
+        order_type=order_type,
+        quantity=_to_decimal(qty),
+        notional=_to_decimal(notional),
+        time_in_force=TimeInForce(_normalize_key(_field(response, "time_in_force"))),
+        limit_price=limit_price,
+        stop_price=stop_price,
+        stop_limit_price=stop_limit_price,
+        trail_price=_to_decimal(_field(response, "trail_price")),
+        trail_percent=_to_decimal(_field(response, "trail_percent")),
+        status=map_status(_field(response, "status")),
+        identifier=str(raw_id) if raw_id is not None else uuid4().hex,
+        client_order_id=_field(response, "client_order_id"),
+        filled_quantity=filled_quantity if filled_quantity is not None else Decimal(0),
+        avg_fill_price=_to_decimal(_field(response, "filled_avg_price")),
+        created_at=_field(response, "created_at"),
+        updated_at=_field(response, "updated_at"),
+        raw=response,
+    )
+
+
+def parse_broker_orders(responses: object, strategy_name: str) -> list[Order]:
+    """Parse an iterable of broker order responses, dropping any that
+    `parse_broker_order` returns None for."""
+    return [
+        order
+        for order in (parse_broker_order(response, strategy_name) for response in responses)
+        if order is not None
+    ]
+
+
+def parse_broker_position(response: object, strategy_name: str) -> Position:
+    """Parse an Alpaca position response (a real `alpaca.trading.models.Position`
+    instance or an equivalent raw dict) into our `Position` entity."""
+    return Position(
+        strategy_name=strategy_name,
+        asset=Asset(symbol=_field(response, "symbol"), asset_type=AssetType.STOCK),
+        quantity=_to_decimal(_field(response, "qty")),
+        side=PositionSide(_normalize_key(_field(response, "side"))),
+        avg_fill_price=_to_decimal(_field(response, "avg_entry_price")),
+        current_price=_to_decimal(_field(response, "current_price")),
+        market_value=_to_decimal(_field(response, "market_value")),
+        unrealized_pnl=_to_decimal(_field(response, "unrealized_pl")),
+        raw=response,
+    )
