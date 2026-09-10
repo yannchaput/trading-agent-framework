@@ -18,6 +18,7 @@ from alpaca.trading.requests import GetOrdersRequest
 
 from trading_agent_framework.brokers.alpaca import orders
 from trading_agent_framework.brokers.alpaca.client import build_trading_client, build_trading_stream
+from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.order import Order
@@ -46,8 +47,8 @@ class AlpacaBroker(Broker):
     ) -> None:
         super().__init__(strategy_name, tracker)
         self._client = client
-        # Unused by this task -- Tasks 15-16 wire the stream up for live events.
         self._stream = stream
+        self._alpaca_stream: AlpacaTradeStream | None = None
 
     @classmethod
     def from_credentials(
@@ -105,3 +106,14 @@ class AlpacaBroker(Broker):
             orders.parse_broker_position(p, self.strategy_name)
             for p in self._client.get_all_positions()
         ]
+
+    def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
+        if self._alpaca_stream is None:
+            self._alpaca_stream = AlpacaTradeStream(self.tracker, self._stream)
+        return self._alpaca_stream
+
+    def start_stream(self) -> None:
+        self._ensure_alpaca_stream().start()
+
+    def stop_stream(self, timeout: float = 5.0) -> None:
+        self._ensure_alpaca_stream().stop(timeout)

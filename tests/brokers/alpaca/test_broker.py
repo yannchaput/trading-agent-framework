@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import threading
 from decimal import Decimal
+from unittest.mock import MagicMock
 
 import pytest
 from alpaca.trading.enums import QueryOrderStatus
@@ -188,3 +190,28 @@ def test_submit_order_stamps_client_order_id_only_when_unset() -> None:
     preset = _make_order(client_order_id="preset-id")
     broker.submit_order(preset)
     assert preset.client_order_id == "preset-id"
+
+
+# Task 16: start_stream / stop_stream delegation
+def test_start_stream_subscribes_handler_and_starts_thread() -> None:
+    client = FakeTradingClient()
+    stream = MagicMock()
+    release = threading.Event()
+    stream.run.side_effect = lambda: release.wait(timeout=2)
+    broker = AlpacaBroker("momentum", client, stream=stream)
+
+    broker.start_stream()
+    try:
+        stream.subscribe_trade_updates.assert_called_once()
+    finally:
+        release.set()
+        broker.stop_stream()
+
+
+def test_stop_stream_before_start_does_not_raise() -> None:
+    client = FakeTradingClient()
+    stream = MagicMock()
+    stream._loop = None
+    broker = AlpacaBroker("momentum", client, stream=stream)
+
+    broker.stop_stream()
