@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from trading_agent_framework import entities
+from trading_agent_framework.entities import account as account_module
 from trading_agent_framework.entities import asset as asset_module
 from trading_agent_framework.entities import enums as enums_module
 from trading_agent_framework.entities import order as order_module
@@ -8,6 +9,7 @@ from trading_agent_framework.entities import position as position_module
 
 
 def test_entities_reexports_match_source_modules() -> None:
+    assert entities.AccountBalances is account_module.AccountBalances
     assert entities.Asset is asset_module.Asset
     assert entities.AssetType is enums_module.AssetType
     assert entities.OrderSide is enums_module.OrderSide

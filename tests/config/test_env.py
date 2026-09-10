@@ -4,7 +4,12 @@ import os
 
 import pytest
 
-from trading_agent_framework.config.env import AlpacaCredentials, load_strategy_env
+from trading_agent_framework.config.env import (
+    TRADING_MODES,
+    AlpacaCredentials,
+    TradingMode,
+    load_strategy_env,
+)
 from trading_agent_framework.errors import ConfigurationError
 
 
@@ -130,3 +135,13 @@ def test_repr_does_not_leak_api_key_or_secret() -> None:
     assert "supersecretkey" not in text
     assert "supersecret" not in text
     assert "AlpacaCredentials" in text
+
+
+def test_trading_modes_are_derived_from_the_enum() -> None:
+    assert TRADING_MODES == frozenset({"live", "paper", "backtesting"})
+    assert {mode.value for mode in TradingMode} == TRADING_MODES
+
+
+def test_trading_mode_is_a_plain_string() -> None:
+    assert TradingMode("paper") is TradingMode.PAPER
+    assert f"{TradingMode.LIVE}" == "live"

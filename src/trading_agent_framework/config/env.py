@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -12,7 +13,16 @@ from trading_agent_framework.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
-TRADING_MODES: frozenset[str] = frozenset({"live", "paper", "backtesting"})
+
+class TradingMode(StrEnum):
+    """The three ways a strategy can run; values match the env-file suffixes."""
+
+    LIVE = "live"
+    PAPER = "paper"
+    BACKTESTING = "backtesting"
+
+
+TRADING_MODES: frozenset[str] = frozenset(mode.value for mode in TradingMode)
 
 _FALSE_PAPER_VALUES = frozenset({"false", "0", "no"})
 

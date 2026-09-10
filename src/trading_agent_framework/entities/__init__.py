@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 
+from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import (
     ACTIVE_ORDER_STATUSES,
@@ -25,6 +26,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "ACTIVE_ORDER_STATUSES",
+    "AccountBalances",
     "Asset",
     "AssetType",
     "Order",
