@@ -4,7 +4,10 @@ version = "0.1.0"
 description = "A trading agent harness managing runtime, the broker layer, agent layer, memory etc."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "alpaca-py>=0.44.0,<0.45",
+    "python-dotenv>=1.2",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -30,6 +33,10 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "ignore:remove second argument of ws_handler:DeprecationWarning",
+    "ignore::DeprecationWarning:websockets.legacy",
+]
 
 [tool.coverage.run]
 source = ["src"]
