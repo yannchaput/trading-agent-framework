@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
@@ -118,7 +118,7 @@ class Order:
             Transaction(
                 quantity=quantity,
                 price=price,
-                timestamp=timestamp if timestamp is not None else datetime.now(),
+                timestamp=timestamp if timestamp is not None else datetime.now(UTC),
             )
         )
         self.filled_quantity += quantity
