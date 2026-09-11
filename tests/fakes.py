@@ -9,12 +9,14 @@ several lines of mock configuration.
 from __future__ import annotations
 
 import dataclasses
+import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -43,6 +45,7 @@ from trading_agent_framework.entities.enums import OrderStatus
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
+from trading_agent_framework.memory.store import DB_FILE_NAME, MemoryStore
 from trading_agent_framework.utils.clock import MarketClock, MarketSession
 from trading_agent_framework.utils.errors import BrokerError
 
@@ -580,3 +583,35 @@ class FakeBroker(Broker):
 
     def stop_stream(self, timeout: float = 5.0) -> None:
         self.calls.append("stop_stream")
+
+
+# --- agent memory ---------------------------------------------------------------
+
+MEMORY_START = et(2026, 9, 14, 10, 0)
+MEMORY_WALL_TIME = datetime(2026, 9, 14, 14, 0, 5, tzinfo=UTC)
+
+
+def make_memory_store(
+    directory: Path, clock: FakeClock | None = None, *, fresh: bool = False
+) -> MemoryStore:
+    """A `MemoryStore` at `directory/memory.sqlite`, on fake time (`MEMORY_START` by default)."""
+    clock = clock if clock is not None else FakeClock(MEMORY_START)
+    return MemoryStore(
+        directory / DB_FILE_NAME,
+        strategy_name="momentum",
+        now=clock.now,
+        wall_clock=lambda: MEMORY_WALL_TIME,
+        fresh=fresh,
+    )
+
+
+def memory_rows(
+    store: MemoryStore, sql: str, params: Sequence[object] = ()
+) -> list[dict[str, Any]]:
+    """Raw rows from the store's database, read on the test's own connection."""
+    conn = sqlite3.connect(store.db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        return [dict(row) for row in conn.execute(sql, params)]
+    finally:
+        conn.close()
