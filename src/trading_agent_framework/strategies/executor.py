@@ -4,21 +4,25 @@
 before_market_opens -> before_starting_trading -> on_trading_iteration every
 `sleeptime` -> before_market_closes -> after_market_closes. Every wait goes
 through the strategy's `MarketClock`, so a simulated clock can later drive the
-very same loop for backtesting.
+very same loop for backtesting. Order events are dispatched on the executor
+thread while it waits.
 """
 
 from __future__ import annotations
 
 import inspect
 import logging
+import signal
 import threading
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from types import FrameType
 from typing import TYPE_CHECKING
 
 from trading_agent_framework.clock import MarketSession
+from trading_agent_framework.entities.enums import OrderEvent
 from trading_agent_framework.errors import BrokerError
-from trading_agent_framework.strategies.events import OrderEventQueue
+from trading_agent_framework.strategies.events import OrderEventQueue, QueuedOrderEvent
 from trading_agent_framework.strategies.timing import next_tick, parse_sleeptime
 
 if TYPE_CHECKING:
@@ -59,6 +63,7 @@ class StrategyExecutor:
         broker = strategy.broker
         self._stop.clear()
         broker.tracker.listeners.append(self._events)
+        restore_sigterm = self._install_sigterm_handler()
         initialized = False
         try:
             broker.sync_open_orders()
@@ -67,21 +72,36 @@ class StrategyExecutor:
             initialized = True
             parse_sleeptime(strategy.sleeptime)  # fail fast on a bad sleeptime
             self._run_sessions()
+        except KeyboardInterrupt:
+            logger.warning("Strategy %s interrupted; running on_abrupt_closing", strategy.name)
+            self._call_hook(strategy.on_abrupt_closing)
         finally:
             if initialized:
                 self._call_hook(strategy.on_strategy_end)
             broker.stop_stream()
             broker.tracker.listeners.remove(self._events)
+            restore_sigterm()
 
-    def wait_until(self, deadline: datetime) -> None:
-        """Wait on the clock until `deadline` or `stop()`."""
+    def wait_until(self, deadline: datetime, until: Callable[[], bool] | None = None) -> bool:
+        """Wait on the clock until `deadline`, dispatching order events meanwhile.
+
+        Returns True as soon as `until()` holds; False at the deadline or on `stop()`.
+        """
         clock = self.strategy.clock
-        while not self._stop.is_set():
+        while True:
+            self._dispatch_events()
+            if until is not None and until():
+                return True
             remaining = (deadline - clock.now()).total_seconds()
-            if remaining <= 0:
-                return
+            if remaining <= 0 or self._stop.is_set():
+                return False
             clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
             self._wake.clear()
+
+    def wait_for(self, until: Callable[[], bool], timeout: float | None = None) -> bool:
+        """`wait_until` with a relative timeout; no timeout means a one-year horizon."""
+        horizon = timedelta(days=365) if timeout is None else timedelta(seconds=timeout)
+        return self.wait_until(self._now() + horizon, until)
 
     # --- run phases ----------------------------------------------------------------
 
@@ -209,3 +229,53 @@ class StrategyExecutor:
 
     def _now(self) -> datetime:
         return self.strategy.clock.now()
+
+    def _dispatch_events(self) -> None:
+        for item in self._events.drain():
+            self._dispatch(item)
+
+    def _dispatch(self, item: QueuedOrderEvent) -> None:
+        strategy = self.strategy
+        order = item.order
+        try:
+            if item.event is OrderEvent.NEW:
+                strategy.on_new_order(order)
+            elif item.event is OrderEvent.CANCELED:
+                strategy.on_canceled_order(order)
+            elif item.event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED):
+                if item.price is None or item.quantity is None:
+                    logger.warning("Fill event for order %s has no fill data", order.identifier)
+                    return
+                hook = (
+                    strategy.on_filled_order
+                    if item.event is OrderEvent.FILLED
+                    else strategy.on_partially_filled_order
+                )
+                position = strategy.get_position(order.asset)
+                hook(position, order, item.price, item.quantity, 1)
+            elif item.event is OrderEvent.ERROR:
+                logger.warning(
+                    "Order %s for %s was rejected: %s",
+                    order.identifier,
+                    strategy.name,
+                    order.error_message,
+                )
+        except Exception as exc:
+            logger.exception("Order hook failed for %s (%s)", strategy.name, item.event)
+            self._on_bot_crash(exc)
+
+    def _install_sigterm_handler(self) -> Callable[[], None]:
+        """Turn SIGTERM into KeyboardInterrupt for this run; returns the undo function."""
+        if threading.current_thread() is not threading.main_thread():
+            return lambda: None  # signal handlers can only be installed on the main thread
+        previous = signal.getsignal(signal.SIGTERM)
+
+        def interrupt(signum: int, frame: FrameType | None) -> None:
+            raise KeyboardInterrupt
+
+        signal.signal(signal.SIGTERM, interrupt)
+
+        def restore() -> None:
+            signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+
+        return restore

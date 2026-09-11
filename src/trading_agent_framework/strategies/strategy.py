@@ -19,7 +19,7 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
+from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.log import ColorLogger
@@ -28,6 +28,10 @@ from trading_agent_framework.strategies.executor import StrategyExecutor
 logger = logging.getLogger(__name__)
 
 Number = Decimal | int | float | str
+
+_FINAL_STATUSES = frozenset(
+    {OrderStatus.FILL, OrderStatus.CANCELED, OrderStatus.ERROR, OrderStatus.EXPIRED}
+)
 
 
 def _to_asset(asset: Asset | str) -> Asset:
@@ -156,12 +160,27 @@ class Strategy:
     # --- control -------------------------------------------------------------------
 
     def sleep(self, seconds: float) -> None:
-        """Pause for `seconds` of clock time (returns early if the run is stopped)."""
+        """Pause for `seconds` of clock time; order hooks still fire meanwhile."""
         self.executor.wait_until(self.get_datetime() + timedelta(seconds=seconds))
 
     def stop(self) -> None:
         """End the run once the current hook returns; `on_strategy_end` still runs."""
         self.executor.stop()
+
+    def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
+        """Wait until `order` is filled, canceled, expired or rejected; False on timeout/stop.
+
+        Needs the broker's trade stream (the runners start it). Order hooks keep firing
+        while waiting. A modified order is replaced: wait on the order `modify_order` returned.
+        """
+        return self.wait_for_orders_execution([order], timeout)
+
+    def wait_for_orders_execution(
+        self, orders: Sequence[Order], timeout: float | None = None
+    ) -> bool:
+        return self.executor.wait_for(
+            lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout
+        )
 
     # --- accounting --------------------------------------------------------------
 
