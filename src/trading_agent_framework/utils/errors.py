@@ -19,3 +19,11 @@ class OrderValidationError(BrokerError, ValueError):
 
 class OrderEventError(BrokerError, ValueError):
     """Raised when an order event cannot be processed."""
+
+
+class MemoryStoreError(TradingFrameworkError):
+    """Raised when the agent memory database cannot be read or written."""
+
+
+class MemoryValidationError(MemoryStoreError, ValueError):
+    """Raised when a memory write is rejected (bad text/kind/tags, unknown or non-open thesis)."""

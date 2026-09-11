@@ -222,3 +222,6 @@ __marimo__/
 
 # git worktrees (superpowers:using-git-worktrees)
 .worktrees/
+
+# Agent memory databases (memory/<strategy>/<mode>/memory.sqlite)
+/memory/
