@@ -3,9 +3,11 @@ from __future__ import annotations
 from trading_agent_framework import entities
 from trading_agent_framework.entities import account as account_module
 from trading_agent_framework.entities import asset as asset_module
+from trading_agent_framework.entities import bars as bars_module
 from trading_agent_framework.entities import enums as enums_module
 from trading_agent_framework.entities import order as order_module
 from trading_agent_framework.entities import position as position_module
+from trading_agent_framework.entities import quote as quote_module
 
 
 def test_entities_reexports_match_source_modules() -> None:
@@ -23,3 +25,5 @@ def test_entities_reexports_match_source_modules() -> None:
     assert entities.Order is order_module.Order
     assert entities.Transaction is order_module.Transaction
     assert entities.Position is position_module.Position
+    assert entities.Bars is bars_module.Bars
+    assert entities.Quote is quote_module.Quote
