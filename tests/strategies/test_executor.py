@@ -147,6 +147,14 @@ def test_daily_sleeptime_runs_once_per_session() -> None:
     ]
 
 
+def test_daily_sleeptime_before_market_closes_fires_near_close() -> None:
+    class Daily(Recorder):
+        sleeptime = "1D"
+
+    strategy = _run(Daily)
+    assert strategy.times("before_market_closes") == [et(2026, 9, 14, 15, 59)]
+
+
 def test_two_day_sleeptime_skips_every_other_session() -> None:
     class EveryOtherDay(Recorder):
         sleeptime = "2D"
@@ -157,6 +165,11 @@ def test_two_day_sleeptime_skips_every_other_session() -> None:
         et(2026, 9, 16, 9, 30),
     ]
     assert len(strategy.times("before_starting_trading")) == 3
+    assert strategy.times("before_market_closes") == [
+        et(2026, 9, 14, 15, 59),
+        et(2026, 9, 15, 15, 59),
+        et(2026, 9, 16, 15, 59),
+    ]
 
 
 def test_overrun_skips_missed_ticks_with_a_warning(caplog: pytest.LogCaptureFixture) -> None:

@@ -159,10 +159,12 @@ class StrategyExecutor:
                 return
             sleeptime = parse_sleeptime(strategy.sleeptime)
             if sleeptime.sessions is not None and not self._iteration_due(sleeptime.sessions):
+                self.wait_until(stop_at)
                 return
             self._iterate()
             sleeptime = parse_sleeptime(strategy.sleeptime)  # the iteration may change it
             if sleeptime.interval is None:
+                self.wait_until(stop_at)
                 return  # session-based sleeptime: one iteration per due session
             tick, skipped = next_tick(tick, sleeptime.interval, self._now())
             if skipped:
