@@ -304,3 +304,23 @@ def test_get_tracked_order_searches_all_buckets() -> None:
     assert tracker.get_tracked_order(order.identifier) is order
 
     assert tracker.get_tracked_order("does-not-exist") is None
+
+
+def test_mark_replaced_cancels_old_tracks_new_and_notifies_nobody() -> None:
+    tracker = OrderTracker()
+    notified: list[tuple[Order, OrderEvent]] = []
+    tracker.listeners.append(lambda order, event: notified.append((order, event)))
+    old = make_order()
+    tracker.track_unprocessed(old)
+    tracker.process_trade_event(old, OrderEvent.NEW)
+    notified.clear()
+    new = make_order()
+
+    tracker.mark_replaced(old, new)
+
+    assert old.status == OrderStatus.CANCELED
+    assert old in tracker.canceled
+    assert old not in tracker.new
+    assert new in tracker.unprocessed
+    assert tracker.get_tracked_order(new.identifier) is new
+    assert notified == []

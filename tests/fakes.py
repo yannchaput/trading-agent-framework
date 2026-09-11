@@ -18,7 +18,12 @@ from zoneinfo import ZoneInfo
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 from alpaca.common.exceptions import APIError
-from alpaca.trading.requests import OrderRequest
+from alpaca.trading.requests import (
+    ClosePositionRequest,
+    GetCalendarRequest,
+    OrderRequest,
+    ReplaceOrderRequest,
+)
 
 from trading_agent_framework.clock import MarketClock, MarketSession
 
@@ -72,6 +77,46 @@ def make_alpaca_position(**overrides: object) -> alpaca_models.Position:
     return alpaca_models.Position(**defaults)  # ty: ignore[invalid-argument-type]
 
 
+def make_alpaca_account(**overrides: object) -> alpaca_models.TradeAccount:
+    """Build a real `alpaca.trading.models.TradeAccount` (string money fields, as Alpaca sends)."""
+    defaults: dict[str, object] = {
+        "id": uuid4(),
+        "account_number": "PA0000000",
+        "status": alpaca_enums.AccountStatus.ACTIVE,
+        "cash": "10000.50",
+        "equity": "25000.25",
+        "portfolio_value": "25000.25",
+        "buying_power": "20000",
+    }
+    defaults.update(overrides)
+    return alpaca_models.TradeAccount(**defaults)  # ty: ignore[invalid-argument-type]
+
+
+def make_alpaca_calendar(
+    day: str, open_at: str = "09:30", close_at: str = "16:00"
+) -> alpaca_models.Calendar:
+    """Build a real `Calendar` the way the SDK does from the API payload (naive times)."""
+    return alpaca_models.Calendar(date=day, open=open_at, close=close_at)
+
+
+def make_failed_close_details(symbol: str = "AAPL") -> alpaca_models.FailedClosePositionDetails:
+    return alpaca_models.FailedClosePositionDetails(
+        code=40310000, message="insufficient qty available for order", symbol=symbol
+    )
+
+
+def make_close_position_response(
+    body: alpaca_models.Order | alpaca_models.FailedClosePositionDetails, symbol: str = "AAPL"
+) -> alpaca_models.ClosePositionResponse:
+    is_order = isinstance(body, alpaca_models.Order)
+    return alpaca_models.ClosePositionResponse(
+        order_id=body.id if isinstance(body, alpaca_models.Order) else None,
+        status=200 if is_order else 403,
+        symbol=symbol,
+        body=body,
+    )
+
+
 def make_api_error(status_code: int | None) -> APIError:
     """Build a real `alpaca.common.exceptions.APIError` reporting `status_code`.
 
@@ -117,6 +162,22 @@ class FakeTradingClient:
 
         self.positions_response: list[alpaca_models.Position] = []
 
+        self.raises: dict[str, BaseException] = {}
+
+        self.account_response: alpaca_models.TradeAccount | None = None
+
+        self.calendar_response: list[alpaca_models.Calendar] = []
+        self.calendar_requests: list[GetCalendarRequest] = []
+
+        self.replace_calls: list[tuple[str, ReplaceOrderRequest]] = []
+        self.replace_response: alpaca_models.Order | None = None
+
+        self.close_position_calls: list[tuple[str, ClosePositionRequest]] = []
+        self.close_position_response: alpaca_models.Order | None = None
+
+        self.close_all_calls: list[bool] = []
+        self.close_all_response: list[alpaca_models.ClosePositionResponse] = []
+
     def submit_order(self, order_data: OrderRequest) -> alpaca_models.Order:
         self.submitted.append(order_data)
         if self.raise_on_submit is not None:
@@ -128,6 +189,7 @@ class FakeTradingClient:
         self.canceled.append(order_id)
 
     def get_orders(self, filter: object = None) -> list[alpaca_models.Order]:
+        self._maybe_raise("get_orders")
         self.last_orders_request = filter
         return self.orders_response
 
@@ -140,6 +202,42 @@ class FakeTradingClient:
 
     def get_all_positions(self) -> list[alpaca_models.Position]:
         return self.positions_response
+
+    def _maybe_raise(self, method: str) -> None:
+        error = self.raises.get(method)
+        if error is not None:
+            raise error
+
+    def get_account(self) -> alpaca_models.TradeAccount:
+        self._maybe_raise("get_account")
+        assert self.account_response is not None, "test must set client.account_response"
+        return self.account_response
+
+    def get_calendar(self, filters: GetCalendarRequest) -> list[alpaca_models.Calendar]:
+        self.calendar_requests.append(filters)
+        self._maybe_raise("get_calendar")
+        return self.calendar_response
+
+    def replace_order_by_id(
+        self, order_id: str, order_data: ReplaceOrderRequest
+    ) -> alpaca_models.Order:
+        self.replace_calls.append((order_id, order_data))
+        self._maybe_raise("replace_order_by_id")
+        assert self.replace_response is not None, "test must set client.replace_response"
+        return self.replace_response
+
+    def close_position(
+        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
+    ) -> alpaca_models.Order:
+        self.close_position_calls.append((symbol_or_asset_id, close_options))
+        self._maybe_raise("close_position")
+        assert self.close_position_response is not None, "test must set close_position_response"
+        return self.close_position_response
+
+    def close_all_positions(self, cancel_orders: bool) -> list[alpaca_models.ClosePositionResponse]:
+        self.close_all_calls.append(cancel_orders)
+        self._maybe_raise("close_all_positions")
+        return self.close_all_response
 
 
 ET = ZoneInfo("America/New_York")

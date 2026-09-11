@@ -115,6 +115,16 @@ class OrderTracker:
             orders.extend(bucket.snapshot())
         return orders
 
+    def mark_replaced(self, old: Order, new: Order) -> None:
+        """Record that the broker replaced `old` with `new` (Alpaca PATCH /orders/{id}).
+
+        No listener fires: the stream's own `replaced` event for `old` maps to
+        MODIFIED (a no-op), and `new` reports its own events once tracked.
+        """
+        with self._transition_lock:
+            self._process_canceled(old)
+            self.unprocessed.append(new)
+
     def _remove_from_all_buckets(self, order: Order) -> None:
         for bucket in self._buckets():
             bucket.remove(order)

@@ -24,10 +24,13 @@ from alpaca.trading.enums import OrderSide as AlpacaOrderSide
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.enums import TimeInForce as AlpacaTimeInForce
 from alpaca.trading.requests import (
+    ClosePositionRequest,
+    GetCalendarRequest,
     GetOrdersRequest,
     LimitOrderRequest,
     MarketOrderRequest,
     OrderRequest,
+    ReplaceOrderRequest,
     StopLimitOrderRequest,
     StopOrderRequest,
     TrailingStopOrderRequest,
@@ -51,8 +54,11 @@ from trading_agent_framework.errors import OrderValidationError
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from alpaca.trading.models import Calendar as AlpacaCalendarModel
+    from alpaca.trading.models import ClosePositionResponse as AlpacaClosePositionResponse
     from alpaca.trading.models import Order as AlpacaOrderModel
     from alpaca.trading.models import Position as AlpacaPositionModel
+    from alpaca.trading.models import TradeAccount as AlpacaTradeAccount
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +68,7 @@ class AlpacaTradingClient(Protocol):
     `alpaca.trading.client.TradingClient` (or a hand-written test double).
 
     A real `TradingClient` satisfies this automatically (structural typing);
-    a fake only needs to implement these five methods, not inherit anything.
+    a fake only needs to implement the methods below, not inherit anything.
 
     Narrower than `TradingClient`'s own `submit_order`/`get_order_by_id`
     signatures in one respect: both are typed here as always returning a
@@ -76,6 +82,15 @@ class AlpacaTradingClient(Protocol):
     def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]: ...
     def get_order_by_id(self, order_id: str) -> AlpacaOrderModel: ...
     def get_all_positions(self) -> list[AlpacaPositionModel]: ...
+    def get_account(self) -> AlpacaTradeAccount: ...
+    def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]: ...
+    def replace_order_by_id(
+        self, order_id: str, order_data: ReplaceOrderRequest
+    ) -> AlpacaOrderModel: ...
+    def close_position(
+        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
+    ) -> AlpacaOrderModel: ...
+    def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
 
 
 # --- Task 7: status / event maps --------------------------------------------
@@ -322,9 +337,34 @@ def build_order_request(order: Order) -> OrderRequest:
         raise OrderValidationError(str(exc)) from exc
 
 
-def build_get_orders_request(limit: int = 100) -> GetOrdersRequest:
-    """Build a GetOrdersRequest for pulling all orders (open, closed, and canceled)."""
-    return GetOrdersRequest(status=QueryOrderStatus.ALL, limit=limit)
+def build_get_orders_request(limit: int = 100, *, open_only: bool = False) -> GetOrdersRequest:
+    """Build a GetOrdersRequest for every order (default) or only the open ones."""
+    status = QueryOrderStatus.OPEN if open_only else QueryOrderStatus.ALL
+    return GetOrdersRequest(status=status, limit=limit)
+
+
+def build_replace_order_request(
+    *, limit_price: Decimal | None = None, stop_price: Decimal | None = None
+) -> ReplaceOrderRequest:
+    """Build the PATCH /orders/{id} body; prices are rounded to Alpaca's ticks first."""
+    if limit_price is None and stop_price is None:
+        raise OrderValidationError("modify_order needs a new limit_price and/or stop_price")
+    try:
+        return ReplaceOrderRequest(
+            limit_price=_to_api_number(None if limit_price is None else round_price(limit_price)),
+            stop_price=_to_api_number(
+                None if stop_price is None else round_stop_price(stop_price)
+            ),
+        )
+    except (ValidationError, ValueError) as exc:
+        raise OrderValidationError(str(exc)) from exc
+
+
+def build_close_position_request(fraction: Decimal) -> ClosePositionRequest:
+    """Close `fraction` (0 < fraction <= 1) of a position, sent as Alpaca's percentage string."""
+    if not Decimal(0) < fraction <= Decimal(1):
+        raise OrderValidationError(f"close fraction must be in (0, 1], got {fraction}")
+    return ClosePositionRequest(percentage=format(fraction * 100, "f"))
 
 
 # --- Task 11: parsing broker responses ---------------------------------------
@@ -443,3 +483,22 @@ def parse_broker_position(response: object, strategy_name: str) -> Position:
         unrealized_pnl=_to_decimal(_field(response, "unrealized_pl")),
         raw=response,
     )
+
+
+def parse_close_all_responses(responses: Iterable[object], strategy_name: str) -> list[Order]:
+    """Orders placed by close_all_positions. Each response `body` is either an order or a
+    FailedClosePositionDetails (code/message, no id); failures are logged and skipped."""
+    closed: list[Order] = []
+    for response in responses:
+        body = _field(response, "body")
+        if _field(body, "id") is None:
+            logger.warning(
+                "Alpaca could not close position %s: %s",
+                _field(response, "symbol"),
+                _field(body, "message"),
+            )
+            continue
+        order = parse_broker_order(body, strategy_name)
+        if order is not None:
+            closed.append(order)
+    return closed
