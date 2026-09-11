@@ -22,7 +22,8 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.log import ColorLogger
+from trading_agent_framework.errors import BrokerError, ConfigurationError
+from trading_agent_framework.log import ColorLogger, setup_strategy_logging
 from trading_agent_framework.strategies.executor import StrategyExecutor
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,14 @@ def _to_decimal(value: Number) -> Decimal:
 
 def _to_optional_decimal(value: Number | None) -> Decimal | None:
     return None if value is None else _to_decimal(value)
+
+
+def _format_duration(delta: timedelta) -> str:
+    """HH:MM:SS, with hours allowed past 24 (a weekend wait reads 65:30:00)."""
+    total = max(0, int(delta.total_seconds()))
+    hours, rest = divmod(total, 3600)
+    minutes, seconds = divmod(rest, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 class Strategy:
@@ -288,3 +297,62 @@ class Strategy:
         targets = [p.asset for p in self.get_positions()] if assets is None else assets
         orders = [self.close_position(asset) for asset in targets]
         return [order for order in orders if order is not None]
+
+    # --- runners (the lumibot-agent `WrappingStrategy` entry points) -------------------
+
+    def run_strategy(self) -> None:
+        if self.trading_mode is TradingMode.LIVE:
+            self.run_live_trading()
+        elif self.trading_mode is TradingMode.PAPER:
+            self.run_paper_trading()
+        else:
+            self.run_backtesting()
+
+    def run_paper_trading(self) -> None:
+        self._run_trading(TradingMode.PAPER)
+
+    def run_live_trading(self) -> None:
+        self._run_trading(TradingMode.LIVE)
+
+    def run_backtesting(self) -> None:
+        raise NotImplementedError(
+            "backtesting is not implemented yet; it ships with the backtesting subproject"
+        )
+
+    def _run_trading(self, mode: TradingMode) -> None:
+        if self.broker.is_paper != (mode is TradingMode.PAPER):
+            account_kind = "paper" if self.broker.is_paper else "live"
+            raise ConfigurationError(
+                f"Refusing to run strategy {self.name!r} in {mode} mode "
+                f"against a {account_kind} broker account"
+            )
+        self.trading_mode = mode
+        log_file = setup_strategy_logging(self.name, mode, project_root=self.project_root)
+        self._log_startup_banner(mode, log_file)
+        self.executor.run()
+
+    def _log_startup_banner(self, mode: TradingMode, log_file: Path) -> None:
+        self.log_info(f"======== {mode.value.upper()} TRADING MODE ========")
+        self.log_info(f"Logs will be saved to: {log_file.parent}")
+        self.log_info(f"Broker account: {'PAPER' if self.broker.is_paper else 'LIVE'}")
+        self.log_info(f"Parameters: {dict(self.parameters)}")
+        self._log_market_conditions()
+        self.log_info(f"Initial cash: {self.get_cash()}")
+        for position in self.get_positions():
+            self.log_info(f"Position: {position.quantity} {position.asset}")
+
+    def _log_market_conditions(self) -> None:
+        try:
+            session = self.clock.next_session()
+        except BrokerError as exc:
+            self.log_warning(f"Market calendar unavailable: {exc}")
+            return
+        if session is None:
+            self.log_warning("No upcoming market session")
+            return
+        now = self.clock.now()
+        if session.open > now:
+            self.log_info(f"{_format_duration(session.open - now)} until market opens")
+        else:
+            self.log_info("Market is open")
+        self.log_info(f"{_format_duration(session.close - now)} until market closes")
