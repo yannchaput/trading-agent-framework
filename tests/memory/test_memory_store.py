@@ -16,6 +16,7 @@ from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.memory.store import (
     DB_FILE_NAME,
+    RETRIEVAL_POLICY,
     HeldPosition,
     MemoryStore,
     memory_db_path,
@@ -368,3 +369,200 @@ def test_record_order_submitted_without_a_matching_decision(tmp_path: Path) -> N
     assert payload["decision_id"] is None
     assert payload["quantity"] is None
     assert payload["order"]["notional"] == "500"
+
+
+# --- search -------------------------------------------------------------------------
+
+
+def test_search_ranks_by_matching_terms_then_recency(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    one_term = store.remember("SPY looks heavy")
+    clock.advance(60)
+    two_terms_old = store.remember("SPY breadth is improving")
+    clock.advance(60)
+    two_terms_new = store.remember("Breadth thrust on SPY")
+    store.remember("Gold miners")
+
+    result = store.search("spy breadth")
+
+    assert [item["id"] for item in result["results"]] == [
+        two_terms_new["id"], two_terms_old["id"], one_term["id"],
+    ]
+    assert result["count"] == 3
+    assert result["retrieval_id"].startswith("retrieval_")
+
+
+def test_search_results_are_lean(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    item = store.remember("x" * 600, metadata={"secret": "not for the model"})
+    [lean] = store.search("")["results"]
+    assert set(lean) == {"id", "kind", "status", "symbol", "updated_at", "text"}
+    assert (lean["id"], lean["updated_at"]) == (item["id"], "2026-09-14T10:00")
+    assert len(lean["text"]) == 500
+
+
+def test_search_filters_on_kind_symbol_and_status(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    spy = store.open_thesis("Long SPY", symbol="SPY")
+    store.open_thesis("Long QQQ", symbol="QQQ")
+    closed = store.open_thesis("Old SPY idea", symbol="SPY")
+    store.close_thesis(closed["id"], "Invalidated")
+    store.remember_lesson("SPY gaps fill", symbol="SPY")
+
+    result = store.search("", kind="thesis", symbol="spy", status="open")
+
+    assert [item["id"] for item in result["results"]] == [spy["id"]]
+
+
+def test_search_includes_history_once_and_marks_it_superseded(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    thesis = store.open_thesis("Long SPY", symbol="SPY")
+    clock.advance(60)
+    store.update_thesis(thesis["id"], "Long SPY, raising target")
+    opened_event = _events(store)[0]
+
+    results = store.search("")["results"]
+
+    assert [item["id"] for item in results] == [thesis["id"], opened_event["event_id"]]
+    history = results[1]
+    assert (history["status"], history["event_type"], history["memory_id"]) == (
+        "superseded", "thesis.opened", thesis["id"],
+    )
+    assert history["text"] == "Long SPY"
+
+
+def test_search_finds_history_only_events(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    store.record_warning("Ordered without data", symbol="SPY")
+    order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, quantity=Decimal(5))
+    store.record_order_submitted(order)
+
+    [found] = store.search("", kind="order", status="submitted")["results"]
+    assert (found["kind"], found["event_type"], found["memory_id"]) == (
+        "order", "order.submitted", f"order_{order.identifier}",
+    )
+    [warning] = store.search("without data")["results"]
+    assert (warning["kind"], warning["status"]) == ("warning", None)
+
+
+def test_empty_query_returns_the_most_recent_first_up_to_the_limit(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    ids = []
+    for text in ("first", "second", "third"):
+        ids.append(store.remember(text)["id"])
+        clock.advance(60)
+
+    result = store.search("", limit=2)
+
+    assert [item["id"] for item in result["results"]] == [ids[2], ids[1]]
+    assert result["count"] == 3
+    assert len(store.search("", limit=0)["results"]) == 1
+
+
+def test_search_logs_a_retrieval(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    store.remember("SPY breadth", metadata={"symbol": "SPY"})
+    store.remember("Gold", metadata={"symbol": "GLD"})
+
+    result = store.search("spy", symbol="spy", limit=5, agent_name="analyst", model_call_id="call-3")
+
+    [row] = memory_rows(store, "SELECT * FROM memory_retrievals")
+    assert row["retrieval_id"] == result["retrieval_id"]
+    assert (row["query"], row["kind"], row["symbol"], row["status"], row["result_limit"]) == (
+        "spy", None, "SPY", None, 5,
+    )
+    assert (row["agent_name"], row["model_call_id"], row["strategy"]) == ("analyst", "call-3", "momentum")
+    assert (row["timestamp"], row["wall_time"]) == ("2026-09-14T10:00:00-04:00", "2026-09-14T14:00:05Z")
+    selected = [item["id"] for item in result["results"]]
+    assert json.loads(row["selected_ids_json"]) == selected
+    assert json.loads(row["candidate_ids_json"]) == selected
+    assert row["rendered_text"] == "memory SPY active: SPY breadth"
+
+
+# --- compact state ----------------------------------------------------------------------
+
+
+def test_compact_state_lists_open_theses_and_validated_lessons(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    spy = store.open_thesis("Long SPY on breadth", symbol="SPY")
+    qqq = store.open_thesis("Long QQQ", symbol="QQQ")
+    store.close_thesis(qqq["id"], "Stopped out")
+    lesson = store.remember_lesson("Don't chase gaps", outcome={"validated": True})
+    store.remember_lesson("Maybe fade the open")
+
+    held = [
+        HeldPosition("spy", Decimal(10), Decimal("512.3")),
+        HeldPosition("IWM", Decimal(0), Decimal("200")),
+    ]
+    state = store.compact_state(held, update_open_thesis_outcomes=False)
+
+    assert state == {
+        "as_of": "2026-09-14T10:00:00-04:00",
+        "held_symbols": ["SPY"],
+        "open_theses": [
+            {
+                "id": spy["id"], "kind": "thesis", "status": "open", "symbol": "SPY",
+                "updated_at": "2026-09-14T10:00", "text": "Long SPY on breadth",
+            }
+        ],
+        "validated_lessons": [
+            {
+                "id": lesson["id"], "kind": "lesson", "status": "validated", "symbol": None,
+                "updated_at": "2026-09-14T10:00", "text": "Don't chase gaps",
+            }
+        ],
+        "retrieval_policy": RETRIEVAL_POLICY,
+    }
+    assert not any(e["event_type"] == "thesis.outcome_observed" for e in _events(store))
+
+
+def test_compact_state_limits_and_truncates(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    ids = []
+    for index in range(3):
+        ids.append(store.open_thesis(f"Thesis {index} " + "z" * 50, symbol="SPY")["id"])
+        clock.advance(60)
+
+    state = store.compact_state(max_theses=2, max_chars_per_item=30)
+
+    assert [item["id"] for item in state["open_theses"]] == [ids[2], ids[1]]
+    assert all(len(item["text"]) == 30 for item in state["open_theses"])
+
+
+def test_compact_state_observes_held_open_theses_once_per_day(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    spy = store.open_thesis("Long SPY", symbol="SPY")
+    store.open_thesis("Long QQQ", symbol="QQQ")
+    held = [HeldPosition("SPY", Decimal(10), Decimal("512.3"))]
+
+    store.compact_state(held)
+    store.compact_state(held)
+
+    observed = [e for e in _events(store) if e["event_type"] == "thesis.outcome_observed"]
+    assert len(observed) == 1
+    [event] = observed
+    assert (event["subject_type"], event["subject_id"], event["symbol"]) == ("thesis", spy["id"], "SPY")
+    assert event["text"] == (
+        "Observed open thesis for SPY: quantity=10 last_price=512.3 market_value=5123.0"
+    )
+    assert json.loads(event["payload_json"]) == {
+        "kind": "thesis_outcome",
+        "status": "observed",
+        "thesis_id": spy["id"],
+        "symbol": "SPY",
+        "position": {
+            "symbol": "SPY", "quantity": "10", "last_price": "512.3", "market_value": "5123.0",
+        },
+        "observed_date": "2026-09-14",
+    }
+    thesis_now = store.get(spy["id"])
+    assert thesis_now is not None and thesis_now["status"] == "open"
+
+    clock.advance(24 * 3600)
+    store.compact_state(held)
+    assert sum(e["event_type"] == "thesis.outcome_observed" for e in _events(store)) == 2

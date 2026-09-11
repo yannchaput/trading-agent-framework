@@ -26,6 +26,10 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 DB_FILE_NAME = "memory.sqlite"
+RETRIEVAL_POLICY = (
+    "If you hold a symbol and plan to add, reduce, or sell it, "
+    "call search_memory for its open thesis first."
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_events (
@@ -115,6 +119,14 @@ ON CONFLICT(memory_id) DO UPDATE SET
     metadata_json = excluded.metadata_json,
     updated_at = excluded.updated_at,
     schema_version = excluded.schema_version
+"""
+
+_INSERT_RETRIEVAL = """
+INSERT INTO memory_retrievals (
+    retrieval_id, timestamp, wall_time, strategy, agent_name, model_call_id,
+    query, kind, symbol, status, result_limit, candidate_ids_json,
+    selected_ids_json, rendered_text, schema_version
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -503,6 +515,111 @@ class MemoryStore:
             ).fetchone()
         return None if row is None else records.index_item(dict(row))
 
+    def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        kind: str | None = None,
+        symbol: str | None = None,
+        status: str | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Lumibot's search: current memories plus event history, ranked by matching query terms.
+
+        Every call is logged to `memory_retrievals`.
+        """
+        query_text = str(query or "").strip()
+        normalized_symbol = records.normalize_symbol(symbol)
+        max_results = max(int(limit), 1)
+        with self._transaction() as conn:
+            index_rows = conn.execute(
+                """
+                SELECT * FROM memory_index
+                WHERE (? IS NULL OR kind = ?) AND (? IS NULL OR symbol = ?)
+                  AND (? IS NULL OR status = ?)
+                """,
+                (kind, kind, normalized_symbol, normalized_symbol, status, status),
+            ).fetchall()
+            event_rows = conn.execute(
+                """
+                SELECT * FROM memory_events
+                WHERE subject_id IS NOT NULL AND (? IS NULL OR symbol = ?)
+                  AND event_id NOT IN (SELECT latest_event_id FROM memory_index)
+                """,
+                (normalized_symbol, normalized_symbol),
+            ).fetchall()
+            candidates = [records.index_item(dict(row)) for row in index_rows]
+            for row in event_rows:
+                item = records.event_item(dict(row))
+                if (kind is None or item["kind"] == kind) and (
+                    status is None or item["status"] == status
+                ):
+                    candidates.append(item)
+            ranked = records.rank(candidates, records.query_terms(query_text))
+            selected = ranked[:max_results]
+            retrieval_id = records.new_retrieval_id()
+            conn.execute(
+                _INSERT_RETRIEVAL,
+                (
+                    retrieval_id,
+                    self._timestamp(),
+                    self._wall_time(),
+                    self.strategy_name,
+                    agent_name,
+                    model_call_id,
+                    query_text,
+                    kind,
+                    normalized_symbol,
+                    status,
+                    max_results,
+                    records.json_dumps([item["id"] for item in ranked]),
+                    records.json_dumps([item["id"] for item in selected]),
+                    records.render_retrieval_text(selected),
+                    SCHEMA_VERSION,
+                ),
+            )
+        return {
+            "count": len(ranked),
+            "retrieval_id": retrieval_id,
+            "results": [
+                records.lean_item(item, max_chars=records.SEARCH_TEXT_CHARS) for item in selected
+            ],
+        }
+
+    def compact_state(
+        self,
+        held: Sequence[HeldPosition] = (),
+        *,
+        max_theses: int = 8,
+        max_lessons: int = 8,
+        max_chars_per_item: int = 900,
+        update_open_thesis_outcomes: bool = True,
+    ) -> dict[str, Any]:
+        """The memory summary injected into agent prompts: open theses, validated lessons and the
+        retrieval policy. Also records a daily `thesis.outcome_observed` for each held open thesis.
+        """
+        held_by_symbol: dict[str, HeldPosition] = {}
+        for position in held:
+            held_symbol = records.normalize_symbol(position.symbol)
+            if held_symbol and position.quantity:
+                held_by_symbol[held_symbol] = position
+        with self._transaction() as conn:
+            theses = self._latest_index_items(conn, "thesis", "open", max_theses)
+            lessons = self._latest_index_items(conn, "lesson", "validated", max_lessons)
+            if update_open_thesis_outcomes:
+                self._observe_open_theses(conn, theses, held_by_symbol)
+        return {
+            "as_of": self._timestamp(),
+            "held_symbols": sorted(held_by_symbol),
+            "open_theses": [records.lean_item(i, max_chars=max_chars_per_item) for i in theses],
+            "validated_lessons": [
+                records.lean_item(i, max_chars=max_chars_per_item) for i in lessons
+            ],
+            "retrieval_policy": RETRIEVAL_POLICY,
+        }
+
     # --- internals --------------------------------------------------------------------
 
     @contextmanager
@@ -719,3 +836,66 @@ class MemoryStore:
             (model_call_id, agent_name, agent_name),
         ).fetchone()
         return None if row is None else row["subject_id"]
+
+    @staticmethod
+    def _latest_index_items(
+        conn: sqlite3.Connection, kind: str, status: str, limit: int
+    ) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT * FROM memory_index WHERE kind = ? AND status = ?
+            ORDER BY updated_at DESC LIMIT ?
+            """,
+            (kind, status, max(int(limit), 1)),
+        ).fetchall()
+        return [records.index_item(dict(row)) for row in rows]
+
+    def _observe_open_theses(
+        self,
+        conn: sqlite3.Connection,
+        theses: Sequence[Mapping[str, Any]],
+        held_by_symbol: Mapping[str, HeldPosition],
+    ) -> None:
+        """At most one `thesis.outcome_observed` per held open thesis per (strategy-time) day."""
+        today = self._timestamp()[:10]
+        for thesis in theses:
+            position = held_by_symbol.get(thesis["symbol"]) if thesis["symbol"] else None
+            if position is None:
+                continue
+            already_observed = conn.execute(
+                """
+                SELECT 1 FROM memory_events
+                WHERE event_type = 'thesis.outcome_observed' AND subject_id = ?
+                  AND timestamp LIKE ?
+                LIMIT 1
+                """,
+                (thesis["id"], f"{today}%"),
+            ).fetchone()
+            if already_observed is not None:
+                continue
+            symbol = thesis["symbol"]
+            metadata = {
+                "thesis_id": thesis["id"],
+                "symbol": symbol,
+                "status": "observed",
+                "position": {
+                    "symbol": symbol,
+                    "quantity": position.quantity,
+                    "last_price": position.last_price,
+                    "market_value": position.market_value,
+                },
+                "observed_date": today,
+            }
+            self._append_event(
+                conn,
+                event_type="thesis.outcome_observed",
+                subject_type="thesis",
+                subject_id=thesis["id"],
+                text=(
+                    f"Observed open thesis for {symbol}: quantity={position.quantity} "
+                    f"last_price={position.last_price} market_value={position.market_value}"
+                ),
+                symbol=symbol,
+                metadata=metadata,
+                payload={"kind": "thesis_outcome", "status": "observed", **metadata},
+            )
