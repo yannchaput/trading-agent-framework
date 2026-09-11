@@ -9,6 +9,7 @@ from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
 from trading_agent_framework import strategies
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
@@ -83,6 +84,21 @@ def test_paper_trading_refuses_a_live_account(tmp_path: Path) -> None:
     with pytest.raises(ConfigurationError, match="paper mode against a live"):
         _strategy(tmp_path, is_paper=False).run_paper_trading()
     assert not (tmp_path / "logs").exists()
+
+
+def test_banner_survives_account_lookup_errors(tmp_path: Path) -> None:
+    class BrokenAccountBroker(FakeBroker):
+        def get_account(self) -> AccountBalances:
+            raise BrokerError("account service down")
+
+    clock = FakeClock(et(2026, 9, 14, 4, 30), weekday_sessions(date(2026, 9, 14), 1))
+    strategy = Hello(BrokenAccountBroker(clock), project_root=tmp_path)
+
+    strategy.run_paper_trading()  # must not raise despite the account lookup failing
+
+    content = _log_content(tmp_path, "paper")
+    assert "Could not fetch account/position info: account service down" in content
+    assert "hello from iteration" in content
 
 
 def test_banner_survives_calendar_errors(tmp_path: Path) -> None:

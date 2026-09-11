@@ -18,7 +18,7 @@ from trading_agent_framework.entities.enums import (
     TimeInForce,
 )
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.strategy import Strategy
+from trading_agent_framework.strategies.strategy import _FINAL_STATUSES, Strategy
 
 _START = et(2026, 9, 14, 9, 0)
 
@@ -84,6 +84,12 @@ def test_explicit_clock_overrides_the_broker_clock() -> None:
 
 def test_is_backtesting_follows_the_mode() -> None:
     assert Strategy(_broker(), mode=TradingMode.BACKTESTING).is_backtesting is True
+
+
+def test_final_statuses_includes_unknown_so_it_never_blocks_a_wait() -> None:
+    """UNKNOWN is what map_status returns for an unrecognised Alpaca status; it must
+    count as final or wait_for_order_execution would block on it for the full timeout."""
+    assert OrderStatus.UNKNOWN in _FINAL_STATUSES
 
 
 # --- hooks ----------------------------------------------------------------------

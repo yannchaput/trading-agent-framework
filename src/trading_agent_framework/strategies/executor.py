@@ -76,11 +76,17 @@ class StrategyExecutor:
             logger.warning("Strategy %s interrupted; running on_abrupt_closing", strategy.name)
             self._call_hook(strategy.on_abrupt_closing)
         finally:
-            if initialized:
-                self._call_hook(strategy.on_strategy_end)
-            broker.stop_stream()
-            broker.tracker.listeners.remove(self._events)
-            restore_sigterm()
+            try:
+                if initialized:
+                    self._dispatch_events()
+                    self._call_hook(strategy.on_strategy_end)
+            finally:
+                try:
+                    broker.stop_stream()
+                except Exception:
+                    logger.exception("stop_stream failed during teardown")
+                broker.tracker.listeners.remove(self._events)
+                restore_sigterm()
 
     def wait_until(self, deadline: datetime, until: Callable[[], bool] | None = None) -> bool:
         """Wait on the clock until `deadline`, dispatching order events meanwhile.

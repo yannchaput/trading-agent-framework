@@ -16,6 +16,7 @@ from trading_agent_framework.brokers.tracker import OrderTracker
 
 if TYPE_CHECKING:
     from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
+    from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
     from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 
 from importlib.metadata import PackageNotFoundError, version
@@ -28,6 +29,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "AlpacaBroker",
+    "AlpacaMarketClock",
     "AlpacaTradeStream",
     "Broker",
     "OrderTracker",
@@ -36,6 +38,7 @@ __all__ = [
 _LAZY = {
     "AlpacaBroker": (".alpaca.broker", "AlpacaBroker"),
     "AlpacaTradeStream": (".alpaca.stream", "AlpacaTradeStream"),
+    "AlpacaMarketClock": (".alpaca.clock", "AlpacaMarketClock"),
 }
 
 

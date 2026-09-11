@@ -48,7 +48,8 @@ def test_replace_request_wraps_sdk_validation_errors() -> None:
 
 
 @pytest.mark.parametrize(
-    ("fraction", "percentage"), [(Decimal(1), "100"), (Decimal("0.25"), "25.00")]
+    ("fraction", "percentage"),
+    [(Decimal(1), "100.000000000"), (Decimal("0.25"), "25.000000000")],
 )
 def test_close_position_request_uses_a_percentage(fraction: Decimal, percentage: str) -> None:
     request = orders.build_close_position_request(fraction)
@@ -60,6 +61,16 @@ def test_close_position_request_uses_a_percentage(fraction: Decimal, percentage:
 def test_close_position_request_rejects_fractions_outside_zero_one(fraction: Decimal) -> None:
     with pytest.raises(OrderValidationError, match="fraction"):
         orders.build_close_position_request(fraction)
+
+
+def test_close_position_request_bounds_percentage_to_nine_decimal_places() -> None:
+    """Alpaca's `percentage` field caps at 9dp; a repeating fraction must be quantized,
+    not passed through with arbitrary Decimal precision."""
+    request = orders.build_close_position_request(Decimal(1) / Decimal(3))
+    assert request.percentage is not None
+    whole, _, decimals = request.percentage.partition(".")
+    assert whole == "33"
+    assert len(decimals) <= 9
 
 
 def test_parse_close_all_responses_keeps_orders_and_logs_failures(

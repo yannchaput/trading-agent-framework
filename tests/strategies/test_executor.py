@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import signal
 from datetime import date, datetime
 from typing import cast
 
@@ -329,3 +330,25 @@ def test_orders_are_synced_and_the_stream_started_before_initialize() -> None:
     assert cast(SeesSetup, strategy).calls_at_init == ["sync_open_orders", "start_stream"]
     assert broker.calls == ["sync_open_orders", "start_stream", "stop_stream"]
     assert broker.tracker.listeners == []
+
+
+def test_stop_stream_failure_still_removes_listener_and_restores_sigterm(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class ExplodingStopStreamBroker(FakeBroker):
+        def stop_stream(self, timeout: float = 5.0) -> None:
+            self.calls.append("stop_stream")
+            raise RuntimeError("stream teardown boom")
+
+    clock = FakeClock(et(2026, 9, 14, 7), weekday_sessions(MONDAY, 1))
+    broker = ExplodingStopStreamBroker(clock)
+    strategy = Recorder(broker)
+    previous_handler = signal.getsignal(signal.SIGTERM)
+
+    with caplog.at_level(logging.ERROR, logger="trading_agent_framework"):
+        strategy.executor.run()  # must not raise despite stop_stream blowing up
+
+    assert broker.tracker.listeners == []
+    assert signal.getsignal(signal.SIGTERM) == previous_handler
+    assert strategy.hooks()[-1] == "on_strategy_end"
+    assert "stop_stream failed during teardown" in caplog.text

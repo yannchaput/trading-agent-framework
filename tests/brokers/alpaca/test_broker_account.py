@@ -116,7 +116,7 @@ def test_close_position_sends_a_percentage_and_tracks_the_order() -> None:
 
     [(symbol, request)] = client.close_position_calls
     assert symbol == "AAPL"
-    assert request.percentage == "50.0"
+    assert request.percentage == "50.000000000"
     assert order is not None
     assert broker.tracker.get_tracked_order(_NEW_ID) is order
 

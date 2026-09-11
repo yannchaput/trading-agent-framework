@@ -19,7 +19,13 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, TimeInForce
+from trading_agent_framework.entities.enums import (
+    ACTIVE_ORDER_STATUSES,
+    OrderSide,
+    OrderStatus,
+    OrderType,
+    TimeInForce,
+)
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import BrokerError, ConfigurationError
@@ -30,9 +36,7 @@ logger = logging.getLogger(__name__)
 
 Number = Decimal | int | float | str
 
-_FINAL_STATUSES = frozenset(
-    {OrderStatus.FILL, OrderStatus.CANCELED, OrderStatus.ERROR, OrderStatus.EXPIRED}
-)
+_FINAL_STATUSES = frozenset(OrderStatus) - ACTIVE_ORDER_STATUSES
 
 
 def _to_asset(asset: Asset | str) -> Asset:
@@ -337,9 +341,12 @@ class Strategy:
         self.log_info(f"Broker account: {'PAPER' if self.broker.is_paper else 'LIVE'}")
         self.log_info(f"Parameters: {dict(self.parameters)}")
         self._log_market_conditions()
-        self.log_info(f"Initial cash: {self.get_cash()}")
-        for position in self.get_positions():
-            self.log_info(f"Position: {position.quantity} {position.asset}")
+        try:
+            self.log_info(f"Initial cash: {self.get_cash()}")
+            for position in self.get_positions():
+                self.log_info(f"Position: {position.quantity} {position.asset}")
+        except BrokerError as exc:
+            self.log_warning(f"Could not fetch account/position info: {exc}")
 
     def _log_market_conditions(self) -> None:
         try:

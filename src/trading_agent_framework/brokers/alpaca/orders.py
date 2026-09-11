@@ -4,11 +4,8 @@ and pre-submission validation.
 This module holds no I/O, no state, and no client instances -- it is a
 collection of module-level functions and constants operating on our own
 `Order` entity and plain Python values. Per the project's global constraints,
-`orders.py` is the only module in the codebase permitted to import
-`alpaca.trading.requests` (needed once `build_order_request` lands here);
-Tasks 7-9 need nothing from the `alpaca` package at all, since the status/event
-maps are keyed by plain lowercase strings and accept either a raw string or an
-enum member duck-typed via `.value`.
+`orders.py` is the only module in the codebase (besides `account.py`)
+permitted to import `alpaca.trading.requests`.
 """
 
 from __future__ import annotations
@@ -93,7 +90,7 @@ class AlpacaTradingClient(Protocol):
     def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
 
 
-# --- Task 7: status / event maps --------------------------------------------
+# --- status / event maps -----------------------------------------------------
 
 ALPACA_STATUS_MAP: MappingProxyType[str, OrderStatus] = MappingProxyType(
     {
@@ -181,7 +178,7 @@ def map_event(raw: object) -> OrderEvent | None:
     return ALPACA_EVENT_MAP[key]
 
 
-# --- Task 8: price conforming ------------------------------------------------
+# --- price conforming ---------------------------------------------------------
 
 _PENNY = Decimal("0.01")
 _SUB_PENNY = Decimal("0.0001")
@@ -227,7 +224,7 @@ def conform_order(order: Order) -> Order:
     return order
 
 
-# --- Task 9: pre-submission validation --------------------------------------
+# --- pre-submission validation -------------------------------------------------
 
 _OPENING_CLOSING_TIF = frozenset({TimeInForce.OPG, TimeInForce.CLS})
 _OPENING_CLOSING_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
@@ -268,7 +265,7 @@ def validate_order(order: Order) -> None:
         )
 
 
-# --- Task 10: build_order_request --------------------------------------------
+# --- request builders ---------------------------------------------------------
 
 _REQUEST_BY_TYPE: MappingProxyType[OrderType, type[OrderRequest]] = MappingProxyType(
     {
@@ -360,14 +357,18 @@ def build_replace_order_request(
         raise OrderValidationError(str(exc)) from exc
 
 
+_CLOSE_PERCENTAGE_PRECISION = Decimal("0.000000001")  # Alpaca caps `percentage` at 9dp
+
+
 def build_close_position_request(fraction: Decimal) -> ClosePositionRequest:
     """Close `fraction` (0 < fraction <= 1) of a position, sent as Alpaca's percentage string."""
     if not Decimal(0) < fraction <= Decimal(1):
         raise OrderValidationError(f"close fraction must be in (0, 1], got {fraction}")
-    return ClosePositionRequest(percentage=format(fraction * 100, "f"))
+    percentage = (fraction * 100).quantize(_CLOSE_PERCENTAGE_PRECISION)
+    return ClosePositionRequest(percentage=format(percentage, "f"))
 
 
-# --- Task 11: parsing broker responses ---------------------------------------
+# --- response parsing -----------------------------------------------------------
 
 _SENTINEL = object()
 
