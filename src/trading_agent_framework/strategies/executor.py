@@ -251,7 +251,15 @@ class StrategyExecutor:
                     if item.event is OrderEvent.FILLED
                     else strategy.on_partially_filled_order
                 )
-                position = strategy.get_position(order.asset)
+                try:
+                    position = strategy.get_position(order.asset)
+                except Exception:
+                    logger.exception(
+                        "Could not fetch position for %s while dispatching a fill; "
+                        "calling the fill hook with position=None",
+                        order.asset,
+                    )
+                    position = None
                 hook(position, order, item.price, item.quantity, 1)
             elif item.event is OrderEvent.ERROR:
                 logger.warning(

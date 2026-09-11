@@ -173,6 +173,28 @@ def test_order_hook_crash_goes_to_on_bot_crash_and_trading_continues() -> None:
     assert strategy.milestones == ["on_trading_iteration", "on_strategy_end"]
 
 
+def test_fill_hook_still_fires_with_no_position_when_position_lookup_fails() -> None:
+    class BrokenPositionsBroker(FakeBroker):
+        def pull_positions(self) -> list[Position]:
+            raise RuntimeError("broker unavailable")
+
+    clock = FakeClock(et(2026, 9, 14, 7), weekday_sessions(MONDAY, 1))
+    strategy = OrderHooks(BrokenPositionsBroker(clock))
+    broker = strategy.fake_broker
+    order = broker.submit_order(strategy.create_order("AAPL", 10, "buy"))
+
+    _on_first_wait(
+        strategy.fake_clock,
+        lambda: broker.tracker.process_trade_event(
+            order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(10)
+        ),
+    )
+    strategy.executor.run()
+
+    assert strategy.events == [("filled", order.identifier, None, Decimal(100), Decimal(10), 1)]
+    assert strategy.errors == []
+
+
 class Waiter(OrderHooks):
     """Submits an order in its first iteration and waits for it."""
 
