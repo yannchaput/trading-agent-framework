@@ -913,7 +913,16 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.errors import BrokerError
+
+if TYPE_CHECKING:
+    from alpaca.data.models import BarSet
+    from alpaca.data.models import Quote as AlpacaQuote
+    from alpaca.data.models import Trade as AlpacaTrade
 ```
+
+This is the same `TYPE_CHECKING` block Task 3 wrote — keep it. It's easy to drop by mistake when
+rewriting the import block wholesale, but `AlpacaStockDataClient`'s annotations (`BarSet`,
+`AlpacaQuote`, `AlpacaTrade`) still need it, and `uv check` will fail without it.
 
 add `_OHLCV = ("open", "high", "low", "close", "volume")` next to the other constants, and append:
 
