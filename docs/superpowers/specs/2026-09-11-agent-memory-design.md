@@ -94,7 +94,7 @@ Plus:
 4. **Connections are closed.** Lumibot's `with sqlite3.connect(...) as conn:` only commits; it never closes.
 5. **Short memory ids.** `<kind>_<8 hex>` (e.g. `thesis_7f3a9c21`) instead of `<kind>_<32 hex>`: the model
    must copy thesis ids back into `update_thesis` / `close_thesis`. On the (negligible) collision, a new id
-   is drawn. Event and retrieval ids are never shown to the model and keep full `uuid4().hex`.
+   is drawn. Event and retrieval ids keep full `uuid4().hex` (see §10.3).
 
 ## 4. Storage
 
@@ -336,3 +336,34 @@ No smoke script: memory is local-only, fully covered by the automated suite.
 - `CLAUDE.md`: `memory/` bullet in the architecture list; gotcha "memory tools return lean payloads — weigh
   the token cost before adding fields"; note that `MemoryStore` must stay independent of `Strategy`.
 - `TODO.md`: strike "Memory" in the MIGRATION list once implemented.
+
+## 10. Amendments made while planning
+
+These override the sections they name.
+
+1. **§5.2 / §5.4 — superseded history.** An event candidate whose `event_type` is a projected type
+   (`memory.created`, `proposal.recorded`, `risk_note.recorded`, `decision.recorded`, `lesson.proposed`,
+   `lesson.validated`, `thesis.opened`, `thesis.updated`, `thesis.closed`) is by construction an older
+   version of a memory (the latest one is excluded), so its search `status` is `"superseded"` instead of
+   its payload status. Otherwise `search_memory(status="open")` would return the original `thesis.opened`
+   event of a thesis that has since been closed. Lean event items carry `"event_type"` and `"memory_id"`
+   (the `subject_id`) so the model can tie history back to its memory.
+2. **§5.1 — thesis tags.** `update_thesis` / `close_thesis` keep the thesis's existing tags (lumibot writes
+   `tags=None`, wiping them from the projection).
+3. **§3.3 #5 — id wording.** Event and retrieval ids keep full `uuid4().hex` because no tool takes them as
+   input (they are not "never shown": `search_memory` returns a `retrieval_id`, and event-sourced search
+   items use their `event_id` as `id`).
+4. **§4.1 — `safe_name`.** A name that is empty or made only of dots (`""`, `"."`, `".."`) becomes
+   `"strategy"`, so no path segment can be `..`.
+5. **§5.1 — `remember`.** An empty `kind` raises `MemoryValidationError`.
+6. **§4.2 — JSON.** Stored with `ensure_ascii=False` (UTF-8 text stays readable and searchable as typed).
+7. **§5.3 — `HeldPosition`.** `last_price` defaults to `None`; `market_value` is a property
+   (`quantity * last_price`, or `None`).
+8. **§6 — thesis error message.** Unknown id (or not a thesis): `unknown thesis_id '<id>'`. Existing but not
+   open: `thesis '<id>' is not open (status: <status>)`.
+9. **§8 — test layout.** Test files are `tests/memory/test_memory_records.py`, `test_memory_store.py`,
+   `test_memory_tools.py` and `tests/core/test_strategy_memory.py` (a new file, mirroring
+   `test_strategy_market_data.py`, rather than additions to `test_strategy.py`). Shared helpers
+   `make_memory_store` / `memory_rows` go in `tests/fakes.py`.
+10. **§9 — `TODO.md`.** Not edited by the implementation: the file carries the user's own uncommitted
+    changes. The user strikes "Memory" themselves.
