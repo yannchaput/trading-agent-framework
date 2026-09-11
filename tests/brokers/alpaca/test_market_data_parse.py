@@ -46,7 +46,7 @@ def test_day_bars_become_a_float_frame_indexed_in_market_time() -> None:
     assert all(str(dtype) == "float64" for dtype in bars.df.dtypes)
     assert list(bars.df["close"]) == [10.0, 11.0]
     assert bars.df.index[0] == et(2026, 9, 9)
-    assert str(bars.df.index.tz) == "America/New_York"
+    assert str(bars.df.index.tz) == "America/New_York"  # ty: ignore[unresolved-attribute]
 
 
 def test_only_the_last_length_bars_are_kept_oldest_first() -> None:
