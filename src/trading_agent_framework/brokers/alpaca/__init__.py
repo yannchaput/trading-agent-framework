@@ -3,6 +3,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
+from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
 from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 
 try:
@@ -13,5 +14,6 @@ except PackageNotFoundError:
 
 __all__ = [
     "AlpacaBroker",
+    "AlpacaMarketClock",
     "AlpacaTradeStream",
 ]
