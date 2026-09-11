@@ -10,22 +10,30 @@ the I/O calls against a `TradingClient` plus the bookkeeping (`tracker`,
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from alpaca.common.exceptions import APIError
 
-from trading_agent_framework.brokers.alpaca import account, orders
-from trading_agent_framework.brokers.alpaca.client import build_trading_client, build_trading_stream
+from trading_agent_framework.brokers.alpaca import account, market_data, orders
+from trading_agent_framework.brokers.alpaca.client import (
+    build_stock_data_client,
+    build_trading_client,
+    build_trading_stream,
+)
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
 from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
-from trading_agent_framework.clock import MarketClock
+from trading_agent_framework.clock import MarketClock, MarketSession
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.errors import BrokerError
 
 if TYPE_CHECKING:
@@ -52,6 +60,7 @@ class AlpacaBroker(Broker):
         *,
         clock: MarketClock | None = None,
         is_paper: bool = True,
+        data_client: market_data.AlpacaStockDataClient | None = None,
     ) -> None:
         super().__init__(
             strategy_name,
@@ -60,6 +69,7 @@ class AlpacaBroker(Broker):
             is_paper=is_paper,
         )
         self._client = client
+        self._data_client = data_client
         self._stream = stream
         self._alpaca_stream: AlpacaTradeStream | None = None
 
@@ -75,8 +85,11 @@ class AlpacaBroker(Broker):
         # every call actually returns the parsed model. Narrow once, here, at
         # the single point a real client is constructed.
         client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
+        data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
         stream = build_trading_stream(creds) if with_stream else None
-        return cls(strategy_name, client, stream=stream, is_paper=creds.is_paper)
+        return cls(
+            strategy_name, client, stream=stream, is_paper=creds.is_paper, data_client=data_client
+        )
 
     def _conform_order(self, order: Order) -> Order:
         return orders.conform_order(order)
@@ -190,6 +203,77 @@ class AlpacaBroker(Broker):
             self.tracker.track_unprocessed(order)
             adopted.append(order)
         return adopted
+
+    # --- market data -------------------------------------------------------------------
+
+    def _require_data_client(self) -> market_data.AlpacaStockDataClient:
+        if self._data_client is None:
+            raise BrokerError(
+                "no market data client configured; construct the broker with data_client=... "
+                "or use AlpacaBroker.from_credentials(...)"
+            )
+        return self._data_client
+
+    def get_last_price(self, asset: Asset) -> Decimal | None:
+        return self.get_last_prices([asset])[asset]
+
+    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        client = self._require_data_client()
+        prices: dict[Asset, Decimal | None] = {}
+        for chunk in market_data.chunk_assets(assets):
+            request = market_data.build_latest_trade_request(chunk)
+            try:
+                response = client.get_stock_latest_trade(request)
+            except Exception as exc:
+                raise BrokerError(
+                    f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}"
+                ) from exc
+            prices.update(market_data.parse_latest_trades(response, chunk))
+        return prices
+
+    def get_quote(self, asset: Asset) -> Quote | None:
+        client = self._require_data_client()
+        request = market_data.build_latest_quote_request([asset])
+        try:
+            response = client.get_stock_latest_quote(request)
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch the latest quote for {asset.symbol}: {exc}") from exc
+        return market_data.parse_quote(response, asset)
+
+    def get_bars(
+        self,
+        assets: Sequence[Asset],
+        length: int,
+        timestep: str = "day",
+        *,
+        include_after_hours: bool = True,
+    ) -> dict[Asset, Bars]:
+        client = self._require_data_client()
+        end = self.clock.now()
+        sessions = self._sessions_before(end, length, timestep)
+        start = market_data.bars_start(end, length, timestep, sessions)
+        in_session = None if include_after_hours else sessions
+        bars: dict[Asset, Bars] = {}
+        for chunk in market_data.chunk_assets(assets):
+            request = market_data.build_bars_request(chunk, timestep, start, end)
+            try:
+                barset = client.get_stock_bars(request)
+            except Exception as exc:
+                raise BrokerError(
+                    f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}"
+                ) from exc
+            bars.update(market_data.parse_bars(barset, chunk, timestep, length, sessions=in_session))
+        return bars
+
+    def _sessions_before(self, end: datetime, length: int, timestep: str) -> list[MarketSession]:
+        first_day = market_data.calendar_lookback_start(end, length, timestep)
+        last_day = end.astimezone(market_data.MARKET_TZ).date()
+        request = account.build_calendar_request(first_day, last_day)
+        try:
+            days = self._client.get_calendar(request)
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch the Alpaca calendar: {exc}") from exc
+        return account.parse_calendar(days, market_data.MARKET_TZ)
 
     def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
         if self._alpaca_stream is None:

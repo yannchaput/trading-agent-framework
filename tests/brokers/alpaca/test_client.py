@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from trading_agent_framework.brokers.alpaca.client import (
+    build_stock_data_client,
     build_trading_client,
     build_trading_stream,
 )
@@ -33,3 +34,14 @@ def test_build_trading_stream_threads_paper_flag(monkeypatch, is_paper: bool) ->
 
     mock_trading_stream.assert_called_once_with(api_key="key", secret_key="secret", paper=is_paper)
     assert result is mock_trading_stream.return_value
+
+
+def test_build_stock_data_client_uses_the_same_credentials(monkeypatch) -> None:
+    creds = AlpacaCredentials(api_key="key", api_secret="secret", is_paper=True)
+    mock_data_client = MagicMock()
+    monkeypatch.setattr("alpaca.data.historical.StockHistoricalDataClient", mock_data_client)
+
+    result = build_stock_data_client(creds)
+
+    mock_data_client.assert_called_once_with(api_key="key", secret_key="secret")
+    assert result is mock_data_client.return_value

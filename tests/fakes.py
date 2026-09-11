@@ -22,6 +22,11 @@ import alpaca.data.models as alpaca_data_models
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 from alpaca.common.exceptions import APIError
+from alpaca.data.requests import (
+    StockBarsRequest,
+    StockLatestQuoteRequest,
+    StockLatestTradeRequest,
+)
 from alpaca.trading.requests import (
     ClosePositionRequest,
     GetCalendarRequest,
@@ -295,6 +300,58 @@ class FakeTradingClient:
         self.close_all_calls.append(cancel_orders)
         self._maybe_raise("close_all_positions")
         return self.close_all_response
+
+
+def _requested_symbols(
+    request: StockBarsRequest | StockLatestTradeRequest | StockLatestQuoteRequest,
+) -> list[str]:
+    symbols = request.symbol_or_symbols
+    return [symbols] if isinstance(symbols, str) else list(symbols)
+
+
+class FakeStockHistoricalDataClient:
+    """A hand-written stand-in for `alpaca.data.historical.StockHistoricalDataClient`.
+
+    Answers from `bars` (raw payloads, see `bar_payload`), `trades` and `quotes`, all keyed by
+    symbol and filtered to the requested symbols. Like Alpaca, a symbol without data is simply
+    absent from the response.
+    """
+
+    def __init__(self) -> None:
+        self.bars: dict[str, list[dict[str, object]]] = {}
+        self.trades: dict[str, alpaca_data_models.Trade] = {}
+        self.quotes: dict[str, alpaca_data_models.Quote] = {}
+        self.bars_requests: list[StockBarsRequest] = []
+        self.trade_requests: list[StockLatestTradeRequest] = []
+        self.quote_requests: list[StockLatestQuoteRequest] = []
+        self.raises: dict[str, BaseException] = {}
+
+    def _maybe_raise(self, method: str) -> None:
+        error = self.raises.get(method)
+        if error is not None:
+            raise error
+
+    def get_stock_bars(self, request_params: StockBarsRequest) -> alpaca_data_models.BarSet:
+        self.bars_requests.append(request_params)
+        self._maybe_raise("get_stock_bars")
+        wanted = _requested_symbols(request_params)
+        return alpaca_data_models.BarSet({s: self.bars[s] for s in wanted if s in self.bars})
+
+    def get_stock_latest_trade(
+        self, request_params: StockLatestTradeRequest
+    ) -> dict[str, alpaca_data_models.Trade]:
+        self.trade_requests.append(request_params)
+        self._maybe_raise("get_stock_latest_trade")
+        wanted = _requested_symbols(request_params)
+        return {s: self.trades[s] for s in wanted if s in self.trades}
+
+    def get_stock_latest_quote(
+        self, request_params: StockLatestQuoteRequest
+    ) -> dict[str, alpaca_data_models.Quote]:
+        self.quote_requests.append(request_params)
+        self._maybe_raise("get_stock_latest_quote")
+        wanted = _requested_symbols(request_params)
+        return {s: self.quotes[s] for s in wanted if s in self.quotes}
 
 
 ET = ZoneInfo("America/New_York")
