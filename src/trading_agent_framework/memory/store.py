@@ -22,6 +22,7 @@ from trading_agent_framework.utils.errors import MemoryStoreError, MemoryValidat
 
 if TYPE_CHECKING:
     from trading_agent_framework.config.env import TradingMode
+    from trading_agent_framework.entities.order import Order
 
 SCHEMA_VERSION = 1
 DB_FILE_NAME = "memory.sqlite"
@@ -153,6 +154,22 @@ def _require_tags(tags: object) -> list[str]:
     return list(tags)
 
 
+def _order_fields(order: Order) -> dict[str, Any]:
+    fields = {
+        "identifier": order.identifier,
+        "client_order_id": order.client_order_id,
+        "status": order.status,
+        "time_in_force": order.time_in_force,
+        "notional": order.notional,
+        "limit_price": order.limit_price,
+        "stop_price": order.stop_price,
+        "stop_limit_price": order.stop_limit_price,
+        "trail_price": order.trail_price,
+        "trail_percent": order.trail_percent,
+    }
+    return {key: value for key, value in fields.items() if value is not None}
+
+
 class MemoryStore:
     """Lumibot's agent memory store (`strategy.memory`) over one SQLite file.
 
@@ -212,6 +229,269 @@ class MemoryStore:
             model_call_id=model_call_id,
             retrieval_id=retrieval_id,
         )
+
+    def remember_proposal(
+        self,
+        text: str,
+        *,
+        symbol: str | None = None,
+        action: str | None = None,
+        tags: Sequence[str] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a research proposal or non-final trade idea (`proposal.recorded`)."""
+        symbol = records.normalize_symbol(symbol)
+        return self._create(
+            event_type="proposal.recorded",
+            kind="proposal",
+            status="proposed",
+            text=text,
+            symbol=symbol,
+            tags=tags,
+            metadata={"symbol": symbol, "action": action, **(metadata or {})},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+    def remember_risk_note(
+        self,
+        text: str,
+        *,
+        symbol: str | None = None,
+        tags: Sequence[str] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a risk note or bear case (`risk_note.recorded`)."""
+        symbol = records.normalize_symbol(symbol)
+        return self._create(
+            event_type="risk_note.recorded",
+            kind="risk_note",
+            status="active",
+            text=text,
+            symbol=symbol,
+            tags=tags,
+            metadata={"symbol": symbol, **(metadata or {})},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+    def remember_decision(
+        self,
+        text: str,
+        *,
+        symbol: str | None = None,
+        action: str | None = None,
+        evidence: Mapping[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record an actual trading decision (`decision.recorded`)."""
+        symbol = records.normalize_symbol(symbol)
+        return self._create(
+            event_type="decision.recorded",
+            kind="decision",
+            status="recorded",
+            text=text,
+            symbol=symbol,
+            tags=tags,
+            metadata={"symbol": symbol, "action": action, "evidence": dict(evidence or {})},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+    def remember_lesson(
+        self,
+        text: str,
+        *,
+        symbol: str | None = None,
+        outcome: Mapping[str, Any] | None = None,
+        tags: Sequence[str] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a lesson: `lesson.validated` only when `outcome["validated"] is True`."""
+        symbol = records.normalize_symbol(symbol)
+        outcome = dict(outcome or {})
+        status = "validated" if outcome.get("validated") is True else "proposed"
+        return self._create(
+            event_type=f"lesson.{status}",
+            kind="lesson",
+            status=status,
+            text=text,
+            symbol=symbol,
+            tags=tags,
+            metadata={"symbol": symbol, "outcome": outcome},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+    def open_thesis(
+        self,
+        text: str,
+        *,
+        symbol: str | None = None,
+        tags: Sequence[str] | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Open an investment thesis (`thesis.opened`)."""
+        symbol = records.normalize_symbol(symbol)
+        return self._create(
+            event_type="thesis.opened",
+            kind="thesis",
+            status="open",
+            text=text,
+            symbol=symbol,
+            tags=tags,
+            metadata={"symbol": symbol, **(metadata or {}), "status": "open"},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+    def update_thesis(
+        self,
+        thesis_id: str,
+        text: str,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Replace an open thesis's text (`thesis.updated`); symbol and tags carry over."""
+        clean_text = _require_text(text)
+        merged = {"thesis_id": thesis_id, **(metadata or {}), "status": "open"}
+        with self._transaction() as conn:
+            thesis = self._open_thesis_row(conn, thesis_id)
+            return self._write_memory(
+                conn,
+                memory_id=thesis["id"],
+                event_type="thesis.updated",
+                kind="thesis",
+                status="open",
+                text=clean_text,
+                symbol=records.normalize_symbol(merged.get("symbol")) or thesis["symbol"],
+                tags=thesis["tags"],
+                metadata=merged,
+                agent_name=agent_name,
+                model_call_id=model_call_id,
+                retrieval_id=retrieval_id,
+            )
+
+    def close_thesis(
+        self,
+        thesis_id: str,
+        text: str,
+        *,
+        outcome: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Close an open thesis with its outcome/reflection (`thesis.closed`)."""
+        clean_text = _require_text(text)
+        with self._transaction() as conn:
+            thesis = self._open_thesis_row(conn, thesis_id)
+            return self._write_memory(
+                conn,
+                memory_id=thesis["id"],
+                event_type="thesis.closed",
+                kind="thesis",
+                status="closed",
+                text=clean_text,
+                symbol=thesis["symbol"],
+                tags=thesis["tags"],
+                metadata={"thesis_id": thesis_id, "outcome": dict(outcome or {}), "status": "closed"},
+                agent_name=agent_name,
+                model_call_id=model_call_id,
+                retrieval_id=retrieval_id,
+            )
+
+    def record_warning(
+        self,
+        text: str,
+        *,
+        kind: str = "agent_warning",
+        symbol: str | None = None,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a runtime warning; `kind` becomes the event type (history only)."""
+        clean_text = _require_text(text)
+        details = dict(metadata or {})
+        with self._transaction() as conn:
+            return self._append_event(
+                conn,
+                event_type=kind,
+                subject_type="warning",
+                subject_id=records.new_memory_id("warning"),
+                text=clean_text,
+                symbol=symbol,
+                metadata=details,
+                payload={"warning": clean_text, "metadata": details},
+                agent_name=agent_name,
+                model_call_id=model_call_id,
+                retrieval_id=retrieval_id,
+            )
+
+    def record_order_submitted(
+        self,
+        order: Order,
+        *,
+        metadata: Mapping[str, Any] | None = None,
+        agent_name: str | None = None,
+        model_call_id: str | None = None,
+        retrieval_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a submitted order (`order.submitted`, history only), linked to the decision
+        recorded in the same model call."""
+        symbol = order.asset.symbol.upper()
+        size = str(order.quantity) if order.quantity is not None else f"${order.notional}"
+        text = f"Submitted order {order.side} {size} {symbol} as {order.order_type}"
+        with self._transaction() as conn:
+            payload = {
+                "kind": "order",
+                "status": "submitted",
+                "symbol": symbol,
+                "side": order.side,
+                "quantity": order.quantity,
+                "order_type": order.order_type,
+                "asset_type": order.asset.asset_type,
+                "order": _order_fields(order),
+                "metadata": dict(metadata or {}),
+                "decision_id": self._decision_for_call(conn, agent_name, model_call_id),
+            }
+            return self._append_event(
+                conn,
+                event_type="order.submitted",
+                subject_type="order",
+                subject_id=f"order_{order.identifier}",
+                text=text,
+                symbol=symbol,
+                metadata=payload,
+                payload=payload,
+                agent_name=agent_name,
+                model_call_id=model_call_id,
+                retrieval_id=retrieval_id,
+            )
 
     # --- reads ------------------------------------------------------------------------
 
@@ -412,3 +692,30 @@ class MemoryStore:
 
     def _wall_time(self) -> str:
         return self._wall_clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _open_thesis_row(conn: sqlite3.Connection, thesis_id: str) -> dict[str, Any]:
+        row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (thesis_id,)).fetchone()
+        if row is None or row["kind"] != "thesis":
+            raise MemoryValidationError(f"unknown thesis_id {thesis_id!r}")
+        if row["status"] != "open":
+            raise MemoryValidationError(f"thesis {thesis_id!r} is not open (status: {row['status']})")
+        return records.index_item(dict(row))
+
+    @staticmethod
+    def _decision_for_call(
+        conn: sqlite3.Connection, agent_name: str | None, model_call_id: str | None
+    ) -> str | None:
+        """The latest decision recorded in the same model call (lumibot's decision provenance)."""
+        if not model_call_id:
+            return None
+        row = conn.execute(
+            """
+            SELECT subject_id FROM memory_events
+            WHERE event_type = 'decision.recorded' AND model_call_id = ?
+              AND (? IS NULL OR agent_name = ?)
+            ORDER BY sequence DESC LIMIT 1
+            """,
+            (model_call_id, agent_name, agent_name),
+        ).fetchone()
+        return None if row is None else row["subject_id"]
