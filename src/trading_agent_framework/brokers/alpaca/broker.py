@@ -10,15 +10,20 @@ the I/O calls against a `TradingClient` plus the bookkeeping (`tracker`,
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from alpaca.common.exceptions import APIError
 
-from trading_agent_framework.brokers.alpaca import orders
+from trading_agent_framework.brokers.alpaca import account, orders
 from trading_agent_framework.brokers.alpaca.client import build_trading_client, build_trading_stream
+from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
 from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
+from trading_agent_framework.clock import MarketClock
+from trading_agent_framework.entities.account import AccountBalances
+from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import BrokerError
@@ -36,14 +41,24 @@ class AlpacaBroker(Broker):
 
     name: ClassVar[str] = "alpaca"
 
+    _SYNC_LIMIT = 500  # Alpaca's maximum page size for GET /orders
+
     def __init__(
         self,
         strategy_name: str,
         client: orders.AlpacaTradingClient,
         tracker: OrderTracker | None = None,
         stream: TradingStream | None = None,
+        *,
+        clock: MarketClock | None = None,
+        is_paper: bool = True,
     ) -> None:
-        super().__init__(strategy_name, tracker)
+        super().__init__(
+            strategy_name,
+            tracker,
+            clock=clock if clock is not None else AlpacaMarketClock(client),
+            is_paper=is_paper,
+        )
         self._client = client
         self._stream = stream
         self._alpaca_stream: AlpacaTradeStream | None = None
@@ -61,7 +76,7 @@ class AlpacaBroker(Broker):
         # the single point a real client is constructed.
         client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
         stream = build_trading_stream(creds) if with_stream else None
-        return cls(strategy_name, client, stream=stream)
+        return cls(strategy_name, client, stream=stream, is_paper=creds.is_paper)
 
     def _conform_order(self, order: Order) -> Order:
         return orders.conform_order(order)
@@ -108,6 +123,73 @@ class AlpacaBroker(Broker):
             orders.parse_broker_position(p, self.strategy_name)
             for p in self._client.get_all_positions()
         ]
+
+    def get_account(self) -> AccountBalances:
+        try:
+            response = self._client.get_account()
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch the Alpaca account: {exc}") from exc
+        return account.parse_account(response)
+
+    def modify_order(
+        self,
+        order: Order,
+        *,
+        limit_price: Decimal | None = None,
+        stop_price: Decimal | None = None,
+    ) -> Order:
+        request = orders.build_replace_order_request(limit_price=limit_price, stop_price=stop_price)
+        try:
+            response = self._client.replace_order_by_id(order.identifier, order_data=request)
+        except Exception as exc:
+            raise BrokerError(f"Failed to modify order {order.identifier}: {exc}") from exc
+        replacement = orders.parse_broker_order(response, self.strategy_name)
+        if replacement is None:
+            raise BrokerError(f"Alpaca returned no usable replacement for order {order.identifier}")
+        self.tracker.mark_replaced(order, replacement)
+        return replacement
+
+    def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        request = orders.build_close_position_request(fraction)
+        try:
+            response = self._client.close_position(asset.symbol, close_options=request)
+        except APIError as exc:
+            if exc.status_code == 404:
+                return None
+            raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
+        except Exception as exc:
+            raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
+        order = orders.parse_broker_order(response, self.strategy_name)
+        if order is not None:
+            self.tracker.track_unprocessed(order)
+        return order
+
+    def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        try:
+            responses = self._client.close_all_positions(cancel_orders=cancel_orders)
+        except Exception as exc:
+            raise BrokerError(f"Failed to close all positions: {exc}") from exc
+        closed = orders.parse_close_all_responses(responses, self.strategy_name)
+        for order in closed:
+            self.tracker.track_unprocessed(order)
+        return closed
+
+    def sync_open_orders(self) -> list[Order]:
+        request = orders.build_get_orders_request(self._SYNC_LIMIT, open_only=True)
+        try:
+            responses = self._client.get_orders(filter=request)
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch open orders: {exc}") from exc
+        prefix = f"{self.strategy_name}:"
+        adopted: list[Order] = []
+        for order in orders.parse_broker_orders(responses, self.strategy_name):
+            if not (order.client_order_id or "").startswith(prefix):
+                continue
+            if self.tracker.get_tracked_order(order.identifier) is not None:
+                continue
+            self.tracker.track_unprocessed(order)
+            adopted.append(order)
+        return adopted
 
     def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
         if self._alpaca_stream is None:

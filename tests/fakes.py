@@ -8,10 +8,13 @@ several lines of mock configuration.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
+from typing import ClassVar
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -25,7 +28,13 @@ from alpaca.trading.requests import (
     ReplaceOrderRequest,
 )
 
+from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.clock import MarketClock, MarketSession
+from trading_agent_framework.entities.account import AccountBalances
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderStatus
+from trading_agent_framework.entities.order import Order
+from trading_agent_framework.entities.position import Position
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -305,3 +314,93 @@ class FakeClock(MarketClock):
         if self.next_session_errors:
             raise self.next_session_errors.pop(0)
         return next((s for s in self.sessions if s.close > self._now), None)
+
+
+class FakeBroker(Broker):
+    """In-memory `Broker` for strategy/executor tests: records every call, no I/O.
+
+    Submitted and synced orders go through the real `OrderTracker`, so tests can
+    drive fills with `broker.tracker.process_trade_event(...)`.
+    """
+
+    name: ClassVar[str] = "fake"
+
+    def __init__(
+        self, clock: MarketClock, strategy_name: str = "momentum", *, is_paper: bool = True
+    ) -> None:
+        super().__init__(strategy_name, clock=clock, is_paper=is_paper)
+        self.account = AccountBalances(
+            cash=Decimal("10000"), portfolio_value=Decimal("25000"), buying_power=Decimal("20000")
+        )
+        self.positions: list[Position] = []
+        self.remote_orders: dict[str, Order] = {}
+        self.orders_to_sync: list[Order] = []
+        self.submitted: list[Order] = []
+        self.canceled: list[Order] = []
+        self.modified: list[tuple[Order, Decimal | None, Decimal | None]] = []
+        self.closed: list[tuple[Asset, Decimal]] = []
+        self.close_all_calls: list[bool] = []
+        self.calls: list[str] = []
+
+    def _conform_order(self, order: Order) -> Order:
+        return order
+
+    def _submit_order(self, order: Order) -> Order:
+        self.submitted.append(order)
+        self.tracker.track_unprocessed(order)
+        return order
+
+    def cancel_order(self, order: Order) -> None:
+        self.canceled.append(order)
+
+    def pull_order(self, identifier: str) -> Order | None:
+        return self.remote_orders.get(identifier)
+
+    def pull_orders(self, limit: int = 100) -> list[Order]:
+        return list(self.remote_orders.values())[:limit]
+
+    def pull_positions(self) -> list[Position]:
+        return list(self.positions)
+
+    def get_account(self) -> AccountBalances:
+        return self.account
+
+    def modify_order(
+        self,
+        order: Order,
+        *,
+        limit_price: Decimal | None = None,
+        stop_price: Decimal | None = None,
+    ) -> Order:
+        self.modified.append((order, limit_price, stop_price))
+        replacement = dataclasses.replace(
+            order,
+            identifier=uuid4().hex,
+            limit_price=limit_price if limit_price is not None else order.limit_price,
+            stop_price=stop_price if stop_price is not None else order.stop_price,
+            status=OrderStatus.UNPROCESSED,
+            transactions=[],
+            filled_quantity=Decimal(0),
+        )
+        self.tracker.mark_replaced(order, replacement)
+        return replacement
+
+    def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        self.closed.append((asset, fraction))
+        return None
+
+    def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        self.close_all_calls.append(cancel_orders)
+        return []
+
+    def sync_open_orders(self) -> list[Order]:
+        self.calls.append("sync_open_orders")
+        for order in self.orders_to_sync:
+            self.tracker.track_unprocessed(order)
+        return list(self.orders_to_sync)
+
+    def start_stream(self) -> None:
+        self.calls.append("start_stream")
+
+    def stop_stream(self, timeout: float = 5.0) -> None:
+        self.calls.append("stop_stream")
