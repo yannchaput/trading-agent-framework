@@ -137,11 +137,28 @@ def query_terms(query: str) -> list[str]:
     return [term.lower() for term in query.split()]
 
 
+def _flatten_values(value: object) -> Iterable[str]:
+    """Every leaf value (never a key) in a JSON-shaped structure, as text.
+
+    Matching on `json_dumps(item)` directly would search JSON key names too, so a term like
+    "data" would match any item merely for having a "metadata" key. Search must only ever match
+    what's actually in the item, not its shape.
+    """
+    if isinstance(value, Mapping):
+        for nested in value.values():
+            yield from _flatten_values(nested)
+    elif isinstance(value, (list, tuple)):
+        for nested in value:
+            yield from _flatten_values(nested)
+    elif value is not None:
+        yield str(value)
+
+
 def score(item: Mapping[str, Any], terms: Sequence[str]) -> int:
-    """Lumibot's relevance: how many terms appear in the item's JSON (1 for an empty query)."""
+    """Lumibot's relevance: how many terms appear in the item's values (1 for an empty query)."""
     if not terms:
         return 1
-    haystack = json_dumps(item).lower()
+    haystack = " ".join(_flatten_values(item)).lower()
     return sum(1 for term in terms if term in haystack)
 
 
