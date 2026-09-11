@@ -45,3 +45,8 @@ def test_fake_broker_modify_marks_the_original_replaced() -> None:
     assert replacement.limit_price == Decimal("101")
     assert order.status == OrderStatus.CANCELED
     assert broker.tracker.get_tracked_order(replacement.identifier) is replacement
+
+
+def test_market_data_methods_are_part_of_the_broker_interface() -> None:
+    expected = {"get_last_price", "get_last_prices", "get_quote", "get_bars"}
+    assert expected <= Broker.__abstractmethods__

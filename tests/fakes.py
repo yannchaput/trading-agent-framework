@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -21,6 +21,7 @@ from zoneinfo import ZoneInfo
 import alpaca.data.models as alpaca_data_models
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
+import pandas as pd
 from alpaca.common.exceptions import APIError
 from alpaca.data.requests import (
     StockBarsRequest,
@@ -38,9 +39,12 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.clock import MarketClock, MarketSession
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.enums import OrderStatus
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.entities.quote import Quote
+from trading_agent_framework.errors import BrokerError
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
@@ -385,6 +389,29 @@ def weekday_sessions(first_day: date, count: int) -> list[MarketSession]:
     return sessions
 
 
+def make_bars_frame(
+    closes: Sequence[float], *, start: datetime | None = None, freq: str = "1D"
+) -> pd.DataFrame:
+    """An OHLCV frame shaped like `Bars.df`: high = close + 1, low = close - 1."""
+    index = pd.date_range(
+        start if start is not None else et(2026, 1, 5),
+        periods=len(closes),
+        freq=freq,
+        name="timestamp",
+    )
+    close = [float(c) for c in closes]
+    return pd.DataFrame(
+        {
+            "open": close,
+            "high": [c + 1 for c in close],
+            "low": [c - 1 for c in close],
+            "close": close,
+            "volume": [1000.0] * len(close),
+        },
+        index=index,
+    )
+
+
 class FakeClock(MarketClock):
     """Manual `MarketClock`: `wait` advances fake time instantly unless `wake`
     is set.
@@ -446,6 +473,11 @@ class FakeBroker(Broker):
         self.closed: list[tuple[Asset, Decimal]] = []
         self.close_all_calls: list[bool] = []
         self.calls: list[str] = []
+        self.last_prices: dict[str, Decimal] = {}
+        self.quotes: dict[str, Quote] = {}
+        self.bar_frames: dict[str, pd.DataFrame] = {}
+        self.bars_calls: list[tuple[tuple[str, ...], int, str, bool]] = []
+        self.market_data_error: BrokerError | None = None
 
     def _conform_order(self, order: Order) -> Order:
         return order
@@ -503,6 +535,40 @@ class FakeBroker(Broker):
         for order in self.orders_to_sync:
             self.tracker.track_unprocessed(order)
         return list(self.orders_to_sync)
+
+    def _check_market_data(self) -> None:
+        if self.market_data_error is not None:
+            raise self.market_data_error
+
+    def get_last_price(self, asset: Asset) -> Decimal | None:
+        self._check_market_data()
+        return self.last_prices.get(asset.symbol)
+
+    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        self._check_market_data()
+        return {asset: self.last_prices.get(asset.symbol) for asset in assets}
+
+    def get_quote(self, asset: Asset) -> Quote | None:
+        self._check_market_data()
+        return self.quotes.get(asset.symbol)
+
+    def get_bars(
+        self,
+        assets: Sequence[Asset],
+        length: int,
+        timestep: str = "day",
+        *,
+        include_after_hours: bool = True,
+    ) -> dict[Asset, Bars]:
+        self._check_market_data()
+        requested = list(assets)
+        symbols = tuple(asset.symbol for asset in requested)
+        self.bars_calls.append((symbols, length, timestep, include_after_hours))
+        return {
+            asset: Bars(asset=asset, timestep=timestep, df=self.bar_frames[asset.symbol].iloc[-length:])
+            for asset in requested
+            if asset.symbol in self.bar_frames
+        }
 
     def start_stream(self) -> None:
         self.calls.append("start_stream")

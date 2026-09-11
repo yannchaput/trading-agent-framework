@@ -20,6 +20,7 @@ from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.enums import (
     ACTIVE_ORDER_STATUSES,
     OrderSide,
@@ -29,6 +30,7 @@ from trading_agent_framework.entities.enums import (
 )
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.errors import BrokerError, ConfigurationError
 from trading_agent_framework.log import ColorLogger, setup_strategy_logging
 
@@ -227,6 +229,48 @@ class Strategy:
     def get_order(self, identifier: str) -> Order | None:
         tracked = self.broker.get_tracked_order(identifier)
         return tracked if tracked is not None else self.broker.pull_order(identifier)
+
+    # --- market data -----------------------------------------------------------------
+
+    def get_last_price(self, asset: Asset | str) -> Decimal | None:
+        """Last traded price; for the quote midpoint use `get_quote(asset).mid`."""
+        return self.broker.get_last_price(_to_asset(asset))
+
+    def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]:
+        return self.broker.get_last_prices([_to_asset(asset) for asset in assets])
+
+    def get_quote(self, asset: Asset | str) -> Quote | None:
+        return self.broker.get_quote(_to_asset(asset))
+
+    def get_historical_prices(
+        self,
+        asset: Asset | str,
+        length: int,
+        timestep: str = "day",
+        *,
+        include_after_hours: bool = True,
+    ) -> Bars | None:
+        """The last `length` "minute" or "day" bars, oldest first; None without data."""
+        target = _to_asset(asset)
+        bars = self.broker.get_bars(
+            [target], length, timestep, include_after_hours=include_after_hours
+        )
+        return bars.get(target)
+
+    def get_historical_prices_for_assets(
+        self,
+        assets: Iterable[Asset | str],
+        length: int,
+        timestep: str = "day",
+        *,
+        include_after_hours: bool = True,
+    ) -> dict[Asset, Bars]:
+        return self.broker.get_bars(
+            [_to_asset(asset) for asset in assets],
+            length,
+            timestep,
+            include_after_hours=include_after_hours,
+        )
 
     # --- trading -----------------------------------------------------------------
 

@@ -1,10 +1,11 @@
 """Broker-agnostic abstract base class for order submission and tracking.
 
 `Broker` fixes the template-method ordering (conform, then submit) and wires a
-default `OrderTracker`, plus an account snapshot, a `MarketClock`, and
-optional order-stream hooks, but leaves everything broker-specific -- how an
-order is conformed, how it's actually submitted, how positions/orders/account
-are pulled -- to concrete subclasses (e.g. `AlpacaBroker`).
+default `OrderTracker`, plus an account snapshot, a `MarketClock`, market
+data, and optional order-stream hooks, but leaves everything broker-specific
+-- how an order is conformed, how it's actually submitted, how
+positions/orders/account are pulled -- to concrete subclasses (e.g.
+`AlpacaBroker`).
 """
 
 from __future__ import annotations
@@ -18,8 +19,10 @@ from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.entities.quote import Quote
 
 
 class Broker(ABC):
@@ -94,6 +97,29 @@ class Broker(ABC):
 
         Returns the adopted ones.
         """
+
+    # --- market data -------------------------------------------------------------------
+
+    @abstractmethod
+    def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Last traded price; None when the data source has no trade for the asset."""
+
+    @abstractmethod
+    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]: ...
+
+    @abstractmethod
+    def get_quote(self, asset: Asset) -> Quote | None: ...
+
+    @abstractmethod
+    def get_bars(
+        self,
+        assets: Sequence[Asset],
+        length: int,
+        timestep: str = "day",
+        *,
+        include_after_hours: bool = True,
+    ) -> dict[Asset, Bars]:
+        """The last `length` bars per asset, oldest first; assets without data are left out."""
 
     def start_stream(self) -> None:  # noqa: B027 -- optional hook, deliberately not abstract
         """Start pushing order events into `tracker`. No-op for brokers without a stream."""
