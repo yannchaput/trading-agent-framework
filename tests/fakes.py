@@ -18,6 +18,7 @@ from typing import ClassVar
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import alpaca.data.models as alpaca_data_models
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 from alpaca.common.exceptions import APIError
@@ -138,6 +139,53 @@ def make_api_error(status_code: int | None) -> APIError:
     if status_code is not None:
         http_error = SimpleNamespace(response=SimpleNamespace(status_code=status_code))
     return APIError("simulated error", http_error=http_error)
+
+
+def bar_payload(timestamp: str, close: float, volume: float = 1000.0) -> dict[str, object]:
+    """One bar as Alpaca's API sends it; `BarSet` is built from these raw payloads."""
+    return {
+        "t": timestamp,
+        "o": close - 0.5,
+        "h": close + 1.0,
+        "l": close - 1.0,
+        "c": close,
+        "v": volume,
+        "n": 10,
+        "vw": close,
+    }
+
+
+def make_alpaca_barset(bars: dict[str, list[dict[str, object]]]) -> alpaca_data_models.BarSet:
+    return alpaca_data_models.BarSet(bars)
+
+
+def make_alpaca_trade(
+    symbol: str = "AAPL", price: float = 100.15, timestamp: str = "2026-09-10T13:30:00Z"
+) -> alpaca_data_models.Trade:
+    payload = {"t": timestamp, "x": "V", "p": price, "s": 50, "i": 1, "c": ["@"], "z": "C"}
+    return alpaca_data_models.Trade(symbol, payload)
+
+
+def make_alpaca_quote(
+    symbol: str = "AAPL",
+    bid: float = 100.1,
+    ask: float = 100.2,
+    bid_size: float = 3.0,
+    ask_size: float = 4.0,
+    timestamp: str = "2026-09-10T13:30:00Z",
+) -> alpaca_data_models.Quote:
+    payload = {
+        "t": timestamp,
+        "bp": bid,
+        "bs": bid_size,
+        "bx": "V",
+        "ap": ask,
+        "as": ask_size,
+        "ax": "V",
+        "c": ["R"],
+        "z": "C",
+    }
+    return alpaca_data_models.Quote(symbol, payload)
 
 
 class FakeTradingClient:

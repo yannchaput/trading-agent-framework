@@ -7,11 +7,13 @@ module allowed to import `alpaca.data.requests`.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING, Protocol
+from decimal import Decimal
+from typing import TYPE_CHECKING, Protocol, cast
 from zoneinfo import ZoneInfo
 
+import pandas as pd
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.requests import (
     StockBarsRequest,
@@ -19,9 +21,13 @@ from alpaca.data.requests import (
     StockLatestTradeRequest,
 )
 from alpaca.data.timeframe import TimeFrame
+from pandas.core.indexes.datetimes import DatetimeIndex
 
+from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
 from trading_agent_framework.clock import MarketSession
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
+from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.errors import BrokerError
 
 if TYPE_CHECKING:
@@ -35,6 +41,7 @@ ADJUSTMENT = Adjustment.ALL  # split- and dividend-adjusted, like lumibot's defa
 MAX_SYMBOLS_PER_REQUEST = 150
 TIMESTEPS = ("minute", "day")
 _MINUTES_PER_SESSION = 390
+_OHLCV = ("open", "high", "low", "close", "volume")
 
 
 class AlpacaStockDataClient(Protocol):
@@ -119,3 +126,75 @@ def build_latest_trade_request(assets: Sequence[Asset]) -> StockLatestTradeReque
 
 def build_latest_quote_request(assets: Sequence[Asset]) -> StockLatestQuoteRequest:
     return StockLatestQuoteRequest(symbol_or_symbols=_symbols(assets), feed=FEED)
+
+
+# --- response parsing ------------------------------------------------------------
+
+
+def parse_bars(
+    barset: object,
+    assets: Sequence[Asset],
+    timestep: str,
+    length: int,
+    *,
+    sessions: Sequence[MarketSession] | None = None,
+) -> dict[Asset, Bars]:
+    """The last `length` bars per asset, oldest first. Assets without bars are left out.
+
+    When `sessions` is given, only bars inside them are kept (so early closes are handled).
+    This filter runs before truncating, so the caller gets `length` in-session bars
+    whenever the feed has that many.
+    """
+    data = cast(Mapping[str, Sequence[object]], _field(barset, "data") or {})
+    result: dict[Asset, Bars] = {}
+    for asset in assets:
+        df = _bars_frame(data.get(asset.symbol) or [])
+        if sessions is not None:
+            df = _within_sessions(df, sessions)
+        df = df.iloc[-length:]
+        if not df.empty:
+            result[asset] = Bars(asset=asset, timestep=timestep, df=df)
+    return result
+
+
+def _bars_frame(rows: Sequence[object]) -> pd.DataFrame:
+    """The float64 boundary for bars (see `entities/bars.py`): indicators want native floats."""
+    index: DatetimeIndex = pd.to_datetime([_field(row, "timestamp") for row in rows], utc=True)  # type: ignore[assignment]
+    columns = {name: [float(cast(float, _field(row, name))) for row in rows] for name in _OHLCV}
+    df = pd.DataFrame(columns, index=index.tz_convert(MARKET_TZ), dtype="float64")
+    df.index.name = "timestamp"
+    return df[~df.index.duplicated(keep="first")].sort_index()
+
+
+def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.DataFrame:
+    keep = pd.Series(False, index=df.index)
+    for session in sessions:
+        keep |= (df.index >= session.open) & (df.index < session.close)
+    return df[keep]
+
+
+def parse_latest_trades(
+    response: Mapping[str, object], assets: Sequence[Asset]
+) -> dict[Asset, Decimal | None]:
+    """Last traded price per asset; None when Alpaca returned no trade for the symbol."""
+    return {asset: _to_decimal(_field(response.get(asset.symbol), "price")) for asset in assets}
+
+
+def parse_quote(response: Mapping[str, object], asset: Asset) -> Quote | None:
+    raw = response.get(asset.symbol)
+    if raw is None:
+        return None
+    return Quote(
+        asset=asset,
+        bid=_book_price(_field(raw, "bid_price")),
+        ask=_book_price(_field(raw, "ask_price")),
+        bid_size=_to_decimal(_field(raw, "bid_size")),
+        ask_size=_to_decimal(_field(raw, "ask_size")),
+        timestamp=cast(datetime, _field(raw, "timestamp")).astimezone(MARKET_TZ),
+    )
+
+
+def _book_price(value: object) -> Decimal | None:
+    """Alpaca reports an empty book side as 0: that means "no price", not a price of zero."""
+    price = _to_decimal(value)
+    return price if price is not None and price > 0 else None
