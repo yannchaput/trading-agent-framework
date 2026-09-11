@@ -8,7 +8,7 @@ from typing import Any
 
 from trading_agent_framework.entities.enums import OrderEvent, OrderStatus
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import OrderEventError
+from trading_agent_framework.utils.errors import OrderEventError
 
 logger = logging.getLogger(__name__)
 

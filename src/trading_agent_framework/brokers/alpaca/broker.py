@@ -30,14 +30,14 @@ from trading_agent_framework.brokers.alpaca.stream import (
 )
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
-from trading_agent_framework.clock import MarketClock, MarketSession
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketClock, MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.trading.stream import TradingStream

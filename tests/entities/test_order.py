@@ -9,7 +9,7 @@ import pytest
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import OrderValidationError
+from trading_agent_framework.utils.errors import OrderValidationError
 
 
 def make_order(**overrides: object) -> Order:

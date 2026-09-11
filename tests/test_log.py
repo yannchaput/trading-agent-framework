@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.log import (
+from trading_agent_framework.utils.log import (
     ANSI_BLUE,
     ANSI_GREY,
     ANSI_RED,

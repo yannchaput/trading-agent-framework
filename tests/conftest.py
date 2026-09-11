@@ -4,7 +4,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from trading_agent_framework.log import reset_strategy_logging
+from trading_agent_framework.utils.log import reset_strategy_logging
 
 
 @pytest.fixture(autouse=True)

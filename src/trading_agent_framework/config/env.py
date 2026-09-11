@@ -9,7 +9,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from trading_agent_framework.errors import ConfigurationError
+from trading_agent_framework.utils.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
 

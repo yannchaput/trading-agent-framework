@@ -46,7 +46,7 @@ from trading_agent_framework.entities.enums import (
 )
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.errors import OrderValidationError
+from trading_agent_framework.utils.errors import OrderValidationError
 
 if TYPE_CHECKING:
     from datetime import datetime

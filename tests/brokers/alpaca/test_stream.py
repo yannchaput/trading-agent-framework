@@ -15,7 +15,7 @@ from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import OrderEventError
+from trading_agent_framework.utils.errors import OrderEventError
 
 
 def _make_order(identifier: str = "order-1") -> Order:

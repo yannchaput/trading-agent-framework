@@ -9,8 +9,9 @@
 
 ## MIGRATION
 * ~~Alpaca broker~~
-* Orchestration framework (scheduling, lifecycle,...)
-* Data and accountig tools
+* ~~Orchestration framework (scheduling, lifecycle,...)~~
+~~* Data and accountig tools~~
+* Agentic framework
 * Tools
 * Memory
 * Account configuration (no short sell, no margin trading)

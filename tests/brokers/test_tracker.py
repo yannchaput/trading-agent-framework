@@ -11,7 +11,7 @@ from trading_agent_framework.brokers.tracker import OrderTracker, SafeList
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderStatus
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import OrderEventError
+from trading_agent_framework.utils.errors import OrderEventError
 
 
 def make_order(**overrides: object) -> Order:

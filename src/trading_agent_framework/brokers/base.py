@@ -16,13 +16,13 @@ from decimal import Decimal
 from typing import ClassVar
 
 from trading_agent_framework.brokers.tracker import OrderTracker
-from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
+from trading_agent_framework.utils.clock import MarketClock
 
 
 class Broker(ABC):

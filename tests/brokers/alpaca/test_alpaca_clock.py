@@ -12,8 +12,8 @@ from tests.fakes import (
 )
 
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
-from trading_agent_framework.clock import MARKET_TZ
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import BrokerError
 
 
 class _Now:

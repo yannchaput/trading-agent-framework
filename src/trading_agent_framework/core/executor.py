@@ -19,11 +19,11 @@ from datetime import datetime, timedelta
 from types import FrameType
 from typing import TYPE_CHECKING
 
-from trading_agent_framework.clock import MarketSession
 from trading_agent_framework.core.events import OrderEventQueue, QueuedOrderEvent
 from trading_agent_framework.core.timing import next_tick, parse_sleeptime
 from trading_agent_framework.entities.enums import OrderEvent
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy

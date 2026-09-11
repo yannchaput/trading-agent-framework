@@ -22,7 +22,7 @@ from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 AAPL = Asset("AAPL")
 MSFT = Asset("MSFT")

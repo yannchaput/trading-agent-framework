@@ -7,7 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from tests.fakes import ET, FakeClock, et, make_session, weekday_sessions
 
-from trading_agent_framework.clock import MARKET_TZ, MarketClock, MarketSession
+from trading_agent_framework.utils.clock import MARKET_TZ, MarketClock, MarketSession
 
 
 class _NoSessionClock(MarketClock):

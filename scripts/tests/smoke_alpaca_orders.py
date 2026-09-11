@@ -41,7 +41,7 @@ from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, TimeInForce
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import ConfigurationError, TradingFrameworkError
+from trading_agent_framework.utils.errors import ConfigurationError, TradingFrameworkError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"

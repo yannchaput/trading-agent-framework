@@ -18,7 +18,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.brokers.alpaca import orders
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.trading.stream import TradingStream

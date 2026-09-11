@@ -14,9 +14,9 @@ from zoneinfo import ZoneInfo
 from alpaca.trading.requests import GetCalendarRequest
 
 from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
-from trading_agent_framework.clock import MarketSession
 from trading_agent_framework.entities.account import AccountBalances
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 
 def parse_account(response: object) -> AccountBalances:

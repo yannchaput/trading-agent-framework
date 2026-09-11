@@ -25,7 +25,7 @@ from dotenv import load_dotenv
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.core import Strategy
-from trading_agent_framework.errors import ConfigurationError, TradingFrameworkError
+from trading_agent_framework.utils.errors import ConfigurationError, TradingFrameworkError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"

@@ -9,7 +9,7 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.errors import BrokerError, ConfigurationError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 MONDAY = date(2026, 9, 14)
 

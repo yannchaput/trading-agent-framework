@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from trading_agent_framework.errors import ConfigurationError
+from trading_agent_framework.utils.errors import ConfigurationError
 
 _PATTERN = re.compile(r"^\s*(\d+)\s*([smthd])\s*$", re.IGNORECASE)
 _UNIT_SECONDS = {"s": 1, "m": 60, "t": 60, "h": 3600}

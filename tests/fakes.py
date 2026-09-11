@@ -36,7 +36,6 @@ from alpaca.trading.requests import (
 )
 
 from trading_agent_framework.brokers.base import Broker
-from trading_agent_framework.clock import MarketClock, MarketSession
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -44,7 +43,8 @@ from trading_agent_framework.entities.enums import OrderStatus
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketClock, MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 

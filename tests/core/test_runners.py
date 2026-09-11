@@ -16,8 +16,8 @@ from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.errors import BrokerError, ConfigurationError
-from trading_agent_framework.log import ANSI_BLUE, ANSI_RESET
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
+from trading_agent_framework.utils.log import ANSI_BLUE, ANSI_RESET
 
 
 class Hello(Strategy):

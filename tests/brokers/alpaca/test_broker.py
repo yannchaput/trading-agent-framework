@@ -21,7 +21,7 @@ from trading_agent_framework.entities.enums import (
     TimeInForce,
 )
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 _BROKER_ORDER_ID = "11111111-1111-1111-1111-111111111111"
 

@@ -14,7 +14,7 @@ from trading_agent_framework.entities.enums import (
     OrderType,
     TimeInForce,
 )
-from trading_agent_framework.errors import OrderValidationError
+from trading_agent_framework.utils.errors import OrderValidationError
 
 _DECIMAL_FIELDS = (
     "quantity",

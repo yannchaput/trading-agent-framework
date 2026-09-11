@@ -10,7 +10,7 @@ from trading_agent_framework.config.env import (
     TradingMode,
     load_strategy_env,
 )
-from trading_agent_framework.errors import ConfigurationError
+from trading_agent_framework.utils.errors import ConfigurationError
 
 
 def _write_env(path, content: str) -> None:

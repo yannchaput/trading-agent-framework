@@ -16,7 +16,6 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 from trading_agent_framework.brokers.base import Broker
-from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
@@ -32,8 +31,9 @@ from trading_agent_framework.entities.enums import (
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError, ConfigurationError
-from trading_agent_framework.log import ColorLogger, setup_strategy_logging
+from trading_agent_framework.utils.clock import MarketClock
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
+from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 logger = logging.getLogger(__name__)
 

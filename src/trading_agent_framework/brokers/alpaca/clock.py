@@ -7,8 +7,8 @@ from datetime import date, datetime, timedelta
 
 from trading_agent_framework.brokers.alpaca import account
 from trading_agent_framework.brokers.alpaca.orders import AlpacaTradingClient
-from trading_agent_framework.clock import MarketClock, MarketSession
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketClock, MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 
 class AlpacaMarketClock(MarketClock):

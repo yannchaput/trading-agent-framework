@@ -10,7 +10,7 @@ from tests.fakes import FakeBroker, FakeClock, et, make_bars_frame
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 
 def _strategy() -> tuple[Strategy, FakeBroker]:

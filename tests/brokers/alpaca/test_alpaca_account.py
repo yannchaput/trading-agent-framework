@@ -9,7 +9,7 @@ from tests.fakes import ET, make_alpaca_account, make_alpaca_calendar, make_sess
 
 from trading_agent_framework.brokers.alpaca import account
 from trading_agent_framework.entities.account import AccountBalances
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 
 def test_parse_account_maps_equity_to_portfolio_value() -> None:

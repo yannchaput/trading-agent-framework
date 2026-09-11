@@ -12,7 +12,7 @@ from tests.fakes import (
 )
 
 from trading_agent_framework.brokers.alpaca import orders
-from trading_agent_framework.errors import OrderValidationError
+from trading_agent_framework.utils.errors import OrderValidationError
 
 _ORDER_ID = "22222222-2222-2222-2222-222222222222"
 

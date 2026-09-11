@@ -18,7 +18,7 @@ from trading_agent_framework.brokers.alpaca.market_data import (
     sessions_needed,
 )
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError
 
 _END = et(2026, 9, 10, 9, 31)  # Thursday, one minute after the open
 _SESSIONS = weekday_sessions(date(2026, 9, 8), 3)  # Tue 8, Wed 9, Thu 10

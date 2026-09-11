@@ -23,7 +23,7 @@ from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.errors import BrokerError, OrderValidationError
+from trading_agent_framework.utils.errors import BrokerError, OrderValidationError
 
 _OLD_ID = "11111111-1111-1111-1111-111111111111"
 _NEW_ID = "22222222-2222-2222-2222-222222222222"

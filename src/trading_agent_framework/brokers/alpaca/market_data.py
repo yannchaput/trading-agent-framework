@@ -23,11 +23,11 @@ from alpaca.data.requests import (
 from alpaca.data.timeframe import TimeFrame
 
 from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
-from trading_agent_framework.clock import MarketSession
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.errors import BrokerError
+from trading_agent_framework.utils.clock import MarketSession
+from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.data.models import BarSet
