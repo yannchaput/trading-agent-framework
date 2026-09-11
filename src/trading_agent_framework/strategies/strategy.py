@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -23,6 +23,7 @@ from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInF
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.log import ColorLogger
+from trading_agent_framework.strategies.executor import StrategyExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ class Strategy:
         self.vars = SimpleNamespace()
         self.first_iteration = True
         self._log = ColorLogger(logger, self.name)
+        self.executor = StrategyExecutor(self)
 
     @property
     def name(self) -> str:
@@ -150,6 +152,16 @@ class Strategy:
 
     def log_critical(self, message: object) -> str:
         return self._log.log_critical(message, stacklevel=2)
+
+    # --- control -------------------------------------------------------------------
+
+    def sleep(self, seconds: float) -> None:
+        """Pause for `seconds` of clock time (returns early if the run is stopped)."""
+        self.executor.wait_until(self.get_datetime() + timedelta(seconds=seconds))
+
+    def stop(self) -> None:
+        """End the run once the current hook returns; `on_strategy_end` still runs."""
+        self.executor.stop()
 
     # --- accounting --------------------------------------------------------------
 
