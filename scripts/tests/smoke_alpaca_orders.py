@@ -6,7 +6,7 @@ NOT part of the automated test suite -- the suite never touches the network
 whenever you want to verify the whole order lifecycle actually works end to
 end against Alpaca's live paper API rather than a fake client:
 
-    uv run python scripts/smoke_alpaca_orders.py
+    uv run python scripts/tests/smoke_alpaca_orders.py
 
 Credentials come from env/.env.alpaca.integration-tests -- a dedicated,
 git-ignored credentials file for this script, loaded directly by path rather
@@ -43,7 +43,7 @@ from trading_agent_framework.entities.enums import OrderSide, OrderStatus, Order
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.errors import ConfigurationError, TradingFrameworkError
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"
 
 STRATEGY_NAME = "smoke-test"
