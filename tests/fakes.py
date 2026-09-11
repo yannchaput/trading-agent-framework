@@ -216,6 +216,7 @@ class FakeTradingClient:
         self.submitted: list[OrderRequest] = []
         self.raise_on_submit: BaseException | type[BaseException] | None = None
         self.submit_response: alpaca_models.Order | None = None
+        self.on_submit_order: Callable[[], None] | None = None
 
         self.canceled: list[str] = []
 
@@ -246,6 +247,10 @@ class FakeTradingClient:
 
     def submit_order(self, order_data: OrderRequest) -> alpaca_models.Order:
         self.submitted.append(order_data)
+        if self.on_submit_order is not None:
+            # Simulates the trade stream racing ahead of this call's response --
+            # asserts on tracker state as of the moment the broker call is in flight.
+            self.on_submit_order()
         if self.raise_on_submit is not None:
             raise self.raise_on_submit
         assert self.submit_response is not None, "test must set client.submit_response"

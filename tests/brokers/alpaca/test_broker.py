@@ -74,6 +74,29 @@ def test_submit_order_success_updates_identifier_status_raw_and_tracker() -> Non
     assert result in broker.tracker.unprocessed.snapshot()
 
 
+def test_submit_order_is_tracked_before_the_broker_call_closing_the_stream_race() -> None:
+    """A trade-update event can arrive on the stream thread before `submit_order`'s
+    REST response is processed. The order must be discoverable (via client_order_id,
+    since the broker-assigned identifier isn't known yet) at the moment the broker
+    call is made, or that event is silently dropped."""
+    client = FakeTradingClient()
+    client.submit_response = make_alpaca_order(id=_BROKER_ORDER_ID)
+    broker = AlpacaBroker("momentum", client)
+    order = _make_order()
+    local_identifier = order.identifier
+    seen_tracked: list[bool] = []
+
+    def check_tracked_mid_submit() -> None:
+        found = broker.tracker.get_tracked_order_by_client_order_id(f"momentum:{local_identifier}")
+        seen_tracked.append(found is not None)
+
+    client.on_submit_order = check_tracked_mid_submit
+
+    broker.submit_order(order)
+
+    assert seen_tracked == [True]
+
+
 # Test 73
 def test_submit_order_raises_sets_error_and_tracks_nowhere() -> None:
     client = FakeTradingClient()
@@ -207,6 +230,61 @@ def test_start_stream_subscribes_handler_and_starts_thread() -> None:
     broker.start_stream()
     try:
         stream.subscribe_trade_updates.assert_called_once()
+    finally:
+        release.set()
+        broker.stop_stream()
+
+
+def test_start_stream_blocks_until_the_websocket_reports_running() -> None:
+    """The websocket handshake (connect/auth/subscribe) happens on the stream's
+    own thread after start() spawns it. If start() returned immediately, a
+    strategy could submit an order before the subscription is live and miss
+    that order's "new" trade update -- there is no replay for events that
+    happened before a stream subscribed."""
+    client = FakeTradingClient()
+    stream = MagicMock()
+    stream._running = False
+    connect_now = threading.Event()
+    release = threading.Event()
+
+    def fake_run() -> None:
+        connect_now.wait(timeout=2)
+        stream._running = True
+        release.wait(timeout=2)
+
+    stream.run.side_effect = fake_run
+    broker = AlpacaBroker("momentum", client, stream=stream)
+    returned: list[str] = []
+
+    def call_start_stream() -> None:
+        broker.start_stream()
+        returned.append("returned")
+
+    caller = threading.Thread(target=call_start_stream)
+    caller.start()
+    try:
+        caller.join(timeout=0.2)
+        assert returned == []  # still waiting on the connection
+
+        connect_now.set()
+        caller.join(timeout=2)
+        assert returned == ["returned"]
+    finally:
+        release.set()
+        broker.stop_stream()
+
+
+def test_start_stream_raises_if_the_websocket_never_reports_running() -> None:
+    client = FakeTradingClient()
+    stream = MagicMock()
+    stream._running = False
+    release = threading.Event()
+    stream.run.side_effect = lambda: release.wait(timeout=2)
+    broker = AlpacaBroker("momentum", client, stream=stream)
+
+    try:
+        with pytest.raises(BrokerError, match="did not connect"):
+            broker.start_stream(connect_timeout=0.1)
     finally:
         release.set()
         broker.stop_stream()

@@ -24,7 +24,10 @@ from trading_agent_framework.brokers.alpaca.client import (
     build_trading_stream,
 )
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
-from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
+from trading_agent_framework.brokers.alpaca.stream import (
+    DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    AlpacaTradeStream,
+)
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.clock import MarketClock, MarketSession
@@ -100,16 +103,20 @@ class AlpacaBroker(Broker):
 
         orders.validate_order(order)
         request = orders.build_order_request(order)
+        # Tracked (by client_order_id) before the call goes out -- the trade stream
+        # can report this order's "new" event before submit_order() returns, and it
+        # needs to find the order already known or that event is silently dropped.
+        self.tracker.track_unprocessed(order)
         try:
             response = self._client.submit_order(order_data=request)
         except Exception as exc:
             order.set_error(exc)
             logger.exception("Failed to submit order %s", order.identifier)
+            self.tracker.untrack(order)
             raise  # set_error BEFORE re-raising -- lumibot's contract
         order.set_identifier(response.id)
         order.status = orders.map_status(response.status)
         order.update_raw(response)
-        self.tracker.track_unprocessed(order)
         return order
 
     def cancel_order(self, order: Order) -> None:
@@ -282,13 +289,13 @@ class AlpacaBroker(Broker):
             self._alpaca_stream = AlpacaTradeStream(self.tracker, self._stream)
         return self._alpaca_stream
 
-    def start_stream(self) -> None:
+    def start_stream(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
         if self._stream is None:
             raise BrokerError(
                 "no TradingStream configured; construct the broker with a stream "
                 "or use AlpacaBroker.from_credentials(..., with_stream=True)"
             )
-        self._ensure_alpaca_stream().start()
+        self._ensure_alpaca_stream().start(connect_timeout=connect_timeout)
 
     def stop_stream(self, timeout: float = 5.0) -> None:
         self._ensure_alpaca_stream().stop(timeout)

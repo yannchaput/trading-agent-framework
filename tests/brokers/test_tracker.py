@@ -306,6 +306,27 @@ def test_get_tracked_order_searches_all_buckets() -> None:
     assert tracker.get_tracked_order("does-not-exist") is None
 
 
+def test_get_tracked_order_by_client_order_id_finds_order_before_broker_id_known() -> None:
+    tracker = OrderTracker()
+    order = make_order()
+    order.client_order_id = "momentum:local-uuid"
+    tracker.track_unprocessed(order)
+
+    assert tracker.get_tracked_order_by_client_order_id("momentum:local-uuid") is order
+    assert tracker.get_tracked_order_by_client_order_id("does-not-exist") is None
+
+
+def test_untrack_removes_order_from_whichever_bucket_it_is_in() -> None:
+    tracker = OrderTracker()
+    order = make_order()
+    tracker.track_unprocessed(order)
+
+    tracker.untrack(order)
+
+    assert tracker.get_tracked_order(order.identifier) is None
+    assert order not in tracker.unprocessed.snapshot()
+
+
 def test_mark_replaced_cancels_old_tracks_new_and_notifies_nobody() -> None:
     tracker = OrderTracker()
     notified: list[tuple[Order, OrderEvent]] = []

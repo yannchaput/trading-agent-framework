@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.brokers.alpaca import orders
@@ -25,6 +26,8 @@ if TYPE_CHECKING:
     from trading_agent_framework.brokers.tracker import OrderTracker
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 10.0
 
 
 class AlpacaTradeStream:
@@ -60,6 +63,16 @@ class AlpacaTradeStream:
 
         stored = self._tracker.get_tracked_order(identifier)
         if stored is None:
+            # The stream can report an order's "new" event before this order's own
+            # submit_order() call has learned its broker-assigned id (a network race
+            # between the REST response and the websocket push) -- fall back to the
+            # client_order_id we always know before submission, then promote it.
+            client_order_id = orders._field(raw_order, "client_order_id")
+            if client_order_id:
+                stored = self._tracker.get_tracked_order_by_client_order_id(str(client_order_id))
+                if stored is not None:
+                    stored.set_identifier(identifier)
+        if stored is None:
             logger.debug("untracked order %s (event %r)", identifier, raw_event)
             return False
 
@@ -74,8 +87,19 @@ class AlpacaTradeStream:
         )
         return True
 
-    def start(self) -> None:
-        """Subscribe the handler and run the websocket loop in a daemon thread."""
+    def start(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
+        """Subscribe the handler, run the websocket loop in a daemon thread, and
+        block until the connect/auth/subscribe handshake actually completes.
+
+        `stream.run()` spawns the handshake asynchronously and returns only when
+        the loop stops -- if `start()` returned as soon as the thread was
+        launched, a strategy could submit an order before the subscription was
+        live and silently miss that order's first trade update (Alpaca doesn't
+        replay events that happened before a stream subscribed). `_running` is
+        `TradingStream`'s own private flag for "handshake complete"; polling it
+        is the same kind of deliberate internals-reach as `stop()`'s `_loop`
+        check below.
+        """
         stream = self._stream
         if stream is None:
             raise BrokerError(
@@ -85,6 +109,13 @@ class AlpacaTradeStream:
         stream.subscribe_trade_updates(self.handle_trade_update)
         self._thread = threading.Thread(target=stream.run, daemon=True, name="alpaca-trade-stream")
         self._thread.start()
+        deadline = time.monotonic() + connect_timeout
+        while not getattr(stream, "_running", False):
+            if time.monotonic() >= deadline:
+                raise BrokerError(
+                    f"alpaca trade stream did not connect within {connect_timeout}s"
+                )
+            time.sleep(0.05)
 
     @property
     def is_running(self) -> bool:

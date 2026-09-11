@@ -102,6 +102,18 @@ class OrderTracker:
                 return found
         return None
 
+    def get_tracked_order_by_client_order_id(self, client_order_id: str) -> Order | None:
+        for bucket in self._buckets():
+            found = bucket.get_by("client_order_id", client_order_id)
+            if found is not None:
+                return found
+        return None
+
+    def untrack(self, order: Order) -> None:
+        """Remove `order` from every bucket, e.g. to roll back a submission that failed."""
+        with self._transition_lock:
+            self._remove_from_all_buckets(order)
+
     def get_all_tracked_orders(self) -> list[Order]:
         orders: list[Order] = []
         for bucket in self._buckets():

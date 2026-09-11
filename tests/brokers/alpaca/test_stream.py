@@ -88,6 +88,25 @@ def test_handle_trade_update_untracked_order_returns_false_and_logs(
     assert tracker.get_all_tracked_orders() == []
 
 
+def test_handle_trade_update_falls_back_to_client_order_id_and_promotes_identifier() -> None:
+    tracker = OrderTracker()
+    order = _make_order(identifier="local-uuid")
+    order.client_order_id = "momentum:local-uuid"
+    tracker.track_unprocessed(order)
+    stream = AlpacaTradeStream(tracker)
+    trade_update = _trade_update(
+        event="new",
+        order=_order_stub(id="broker-order-1", client_order_id="momentum:local-uuid"),
+    )
+
+    result = asyncio.run(stream.handle_trade_update(trade_update))
+
+    assert result is True
+    assert order.identifier == "broker-order-1"
+    assert order in tracker.new.snapshot()
+    assert tracker.get_tracked_order("broker-order-1") is order
+
+
 # Test 82
 def test_handle_trade_update_partial_fill_records_transaction() -> None:
     tracker = OrderTracker()
