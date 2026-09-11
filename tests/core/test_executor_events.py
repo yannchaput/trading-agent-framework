@@ -13,11 +13,11 @@ from typing import cast
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
+from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.strategy import Strategy
 
 MONDAY = date(2026, 9, 14)
 

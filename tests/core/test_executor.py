@@ -8,8 +8,8 @@ from typing import cast
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
+from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.errors import BrokerError, ConfigurationError
-from trading_agent_framework.strategies.strategy import Strategy
 
 MONDAY = date(2026, 9, 14)
 

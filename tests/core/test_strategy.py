@@ -8,6 +8,7 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core.strategy import _FINAL_STATUSES, Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import (
     OrderEvent,
@@ -18,7 +19,6 @@ from trading_agent_framework.entities.enums import (
     TimeInForce,
 )
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.strategy import _FINAL_STATUSES, Strategy
 
 _START = et(2026, 9, 14, 9, 0)
 

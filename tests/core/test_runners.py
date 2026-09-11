@@ -7,17 +7,17 @@ from pathlib import Path
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
-from trading_agent_framework import strategies
+from trading_agent_framework import core
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core import executor as executor_module
+from trading_agent_framework.core import strategy as strategy_module
+from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.errors import BrokerError, ConfigurationError
 from trading_agent_framework.log import ANSI_BLUE, ANSI_RESET
-from trading_agent_framework.strategies import executor as executor_module
-from trading_agent_framework.strategies import strategy as strategy_module
-from trading_agent_framework.strategies.strategy import Strategy
 
 
 class Hello(Strategy):
@@ -141,6 +141,6 @@ def test_run_backtesting_is_not_implemented_yet(tmp_path: Path) -> None:
         _strategy(tmp_path, mode=TradingMode.BACKTESTING).run_strategy()
 
 
-def test_strategies_package_reexports() -> None:
-    assert strategies.Strategy is strategy_module.Strategy
-    assert strategies.StrategyExecutor is executor_module.StrategyExecutor
+def test_core_package_reexports() -> None:
+    assert core.Strategy is strategy_module.Strategy
+    assert core.StrategyExecutor is executor_module.StrategyExecutor

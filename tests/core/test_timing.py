@@ -5,8 +5,8 @@ from datetime import timedelta
 import pytest
 from tests.fakes import et
 
+from trading_agent_framework.core.timing import SleepTime, next_tick, parse_sleeptime
 from trading_agent_framework.errors import ConfigurationError
-from trading_agent_framework.strategies.timing import SleepTime, next_tick, parse_sleeptime
 
 
 @pytest.mark.parametrize(

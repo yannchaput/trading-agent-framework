@@ -35,10 +35,10 @@ from dotenv import load_dotenv
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.clock import MarketClock, MarketSession
 from trading_agent_framework.config.env import AlpacaCredentials, TradingMode, find_project_root
+from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.enums import OrderSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.errors import TradingFrameworkError
-from trading_agent_framework.strategies import Strategy
 
 PROJECT_ROOT = find_project_root()
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"

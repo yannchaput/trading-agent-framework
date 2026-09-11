@@ -4,10 +4,10 @@ import threading
 from decimal import Decimal
 
 from trading_agent_framework.brokers.tracker import OrderTracker
+from trading_agent_framework.core.events import OrderEventQueue, QueuedOrderEvent
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, OrderSide
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.strategies.events import OrderEventQueue, QueuedOrderEvent
 
 
 def _order() -> Order:

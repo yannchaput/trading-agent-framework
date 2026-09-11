@@ -35,7 +35,7 @@ Layered, broker-agnostic by design:
 - `clock.py` -- `MarketClock` ABC + `MarketSession`: the executor's only source of time and waiting (the seam a future backtest clock plugs into).
 - `brokers/alpaca/account.py` -- **pure** account and calendar translation (same rules as `orders.py`).
 - `brokers/alpaca/clock.py` -- `AlpacaMarketClock`: sessions (early closes included) from Alpaca's calendar, cached ~10 trading days.
-- `strategies/` -- `Strategy` (lumibot hook names/signatures, broker facade, paper/live runners), `StrategyExecutor` (single-threaded session loop), `timing.py` (pure `sleeptime` parsing and tick maths), `events.py` (stream-thread → executor-thread order-event queue).
+- `core/` -- `Strategy` (lumibot hook names/signatures, broker facade, paper/live runners), `StrategyExecutor` (single-threaded session loop), `timing.py` (pure `sleeptime` parsing and tick maths), `events.py` (stream-thread → executor-thread order-event queue).
 - `log.py` -- `ColorLogger` (`log_info`/`log_warning`/... with ANSI colours) and `setup_strategy_logging` (lumibot-style `logs/<strategy>/<mode>/<ts>_<mode>/<mode>.log`).
 
 ## Key patterns / gotchas
