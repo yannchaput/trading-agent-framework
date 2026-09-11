@@ -34,6 +34,22 @@
 7. Exceptions in any lifecycle hook (not only `on_trading_iteration`) are logged, passed to `on_bot_crash`, and trading continues.
 8. `wait_for_order_execution` / `wait_for_orders_execution` return `bool` (`True` when every order reached a final status).
 
+## As-built deviations (discovered during implementation; recorded, not re-litigated)
+
+- **Task 5** created `tests/brokers/alpaca/test_alpaca_account.py`, not the `test_account.py` name given
+  at lines 962/1078 below — that name collides with the pre-existing `tests/entities/test_account.py`
+  (this repo has no `__init__.py` under `tests/`, so pytest needs globally-unique basenames repo-wide).
+  Verified as a real collision and the correct minimal fix by that task's reviewer.
+- **Task 6** created `tests/brokers/alpaca/test_alpaca_clock.py`, not the `test_clock.py` name given at
+  lines 1444/1452/1557 below — same collision reason, against `tests/test_clock.py` from Task 2.
+- **Task 2**'s `MarketClock.now()`/`wait()` (`clock.py`) ended up concrete with live-wall-clock defaults,
+  not abstract as the design spec's §4.1 states. This was never logged as a deliberate deviation at the
+  time; the implementation matches the plan's own Task 2 code, so it's a spec/plan bookkeeping gap, not
+  an implementation defect. Flagged by the final whole-branch review — worth revisiting (restore
+  `@abstractmethod` with a `LiveClock` mixin) before the backtesting subproject starts, so a future
+  `BacktestClock` that forgets to override `now()`/`wait()` fails loudly instead of silently reading the
+  real wall clock.
+
 ## File map
 
 | File | Status | Responsibility |
