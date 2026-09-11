@@ -38,6 +38,7 @@ Layered, broker-agnostic by design:
 - `brokers/alpaca/market_data.py` -- **pure** market-data translation (same rules as `orders.py`): timesteps (`"minute"`/`"day"` only), the calendar-based bars window, IEX request builders, and bar/trade/quote parsing.
 - `brokers/alpaca/clock.py` -- `AlpacaMarketClock`: sessions (early closes included) from Alpaca's calendar, cached ~10 trading days.
 - `core/` -- `Strategy` (lumibot hook names/signatures, broker facade, paper/live runners), `StrategyExecutor` (single-threaded session loop), `timing.py` (pure `sleeptime` parsing and tick maths), `events.py` (stream-thread → executor-thread order-event queue), `indicators.py` (`strategy.indicators.<pandas-ta name>(asset, ...)`, no cache).
+- `memory/` -- agent memory (lumibot's `strategy.memory`): `records.py` (**pure**: ids, JSON, lean items, search scoring), `store.py` (`MemoryStore`, the only SQLite code: append-only `memory_events`, the `memory_index` projection, `memory_retrievals`; one DB per strategy and mode at `memory/<strategy>/<mode>/memory.sqlite`), `tools.py` (lumibot's 9 memory tools as plain typed functions, plus `agent_call_context` for provenance). No LangChain here: the agent layer wraps the tools.
 - `log.py` -- `ColorLogger` (`log_info`/`log_warning`/... with ANSI colours) and `setup_strategy_logging` (lumibot-style `logs/<strategy>/<mode>/<ts>_<mode>/<mode>.log`).
 
 ## Key patterns / gotchas
@@ -54,6 +55,9 @@ Layered, broker-agnostic by design:
 - `tests/conftest.py` resets package logging after every test; `setup_strategy_logging` disables propagation, which would otherwise starve other tests' `caplog`.
 - Env file resolution and naming conventions (`env/.env.{strategy}.{mode}`) are documented in `env/README.md` -- read that before adding new env-dependent config rather than re-deriving it here.
 - **Market data:** `get_last_price` is the last *trade* (not the quote midpoint; use `get_quote(...).mid`). Every data request uses the IEX feed; bars are split/dividend-adjusted. `get_bars` makes one `get_calendar` call to start its window at the right session. Nothing is cached: every call hits the API (200 requests/min on the free IEX plan).
+- **Memory tools are token-budgeted.** They return lean payloads (`{id, kind, status}`, or lean search items without metadata) and have one-line docstrings, because both reach the LLM on every call. Weigh the token cost before adding a field. Validation problems come back as `{"error": ...}`; database failures raise `MemoryStoreError`. `tools.py` deliberately has no `from __future__ import annotations` (the agent layer reads real annotations).
+- **`MemoryStore` never knows `Strategy`.** It gets time from injected `now` / `wall_clock` callables (the strategy passes `clock.now`) and held positions as `HeldPosition` arguments to `compact_state`. Keep it that way so the store stays testable and backtest-clock friendly.
+- **Backtesting memory is wiped** at the first `strategy.memory` access of every backtest run (`fresh=True`), so one run's lessons can't leak into the next. Paper and live memory are never wiped.
 
 ## Development workflow
 
