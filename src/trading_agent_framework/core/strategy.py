@@ -19,6 +19,7 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.clock import MarketClock
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.executor import StrategyExecutor
+from trading_agent_framework.core.indicators import Indicators
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.enums import (
@@ -87,6 +88,7 @@ class Strategy:
         self.vars = SimpleNamespace()
         self.first_iteration = True
         self._log = ColorLogger(logger, self.name)
+        self._indicators: Indicators | None = None
         self.executor = StrategyExecutor(self)
 
     @property
@@ -96,6 +98,13 @@ class Strategy:
     @property
     def is_backtesting(self) -> bool:
         return self.trading_mode is TradingMode.BACKTESTING
+
+    @property
+    def indicators(self) -> Indicators:
+        """pandas-ta-classic indicators over this strategy's bars, e.g. `indicators.sma(a, length=20)`."""
+        if self._indicators is None:
+            self._indicators = Indicators(self)
+        return self._indicators
 
     # --- lifecycle hooks -------------------------------------------------------
 

@@ -375,6 +375,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pandas-ta-classic"
+version = "0.6.52"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "pandas" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/88/439fb35fe42bf458623e21e4e7bc62408e4f0cd4cd9ac387806510db2e01/pandas_ta_classic-0.6.52-py3-none-any.whl", hash = "sha256:53956dde8969b8a1ac1cda7ee514c74b4af65d802387353814814ac2e1d949e2", size = 396905, upload-time = "2026-06-24T15:23:48.248Z" },
+]
+
+[[package]]
 name = "pluggy"
 version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
@@ -571,6 +583,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
+    { name = "pandas-ta-classic" },
     { name = "python-dotenv" },
 ]
 
@@ -584,6 +597,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alpaca-py", specifier = ">=0.44.0,<0.45" },
+    { name = "pandas-ta-classic", specifier = ">=0.6.52,<0.7" },
     { name = "python-dotenv", specifier = ">=1.2" },
 ]
 
