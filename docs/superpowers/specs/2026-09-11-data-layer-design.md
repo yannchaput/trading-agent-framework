@@ -129,7 +129,7 @@ doesn't touch the "money is Decimal" rule — scalar prices (`get_last_price`, `
 |---|---|
 | `get_last_price(asset: Asset) -> Decimal \| None` | `StockLatestTradeRequest` → `get_stock_latest_trade` (last **traded** price — see §6.2) |
 | `get_last_prices(assets: Sequence[Asset]) -> dict[Asset, Decimal \| None]` | one multi-symbol `StockLatestTradeRequest` call |
-| `get_quote(asset: Asset) -> Quote` | `StockLatestQuoteRequest` → `get_stock_latest_quote` |
+| `get_quote(asset: Asset) -> Quote \| None` | `StockLatestQuoteRequest` → `get_stock_latest_quote` (`None` when Alpaca has no quote for the symbol, see §12) |
 | `get_bars(assets: Sequence[Asset], length: int, timestep: str = "day", *, include_after_hours: bool = True) -> dict[Asset, Bars]` | `StockBarsRequest` → `get_stock_bars`, chunked at 150 symbols per call |
 
 No `quote=`/`exchange=` parameters (lumibot carries these for crypto quote-currency and futures-exchange
@@ -179,13 +179,12 @@ different client class. `AlpacaBroker.from_credentials` builds both.
   (`opening_range_breakout` uses `"minute"`, cross-momentum strategies use `"day"`; nothing uses a
   multi-timeframe string like `"5minute"`). Lumibot's multi-format parser/resampler is not ported — add a
   specific timestep the day a real strategy needs one.
-- `_bars_start(end: datetime, length: int, timestep: str) -> datetime`: a generous calendar-day buffer
-  back from `end` (`length` trading days ≈ `length * 1.6 + 10` calendar days for `"day"`; `length` minutes
-  ≈ `ceil(length / 390) * 1.6 + 10` calendar days for `"minute"`, 390 being minutes in a regular trading
-  session). This over-fetches on purpose — `parse_bars_response` truncates to the last `length` rows after
-  fetching (see below), so the buffer only needs to be generous, never exact. This is the same
-  over-fetch-then-truncate strategy lumibot uses, without needing a trading-calendar dependency to compute
-  exact trading-day boundaries.
+- ~~`_bars_start(end, length, timestep)`: a generous calendar-day buffer (`length * 1.6 + 10` days)~~ —
+  **superseded during planning (§12.1):** the window start comes from the Alpaca trading calendar.
+  `sessions_needed(length, timestep)` is `length + 1` for `"day"` and `ceil(length / 390) + 1` for
+  `"minute"` (the `+1` covers a partial current session); `bars_start(end, length, timestep, sessions)`
+  returns midnight (market time) of the earliest needed session, so that day's pre-market bars are
+  included. The parser still truncates to the last `length` rows.
 - `build_bars_request(symbols, length, timestep, end) -> StockBarsRequest`, `build_last_trade_request`,
   `build_latest_quote_request`: thin request builders, `feed=DataFeed.IEX` always set.
 - `parse_bars_response(response, assets_by_symbol, timestep, length, include_after_hours) -> dict[Asset, Bars]`:
@@ -199,7 +198,7 @@ different client class. `AlpacaBroker.from_credentials` builds both.
 
 ### 6.4 `broker.py`
 
-Owns the `StockHistoricalDataClient` (built once, lazily, like the existing trading client). Each method is
+Holds the `StockHistoricalDataClient`, injected through the constructor (§12.3). Each method is
 I/O + `market_data.py` calls + `BrokerError` wrapping — no translation logic of its own, per the existing
 "broker.py contains no translation logic itself" rule.
 
@@ -208,7 +207,7 @@ I/O + `market_data.py` calls + `BrokerError` wrapping — no translation logic o
 ```python
 def get_last_price(self, asset: Asset | str) -> Decimal | None: ...
 def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]: ...
-def get_quote(self, asset: Asset | str) -> Quote: ...
+def get_quote(self, asset: Asset | str) -> Quote | None: ...
 
 def get_historical_prices(
     self, asset: Asset | str, length: int, timestep: str = "day", *, include_after_hours: bool = True
@@ -349,3 +348,25 @@ TDD throughout, no network, following `tests/fakes.py`'s existing conventions.
    (the default) around that time; `Indicators` already forwards `include_after_hours` through to
    `get_historical_prices` (§8), so `strategy.indicators.sma(asset, timestep="minute", length=20)` is
    warmed up with pre-market bars by default without any extra parameter.
+
+## 12. Amendments made while writing the implementation plan
+
+1. **Bars window from the trading calendar** (user decision). The `length * 1.6 + 10` calendar-day
+   buffer would pull ~12 days of minute data for a 30-bar request (hundreds of thousands of bars for a
+   150-symbol scan). Instead `AlpacaBroker.get_bars` makes one `get_calendar` call (reusing `account.py`'s
+   `build_calendar_request`/`parse_calendar`) and starts the window at the Nth-previous session (§6.3).
+   The same sessions drive the `include_after_hours=False` filter, so early closes (13:00) are handled
+   correctly instead of a hard-coded 9:30–16:00 mask.
+2. **`get_quote` returns `Quote | None`**, following §5's own rule that "no data" is `None` and a failed
+   call is `BrokerError`.
+3. **The data client is injected**, not built lazily: `AlpacaBroker(..., data_client=...)`, built by
+   `from_credentials` via `build_stock_data_client`. Data methods raise `BrokerError` when no data client
+   was given, like `start_stream` does without a stream.
+4. **Public pure-function names** in `market_data.py` (`parse_timestep`, `sessions_needed`, `bars_start`,
+   ...), matching `orders.py`'s style (`map_status`, `round_price`), since tests call them directly.
+5. **Bars are split- and dividend-adjusted** (`Adjustment.ALL`), mirroring lumibot's default
+   (`AlpacaData._auto_adjust = True`), so indicators don't see artificial jumps at splits.
+6. **A zero or missing bid/ask becomes `None`** in `Quote` (Alpaca reports an empty side as 0; lumibot
+   guards the same way with a truthiness check), so `Quote.mid` is never computed from a fake zero.
+7. **Test factories:** `bar_payload`/`make_alpaca_barset`/`make_alpaca_trade`/`make_alpaca_quote` in
+   `tests/fakes.py` (alpaca-py builds `BarSet` from raw payload dicts, so a per-bar model factory isn't needed).
