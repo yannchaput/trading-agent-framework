@@ -174,6 +174,13 @@ def test_remember_proposal(tmp_path: Path) -> None:
     assert _events(store)[-1]["event_type"] == "proposal.recorded"
 
 
+def test_explicit_symbol_argument_wins_over_a_conflicting_metadata_symbol(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    item = store.remember_proposal("Buy SPY", symbol="SPY", metadata={"symbol": "QQQ"})
+    assert item["symbol"] == "SPY"
+    assert _events(store)[-1]["symbol"] == "SPY"
+
+
 def test_remember_risk_note(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     item = store.remember_risk_note("Earnings next week", symbol="SPY", metadata={"src": "cal"})
