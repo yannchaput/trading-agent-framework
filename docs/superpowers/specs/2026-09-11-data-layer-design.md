@@ -299,9 +299,10 @@ around this accessor, out of scope per §1.
 
 TDD throughout, no network, following `tests/fakes.py`'s existing conventions.
 
-- `tests/brokers/alpaca/test_market_data.py`: pure-function tests for `_parse_timestep`, `_bars_start`,
-  request builders, and response parsers, using new `make_alpaca_bar`/`make_alpaca_quote`/`make_alpaca_trade`
-  factories in `tests/fakes.py` (real `alpaca.data.models` objects, same pattern as `make_alpaca_order`).
+- `tests/brokers/alpaca/test_market_data.py`: pure-function tests for `parse_timestep`,
+  `calendar_lookback_start`/`bars_start` (the calendar-based window, §12.1), request builders, and response
+  parsers, using new `make_alpaca_bar`/`make_alpaca_quote`/`make_alpaca_trade` factories in `tests/fakes.py`
+  (real `alpaca.data.models` objects, same pattern as `make_alpaca_order`).
   Covers: the after-hours filter-then-truncate ordering, chunking at 150 symbols, unknown-timestep `ValueError`.
 - `tests/brokers/alpaca/test_broker_market_data.py`: `AlpacaBroker`'s new methods against a new
   `FakeStockHistoricalDataClient` (same shape as the existing `FakeTradingClient`), including `BrokerError`
@@ -322,8 +323,9 @@ TDD throughout, no network, following `tests/fakes.py`'s existing conventions.
 - Manual script `scripts/tests/smoke_alpaca_data.py`, following `smoke_alpaca_orders.py`'s conventions: runs
   against real paper credentials, calls `get_last_price`, `get_quote`, `get_historical_prices` (both
   timesteps), `get_historical_prices_for_assets` on a couple of symbols, and one `indicators.sma(...)` /
-  `indicators.bbands(...)` call — logs the results for manual inspection. This is also where the `_bars_start`
-  buffer heuristic gets its first real-world check (confirms the over-fetch is generous enough, and that
+  `indicators.bbands(...)` call — logs the results for manual inspection. This is also where the
+  calendar-based window (`calendar_lookback_start`/`bars_start`, §12.1) gets its first real-world check
+  (confirms the trading-calendar lookup lands on the right session boundaries, and that
   `include_after_hours=False` actually trims the expected rows on real IEX minute data).
 
 ## 11. Other decisions

@@ -153,6 +153,16 @@ def test_get_bars_rejects_an_unknown_timestep_before_any_request() -> None:
     assert data.bars_requests == []
 
 
+def test_get_bars_with_no_assets_makes_no_network_calls() -> None:
+    data = _data_with_minutes()
+    trading = _trading_with_calendar()
+
+    assert _broker(data, trading).get_bars([], 5, "day") == {}
+
+    assert trading.calendar_requests == []
+    assert data.bars_requests == []
+
+
 # --- failures --------------------------------------------------------------------
 
 

@@ -21,7 +21,6 @@ from alpaca.data.requests import (
     StockLatestTradeRequest,
 )
 from alpaca.data.timeframe import TimeFrame
-from pandas.core.indexes.datetimes import DatetimeIndex
 
 from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
 from trading_agent_framework.clock import MarketSession
@@ -143,13 +142,14 @@ def parse_bars(
 
     When `sessions` is given, only bars inside them are kept (so early closes are handled).
     This filter runs before truncating, so the caller gets `length` in-session bars
-    whenever the feed has that many.
+    whenever the feed has that many. No-op for `"day"` bars, which Alpaca timestamps at
+    midnight market time -- always outside any session's 09:30-16:00 window.
     """
     data = cast(Mapping[str, Sequence[object]], _field(barset, "data") or {})
     result: dict[Asset, Bars] = {}
     for asset in assets:
         df = _bars_frame(data.get(asset.symbol) or [])
-        if sessions is not None:
+        if sessions is not None and timestep != "day":
             df = _within_sessions(df, sessions)
         df = df.iloc[-length:]
         if not df.empty:
@@ -159,7 +159,7 @@ def parse_bars(
 
 def _bars_frame(rows: Sequence[object]) -> pd.DataFrame:
     """The float64 boundary for bars (see `entities/bars.py`): indicators want native floats."""
-    index: DatetimeIndex = pd.to_datetime([_field(row, "timestamp") for row in rows], utc=True)  # type: ignore[assignment]
+    index = pd.to_datetime([_field(row, "timestamp") for row in rows], utc=True)
     columns = {name: [float(cast(float, _field(row, name))) for row in rows] for name in _OHLCV}
     df = pd.DataFrame(columns, index=index.tz_convert(MARKET_TZ), dtype="float64")
     df.index.name = "timestamp"

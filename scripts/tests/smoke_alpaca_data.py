@@ -91,6 +91,16 @@ def main() -> int:
     assert day is not None
     print(f"daily bars: {day.df.index[0]} .. {day.df.index[-1]}\n{day.df.tail(3)}")
 
+    day_regular = strategy.get_historical_prices("SPY", DAY_BARS, "day", include_after_hours=False)
+    _check(day_regular is not None, "no daily bars for SPY with include_after_hours=False")
+    assert day_regular is not None
+    print(f"daily bars, include_after_hours=False: {len(day_regular.df)} bars")
+    _check(
+        len(day_regular.df) == len(day.df),
+        "include_after_hours=False should be a no-op for day bars "
+        f"(got {len(day_regular.df)} vs {len(day.df)})",
+    )
+
     extended = strategy.get_historical_prices("SPY", MINUTE_BARS, "minute")
     regular = strategy.get_historical_prices(
         "SPY", MINUTE_BARS, "minute", include_after_hours=False

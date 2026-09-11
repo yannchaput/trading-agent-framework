@@ -248,6 +248,8 @@ class AlpacaBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        if not assets:
+            return {}
         client = self._require_data_client()
         end = self.clock.now()
         sessions = self._sessions_before(end, length, timestep)

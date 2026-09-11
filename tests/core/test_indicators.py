@@ -36,7 +36,11 @@ def test_single_column_indicators_return_the_latest_value() -> None:
 def test_indicators_receive_every_ohlcv_column() -> None:
     strategy, _ = _strategy()
 
-    assert strategy.indicators.atr("SPY", length=14) == pytest.approx(2.0)
+    # bop needs open/high/low/close (pandas-ta-classic's `open_` param -- regression
+    # coverage for the open/open_ kwarg mismatch); mfi needs high/low/close/volume.
+    # Together every one of the five OHLCV columns is genuinely exercised.
+    assert strategy.indicators.bop("SPY") == pytest.approx(0.0, abs=1e-9)
+    assert strategy.indicators.mfi("SPY", length=14) == pytest.approx(100.0)
 
 
 def test_multi_column_indicators_return_an_indicator_row() -> None:

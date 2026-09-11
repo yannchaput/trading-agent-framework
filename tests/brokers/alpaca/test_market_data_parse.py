@@ -92,6 +92,18 @@ def test_early_close_sessions_drop_bars_after_the_early_close() -> None:
     assert list(bars.df["close"]) == [1.0]
 
 
+def test_day_bars_ignore_the_sessions_filter() -> None:
+    # Daily bars are timestamped at midnight market time, outside every session's
+    # 09:30-16:00 window -- the filter must be a no-op for "day" bars (spec §6.3).
+    barset = make_alpaca_barset(
+        {"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]}
+    )
+
+    bars = parse_bars(barset, [AAPL], "day", 5, sessions=_SESSION)[AAPL]
+
+    assert list(bars.df["close"]) == [10.0, 11.0]
+
+
 def test_assets_without_bars_are_left_out() -> None:
     barset = make_alpaca_barset({"AAPL": _MINUTES, "MSFT": []})
 

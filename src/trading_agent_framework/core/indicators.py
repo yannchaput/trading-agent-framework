@@ -75,7 +75,9 @@ class Indicators:
             )
 
         def compute(df: pd.DataFrame, **kwargs: Any) -> object:
-            return function(**{column: df[column] for column in _OHLCV}, **kwargs)
+            series = {column: df[column] for column in _OHLCV}
+            series["open_"] = series["open"]  # pandas-ta-classic's name for ~20 indicators
+            return function(**series, **kwargs)
 
         def indicator(asset: Asset | str, timestep: str = "day", **kwargs: Any) -> IndicatorValue:
             return self._evaluate(name, compute, asset, timestep, kwargs)
