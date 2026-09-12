@@ -250,7 +250,7 @@ __all__ = ["LLMCredentials"]
 - [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `uv run pytest tests/agents/test_agent_config.py -v`
-Expected: PASS (7 tests).
+Expected: PASS (12 tests — two of the test functions are parametrized).
 
 - [ ] **Step 7: Lint and commit**
 
