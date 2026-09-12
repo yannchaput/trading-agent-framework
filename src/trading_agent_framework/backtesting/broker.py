@@ -7,12 +7,14 @@ half below the "--- fills" marker.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from typing import ClassVar
+from uuid import uuid4
 
 from trading_agent_framework.backtesting import fills
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
@@ -22,7 +24,7 @@ from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
-from trading_agent_framework.entities.enums import OrderEvent, OrderSide, PositionSide
+from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
@@ -109,11 +111,20 @@ class BacktestBroker(Broker):
     ) -> Order:
         if order.identifier not in self._pending:
             raise BacktestError(f"order {order.identifier} is not pending; cannot modify")
-        if limit_price is not None:
-            order.limit_price = limit_price
-        if stop_price is not None:
-            order.stop_price = stop_price
-        return order
+        replacement = dataclasses.replace(
+            order,
+            identifier=uuid4().hex,
+            limit_price=limit_price if limit_price is not None else order.limit_price,
+            stop_price=stop_price if stop_price is not None else order.stop_price,
+            status=OrderStatus.UNPROCESSED,
+            transactions=[],
+            filled_quantity=Decimal(0),
+        )
+        pending = self._pending.pop(order.identifier)
+        pending.order = replacement
+        self._pending[replacement.identifier] = pending
+        self.tracker.mark_replaced(order, replacement)
+        return replacement
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         position = self._positions.get(asset)

@@ -11,7 +11,7 @@ from trading_agent_framework.backtesting.clock import BacktestClock
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.utils.errors import OrderValidationError
+from trading_agent_framework.utils.errors import BacktestError, OrderValidationError
 
 AAPL = Asset("AAPL")
 NOW = datetime(2026, 1, 5, 16, tzinfo=UTC)
@@ -70,9 +70,36 @@ def test_modify_order_updates_the_pending_orders_prices() -> None:
     assert replacement.limit_price == Decimal(145)
 
 
-def test_modify_order_on_an_unpending_order_raises() -> None:
-    from trading_agent_framework.utils.errors import BacktestError
+def test_modify_order_returns_a_distinct_replacement_and_re_keys_pending() -> None:
+    broker = _broker()
+    order = broker.submit_order(
+        Order(
+            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
+            quantity=Decimal(10), limit_price=Decimal(140), stop_price=Decimal(130),
+        )
+    )
+    old_identifier = order.identifier
 
+    replacement = broker.modify_order(order, limit_price=Decimal(145))
+
+    assert replacement is not order
+    assert replacement.identifier != old_identifier
+    assert replacement.limit_price == Decimal(145)
+    assert replacement.stop_price == Decimal(130)
+
+    # the new identifier is now the one findable via pull_order and as pending;
+    # the old identifier is still tracked (now canceled, per mark_replaced) but
+    # no longer resolves to a pending order.
+    assert broker.pull_order(replacement.identifier) == replacement
+    assert old_identifier not in broker._pending
+    assert replacement.identifier in broker._pending
+
+    # the old order object is no longer resolvable as pending under itself
+    with pytest.raises(BacktestError):
+        broker.modify_order(order, limit_price=Decimal(150))
+
+
+def test_modify_order_on_an_unpending_order_raises() -> None:
     broker = _broker()
     order = Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
     with pytest.raises(BacktestError):
