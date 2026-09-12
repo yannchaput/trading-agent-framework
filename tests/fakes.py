@@ -36,6 +36,7 @@ from alpaca.trading.requests import (
     OrderRequest,
     ReplaceOrderRequest,
 )
+from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.entities.account import AccountBalances
@@ -615,3 +616,16 @@ def memory_rows(
         return [dict(row) for row in conn.execute(sql, params)]
     finally:
         conn.close()
+
+
+class FakeToolCallingChatModel(GenericFakeChatModel):
+    """`GenericFakeChatModel` with `bind_tools` stubbed out.
+
+    The base class doesn't implement tool binding (it raises `NotImplementedError`), but
+    `create_agent` always calls `model.bind_tools(...)` when the agent has tools. This fake
+    scripts its responses directly via `messages`, so it doesn't need real tool-schema binding --
+    returning `self` unchanged is enough.
+    """
+
+    def bind_tools(self, tools: object, **kwargs: object) -> FakeToolCallingChatModel:
+        return self
