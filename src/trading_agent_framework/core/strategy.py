@@ -16,7 +16,7 @@ from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
 from trading_agent_framework.brokers.base import Broker
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
 from trading_agent_framework.entities.asset import Asset
@@ -31,6 +31,7 @@ from trading_agent_framework.entities.enums import (
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
+from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MarketClock
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
@@ -89,6 +90,8 @@ class Strategy:
         self.first_iteration = True
         self._log = ColorLogger(logger, self.name)
         self._indicators: Indicators | None = None
+        self._memory: MemoryStore | None = None
+        self._memory_mode: TradingMode | None = None
         self.executor = StrategyExecutor(self)
 
     @property
@@ -105,6 +108,23 @@ class Strategy:
         if self._indicators is None:
             self._indicators = Indicators(self)
         return self._indicators
+
+    @property
+    def memory(self) -> MemoryStore:
+        """Agent memory for this strategy and trading mode (lumibot's `strategy.memory`).
+
+        Opened lazily at `memory/<strategy>/<mode>/memory.sqlite`; a backtest run starts empty.
+        """
+        if self._memory is None or self._memory_mode is not self.trading_mode:
+            root = self.project_root if self.project_root is not None else find_project_root()
+            self._memory = MemoryStore(
+                memory_db_path(root, self.name, self.trading_mode),
+                strategy_name=self.name,
+                now=self.clock.now,
+                fresh=self.is_backtesting,
+            )
+            self._memory_mode = self.trading_mode
+        return self._memory
 
     # --- lifecycle hooks -------------------------------------------------------
 
