@@ -72,3 +72,11 @@ def test_weekday_sessions_skip_weekends() -> None:
     sessions = weekday_sessions(date(2026, 9, 18), 2)  # Friday
     assert [s.open.date() for s in sessions] == [date(2026, 9, 18), date(2026, 9, 21)]
     assert sessions[0].open.tzinfo is ET
+
+
+def test_market_clock_default_max_wait_slice_is_60_seconds() -> None:
+    class ConcreteClock(MarketClock):
+        def next_session(self) -> MarketSession | None:
+            return None
+
+    assert ConcreteClock().max_wait_slice == 60.0

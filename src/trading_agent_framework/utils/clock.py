@@ -35,6 +35,10 @@ class MarketClock(ABC):
     """Time source and session calendar for the strategy executor."""
 
     tz: ZoneInfo = MARKET_TZ
+    # Correction cadence for an open-ended wait, e.g. after a suspended laptop.
+    # A simulated clock (BacktestClock) overrides this to math.inf: nothing needs
+    # correcting when time never actually passes.
+    max_wait_slice: float = 60.0
 
     def now(self) -> datetime:
         return datetime.now(self.tz)
