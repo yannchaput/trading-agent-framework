@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -84,6 +84,58 @@ def test_a_download_failure_raises_backtest_data_error() -> None:
     source = YahooBacktestData(START, END, download=failing_download)
     with pytest.raises(BacktestDataError, match="AAPL"):
         source.bars(AAPL, END, 1, "day")
+
+
+def test_missing_yfinance_dependency_raises_backtest_data_error() -> None:
+    """No `download` injected and no real yfinance installed in this environment
+    (see repo note in CLAUDE.md about lazy yfinance import): the real
+    `_real_download()` path's `import yfinance` must not leak a raw
+    ModuleNotFoundError out of the public `bars()` method."""
+    source = YahooBacktestData(START, END)
+    with pytest.raises(BacktestDataError, match="yfinance"):
+        source.bars(AAPL, END, 1, "day")
+
+
+def test_an_injected_download_raising_module_not_found_is_wrapped() -> None:
+    """Same failure mode as above, reproduced via an injected `download` so the
+    test doesn't depend on yfinance actually being absent."""
+
+    def missing_yfinance(symbol: str, **kwargs: object) -> pd.DataFrame:
+        raise ModuleNotFoundError("No module named 'yfinance'")
+
+    source = YahooBacktestData(START, END, download=missing_yfinance)
+    with pytest.raises(BacktestDataError, match="yfinance"):
+        source.bars(AAPL, END, 1, "day")
+
+
+def test_a_malformed_raw_frame_raises_backtest_data_error() -> None:
+    def bad_download(symbol: str, **kwargs: object) -> pd.DataFrame:
+        # Missing "close"/"volume" columns -- parse_yahoo_frame's column
+        # selection must raise a KeyError here.
+        return pd.DataFrame({"Open": [150.0]}, index=pd.date_range("2026-01-05", periods=1))
+
+    source = YahooBacktestData(START, END, download=bad_download)
+    with pytest.raises(BacktestDataError, match="AAPL"):
+        source.bars(AAPL, END, 1, "day")
+
+
+def test_load_honors_its_own_start_and_end_arguments() -> None:
+    """load()'s start/end must reach the download call, not the constructor's
+    fixed window -- CachedDataSource trusts load()'s own window when it derives
+    a cache file's path."""
+    calls: list[dict] = []
+
+    def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
+        calls.append(kwargs)
+        return _raw_yahoo_frame()
+
+    other_start = datetime(2026, 2, 1, tzinfo=UTC)
+    other_end = datetime(2026, 2, 10, tzinfo=UTC)
+    source = YahooBacktestData(START, END, download=fake_download)
+    source.load([AAPL], other_start, other_end, "day")
+
+    assert calls[0]["start"] == other_start.date().isoformat()
+    assert calls[0]["end"] == (other_end.date() + timedelta(days=1)).isoformat()
 
 
 def test_minute_timestep_is_not_supported() -> None:

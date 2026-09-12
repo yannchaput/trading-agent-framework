@@ -41,14 +41,14 @@ class YahooBacktestData(BacktestDataSource):
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
         for asset in assets:
-            self._fetch(asset, timestep)
+            self._fetch(asset, timestep, start, end)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         if timestep != "day":
             raise BacktestDataError(f"YahooBacktestData only supports timestep='day', got {timestep!r}")
         df = self._frames.get(asset)
         if df is None:
-            df = self._fetch(asset, timestep)
+            df = self._fetch(asset, timestep, self._start, self._end)
         if df is None or df.empty:
             return None
         visible = df[df.index <= cutoff]
@@ -73,19 +73,23 @@ class YahooBacktestData(BacktestDataSource):
             day += timedelta(days=1)
         return sessions
 
-    def _fetch(self, asset: Asset, timestep: str) -> pd.DataFrame | None:
-        download = self._download if self._download is not None else self._real_download()
+    def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
         try:
+            download = self._download if self._download is not None else self._real_download()
             raw = download(
                 asset.symbol,
-                start=self._start.date().isoformat(),
-                end=(self._end.date() + timedelta(days=1)).isoformat(),
+                start=start.date().isoformat(),
+                end=(end.date() + timedelta(days=1)).isoformat(),
                 auto_adjust=True,
                 progress=False,
             )
+            df = parse_yahoo_frame(raw)
+        except ImportError as exc:
+            raise BacktestDataError(
+                "yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra"
+            ) from exc
         except Exception as exc:
             raise BacktestDataError(f"failed to fetch Yahoo data for {asset.symbol}: {exc}") from exc
-        df = parse_yahoo_frame(raw)
         self._frames[asset] = df
         return df
 
