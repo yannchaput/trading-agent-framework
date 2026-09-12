@@ -176,3 +176,43 @@ def test_write_metrics_wraps_io_failures(tmp_path: Path) -> None:
     blocker.write_text("x", encoding="utf-8")
     with pytest.raises(BacktestDataError):
         report.write_metrics(blocker, {"raw": {}})
+
+
+def test_write_settings_wraps_non_finite_floats_instead_of_raising_raw_value_error(
+    tmp_path: Path,
+) -> None:
+    from trading_agent_framework.utils.errors import BacktestDataError
+
+    # settings is an arbitrary caller-supplied dict (e.g. "parameters" from strategy
+    # config) -- write_settings must not let json.dumps's raw ValueError on a
+    # non-finite float escape unwrapped.
+    settings = {"name": "x", "risk_free_rate": float("nan")}
+    with pytest.raises(BacktestDataError):
+        report.write_settings(tmp_path, settings)
+
+
+def test_write_equity_with_empty_ledger_produces_a_valid_empty_file(tmp_path: Path) -> None:
+    path = report.write_equity(tmp_path, Ledger())
+    df = pd.read_parquet(path)
+    for column in ("portfolio_value", "cash", "positions_value", "return", "benchmark_close"):
+        assert column in df.columns
+    assert len(df) == 0
+
+
+def test_write_trades_with_empty_ledger_produces_a_valid_empty_file(tmp_path: Path) -> None:
+    path = report.write_trades(tmp_path, Ledger())
+    df = pd.read_parquet(path)
+    for column in (
+        "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
+        "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+    ):
+        assert column in df.columns
+    assert len(df) == 0
+
+
+def test_write_indicators_with_empty_ledger_produces_a_valid_empty_file(tmp_path: Path) -> None:
+    path = report.write_indicators(tmp_path, Ledger())
+    df = pd.read_parquet(path)
+    for column in ("datetime", "name", "value", "color", "style", "plot_name"):
+        assert column in df.columns
+    assert len(df) == 0

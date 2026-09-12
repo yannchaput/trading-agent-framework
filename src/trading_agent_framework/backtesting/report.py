@@ -77,8 +77,12 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
         # itself: callers must already have replaced inf/nan (see _sanitize_json)
         # before this point; this just turns "we missed one" into a loud, immediate
         # ValueError instead of a silent non-standard JSON token in the output file.
+        # write_settings has no sanitize-first step of its own (unlike write_metrics),
+        # so a non-finite float anywhere in a caller-supplied dict (e.g. "parameters")
+        # hits this ValueError -- caught here so it comes out as BacktestDataError
+        # like every other failure in this module, not a raw stdlib exception.
         path.write_text(json.dumps(payload, indent=2, default=str, allow_nan=False), encoding="utf-8")
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         raise BacktestDataError(f"failed to write {path}: {exc}") from exc
     return path
 
@@ -105,6 +109,21 @@ def write_metrics(run_dir: Path, metrics: dict[str, Any]) -> Path:
     return _write_json(run_dir / "metrics.json", payload)
 
 
+# Explicit column lists for the three row-list-of-dicts -> DataFrame conversions
+# below. Passing `columns=` to the DataFrame constructor (rather than letting it
+# infer columns from the dicts) keeps the output schema identical whether `rows`
+# is empty or not -- an empty `ledger.equity`/`fills`/`lines` (a genuinely
+# completed but trade-less/data-less backtest run) must still produce a
+# well-formed, zero-row parquet file with the dashboard's expected columns,
+# not a KeyError (write_equity's set_index) or a columns-less frame.
+_EQUITY_COLUMNS = ("datetime", "portfolio_value", "cash", "positions_value", "benchmark_close")
+_TRADE_COLUMNS = (
+    "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
+    "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+)
+_INDICATOR_COLUMNS = ("datetime", "name", "value", "color", "style", "plot_name")
+
+
 def write_equity(run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decimal] | None = None) -> Path:
     import pandas as pd
 
@@ -118,7 +137,7 @@ def write_equity(run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decima
         }
         for sample in ledger.equity
     ]
-    df = pd.DataFrame(rows).set_index("datetime").sort_index()
+    df = pd.DataFrame(rows, columns=_EQUITY_COLUMNS).set_index("datetime").sort_index()
     df["return"] = df["portfolio_value"].pct_change()
     df["benchmark_return"] = df["benchmark_close"].pct_change() if benchmark else pd.Series(dtype="float64")
     return _write_parquet(run_dir / "equity.parquet", df)
@@ -137,7 +156,7 @@ def write_trades(run_dir: Path, ledger: Ledger) -> Path:
         }
         for f in ledger.fills
     ]
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=_TRADE_COLUMNS)
     return _write_parquet(run_dir / "trades.parquet", df)
 
 
@@ -151,7 +170,7 @@ def write_indicators(run_dir: Path, ledger: Ledger) -> Path:
         }
         for line in ledger.lines
     ]
-    df = pd.DataFrame(rows)
+    df = pd.DataFrame(rows, columns=_INDICATOR_COLUMNS)
     return _write_parquet(run_dir / "indicators.parquet", df)
 
 
