@@ -1,6 +1,7 @@
 # TODOS
 
 ## General
+* Migrate projects to the 2nd hard dreive (with the models)
 * Enable IBKR broker
 * Make a factory out of the various cross_momentum strategies to select one
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
@@ -10,13 +11,14 @@
 ## MIGRATION
 * ~~Alpaca broker~~
 * ~~Orchestration framework (scheduling, lifecycle,...)~~
-~~* Data and accountig tools~~
-* Agentic framework
+* ~~Data and accountig tools~~
+* ~~Agentic framework - langchain foundation~~
 * Tools
-* Memory
+* ~~Memory~~
 * Account configuration (no short sell, no margin trading)
 * Backtesting (vectorbt)
 * Cache management
+* dashboard
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
