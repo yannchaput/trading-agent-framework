@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from langchain_core.callbacks import CallbackManagerForLLMRun
 from langchain_core.messages import AIMessage, ToolCall
 from tests.fakes import FakeToolCallingChatModel
 
@@ -67,9 +68,7 @@ def test_create_with_no_model_and_no_llm_model_env_raises_configuration_error() 
 
 def test_run_returns_a_text_only_result() -> None:
     manager = _manager()
-    handle = manager.create(
-        name="analyst", system_prompt="be helpful", model=_fake_model([AIMessage("The answer is 42.")])
-    )
+    handle = manager.create(name="analyst", system_prompt="be helpful", model=_fake_model([AIMessage("The answer is 42.")]))
 
     result = handle.run("What is the answer?")
 
@@ -118,13 +117,11 @@ def test_run_with_context_appends_it_to_the_prompt() -> None:
     captured: dict[str, Any] = {}
 
     class RecordingModel(FakeToolCallingChatModel):
-        def _generate(self, messages: list[Any], **kwargs: Any) -> Any:
+        def _generate(self, messages: list[Any], stop: list[str] | None = None, run_manager: CallbackManagerForLLMRun | None = None, **kwargs: Any) -> Any:
             captured["last_human_content"] = messages[-1].content
-            return super()._generate(messages, **kwargs)
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-    handle = manager.create(
-        name="analyst", system_prompt="x", model=RecordingModel(messages=iter([AIMessage("ok")]))
-    )
+    handle = manager.create(name="analyst", system_prompt="x", model=RecordingModel(messages=iter([AIMessage("ok")])))
 
     handle.run("Decide.", context={"symbol": "SPY"})
 
