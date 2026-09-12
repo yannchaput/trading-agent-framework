@@ -47,6 +47,39 @@ def test_market_order_fills_on_the_next_bar_not_the_submission_bar() -> None:
     assert order.identifier not in broker._pending
 
 
+def test_order_submitted_mid_bar_formation_skips_that_bar_and_fills_on_the_one_after() -> None:
+    # Submission happens strictly BEFORE any bar has closed (clock starts before DAY1, the
+    # first bar's close) -- the mid-bar-formation case the boundary-aligned fixture above
+    # can't exercise. The bar that closes at DAY1 is the one "in progress" at submission and
+    # must be skipped; the fill must happen on the bar that closes at DAY2, not DAY1.
+    source = FakeBacktestDataSource()
+    df = make_close_indexed_frame([150.0, 151.0], start=DAY1, freq="1D")
+    source.set_bars(AAPL, df)
+    before_day1 = DAY1 - timedelta(hours=1)
+    clock = BacktestClock(start=before_day1, sessions=[])
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=Decimal(10000))
+    clock.on_advance = broker.on_advance
+
+    order = broker.submit_order(
+        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
+    )
+    assert broker._pending[order.identifier].needs_skip is True
+
+    # DAY1's bar closes: this is the submitting (in-progress) bar -- must be skipped, not filled.
+    clock._now = DAY1
+    broker.on_advance(before_day1, DAY1)
+    assert order.status is OrderStatus.NEW
+    assert order.identifier in broker._pending
+    assert broker._pending[order.identifier].needs_skip is False
+
+    # DAY2's bar closes: the first bar genuinely eligible to fill this order.
+    clock._now = DAY2
+    broker.on_advance(DAY1, DAY2)
+    assert order.status is OrderStatus.FILL
+    assert order.avg_fill_price == Decimal("151.0")
+    assert order.identifier not in broker._pending
+
+
 def test_fill_updates_cash_and_creates_a_long_position() -> None:
     broker, clock, _ = _broker_with_two_bars(budget=Decimal(10000))
     broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))

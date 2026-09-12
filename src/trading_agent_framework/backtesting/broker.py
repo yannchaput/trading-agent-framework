@@ -39,6 +39,11 @@ class _PendingOrder:
     order: Order
     asset: Asset
     last_evaluated: datetime
+    # True when `last_evaluated` was the raw submission instant rather than an exact bar-close
+    # boundary -- i.e. a bar was still forming at submission. The first bar `_process_pending`
+    # finds closing after `last_evaluated` is then that in-progress bar (the submitting bar) and
+    # must be skipped once rather than used to fill: "nothing fills within the submitting bar".
+    needs_skip: bool = False
 
 
 class BacktestBroker(Broker):
@@ -82,8 +87,15 @@ class BacktestBroker(Broker):
             order.client_order_id = f"{self.strategy_name}:{order.identifier}"
         self.tracker.track_unprocessed(order)
         self.tracker.process_trade_event(order, OrderEvent.NEW)
+        now = self.clock.now()
+        found = self._latest_bar_with_time(order.asset, now)
+        # Case 1: a bar closed exactly at `now` -- nothing is mid-formation, so the next bar to
+        # close is already a safe fill bar. Case 2: no bar closed exactly at `now` (either none
+        # has closed yet, or the latest one closed strictly earlier) -- a bar is currently
+        # forming and must be skipped once before any fill (see `_PendingOrder.needs_skip`).
+        needs_skip = found is None or found[1] < now
         self._pending[order.identifier] = _PendingOrder(
-            order=order, asset=order.asset, last_evaluated=self.clock.now()
+            order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip
         )
         return order
 
@@ -232,6 +244,12 @@ class BacktestBroker(Broker):
             if bar_time <= pending.last_evaluated:
                 continue  # no new bar has closed for this asset since we last checked
             pending.last_evaluated = bar_time
+            if pending.needs_skip:
+                # This is the bar that was still forming at submission time -- "nothing fills
+                # within the submitting bar" (design spec section 2/6.1). Skip it once; the
+                # order becomes eligible starting with the next bar found after this one.
+                pending.needs_skip = False
+                continue
             order = pending.order
             try:
                 result = fills.evaluate_fill(
