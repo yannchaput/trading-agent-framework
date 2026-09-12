@@ -56,6 +56,34 @@ def test_compute_metrics_with_a_benchmark_computes_beta_alpha_and_correlation() 
     assert "sharpe_benchmark" in result
 
 
+def test_compute_metrics_sortino_incorporates_a_nonzero_risk_free_rate() -> None:
+    """Regression test for a review finding: compute_metrics called sortino_ratio()
+    with no arguments, so risk_free_rate never reached the Sortino threshold even
+    though the design spec (section 6.5) requires it for Sharpe/Sortino/Treynor. Every
+    other golden-value test in this file uses risk_free_rate=0.0, where the bug is
+    invisible (the zero threshold is correct either way) -- this test uses a nonzero
+    rate and hand-computes the expected ratio independently of vectorbt."""
+    returns = _returns()
+    risk_free_rate = 0.02
+    periods = 252
+    result = compute_metrics(returns, None, timestep="day", risk_free_rate=risk_free_rate)
+
+    daily_rf = risk_free_rate / periods
+    adjusted = returns - daily_rf
+    average_annualized_return = adjusted.mean() * periods
+    downside = adjusted.clip(upper=0.0)
+    downside_risk = float(np.sqrt((downside**2).mean()) * np.sqrt(periods))
+    expected_sortino = float(average_annualized_return / downside_risk)
+
+    assert result["sortino_strategy"] == pytest.approx(expected_sortino, rel=1e-6)
+
+    # Sanity check: the buggy zero-threshold value must differ from the fixed one,
+    # otherwise this test wouldn't actually be exercising the fix.
+    zero_threshold_downside = float(np.sqrt((returns.clip(upper=0.0) ** 2).mean()) * np.sqrt(periods))
+    zero_threshold_sortino = float((returns.mean() * periods) / zero_threshold_downside)
+    assert expected_sortino != pytest.approx(zero_threshold_sortino, rel=1e-6)
+
+
 def test_compute_metrics_skew_and_kurtosis_match_pandas() -> None:
     returns = _returns()
     result = compute_metrics(returns, None, timestep="day", risk_free_rate=0.0)

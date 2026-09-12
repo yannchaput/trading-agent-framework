@@ -18,10 +18,15 @@ convention the rest of this codebase (and the golden-value tests) use. Passing
 `year_freq="{periods}{unit}"` alongside a matching per-bar `freq="1{unit}"` pins
 `accessor.ann_factor` to exactly `periods` (252 for "day"), which is what makes
 `sharpe_ratio`/`annualized`/`annualized_volatility`/`calmar_ratio`/`sortino_ratio`
-match the hand-computed formulas. Also: `sharpe_ratio(risk_free=...)` and
-`omega_ratio(risk_free=...)` treat `risk_free` as a *per-period* rate (subtracted
-directly from each return), not an annual one -- so the annual `risk_free_rate`
-argument is divided by `periods` before being passed in.
+match the hand-computed formulas. Also: `sharpe_ratio(risk_free=...)`,
+`omega_ratio(risk_free=...)`, and `sortino_ratio(required_return=...)` all treat their
+threshold argument as a *per-period* rate (subtracted directly from each return, per
+`vectorbt.returns.nb.sortino_ratio_1d_nb`/`downside_risk_1d_nb`), not an annual one --
+so the annual `risk_free_rate` argument is divided by `periods` before being passed to
+any of them. `sortino_ratio()` with no argument silently defaults `required_return` to
+0.0, which is why an earlier version of this module that omitted the argument computed
+Sortino against a zero threshold regardless of `risk_free_rate` -- invisible in tests
+that only ever passed `risk_free_rate=0.0`.
 """
 
 from __future__ import annotations
@@ -59,7 +64,7 @@ def compute_metrics(
         "total_return_strategy": float(accessor.total()),
         "cagr_strategy": float(accessor.annualized()),
         "sharpe_strategy": float(accessor.sharpe_ratio(risk_free=daily_rf)),
-        "sortino_strategy": float(accessor.sortino_ratio()),
+        "sortino_strategy": float(accessor.sortino_ratio(required_return=daily_rf)),
         "calmar_strategy": float(accessor.calmar_ratio()),
         "omega_strategy": float(accessor.omega_ratio(risk_free=daily_rf)),
         "max_drawdown_strategy": float(accessor.max_drawdown()),
@@ -78,7 +83,7 @@ def compute_metrics(
                 "total_return_benchmark": float(bm_accessor.total()),
                 "cagr_benchmark": float(bm_accessor.annualized()),
                 "sharpe_benchmark": float(bm_accessor.sharpe_ratio(risk_free=daily_rf)),
-                "sortino_benchmark": float(bm_accessor.sortino_ratio()),
+                "sortino_benchmark": float(bm_accessor.sortino_ratio(required_return=daily_rf)),
                 "calmar_benchmark": float(bm_accessor.calmar_ratio()),
                 "omega_benchmark": float(bm_accessor.omega_ratio(risk_free=daily_rf)),
                 "max_drawdown_benchmark": float(bm_accessor.max_drawdown()),
