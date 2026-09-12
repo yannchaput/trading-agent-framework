@@ -4,11 +4,13 @@ Fills evaluate one already-closed bar against one order's request. `BacktestBrok
 only ever calls this against a bar that closed strictly after the order was submitted
 (next-bar-open) -- this module has no notion of "which bar" beyond the one it's given.
 
-Fill rules, all "ties resolved pessimistically" (design spec, section 2): when the
-bar's range only *touches* the trigger price, the trader gets exactly that price, not
-a better one; when the bar gaps clean through it, the trader gets the real, unavoidable
-open price -- which is worse for them in every case below (that's what makes it
-pessimistic rather than optimistic).
+Fill rules, all "ties resolved pessimistically" (design spec, section 2):
+1. When the bar's range only *touches* the trigger price (doesn't gap through it),
+   the trader gets exactly that price, not a better one.
+2. When the bar gaps through a LIMIT or STOP_LIMIT-limit price favorably, the trader
+   gets a price improvement (e.g., buy limit at 96, gap open at 90 → fill at 90).
+3. When the bar gaps through a STOP or STOP_LIMIT-stop price, the trader gets a
+   worse fill price (slippage on trigger is unavoidable -- that's the point of a stop).
 
 - MARKET: always fills, at the bar's open.
 - LIMIT buy: fills iff low <= limit_price, at min(open, limit_price).
