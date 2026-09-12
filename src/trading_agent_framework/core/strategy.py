@@ -15,6 +15,8 @@ from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 from typing import Any
 
+from trading_agent_framework.agents.config import LLMCredentials
+from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
@@ -92,6 +94,7 @@ class Strategy:
         self._indicators: Indicators | None = None
         self._memory: MemoryStore | None = None
         self._memory_mode: TradingMode | None = None
+        self._agents: AgentManager | None = None
         self.executor = StrategyExecutor(self)
 
     @property
@@ -125,6 +128,13 @@ class Strategy:
             )
             self._memory_mode = self.trading_mode
         return self._memory
+
+    @property
+    def agents(self) -> AgentManager:
+        """This strategy's LLM agents (lumibot's `strategy.agents`); built on first use."""
+        if self._agents is None:
+            self._agents = AgentManager(LLMCredentials.from_env)
+        return self._agents
 
     # --- lifecycle hooks -------------------------------------------------------
 

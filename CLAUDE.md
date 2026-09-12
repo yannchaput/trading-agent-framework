@@ -39,6 +39,12 @@ Layered, broker-agnostic by design:
 - `brokers/alpaca/clock.py` -- `AlpacaMarketClock`: sessions (early closes included) from Alpaca's calendar, cached ~10 trading days.
 - `core/` -- `Strategy` (lumibot hook names/signatures, broker facade, paper/live runners), `StrategyExecutor` (single-threaded session loop), `timing.py` (pure `sleeptime` parsing and tick maths), `events.py` (stream-thread → executor-thread order-event queue), `indicators.py` (`strategy.indicators.<pandas-ta name>(asset, ...)`, no cache).
 - `memory/` -- agent memory (lumibot's `strategy.memory`): `records.py` (**pure**: ids, JSON, lean items, search scoring), `store.py` (`MemoryStore`, the only SQLite code: append-only `memory_events`, the `memory_index` projection, `memory_retrievals`; one DB per strategy and mode at `memory/<strategy>/<mode>/memory.sqlite`), `tools.py` (lumibot's 9 memory tools as plain typed functions, plus `agent_call_context` for provenance). No LangChain here: the agent layer wraps the tools.
+- `agents/` -- LangChain agent creation/execution (lumibot's `strategy.agents`): `config.py` (**pure**:
+  `LLMCredentials.from_env`, mirrors `AlpacaCredentials`), `results.py` (**pure**: `AgentRunResult`/
+  `ToolCallRecord`, and a duck-typed parser from a LangChain message list), `manager.py`
+  (`AgentManager`/`AgentHandle`, the only place that imports `langchain`/`langchain_openai`, and only
+  inside method bodies). No builtin tools, no MCP/skills: the caller passes `tools=[...]` explicitly (e.g.
+  `memory_tools(self.memory)`).
 - `log.py` -- `ColorLogger` (`log_info`/`log_warning`/... with ANSI colours) and `setup_strategy_logging` (lumibot-style `logs/<strategy>/<mode>/<ts>_<mode>/<mode>.log`).
 
 ## Key patterns / gotchas
@@ -58,6 +64,14 @@ Layered, broker-agnostic by design:
 - **Memory tools are token-budgeted.** They return lean payloads (`{id, kind, status}`, or lean search items without metadata) and have one-line docstrings, because both reach the LLM on every call. Weigh the token cost before adding a field. Validation problems come back as `{"error": ...}`; database failures raise `MemoryStoreError`. `tools.py` deliberately has no `from __future__ import annotations` (the agent layer reads real annotations).
 - **`MemoryStore` never knows `Strategy`.** It gets time from injected `now` / `wall_clock` callables (the strategy passes `clock.now`) and held positions as `HeldPosition` arguments to `compact_state`. Keep it that way so the store stays testable and backtest-clock friendly.
 - **Backtesting memory is wiped** at the first `strategy.memory` access of every backtest run (`fresh=True`), so one run's lessons can't leak into the next. Paper and live memory are never wiped.
+- **`agents/` defers every LangChain import to inside method bodies** (never at module level), mirroring
+  `core/indicators.py`'s deferred `pandas_ta_classic` import -- a strategy that never calls
+  `self.agents.create(...)` never pays for LangChain in memory. `AgentManager` doesn't know `Strategy`
+  either; it takes a `credentials_source` callable (`LLMCredentials.from_env`).
+- **`AgentRunResult.tool_calls[i].result` is a string, not the tool's return value.** LangChain always
+  stringifies (JSON-encodes) a tool's return value into `ToolMessage.content` before it reaches agent code,
+  so the original Python object (e.g. a memory tool's `{id, kind, status}` dict) isn't recoverable there --
+  read it from the tool's own return value directly if you need it as data, not from the agent's result.
 
 ## Development workflow
 
