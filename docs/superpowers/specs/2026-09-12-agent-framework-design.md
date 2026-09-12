@@ -54,7 +54,7 @@ shape as `memory/`):
 | `agents/config.py` | **Pure**, no I/O: `LLMCredentials.from_env()` (reads `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY`), same shape as `config.env.AlpacaCredentials`. | `config/env.py` |
 | `agents/results.py` | **Pure**: `ToolCallRecord`, `AgentRunResult` dataclasses, and the pure function that turns a LangChain message list into an `AgentRunResult`. | stdlib only |
 | `agents/manager.py` | `AgentManager` (the `strategy.agents` object) and `AgentHandle`. The only module that imports `langchain` / `langchain_core` / `langchain_openai`, and only inside method bodies. | `config.py`, `results.py`, `utils/errors.py` |
-| `agents/__init__.py` | Lazy `__getattr__` re-export of `AgentManager`, `AgentHandle`, `AgentRunResult`, `ToolCallRecord`, `LLMCredentials` — same pattern as `brokers/__init__.py`. Importing the package does not import `langchain`. | — |
+| `agents/__init__.py` | Plain eager re-export of `AgentManager`, `AgentHandle`, `AgentRunResult`, `ToolCallRecord`, `LLMCredentials` — same style as `memory/__init__.py`. This is enough (not `brokers/__init__.py`'s lazy `__getattr__`) because `manager.py` itself never imports `langchain` at module level; importing the package still doesn't import `langchain`. | — |
 
 Plus:
 - `utils/errors.py`: new `AgentError(TradingFrameworkError)`.
@@ -72,11 +72,13 @@ Plus:
 - **`AgentHandle` builds its LangChain agent once, at `create()` time**, not on every `run()` — the model
   and tool list are fixed for the handle's lifetime. Re-creating a same-named agent is a caller error
   (`ValueError`, lumibot parity), not a way to reconfigure one.
-- **Tool wrapping is automatic but non-magical.** Any callable in `tools=[...]` that is not already a
-  LangChain `BaseTool` is wrapped with `langchain_core.tools.tool(fn)` before being handed to
-  `create_agent`. This makes `memory_tools(strategy.memory)` (plain typed functions with one-line
-  docstrings) usable as-is; a callable with no docstring or missing type hints fails at `create()` time with
-  whatever error `langchain_core.tools.tool()` raises — not swallowed or special-cased.
+- **No tool wrapping needed.** `create_agent(tools=[...])` accepts plain callables directly (verified against
+  `langchain` 1.4.0's actual signature: `tools: Sequence[BaseTool | Callable[..., Any] | dict[str, Any]]`) —
+  it wraps them internally. `memory_tools(strategy.memory)` (plain typed functions with one-line docstrings,
+  no `@tool` decorator) is passed straight through with zero glue code; verified end-to-end against a fake
+  tool-calling model. A callable with no docstring or missing type hints fails inside `create_agent` itself
+  with whatever error LangChain's own tool conversion raises — not swallowed or special-cased by this
+  framework.
 - **Error wrapping.** Any exception raised while building the chat model or LangChain agent in `create()`
   (e.g. `ChatOpenAI` construction failure, a tool `langchain_core.tools.tool()` can't wrap), or while
   invoking the agent / parsing its response in `run()` (`httpx` connection errors, malformed provider
@@ -167,12 +169,14 @@ class AgentManager:
     or custom `ChatOpenAI` kwargs the credentials shape doesn't expose, builds their own model and skips
     `LLMCredentials` entirely). `timeout_seconds` is ignored in this case — it's the caller's model to
     configure.
-- `tools`: each element that is not already a `BaseTool` is wrapped with `langchain_core.tools.tool(fn)`.
-  Order is preserved (no dedup, no builtin additions).
-- Builds the LangChain agent immediately (`create_agent(model=..., tools=wrapped_tools, system_prompt=system_prompt)`)
-  and stores it on the returned `AgentHandle`. Any exception here (bad model id format, `ChatOpenAI`
-  rejecting the credentials, `langchain_core.tools.tool()` unable to wrap a tool) is caught and re-raised as
-  `AgentError` — see §3.2.
+- `tools`: passed straight through to `create_agent(tools=...)` — no wrapping, no dedup, no builtin
+  additions (§3.2).
+- Builds the LangChain agent immediately (`create_agent(model=..., tools=tools, system_prompt=system_prompt)`)
+  and stores it on the returned `AgentHandle`. `ChatOpenAI` construction does no I/O (verified: no network
+  call happens until the first real request), so failures here are mostly `create_agent`'s own tool
+  conversion errors (e.g. an untyped/undocumented tool) or pydantic validation errors from the model
+  constructor (e.g. a bad `timeout_seconds` type) — caught and re-raised as `AgentError`, same as any
+  `run()`-time failure (§3.2).
 
 ### 5.2 Running
 
@@ -188,9 +192,14 @@ class AgentHandle:
 - Parses the returned message list (`result["messages"]`) into an `AgentRunResult`:
   - `output` = the content of the last `AIMessage`.
   - `tool_calls` = one `ToolCallRecord(name, args, result)` per `AIMessage.tool_calls` entry, matched to its
-    corresponding `ToolMessage` by `tool_call_id`, in call order. A tool call with no matching `ToolMessage`
-    (defensive case — shouldn't happen with a well-behaved `create_agent` loop, but the parser must not
-    crash on it) gets `result=None`.
+    corresponding `ToolMessage` by `tool_call_id`, in call order. `result` is `ToolMessage.content` **as a
+    string, verbatim** — LangChain's tool-execution node always stringifies a tool's return value into
+    `ToolMessage.content` (JSON-encoding a dict/list, plain `str()` otherwise; verified empirically), so the
+    original Python object a tool returned (e.g. `memory_tools()`'s `{"id": ..., "kind": ..., "status": ...}`)
+    is not recoverable as a Python object here — only its rendered text. This is sufficient for the stated
+    purpose (§5.3: logging/audit), and reparsing JSON speculatively would be guessing at a shape this
+    framework doesn't control. A tool call with no matching `ToolMessage` (defensive case — shouldn't happen
+    with a well-behaved `create_agent` loop, but the parser must not crash on it) gets `result=""`.
 - Any exception from `.invoke(...)` (model construction already happened in `create()`, §5.1) is caught and
   re-raised as `AgentError(f"agent {self.name!r} failed: {exc}") from exc`.
 
@@ -201,7 +210,7 @@ class AgentHandle:
 class ToolCallRecord:
     name: str
     args: dict[str, Any]
-    result: Any
+    result: str
 
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
@@ -209,9 +218,9 @@ class AgentRunResult:
     tool_calls: list[ToolCallRecord]
 ```
 
-Pure dataclasses in `agents/results.py`; no LangChain types leak into their fields (`args`/`result` are
-whatever plain JSON-compatible values the tool call carried — `dict`/`list`/`str`/`int`/`float`/`bool`/`None`
-— since every existing tool, e.g. `memory_tools()`, returns exactly that).
+Pure dataclasses in `agents/results.py`; no LangChain types leak into their fields. `args` is the tool-call
+arguments dict LangChain already parses onto `AIMessage.tool_calls` (plain JSON-compatible values); `result`
+is always a `str` — the tool's `ToolMessage.content`, verbatim (§5.2).
 
 ## 6. Strategy wiring
 
@@ -253,21 +262,28 @@ class MyStrategy(Strategy):
 
 ## 7. Testing
 
-pytest, no network, no `MagicMock` (repo convention). LangChain ships a hand-scriptable fake chat model
-(`langchain_core.language_models.fake_chat_models.GenericFakeChatModel`) that returns a pre-loaded sequence
-of messages, including `AIMessage`s with `tool_calls` — used instead of a hand-rolled fake, since it already
+pytest, no network, no `MagicMock` (repo convention). LangChain ships a hand-scriptable fake chat model,
+`langchain_core.language_models.fake_chat_models.GenericFakeChatModel`, that returns a pre-loaded sequence of
+messages (including `AIMessage`s with `tool_calls`) — used instead of a hand-rolled fake, since it already
 satisfies "no network" and produces real LangChain message objects (closer to production than a hand-rolled
 stub would be, and there is nothing repo-specific to fake here the way there is for the Alpaca SDK).
+`GenericFakeChatModel.bind_tools()` raises `NotImplementedError` (verified) — `create_agent` always calls
+`bind_tools()` on the model, so tests use a `FakeToolCallingChatModel(GenericFakeChatModel)` subclass in
+`tests/fakes.py` that overrides `bind_tools(self, tools, **kwargs)` to `return self` unchanged (the fake
+scripts its responses directly; it doesn't need real tool-schema binding).
 
 - `tests/agents/test_agent_config.py` — `LLMCredentials.from_env`: required `LLM_BASE_URL`/`LLM_API_KEY`,
   optional `LLM_MODEL`, blank-string rejection, `ConfigurationError` messages.
 - `tests/agents/test_agent_results.py` — message-list → `AgentRunResult` parsing: plain text-only reply, one
-  tool call, multiple tool calls in order, a tool call with no matching `ToolMessage` (defensive case).
-- `tests/agents/test_agent_manager.py` — `create()`: duplicate name raises, missing model with no
-  `LLM_MODEL` raises, a plain-callable tool gets wrapped and is actually invocable, a `BaseTool` instance
-  passed through unchanged, an already-built `BaseChatModel` bypasses `LLMCredentials` entirely.
-  `__getitem__` / `__contains__` on unknown name. `run()`: happy path against `GenericFakeChatModel` (text
-  only, and with a scripted tool call), and a model/tool exception surfaces as `AgentError`.
+  tool call, multiple tool calls in order (`result` is the raw `ToolMessage.content` string, including a
+  JSON-object payload left un-parsed), a tool call with no matching `ToolMessage` (defensive case, `result=""`).
+- `tests/agents/test_agent_manager.py` — `create()`: duplicate name raises `ValueError`, missing model with
+  no `LLM_MODEL` raises `ConfigurationError`, a plain-callable tool (e.g. one of `memory_tools()`) is
+  accepted and actually invocable through the agent, an already-built `BaseChatModel` bypasses
+  `LLMCredentials` entirely. `__getitem__` / `__contains__` on an unknown name. `run()`: happy path against
+  `FakeToolCallingChatModel` (text only, and with a scripted tool call whose result round-trips through
+  `AgentRunResult`), and a tool exception surfaces as `AgentError` (verified: an unhandled tool exception
+  propagates out of `agent.invoke(...)` as the tool's own exception type, so `run()` must catch broadly).
 - `tests/core/test_strategy_agents.py` — `.agents` is lazy and memoized per instance (mirrors
   `test_strategy_memory.py`'s shape for `.memory`).
 
@@ -284,5 +300,23 @@ manual, environment-specific check the user runs themselves (documented in `CLAU
 
 ## 9. Amendments made while planning
 
-None yet — this section is a placeholder for changes discovered during implementation planning or coding,
-following the convention set by the memory-layer spec (§10 there).
+These override the sections they name. All verified by running real `langchain==1.4.0` /
+`langchain-openai==1.6.2` code in an ephemeral `uv run --with` environment during plan-writing, not assumed.
+
+1. **§3.2 / §5.1 — no manual tool wrapping.** `create_agent(tools=[...])`'s actual signature accepts
+   `Sequence[BaseTool | Callable[..., Any] | dict[str, Any]]` and wraps plain callables itself. Verified
+   `memory_tools(store)`'s plain functions (no `@tool` decorator) work unmodified as `create_agent` tools,
+   end to end through a scripted tool call. `AgentManager.create()` does no wrapping of its own.
+2. **§5.2 / §5.3 — `ToolCallRecord.result` is `str`, not `Any`.** LangChain's tool-execution node always
+   converts a tool's return value into `ToolMessage.content` as a string (JSON-encoding dicts/lists,
+   `str()` otherwise) before it ever reaches agent code — verified with a tool returning a dict. There is no
+   point in the pipeline where the original Python object is recoverable, so `ToolCallRecord.result: str`
+   holds that rendered text verbatim instead of speculatively re-parsing it.
+3. **§5.1 — `ChatOpenAI` construction does no I/O.** Verified: `ChatOpenAI(model=..., base_url=..., api_key=..., timeout=...)`
+   builds successfully offline; no network call happens until the first real request. Failures surfaced by
+   `create()` are therefore `create_agent`'s tool-conversion errors or pydantic validation errors on the
+   model constructor, not connectivity errors — those only ever appear from `run()`'s `.invoke()` call.
+4. **§7 — the test fake needs `bind_tools` overridden.** `GenericFakeChatModel.bind_tools()` raises
+   `NotImplementedError` (it's an abstract stub on `BaseChatModel`), and `create_agent` unconditionally
+   calls `model.bind_tools(...)` when the agent has any tools. Tests use a one-line
+   `FakeToolCallingChatModel(GenericFakeChatModel)` subclass that overrides `bind_tools` to `return self`.
