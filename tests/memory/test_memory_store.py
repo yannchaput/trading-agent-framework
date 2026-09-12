@@ -371,6 +371,37 @@ def test_record_order_submitted_without_a_matching_decision(tmp_path: Path) -> N
     assert payload["order"]["notional"] == "500"
 
 
+def test_record_order_submitted_decision_lookup_filters_by_agent_name(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    other_agent_decision = store.remember_decision(
+        "Buy SPY (analyst)", agent_name="analyst", model_call_id="call-shared"
+    )
+    trader_decision = store.remember_decision(
+        "Buy SPY (trader)", agent_name="trader", model_call_id="call-shared"
+    )
+    order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.BUY, quantity=Decimal(10))
+
+    store.record_order_submitted(order, agent_name="trader", model_call_id="call-shared")
+
+    payload = json.loads(_events(store)[-1]["payload_json"])
+    assert payload["decision_id"] == trader_decision["id"]
+    assert payload["decision_id"] != other_agent_decision["id"]
+
+
+def test_record_order_submitted_decision_lookup_takes_the_latest_of_several(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    store.remember_decision("First thought", agent_name="trader", model_call_id="call-1")
+    latest_decision = store.remember_decision(
+        "Changed my mind", agent_name="trader", model_call_id="call-1"
+    )
+    order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, quantity=Decimal(5))
+
+    store.record_order_submitted(order, agent_name="trader", model_call_id="call-1")
+
+    payload = json.loads(_events(store)[-1]["payload_json"])
+    assert payload["decision_id"] == latest_decision["id"]
+
+
 # --- search -------------------------------------------------------------------------
 
 
