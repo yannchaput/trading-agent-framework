@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -9,6 +11,8 @@ from tests.fakes import FakeToolCallingChatModel
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.manager import AgentHandle, AgentManager
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
+from trading_agent_framework.memory.store import MemoryStore
+from trading_agent_framework.memory.tools import memory_tools
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError
 
 
@@ -88,6 +92,25 @@ def test_run_with_a_tool_call_round_trips_through_the_tool() -> None:
         output="The answer is 3.",
         tool_calls=[ToolCallRecord(name="add", args={"a": 1, "b": 2}, result="3")],
     )
+
+
+def test_a_memory_tool_is_accepted_and_actually_invocable(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "memory.sqlite", strategy_name="s", now=lambda: datetime.now(UTC))
+    manager = _manager()
+    model = _fake_model(
+        [
+            AIMessage(content="", tool_calls=[ToolCall(name="remember", args={"text": "note"}, id="call_1")]),
+            AIMessage(content="Remembered."),
+        ]
+    )
+    handle = manager.create(name="analyst", system_prompt="x", model=model, tools=memory_tools(store))
+
+    result = handle.run("remember this")
+
+    assert result.output == "Remembered."
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "remember"
+    assert '"kind": "memory"' in result.tool_calls[0].result
 
 
 def test_run_with_context_appends_it_to_the_prompt() -> None:

@@ -30,9 +30,9 @@ class AgentHandle:
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         try:
             raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
+            return parse_agent_messages(raw_result["messages"])
         except Exception as exc:
             raise AgentError(f"agent {self.name!r} failed: {exc}") from exc
-        return parse_agent_messages(raw_result["messages"])
 
 
 class AgentManager:
@@ -51,6 +51,14 @@ class AgentManager:
         tools: Sequence[Callable[..., Any] | BaseTool] | None = None,
         timeout_seconds: float | None = None,
     ) -> AgentHandle:
+        """Build and register a named agent; raises `ValueError` if `name` is already taken.
+
+        `timeout_seconds` defaults to `None` -- no request timeout at all, deliberately, since a
+        reasoning-capable local model can legitimately take minutes per call and a
+        framework-imposed default would silently break that use case. It only applies when
+        `model` is a string resolved through `LLMCredentials`; a pre-built `BaseChatModel`
+        instance passed as `model` configures its own timeout and ignores this parameter.
+        """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
 
@@ -68,7 +76,7 @@ class AgentManager:
 
     def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None) -> Any:
         if model is not None and not isinstance(model, str):
-            return model  # already a chat-model instance -- used as-is, LLMCredentials untouched
+            return model  # already a chat-model instance -- used as-is, LLMCredentials and timeout_seconds untouched
 
         try:
             from langchain_openai import ChatOpenAI

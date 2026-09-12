@@ -72,6 +72,12 @@ Layered, broker-agnostic by design:
   stringifies (JSON-encodes) a tool's return value into `ToolMessage.content` before it reaches agent code,
   so the original Python object (e.g. a memory tool's `{id, kind, status}` dict) isn't recoverable there --
   read it from the tool's own return value directly if you need it as data, not from the agent's result.
+- **`Strategy.agents.create(..., timeout_seconds=None)` (the default) means no request timeout at all.**
+  Deliberate: this framework targets slow, reasoning-capable local models that can legitimately take
+  minutes per call, and a framework-imposed default would silently break that use case. The cost: per
+  "Strategy code runs on one thread" above, a hung or OOM'd local LLM server blocks `on_trading_iteration()`
+  -- and therefore order-event hook dispatch -- indefinitely. Pass an explicit `timeout_seconds` if your
+  deployment needs one.
 
 ## Development workflow
 

@@ -49,7 +49,8 @@ def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
                     result=tool_results.get(call["id"], ""),
                 )
             )
-        output = _as_text(message.content)
+        text = getattr(message, "text", None)
+        output = text if isinstance(text, str) else _as_text(message.content)
 
     return AgentRunResult(output=output, tool_calls=tool_calls)
 

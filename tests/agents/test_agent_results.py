@@ -94,3 +94,18 @@ def test_no_ai_messages_gives_empty_output_and_no_tool_calls() -> None:
     result = parse_agent_messages([_human("hello")])
 
     assert result == AgentRunResult(output="", tool_calls=[])
+
+
+def _ai_with_list_content(list_content: list[dict[str, Any]], text: str) -> SimpleNamespace:
+    return SimpleNamespace(content=list_content, tool_calls=[], text=text)
+
+
+def test_list_content_uses_the_text_property_not_the_raw_content() -> None:
+    messages = [
+        _human("describe this"),
+        _ai_with_list_content([{"type": "text", "text": "hello"}], text="hello"),
+    ]
+
+    result = parse_agent_messages(messages)
+
+    assert result.output == "hello"
