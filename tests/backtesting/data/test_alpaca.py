@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
@@ -58,11 +58,13 @@ def test_reindex_to_bar_close_handles_an_empty_frame() -> None:
 def test_bars_fetches_and_reindexes_via_the_injected_clients() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [
-        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06"),
+        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06", close_at="13:00"),
     ]
     data_client = FakeStockHistoricalDataClient()
+    # Daily bars, realistically timestamped at midnight *market time* (EST here:
+    # UTC-5, so 05:00Z), not a fixed 00:00:00Z -- see market_data.py:146.
     data_client.bars["AAPL"] = [
-        bar_payload("2026-01-05T00:00:00Z", 150.0), bar_payload("2026-01-06T00:00:00Z", 151.0),
+        bar_payload("2026-01-05T05:00:00Z", 150.0), bar_payload("2026-01-06T05:00:00Z", 151.0),
     ]
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
@@ -70,8 +72,11 @@ def test_bars_fetches_and_reindexes_via_the_injected_clients() -> None:
 
     assert result is not None
     assert list(result.df["close"]) == [150.0, 151.0]
-    # Reindexed to each session's 16:00 ET close, not midnight.
-    assert result.df.index[0].hour == 16
+    # Each bar lands on its own session's ET calendar date and close time --
+    # the Jan-5 bar on the regular 16:00 close, the Jan-6 bar (early close) on
+    # 13:00 -- proving the date alignment, not just a shared "16:00" hour.
+    assert (result.df.index[0].date(), result.df.index[0].hour) == (date(2026, 1, 5), 16)
+    assert (result.df.index[1].date(), result.df.index[1].hour) == (date(2026, 1, 6), 13)
 
 
 def test_bars_returns_none_for_an_asset_with_no_data() -> None:
@@ -98,7 +103,7 @@ def test_a_calendar_fetch_failure_raises_backtest_data_error() -> None:
     trading_client = FakeTradingClient()
     trading_client.raises["get_calendar"] = RuntimeError("API down")
     data_client = FakeStockHistoricalDataClient()
-    data_client.bars["AAPL"] = [bar_payload("2026-01-05T00:00:00Z", 150.0)]
+    data_client.bars["AAPL"] = [bar_payload("2026-01-05T05:00:00Z", 150.0)]
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
     with pytest.raises(BacktestDataError, match="calendar"):
@@ -111,7 +116,7 @@ def test_a_malformed_bars_response_raises_backtest_data_error() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
     data_client = FakeStockHistoricalDataClient()
-    data_client.bars["AAPL"] = [{"t": "2026-01-05T00:00:00Z"}]  # missing o/h/l/c/v
+    data_client.bars["AAPL"] = [{"t": "2026-01-05T05:00:00Z"}]  # missing o/h/l/c/v
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
     with pytest.raises(BacktestDataError, match="AAPL"):
@@ -140,7 +145,7 @@ def test_load_honors_its_own_start_and_end_arguments() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-02-01")]
     data_client = FakeStockHistoricalDataClient()
-    data_client.bars["AAPL"] = [bar_payload("2026-02-01T00:00:00Z", 150.0)]
+    data_client.bars["AAPL"] = [bar_payload("2026-02-01T05:00:00Z", 150.0)]
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
     other_start = datetime(2026, 2, 1, tzinfo=UTC)
@@ -160,7 +165,7 @@ def test_bars_lazy_fetch_uses_the_constructor_fixed_window() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
     data_client = FakeStockHistoricalDataClient()
-    data_client.bars["AAPL"] = [bar_payload("2026-01-05T00:00:00Z", 150.0)]
+    data_client.bars["AAPL"] = [bar_payload("2026-01-05T05:00:00Z", 150.0)]
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
     source.bars(AAPL, END, 1, "day")

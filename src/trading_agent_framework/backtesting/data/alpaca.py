@@ -109,12 +109,16 @@ def reindex_to_bar_close(df: pd.DataFrame, timestep: str, sessions: Sequence[Mar
     """Pure: shift Alpaca's bar-START index to bar-CLOSE.
 
     Minute bars are exactly 1-minute windows starting at `timestamp`: shift by
-    +1 minute. Daily bars are timestamped at midnight UTC of the *nominal*
-    session date (Alpaca convention); `market_data._bars_frame` already
-    converts that index to America/New_York, which -- since ET trails UTC --
-    lands on the *previous* ET calendar day (e.g. `2026-01-05T00:00:00Z` becomes
-    `2026-01-04T19:00:00-05:00`). Converting back to UTC before taking `.date()`
-    recovers the correct nominal session date to look up each session's close.
+    +1 minute. Daily bars are timestamped at midnight *market time* -- a
+    DST-aware UTC offset (`04:00Z` in EDT, `05:00Z` in EST), not a fixed
+    `00:00:00Z` (see `brokers/alpaca/market_data.py`'s own documented
+    convention). `market_data._bars_frame` already converts that index to
+    America/New_York, which lands exactly on midnight ET of the nominal
+    session date. Converting back to UTC before taking `.date()` is a
+    defensive no-op for correctly-shaped data -- both `.date()` and
+    `.astimezone(UTC).date()` agree on the nominal session date for any
+    midnight-ET timestamp -- kept in case this function ever receives
+    timestamps that aren't already market-time-aware.
     """
     import pandas as pd
 
