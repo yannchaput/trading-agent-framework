@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from trading_agent_framework.backtesting import fills
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
-from trading_agent_framework.backtesting.ledger import Ledger
+from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord, Ledger
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
@@ -214,3 +214,83 @@ class BacktestBroker(Broker):
             signed_qty = position.quantity if position.side is PositionSide.LONG else -position.quantity
             total += signed_qty * price
         return total
+
+    # --- fills: called by BacktestClock.on_advance --------------------------------------
+
+    def on_advance(self, previous_now: datetime, new_now: datetime) -> None:
+        """Registered as `BacktestClock.on_advance`: process fills, then sample equity."""
+        self._process_pending(new_now)
+        self._sample_equity(new_now)
+
+    def _process_pending(self, cutoff: datetime) -> None:
+        for identifier in list(self._pending):
+            pending = self._pending[identifier]
+            found = self._latest_bar_with_time(pending.asset, cutoff)
+            if found is None:
+                continue
+            bar, bar_time = found
+            if bar_time <= pending.last_evaluated:
+                continue  # no new bar has closed for this asset since we last checked
+            pending.last_evaluated = bar_time
+            order = pending.order
+            try:
+                result = fills.evaluate_fill(
+                    order_type=order.order_type, side=order.side, bar=bar,
+                    limit_price=order.limit_price, stop_price=order.stop_price,
+                    stop_limit_price=order.stop_limit_price,
+                )
+            except ValueError as exc:
+                order.set_error(exc)
+                self.tracker.process_trade_event(order, OrderEvent.ERROR)
+                del self._pending[identifier]
+                continue
+            if result is None:
+                continue  # still doesn't touch the trigger; retried on the next bar
+            self._fill(order, result.price, bar_time)
+            del self._pending[identifier]
+
+    def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
+        assert order.quantity is not None  # notional orders are rejected at submission
+        execution_price, commission_per_share = fills.apply_commission_and_slippage(
+            raw_price, order.side, commission=self._commission, slippage=self._slippage
+        )
+        quantity = order.quantity
+        commission_cost = commission_per_share * quantity
+        notional = execution_price * quantity
+        if order.side is OrderSide.BUY:
+            self._cash -= notional + commission_cost
+        else:
+            self._cash += notional - commission_cost
+        self._apply_to_position(order.asset, order.side, quantity, execution_price)
+        self.ledger.record_fill(FillRecord(
+            time=bar_time, identifier=order.identifier, symbol=order.asset.symbol,
+            side=order.side, order_type=order.order_type, quantity=order.quantity,
+            filled_quantity=quantity, price=execution_price, trade_cost=commission_cost,
+            trade_slippage=(execution_price - raw_price).copy_abs(),
+        ))
+        order.avg_fill_price = execution_price
+        self.tracker.process_trade_event(
+            order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity
+        )
+
+    def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
+        existing = self._positions.get(asset)
+        signed = quantity if side is OrderSide.BUY else -quantity
+        new_quantity = signed if existing is None else (
+            existing.quantity if existing.side is PositionSide.LONG else -existing.quantity
+        ) + signed
+        if new_quantity == 0:
+            self._positions.pop(asset, None)
+            return
+        self._positions[asset] = Position(
+            strategy_name=self.strategy_name, asset=asset, quantity=new_quantity.copy_abs(),
+            side=PositionSide.LONG if new_quantity > 0 else PositionSide.SHORT,
+            avg_fill_price=price,
+        )
+
+    def _sample_equity(self, cutoff: datetime) -> None:
+        positions_value = self._positions_value(cutoff)
+        self.ledger.record_equity(EquitySample(
+            time=cutoff, portfolio_value=self._cash + positions_value,
+            cash=self._cash, positions_value=positions_value,
+        ))
