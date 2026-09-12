@@ -165,10 +165,18 @@ class AgentManager:
 - `model`:
   - `None` → use `credentials.default_model`; `ConfigurationError` if that's also `None`.
   - `str` → build `ChatOpenAI(base_url=credentials.base_url, api_key=credentials.api_key, model=model, timeout=timeout_seconds)`.
+    `timeout_seconds` defaults to `None`, which `ChatOpenAI` treats as **no timeout at all** (verified: not
+    the OpenAI SDK's usual 600s default — `timeout=None` disables it) — deliberately not given a finite
+    default here, because a reasoning-capable local model (this framework's actual target, e.g.
+    `Qwen3-30B-A3B-Thinking`) can legitimately take minutes per call, and a framework-imposed default would
+    silently fail exactly the deployments this project is for. The cost is explicit, not hidden: per
+    `CLAUDE.md`'s "Strategy code runs on one thread" rule, a hung or OOM'd local server blocks
+    `on_trading_iteration()` (and therefore order-event hook dispatch) indefinitely — callers with a
+    less-patient model or a flakier server should pass `timeout_seconds` explicitly.
   - `BaseChatModel` instance → used as-is (escape hatch: a caller who wants Anthropic, a different provider,
     or custom `ChatOpenAI` kwargs the credentials shape doesn't expose, builds their own model and skips
     `LLMCredentials` entirely). `timeout_seconds` is ignored in this case — it's the caller's model to
-    configure.
+    configure; `create()`'s docstring says so.
 - `tools`: passed straight through to `create_agent(tools=...)` — no wrapping, no dedup, no builtin
   additions (§3.2).
 - Builds the LangChain agent immediately (`create_agent(model=..., tools=tools, system_prompt=system_prompt)`)
@@ -188,9 +196,21 @@ class AgentHandle:
 - Builds the human message: `task_prompt` alone, or `f"{task_prompt}\n\nContext:\n{context}"` when
   `context` is given (simple, no templating engine — this is a lean framework, not a prompt-management
   system).
-- Calls `self._agent.invoke({"messages": [{"role": "user", "content": message}]})`.
-- Parses the returned message list (`result["messages"]`) into an `AgentRunResult`:
-  - `output` = the content of the last `AIMessage`.
+- Calls `self._agent.invoke({"messages": [{"role": "user", "content": message}]})`, then parses the returned
+  message list (`result["messages"]`) into an `AgentRunResult` — both steps inside the same `try/except`, so
+  a malformed-but-successful `invoke()` result (an unexpected message shape, an incompatible LangChain
+  version) is wrapped the same way a connection failure is. §3.2 is authoritative here: "invoking the agent
+  **/ parsing its response**... is caught and re-raised as `AgentError`" — the parse step is not exempt.
+  - `output` = a message's own rendered text, taken from its `.text` attribute when that's a plain `str`
+    (the langchain-core 1.x `BaseMessage.text` property, which correctly extracts text from multimodal/
+    block-structured `content` — e.g. an Anthropic-style `content=[{"type": "text", ...}, ...]` list, which a
+    reasoning-capable local model can also produce) and falling back to `_as_text(message.content)`
+    otherwise (plain `str()` for anything that isn't already a `str`). Using `message.content` directly
+    would render a list-content message as a Python list repr instead of its actual text — verified
+    empirically against a `content=[{"type": "text", "text": "hello"}]` message. This keeps `results.py`
+    duck-typed (`getattr(message, "text", None)`, no `langchain_core` import) while still handling the
+    `BaseChatModel`-instance escape hatch (§5.1) correctly, since that path is exactly where non-string
+    content shows up.
   - `tool_calls` = one `ToolCallRecord(name, args, result)` per `AIMessage.tool_calls` entry, matched to its
     corresponding `ToolMessage` by `tool_call_id`, in call order. `result` is `ToolMessage.content` **as a
     string, verbatim** — LangChain's tool-execution node always stringifies a tool's return value into
@@ -200,8 +220,6 @@ class AgentHandle:
     purpose (§5.3: logging/audit), and reparsing JSON speculatively would be guessing at a shape this
     framework doesn't control. A tool call with no matching `ToolMessage` (defensive case — shouldn't happen
     with a well-behaved `create_agent` loop, but the parser must not crash on it) gets `result=""`.
-- Any exception from `.invoke(...)` (model construction already happened in `create()`, §5.1) is caught and
-  re-raised as `AgentError(f"agent {self.name!r} failed: {exc}") from exc`.
 
 ### 5.3 `AgentRunResult` / `ToolCallRecord`
 
@@ -320,3 +338,45 @@ These override the sections they name. All verified by running real `langchain==
    `NotImplementedError` (it's an abstract stub on `BaseChatModel`), and `create_agent` unconditionally
    calls `model.bind_tools(...)` when the agent has any tools. Tests use a one-line
    `FakeToolCallingChatModel(GenericFakeChatModel)` subclass that overrides `bind_tools` to `return self`.
+
+## 10. Amendments made during the final whole-branch review
+
+Found by the final reviewer (Opus) after all 4 implementation tasks passed their own task-scoped reviews;
+these are genuine spec/implementation gaps a per-task lens can't see, not planning-time corrections.
+
+1. **§3.2 vs §5.2 — the spec contradicted itself, and the implementation followed the narrower clause.**
+   §3.2 said parsing the response is wrapped in `AgentError`; §5.2 said only `.invoke(...)` is. Resolved in
+   favor of §3.2 (the stricter, "never let a raw exception escape" reading) — §5.2 above now says both steps
+   share one `try/except`. The exposure was small (`create_agent`'s output-state shape is type-guaranteed,
+   and malformed model tool calls land in `AIMessage.invalid_tool_calls`, never `tool_calls`), but leaving
+   any daylight between "invoke" and "parse" in a public framework method contradicted the project's own
+   error-wrapping rule for no real benefit.
+2. **§5.2 — `output` must use `.text`, not raw `.content`.** `AIMessage.content` can be a list of content
+   blocks (Anthropic-style multimodal/reasoning output; a local reasoning model such as
+   `Qwen3-30B-A3B-Thinking` can produce the same shape) rather than a plain string. The original duck-typed
+   `_as_text(message.content)` rendered that case as a Python list repr instead of the model's actual text —
+   verified against `AIMessage(content=[{"type": "text", "text": "hello"}])`. Fixed by preferring
+   `message.text` (a `str` property on langchain-core 1.x's `BaseMessage` that already extracts the text
+   correctly) and falling back to `_as_text(message.content)` only when `.text` isn't a plain `str`. Still no
+   `langchain_core` import in `results.py` — `.text` is read via `getattr`, matching the file's existing
+   duck-typing style.
+3. **§5.1 — the "no default timeout" tradeoff is now explicit, not silent.** `timeout_seconds=None` means
+   `ChatOpenAy` disables its request timeout entirely (verified: not the OpenAI SDK's usual 600s). Given this
+   framework's actual target — slow, reasoning-capable local models — a framework-imposed finite default
+   would silently break exactly the deployments it's for, so no default was added. What changed: §5.1 above,
+   `create()`'s docstring, and a `CLAUDE.md` gotcha now say so explicitly, including the concrete cost (a
+   hung/OOM'd local server blocks `on_trading_iteration()`, and therefore order-event hook dispatch,
+   indefinitely — `CLAUDE.md`'s own "Strategy code runs on one thread" rule).
+4. **§7 — the `memory_tools()` integration test from the original test list was substituted, silently.**
+   §7 asked for "a plain-callable tool (e.g. one of `memory_tools()`)"; the committed test used a
+   locally-defined `add(a, b)` instead. Both prove the same mechanism, but only `memory_tools()` proves the
+   claim this spec actually rests weight on (§3.2: "`memory_tools(strategy.memory)`... is passed straight
+   through with zero glue code") has regression coverage — a future change to a memory tool's signature that
+   LangChain's schema inference can't handle would otherwise surface only at runtime, not in the suite. A
+   `memory_tools()`-based test was added alongside the existing `add`-based ones (both are useful: `add`
+   is a minimal walking-skeleton test, `memory_tools()` is the load-bearing integration proof).
+5. **Not amended — `tests/agents/__init__.py` deleted, no spec change needed.** Task 1 created this
+   unrequested empty file (deferred as a harmless Minor at the time); the final review found it actually
+   registers a top-level `agents` module in `sys.modules` during test collection (verified), a latent
+   shadowing hazard against the real `trading_agent_framework.agents` package. Removed — pytest still
+   collects and runs `tests/agents/*` without it, matching every other test directory in the project.
