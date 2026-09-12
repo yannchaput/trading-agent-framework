@@ -9,10 +9,15 @@ dependencies = [
     "langchain>=1.0,<2.0",
     "langchain-openai>=1.0",
     "pandas-ta-classic>=0.6.52,<0.7",
+    "plotly>=5.0,<6.0",
     "pyarrow>=18.0",
     "python-dotenv>=1.2",
     "rich>=13.9",
+    "vectorbt>=1.1.0,<2.0",
 ]
+
+[project.optional-dependencies]
+backtesting-yahoo = ["yfinance>=0.2.61"]
 
 [project.scripts]
 agent = "trading_agent_framework.main:main"
