@@ -19,6 +19,7 @@
 * Backtesting (vectorbt)
 * Cache management
 * dashboard
+* Check Executor:_initialize method. All the parameters are supposed to be assigned automatically to Strategy parameters instance. But they are not. Is it a bug?
 
 ## BUGS
 * Review `uv check` errors and fix or silent them

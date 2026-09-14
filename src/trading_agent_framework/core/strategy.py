@@ -85,9 +85,13 @@ class Strategy:
     ) -> None:
         self.broker = broker
         self.trading_mode = mode
+        # Copy all parameters passed to __init__ into self.parameters, overriding class-level defaults
+        # This attribute only accepts framework dependant parameters.
         self.parameters = {**type(self).parameters, **(parameters or {})}
         self.clock = clock if clock is not None else broker.clock
         self.project_root = project_root
+        # A container for strategy-specific variables that can be set and read by the user; not persisted.
+        # It is not used by the framework.
         self.vars = SimpleNamespace()
         self.first_iteration = True
         self._log = ColorLogger(logger, self.name)
@@ -229,12 +233,8 @@ class Strategy:
         """
         return self.wait_for_orders_execution([order], timeout)
 
-    def wait_for_orders_execution(
-        self, orders: Sequence[Order], timeout: float | None = None
-    ) -> bool:
-        return self.executor.wait_for(
-            lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout
-        )
+    def wait_for_orders_execution(self, orders: Sequence[Order], timeout: float | None = None) -> bool:
+        return self.executor.wait_for(lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout)
 
     # --- accounting --------------------------------------------------------------
 
@@ -291,9 +291,7 @@ class Strategy:
     ) -> Bars | None:
         """The last `length` "minute" or "day" bars, oldest first; None without data."""
         target = _to_asset(asset)
-        bars = self.broker.get_bars(
-            [target], length, timestep, include_after_hours=include_after_hours
-        )
+        bars = self.broker.get_bars([target], length, timestep, include_after_hours=include_after_hours)
         return bars.get(target)
 
     def get_historical_prices_for_assets(
@@ -363,9 +361,7 @@ class Strategy:
     def cancel_open_orders(self) -> None:
         self.cancel_orders(self.broker.tracker.get_active_orders())
 
-    def modify_order(
-        self, order: Order, limit_price: Number | None = None, stop_price: Number | None = None
-    ) -> Order:
+    def modify_order(self, order: Order, limit_price: Number | None = None, stop_price: Number | None = None) -> Order:
         """Change an open order's prices; returns the replacement order (new identifier)."""
         return self.broker.modify_order(
             order,
@@ -402,17 +398,12 @@ class Strategy:
         self._run_trading(TradingMode.LIVE)
 
     def run_backtesting(self) -> None:
-        raise NotImplementedError(
-            "backtesting is not implemented yet; it ships with the backtesting subproject"
-        )
+        raise NotImplementedError("backtesting is not implemented yet; it ships with the backtesting subproject")
 
     def _run_trading(self, mode: TradingMode) -> None:
         if self.broker.is_paper != (mode is TradingMode.PAPER):
             account_kind = "paper" if self.broker.is_paper else "live"
-            raise ConfigurationError(
-                f"Refusing to run strategy {self.name!r} in {mode} mode "
-                f"against a {account_kind} broker account"
-            )
+            raise ConfigurationError(f"Refusing to run strategy {self.name!r} in {mode} mode against a {account_kind} broker account")
         self.trading_mode = mode
         log_file = setup_strategy_logging(self.name, mode, project_root=self.project_root)
         self._log_startup_banner(mode, log_file)

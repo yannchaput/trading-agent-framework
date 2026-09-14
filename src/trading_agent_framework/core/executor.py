@@ -114,15 +114,13 @@ class StrategyExecutor:
     def _initialize(self) -> None:
         strategy = self.strategy
         signature = inspect.signature(strategy.initialize)
-        kwargs = {
-            name: value
-            for name, value in strategy.parameters.items()
-            if name in signature.parameters and signature.parameters[name].kind in _KEYWORD_KINDS
-        }
+        # Populate the initialize() kwargs with the strategy's parameters that match its signature subclassing.
+        kwargs = {name: value for name, value in strategy.parameters.items() if name in signature.parameters and signature.parameters[name].kind in _KEYWORD_KINDS}
         logger.info("Initializing strategy %s", strategy.name)
         try:
             strategy.initialize(**kwargs)
         except Exception as exc:
+            # calls logging exception method: exc_info being true by default, the exception will be logged
             logger.exception("initialize failed for strategy %s", strategy.name)
             self._on_bot_crash(exc)
             raise
@@ -252,17 +250,12 @@ class StrategyExecutor:
                 if item.price is None or item.quantity is None:
                     logger.warning("Fill event for order %s has no fill data", order.identifier)
                     return
-                hook = (
-                    strategy.on_filled_order
-                    if item.event is OrderEvent.FILLED
-                    else strategy.on_partially_filled_order
-                )
+                hook = strategy.on_filled_order if item.event is OrderEvent.FILLED else strategy.on_partially_filled_order
                 try:
                     position = strategy.get_position(order.asset)
                 except Exception:
                     logger.exception(
-                        "Could not fetch position for %s while dispatching a fill; "
-                        "calling the fill hook with position=None",
+                        "Could not fetch position for %s while dispatching a fill; calling the fill hook with position=None",
                         order.asset,
                     )
                     position = None
