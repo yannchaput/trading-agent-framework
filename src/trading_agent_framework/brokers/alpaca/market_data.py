@@ -50,19 +50,15 @@ class AlpacaStockDataClient(Protocol):
     """
 
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet: ...
-    def get_stock_latest_trade(
-        self, request_params: StockLatestTradeRequest
-    ) -> dict[str, AlpacaTrade]: ...
-    def get_stock_latest_quote(
-        self, request_params: StockLatestQuoteRequest
-    ) -> dict[str, AlpacaQuote]: ...
+    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]: ...
+    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]: ...
 
 
 def parse_timestep(timestep: str) -> TimeFrame:
     if timestep == "minute":
-        return TimeFrame.Minute
+        return cast(TimeFrame, TimeFrame.Minute)
     if timestep == "day":
-        return TimeFrame.Day
+        return cast(TimeFrame, TimeFrame.Day)
     raise ValueError(f"Unsupported timestep {timestep!r}; expected one of {TIMESTEPS}")
 
 
@@ -82,9 +78,7 @@ def calendar_lookback_start(end: datetime, length: int, timestep: str) -> date:
     return (end.astimezone(MARKET_TZ) - timedelta(days=days)).date()
 
 
-def bars_start(
-    end: datetime, length: int, timestep: str, sessions: Sequence[MarketSession]
-) -> datetime:
+def bars_start(end: datetime, length: int, timestep: str, sessions: Sequence[MarketSession]) -> datetime:
     """Midnight (market time) of the earliest session needed, so its pre-market bars count."""
     needed = sessions_needed(length, timestep)
     today = end.astimezone(MARKET_TZ).date()
@@ -106,9 +100,7 @@ def _symbols(assets: Sequence[Asset]) -> list[str]:
     return [asset.symbol for asset in assets]
 
 
-def build_bars_request(
-    assets: Sequence[Asset], timestep: str, start: datetime, end: datetime
-) -> StockBarsRequest:
+def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> StockBarsRequest:
     return StockBarsRequest(
         symbol_or_symbols=_symbols(assets),
         timeframe=parse_timestep(timestep),
@@ -159,7 +151,7 @@ def parse_bars(
 
 def _bars_frame(rows: Sequence[object]) -> pd.DataFrame:
     """The float64 boundary for bars (see `entities/bars.py`): indicators want native floats."""
-    index = pd.to_datetime([_field(row, "timestamp") for row in rows], utc=True)
+    index = pd.to_datetime([_field(row, "timestamp") for row in rows], utc=True)  # pyright: ignore[reportArgumentType, reportCallIssue]
     columns = {name: [float(cast(float, _field(row, name))) for row in rows] for name in _OHLCV}
     df = pd.DataFrame(columns, index=index.tz_convert(MARKET_TZ), dtype="float64")
     df.index.name = "timestamp"
@@ -173,9 +165,7 @@ def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.
     return df[keep]
 
 
-def parse_latest_trades(
-    response: Mapping[str, object], assets: Sequence[Asset]
-) -> dict[Asset, Decimal | None]:
+def parse_latest_trades(response: Mapping[str, object], assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
     """Last traded price per asset; None when Alpaca returned no trade for the symbol."""
     return {asset: _to_decimal(_field(response.get(asset.symbol), "price")) for asset in assets}
 

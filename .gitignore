@@ -225,3 +225,7 @@ __marimo__/
 
 # Agent memory databases (memory/<strategy>/<mode>/memory.sqlite)
 /memory/
+
+# Strategy specific data files (data/<strategy>/<mode>/cross_momentum_ptf_history_*.json)
+data/cross_momentum_ptf_history_*.json
+data/universe/us_stock_universe*.json
