@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.manager import AgentManager
@@ -37,6 +37,10 @@ from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MarketClock
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
+
+if TYPE_CHECKING:
+    from trading_agent_framework.backtesting.data.base import BacktestDataSource
+    from trading_agent_framework.backtesting.runner import BacktestResult
 
 logger = logging.getLogger(__name__)
 
@@ -427,9 +431,46 @@ class Strategy:
     def run_live_trading(self) -> None:
         self._run_trading(TradingMode.LIVE)
 
-    def run_backtesting(self) -> None:
-        raise NotImplementedError(
-            "backtesting is not implemented yet; it ships with the backtesting subproject"
+    def run_backtesting(
+        self,
+        *,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        budget: Number | None = None,
+        data_source: BacktestDataSource | None = None,
+        benchmark: str | None = None,
+        timestep: str = "day",
+        commission: Number = Decimal(0),
+        slippage: Number = Decimal(0),
+        risk_free_rate: float = 0.0,
+    ) -> BacktestResult:
+        """Run this strategy against simulated time and simulated fills.
+
+        `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
+        `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
+        `data_source` defaults to a Yahoo daily source over [start, end] (no on-disk
+        cache by default -- wrap it in `backtesting.CachedDataSource` for repeat runs).
+        """
+        from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+        from trading_agent_framework.backtesting.runner import run_backtest
+
+        resolved_start = start if start is not None else self.backtesting_start
+        resolved_end = end if end is not None else self.backtesting_end
+        if resolved_start is None or resolved_end is None:
+            raise ConfigurationError(
+                "run_backtesting needs start/end, either as arguments or as "
+                "backtesting_start/backtesting_end class attributes"
+            )
+        resolved_budget = _to_decimal(budget) if budget is not None else self.budget
+        resolved_source = (
+            data_source if data_source is not None
+            else YahooBacktestData(resolved_start, resolved_end)
+        )
+        return run_backtest(
+            self, start=resolved_start, end=resolved_end, budget=resolved_budget,
+            data_source=resolved_source, benchmark=benchmark or self.benchmark_symbol,
+            timestep=timestep, commission=_to_decimal(commission), slippage=_to_decimal(slippage),
+            risk_free_rate=risk_free_rate,
         )
 
     def _run_trading(self, mode: TradingMode) -> None:

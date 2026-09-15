@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -136,9 +136,58 @@ def test_run_strategy_dispatches_on_the_trading_mode(tmp_path: Path, mode: Tradi
     assert strategy.ran == [mode.value]
 
 
-def test_run_backtesting_is_not_implemented_yet(tmp_path: Path) -> None:
-    with pytest.raises(NotImplementedError, match="backtesting"):
-        _strategy(tmp_path, mode=TradingMode.BACKTESTING).run_strategy()
+def test_run_backtesting_requires_start_and_end(tmp_path: Path) -> None:
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    with pytest.raises(ConfigurationError, match="start/end"):
+        strategy.run_backtesting()
+
+
+def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> None:
+    from datetime import time, timedelta
+    from zoneinfo import ZoneInfo
+
+    import pandas as pd
+    from tests.backtesting.fakes import FakeBacktestDataSource
+
+    from trading_agent_framework.backtesting.broker import BacktestBroker
+    from trading_agent_framework.utils.clock import MarketSession
+
+    et_tz = ZoneInfo("America/New_York")
+
+    def _sessions(first_day: date, count: int) -> list[MarketSession]:
+        result: list[MarketSession] = []
+        day = first_day
+        while len(result) < count:
+            if day.weekday() < 5:
+                result.append(MarketSession(
+                    open=datetime.combine(day, time(9, 30), tzinfo=et_tz),
+                    close=datetime.combine(day, time(16, 0), tzinfo=et_tz),
+                ))
+            day += timedelta(days=1)
+        return result
+
+    sessions = _sessions(date(2026, 1, 5), 3)
+    closes = [150.0, 151.0, 152.0]
+    df = pd.DataFrame(
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
+         "close": closes, "volume": [1000.0] * len(closes)},
+        index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
+    )
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(Asset("AAPL"), df)
+    source.set_bars(Asset("SPY"), df)
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    result = strategy.run_backtesting(
+        start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
+        data_source=source, benchmark="SPY",
+    )
+
+    assert result.run_dir.is_dir()
+    assert (result.run_dir / "metrics.json").is_file()
+    assert (result.run_dir / "settings.json").is_file()
+    assert isinstance(strategy.broker, BacktestBroker)  # rebound by run_backtesting
 
 
 def test_core_package_reexports() -> None:
