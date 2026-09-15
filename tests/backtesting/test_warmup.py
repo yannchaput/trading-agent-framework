@@ -33,8 +33,7 @@ class TestWarmupCalendarDays:
         assert warmup_calendar_days(300, holiday_buffer_days=15) == 435
         assert warmup_calendar_days(300, holiday_buffer_days=30) == 450
 
-    @pytest.mark.parametrize("trading_days", [0, 1, 10, 50, 300, 1000])
-    def test_monotonically_non_decreasing(self, trading_days):
+    def test_monotonically_non_decreasing(self):
         """Results are monotonically non-decreasing across the sequence."""
         trading_days_list = [0, 1, 10, 50, 300, 1000]
         results = [warmup_calendar_days(td) for td in trading_days_list]
