@@ -24,7 +24,9 @@ keep `sleeptime` at least as fine-grained as `timestep` when using minute bars.
 
 from __future__ import annotations
 
+import dataclasses
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -168,11 +170,18 @@ def _run(
         {ts: Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
     )
 
-    report.write_equity(run_dir, broker.ledger, benchmark_by_time)
+    # ONE session-reduced equity series, shared by equity.parquet and metrics.json.
+    # They used to be built from different things -- metrics from this reduction,
+    # equity.parquet straight from the raw (oversampled) ledger -- which made the
+    # dashboard's plotted return series disagree with the metrics computed beside it
+    # and broke equity.parquet's benchmark join outright (see `report.write_equity`).
+    session_equity_samples = _session_equity_samples(broker.ledger.equity, sessions)
+
+    report.write_equity(run_dir, session_equity_samples, benchmark_by_time)
     report.write_trades(run_dir, broker.ledger)
     report.write_indicators(run_dir, broker.ledger)
 
-    session_equity = _session_equity_series(broker.ledger.equity, sessions)
+    session_equity = _session_equity_series(session_equity_samples)
     portfolio_returns = session_equity.pct_change().dropna()
     benchmark_returns = benchmark_series.pct_change().dropna() if benchmark_series is not None else None
 
@@ -214,10 +223,32 @@ def _run(
     return BacktestResult(run_dir=run_dir, settings=settings, metrics=computed_metrics)
 
 
-def _session_equity_series(
+def _session_equity_series(session_samples: Sequence[EquitySample]) -> pd.Series:
+    """The `portfolio_value` curve of `_session_equity_samples`'s output, as a float
+    `pd.Series` indexed by session close -- the shape `compute_metrics` wants.
+
+    Kept deliberately thin: the reduction itself lives in `_session_equity_samples` so
+    that `report.write_equity` and `compute_metrics` consume the *same* rows rather
+    than two independently-derived series (the defect this split fixes).
+    """
+    import pandas as pd
+
+    return pd.Series(
+        [float(s.portfolio_value) for s in session_samples],
+        index=pd.DatetimeIndex([s.time for s in session_samples], name="timestamp"),
+    )
+
+
+def _session_equity_samples(
     equity_samples: list[EquitySample], sessions: list[MarketSession]
-) -> pd.Series:
+) -> list[EquitySample]:
     """Reduce `equity_samples` down to exactly one sample per trading session.
+
+    Each surviving sample is re-stamped with its session's `close`, so the result is
+    indexed by *session identity*: that is what lets `report.write_equity` join the
+    (also one-row-per-session, bar-close-indexed) benchmark series by timestamp, and
+    what puts `equity.parquet`'s `return` column on the same cadence as
+    `metrics.json`'s `portfolio_returns`.
 
     `BacktestBroker.on_advance` samples equity on every clock advance, not just at
     session boundaries: under `Strategy`'s default timing (`minutes_before_opening=60`,
@@ -257,26 +288,22 @@ def _session_equity_series(
     invariant of `Ledger.equity` (append-only, written by a clock that only ever
     advances) and `BacktestDataSource.sessions()`.
     """
-    import pandas as pd
-
-    index: list[datetime] = []
-    values: list[float] = []
+    reduced: list[EquitySample] = []
     sample_index = 0
-    last_value: float | None = None
+    last_sample: EquitySample | None = None
     session_count = len(sessions)
     for i, session in enumerate(sessions):
         if i + 1 < session_count:
             boundary = sessions[i + 1].open
             while sample_index < len(equity_samples) and equity_samples[sample_index].time < boundary:
-                last_value = float(equity_samples[sample_index].portfolio_value)
+                last_sample = equity_samples[sample_index]
                 sample_index += 1
         else:
             # Last session: no next session to bound it -- claim every remaining
             # sample, however late, so its true post-close equity isn't dropped.
             while sample_index < len(equity_samples):
-                last_value = float(equity_samples[sample_index].portfolio_value)
+                last_sample = equity_samples[sample_index]
                 sample_index += 1
-        if last_value is not None:
-            index.append(session.close)
-            values.append(last_value)
-    return pd.Series(values, index=pd.DatetimeIndex(index, name="timestamp"))
+        if last_sample is not None:
+            reduced.append(dataclasses.replace(last_sample, time=session.close))
+    return reduced

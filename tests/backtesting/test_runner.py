@@ -91,7 +91,9 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
 
     equity = pd.read_parquet(result.run_dir / "equity.parquet")
     assert "benchmark_close" in equity.columns
-    assert equity["benchmark_close"].notna().any()
+    # Not `.notna().any()`: that passed at 6 non-null rows out of 23 while the column
+    # was almost entirely broken (see the dedicated tests below).
+    assert equity["benchmark_close"].notna().sum() == len(sessions)
 
     trades = pd.read_parquet(result.run_dir / "trades.parquet")
     assert len(trades) == 1  # the one order fills once
@@ -251,6 +253,60 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     assert result.metrics["cagr_strategy"] != pytest.approx(old_cagr, rel=1e-3)
 
 
+def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_count: int = 6):
+    """Run a real `run_backtest` over `session_count` sessions and return
+    `(equity_dataframe, sessions)`."""
+    sessions = _sessions(date(2026, 3, 2), session_count)
+    closes = [150.0 + i for i in range(session_count)]
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, closes))
+    source.set_bars(SPY, _bars(sessions, [400.0 + (i % 3) for i in range(session_count)]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(strategy_cls, tmp_path, start)
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+    # Premise of the whole finding, verified rather than assumed: the raw ledger really
+    # is oversampled relative to sessions, so a session-cadence parquet is a real
+    # reduction and not an accident of this fixture.
+    assert len(strategy.broker.ledger.equity) > len(sessions)
+    return pd.read_parquet(result.run_dir / "equity.parquet"), sessions
+
+
+def _assert_session_cadence_equity(equity: pd.DataFrame, sessions: list[MarketSession]) -> None:
+    # One row per trading session -- NOT one per clock advance.
+    assert len(equity) == len(sessions)
+    assert list(equity.index) == [pd.Timestamp(s.close) for s in sessions]
+    # Every session's row carries a benchmark close, and every session-over-session
+    # gap therefore yields a real benchmark return (only the first row's pct_change
+    # is legitimately NaN).
+    assert equity["benchmark_close"].notna().sum() == len(sessions)
+    assert equity["benchmark_return"].notna().sum() == len(sessions) - 1
+    assert equity["return"].notna().sum() == len(sessions) - 1
+
+
+def test_run_backtest_writes_a_session_cadence_equity_parquet_with_a_fully_joined_benchmark(
+    tmp_path: Path,
+) -> None:
+    """Critical whole-branch review finding. `equity.parquet` never received the
+    session-cadence fix `metrics.json`'s `portfolio_returns` got: `write_equity` was
+    handed the RAW ledger (every clock advance) and joined the benchmark by exact
+    timestamp equality against those raw instants. Reviewer's repro over 6 sessions,
+    default timing: 23 rows, `benchmark_close` non-null on 6 of them (the ones that
+    happened to land exactly on 16:00), `benchmark_return` non-null on NONE (isolated
+    non-null values separated by holes -> pct_change is NaN everywhere).
+
+    Uses `Strategy`'s DEFAULT timing deliberately -- that is what produces the
+    oversampling; zeroing the minutes_* knobs would hide the bug.
+    """
+    equity, sessions = _equity_parquet_for(tmp_path, BuyOnceStrategy)
+    _assert_session_cadence_equity(equity, sessions)
+
+
 class LateCloseBuyOnceStrategy(BuyOnceStrategy):
     """Same as `BuyOnceStrategy`, but with a non-default, publicly-overridable
     `minutes_after_closing` -- the exact knob round 2 of this review finding is about.
@@ -343,3 +399,18 @@ def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp
     round1_total_return = float((1 + round1_returns).prod() - 1)
     round1_cagr = (1 + round1_total_return) ** (252 / len(round1_returns)) - 1
     assert result.metrics["cagr_strategy"] != pytest.approx(round1_cagr, rel=1e-3)
+
+
+def test_equity_parquet_session_cadence_survives_nonzero_minutes_after_closing(
+    tmp_path: Path,
+) -> None:
+    """`equity.parquet`'s half of the round-2 `minutes_after_closing` failure mode,
+    mirroring `test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing`
+    for `metrics.json`. With `minutes_after_closing=5` no clock advance lands exactly on
+    16:00 any more, so the old raw-ledger exact-timestamp benchmark join matched
+    *nothing*: `benchmark_close` was null on ALL 23 rows in the reviewer's repro (down
+    from a lucky 6 under default timing). The session-close re-stamping makes the join
+    independent of that knob entirely.
+    """
+    equity, sessions = _equity_parquet_for(tmp_path, LateCloseBuyOnceStrategy)
+    _assert_session_cadence_equity(equity, sessions)

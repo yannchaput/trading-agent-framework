@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.backtesting.ledger import Ledger
+from trading_agent_framework.backtesting.ledger import EquitySample, Ledger
 from trading_agent_framework.utils.errors import BacktestDataError
 
 # Mirrors the real dashboard's MetricSet Pydantic model field names (design spec,
@@ -124,7 +125,33 @@ _TRADE_COLUMNS = (
 _INDICATOR_COLUMNS = ("datetime", "name", "value", "color", "style", "plot_name")
 
 
-def write_equity(run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decimal] | None = None) -> Path:
+def write_equity(
+    run_dir: Path,
+    equity: Sequence[EquitySample],
+    benchmark: dict[datetime, Decimal] | None = None,
+) -> Path:
+    """Write equity.parquet from an ALREADY SESSION-REDUCED equity series.
+
+    `equity` is NOT `ledger.equity` -- it is `runner._session_equity_samples(...)`'s
+    output: exactly one sample per trading session, each re-stamped at that session's
+    own `close`. Two things depend on that, and both were broken while this function
+    took the raw ledger (Critical whole-branch review finding):
+
+    1. **Cadence.** `BacktestBroker.on_advance` samples equity on every clock advance
+       (pre-open/open/pre-close/close under `Strategy`'s default timing), so the raw
+       ledger is oversampled several-to-one against a session. `metrics.json`'s
+       `portfolio_returns` was fixed to run at session cadence (see
+       `runner._session_equity_series`); this file's `return` column has to agree with
+       it, or the dashboard plots a different return series than the metrics describe.
+    2. **The benchmark join.** `benchmark` is keyed by bar-CLOSE timestamp and is
+       naturally one row per session -- for a daily backtest, exactly the session-close
+       timestamps `_session_equity_samples` stamps its rows with. Joining on those is
+       therefore a join on *session identity*. Against raw ledger samples the same
+       lookup matched only the handful that happened to land exactly on a 16:00 close
+       (and none at all once `minutes_after_closing` moved them), leaving
+       `benchmark_close` null on most rows and `benchmark_return` -- a `pct_change`
+       across those holes -- null on ALL of them.
+    """
     import pandas as pd
 
     rows = [
@@ -135,7 +162,7 @@ def write_equity(run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decima
             "positions_value": _float(sample.positions_value),
             "benchmark_close": _float(benchmark.get(sample.time)) if benchmark else None,
         }
-        for sample in ledger.equity
+        for sample in equity
     ]
     df = pd.DataFrame(rows, columns=_EQUITY_COLUMNS).set_index("datetime").sort_index()
     df["return"] = df["portfolio_value"].pct_change()
