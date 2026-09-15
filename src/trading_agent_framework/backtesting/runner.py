@@ -93,9 +93,18 @@ def run_backtest(
     window accessor, so that mismatch cannot be detected from here. Construct
     `data_source` with the same `start`/`end` passed to this function to avoid it.
 
+    `start` and `end` must be timezone-aware. Every `MarketSession` this subsystem
+    produces is tz-aware (`MarketSession.__post_init__` enforces it), so a naive
+    `start` blows up deep inside `BacktestClock.next_session()`'s
+    `session.close > self._now` comparison with a bare "can't compare offset-naive and
+    offset-aware datetimes" -- a message that says nothing about which argument was at
+    fault. Validated up front instead (Important whole-branch review finding: the
+    README's own quickstart example used `datetime.now()` and hit exactly that).
+
     Never raises a raw exception: anything other than an existing `BacktestError`
     is wrapped in one.
     """
+    _require_aware(start=start, end=end)
     try:
         return _run(
             strategy,
@@ -113,6 +122,23 @@ def run_backtest(
         raise
     except Exception as exc:
         raise BacktestError(f"backtest run failed: {exc}") from exc
+
+
+def _require_aware(**moments: datetime) -> None:
+    """Reject naive `start`/`end` with a message that names the offending argument and
+    shows the fix, rather than letting a downstream comparison fail obscurely."""
+    naive = [
+        name for name, value in moments.items()
+        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None
+    ]
+    if naive:
+        raise BacktestError(
+            f"run_backtest needs timezone-aware datetimes; {', '.join(naive)} "
+            f"{'is' if len(naive) == 1 else 'are'} naive. Trading sessions carry a "
+            "market timezone, so a naive bound cannot be compared against them. Use "
+            'e.g. `from zoneinfo import ZoneInfo; ET = ZoneInfo("America/New_York"); '
+            "datetime.now(ET)`."
+        )
 
 
 def _run(

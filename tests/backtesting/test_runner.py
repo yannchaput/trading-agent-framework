@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -19,6 +19,7 @@ from trading_agent_framework.backtesting.runner import BacktestResult, run_backt
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MarketSession
+from trading_agent_framework.utils.errors import BacktestError
 
 ET = ZoneInfo("America/New_York")
 AAPL = Asset("AAPL")
@@ -99,6 +100,65 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
     assert len(trades) == 1  # the one order fills once
 
     assert "sharpe_strategy" in result.metrics
+
+
+@pytest.mark.parametrize(
+    ("naive_start", "naive_end", "expected"),
+    [(True, True, "start, end"), (True, False, "start"), (False, True, "end")],
+)
+def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(
+    tmp_path: Path, naive_start: bool, naive_end: bool, expected: str
+) -> None:
+    """Important whole-branch review finding: the README's own quickstart used
+    `datetime.now()`, and the only symptom was `BacktestError: backtest run failed:
+    can't compare offset-naive and offset-aware datetimes` raised from deep inside
+    `BacktestClock.next_session()` -- nothing naming `start`/`end` or saying what to do.
+    `MarketSession` requires tz-aware datetimes, so this is validated up front.
+    """
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    aware_start = sessions[0].open - timedelta(hours=1)
+    aware_end = sessions[-1].close
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, aware_start)
+
+    with pytest.raises(BacktestError, match="timezone-aware") as excinfo:
+        run_backtest(
+            strategy,
+            start=aware_start.replace(tzinfo=None) if naive_start else aware_start,
+            end=aware_end.replace(tzinfo=None) if naive_end else aware_end,
+            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        )
+
+    # The message names the offending argument(s) -- the whole point of validating here.
+    assert expected in str(excinfo.value)
+    # ...and it is the up-front check, not the old obscure downstream comparison.
+    assert "offset-naive" not in str(excinfo.value)
+    assert not source.load_calls  # rejected before any data was even requested
+
+
+def test_run_backtest_accepts_aware_datetimes_in_any_timezone(tmp_path: Path) -> None:
+    """The validation is "aware", not "in the market's timezone" -- a UTC bound (what
+    `smoke_backtest.py`-style code and most callers produce) must still work."""
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    start = (sessions[0].open - timedelta(hours=1)).astimezone(UTC)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close.astimezone(UTC),
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+    assert (result.run_dir / "metrics.json").is_file()
 
 
 def test_run_backtest_rebinds_the_strategys_broker_and_clock(tmp_path: Path) -> None:

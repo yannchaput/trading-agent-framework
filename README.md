@@ -56,13 +56,21 @@ source) no Alpaca account needed at all.
 
 ```python
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+end = datetime.now(ET)
 
 result = my_strategy.run_backtesting(
-    start=datetime.now() - timedelta(days=365),
-    end=datetime.now(),
+    start=end - timedelta(days=365),
+    end=end,
 )
 print(result.metrics["sharpe_strategy"], result.run_dir)
 ```
+
+`start` and `end` must be **timezone-aware** (trading sessions carry a market
+timezone, so a naive bound cannot be compared against them) -- `datetime.now(ET)`,
+not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
 
 `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
 `backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
