@@ -55,6 +55,45 @@ def test_reindex_to_bar_close_handles_an_empty_frame() -> None:
     assert reindex_to_bar_close(pd.DataFrame(), "day", []).empty
 
 
+def test_reindex_to_bar_close_raises_when_a_daily_bars_date_has_no_session() -> None:
+    """Important whole-branch review finding. This used to fall back to the bar's
+    ORIGINAL (bar-open, midnight-ET) index, which is a real no-look-ahead violation:
+    the Jan-7 bar below would have been indexed at 2026-01-07 00:00 ET and so become
+    visible through `bars(..., cutoff)` more than nine hours before its session even
+    opens. There is no correct close time to re-index to, so it must fail loudly.
+    """
+    df = pd.DataFrame(
+        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0],
+         "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
+        index=pd.DatetimeIndex(
+            # Jan 7 is absent from `_sessions()` -- exactly what a window filter that
+            # drops a date the bars fetch kept produces.
+            [datetime(2026, 1, 5, tzinfo=MARKET_TZ), datetime(2026, 1, 7, tzinfo=MARKET_TZ)]
+        ),
+    )
+    with pytest.raises(BacktestDataError, match="2026-01-07"):
+        reindex_to_bar_close(df, "day", _sessions(), symbol="AAPL")
+
+
+def test_a_daily_bar_outside_the_session_window_raises_through_the_public_bars_method() -> None:
+    """The same defect reached the way it actually happens in a run: `end` lands
+    mid-session, so `sessions()`'s `s.close <= end` filter drops that day while the
+    bars fetch still returns its daily bar."""
+    trading_client = FakeTradingClient()
+    trading_client.calendar_response = [
+        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06"),
+    ]
+    data_client = FakeStockHistoricalDataClient()
+    data_client.bars["AAPL"] = [
+        bar_payload("2026-01-05T05:00:00Z", 150.0), bar_payload("2026-01-06T05:00:00Z", 151.0),
+    ]
+    mid_session_end = datetime(2026, 1, 6, 12, 0, tzinfo=MARKET_TZ)  # before the 16:00 close
+    source = AlpacaBacktestData(data_client, trading_client, START, mid_session_end)
+
+    with pytest.raises(BacktestDataError, match="2026-01-06"):
+        source.bars(AAPL, mid_session_end, 2, "day")
+
+
 def test_bars_fetches_and_reindexes_via_the_injected_clients() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [

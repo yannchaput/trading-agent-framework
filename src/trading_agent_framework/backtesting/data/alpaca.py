@@ -100,12 +100,18 @@ class AlpacaBacktestData(BacktestDataSource):
             # itself (message already mentions "calendar") -- kept outside the
             # try/except above so that message isn't swallowed by the generic one.
             sessions = self.sessions(start, end)
-            df = reindex_to_bar_close(source_bars.df, timestep, sessions)
+            df = reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)
         self._frames[asset] = df
         return df
 
 
-def reindex_to_bar_close(df: pd.DataFrame, timestep: str, sessions: Sequence[MarketSession]) -> pd.DataFrame:
+def reindex_to_bar_close(
+    df: pd.DataFrame,
+    timestep: str,
+    sessions: Sequence[MarketSession],
+    *,
+    symbol: str | None = None,
+) -> pd.DataFrame:
     """Pure: shift Alpaca's bar-START index to bar-CLOSE.
 
     Minute bars are exactly 1-minute windows starting at `timestamp`: shift by
@@ -119,6 +125,18 @@ def reindex_to_bar_close(df: pd.DataFrame, timestep: str, sessions: Sequence[Mar
     `.astimezone(UTC).date()` agree on the nominal session date for any
     midnight-ET timestamp -- kept in case this function ever receives
     timestamps that aren't already market-time-aware.
+
+    A daily bar whose date has NO session in `sessions` raises `BacktestDataError`.
+    This used to fall back to the bar's ORIGINAL index instead, which is a real
+    no-look-ahead violation and not a cosmetic one (Important whole-branch review
+    finding): that original index is midnight ET, i.e. ~9.5 hours before the session
+    it belongs to even OPENS, so the bar would become visible to the strategy through
+    `bars(..., cutoff)` most of a day early -- silently, and looking entirely
+    plausible. The situation is reachable whenever `sessions()`'s window filter drops
+    a date the bars fetch kept (e.g. an `end` set mid-session, so that day's session
+    fails the `s.close <= end` test while Alpaca still returns its partial daily bar),
+    so failing loudly is the only safe answer -- there is no correct close time to
+    re-index to.
     """
     import pandas as pd
 
@@ -129,7 +147,20 @@ def reindex_to_bar_close(df: pd.DataFrame, timestep: str, sessions: Sequence[Mar
         df.index = df.index + timedelta(minutes=1)
         return df.sort_index()
     close_by_date = {s.open.astimezone(market_data.MARKET_TZ).date(): s.close for s in sessions}
-    new_index = [close_by_date.get(ts.astimezone(UTC).date(), ts) for ts in df.index]
+    new_index = []
+    for ts in df.index:
+        bar_date = ts.astimezone(UTC).date()
+        close = close_by_date.get(bar_date)
+        if close is None:
+            subject = f"{symbol} " if symbol else ""
+            raise BacktestDataError(
+                f"no trading session found for the {subject}daily bar dated {bar_date}: "
+                "cannot re-index it from bar-open to bar-close, and keeping its "
+                "bar-open index would expose the bar hours before its session closes. "
+                "Construct the data source with a window that fully covers every "
+                "session you request bars for (whole sessions, not a mid-session end)."
+            )
+        new_index.append(close)
     df = df.copy()
     df.index = pd.DatetimeIndex(new_index, name="timestamp")
     return df.sort_index()

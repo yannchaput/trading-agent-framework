@@ -29,7 +29,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BacktestError, OrderValidationError
+from trading_agent_framework.utils.errors import BacktestDataError, BacktestError, OrderValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ class BacktestBroker(Broker):
     ) -> dict[Asset, Bars]:
         result: dict[Asset, Bars] = {}
         for asset in assets:
-            bars = self._data_source.bars(asset, self.clock.now(), length, timestep)
+            bars = self._source_bars(asset, self.clock.now(), length, timestep)
             if bars is not None:
                 result[asset] = bars
         return result
@@ -198,10 +198,54 @@ class BacktestBroker(Broker):
 
     # --- shared bar lookup -----------------------------------------------------------------
 
+    def _source_bars(
+        self, asset: Asset, cutoff: datetime, length: int, timestep: str
+    ) -> Bars | None:
+        """THE gate (design spec, section 5.2): the single place this broker -- and so
+        the strategy, whose every price request funnels through `get_bars`,
+        `get_last_price`, `get_quote` or the fill engine -- reads a
+        `BacktestDataSource`, plus the spec's defensive assertion on what comes back.
+
+        `bars()` is contractually "the last `length` bars closed at or before
+        `cutoff`", and every source enforces that itself. This re-checks it anyway,
+        once, because the cost of a source getting it wrong is not an exception but a
+        backtest that looks great and is worthless -- "cheap insurance against a future
+        provider with a sloppy index", as the spec puts it. It is exactly the net that
+        would have caught `AlpacaBacktestData`'s bar-open fallback (fixed at its own
+        root in `data/alpaca.py`) had it produced a *future*-dated row rather than a
+        past-dated one.
+
+        Only the "past the cutoff" direction is checked, per the spec. A deliberately
+        absent "too far in the past" check has no principled threshold: a source
+        legitimately returns a stale latest bar over a weekend, a holiday, a halt, or
+        for a thinly-traded or delisted symbol, so any bound tight enough to catch a
+        mis-indexed bar would also fire on ordinary data. That failure mode is
+        addressed where it can be decided correctly -- at the source, which alone knows
+        a bar's date has no session -- not by a heuristic here.
+        """
+        bars = self._data_source.bars(asset, cutoff, length, timestep)
+        if bars is None or bars.df.empty:
+            return bars
+        try:
+            latest = bars.df.index.max()
+            past_cutoff = bool(latest > cutoff)
+        except TypeError as exc:  # e.g. a tz-naive index compared against a tz-aware cutoff
+            raise BacktestDataError(
+                f"{self._data_source.name} returned bars for {asset.symbol} whose index "
+                f"cannot be compared against the {cutoff.isoformat()} cutoff: {exc}"
+            ) from exc
+        if past_cutoff:
+            raise BacktestDataError(
+                f"{self._data_source.name} returned a bar for {asset.symbol} closing at "
+                f"{latest}, after the {cutoff.isoformat()} no-look-ahead cutoff; "
+                "a data source must only return bars closed at or before the cutoff"
+            )
+        return bars
+
     def _latest_bar_with_time(
         self, asset: Asset, cutoff: datetime
     ) -> tuple[fills.Bar, datetime] | None:
-        bars = self._data_source.bars(asset, cutoff, 1, self._timestep)
+        bars = self._source_bars(asset, cutoff, 1, self._timestep)
         if bars is None or bars.df.empty:
             return None
         row = bars.df.iloc[-1]
