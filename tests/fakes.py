@@ -291,7 +291,14 @@ class FakeTradingClient:
     def get_calendar(self, filters: GetCalendarRequest) -> list[alpaca_models.Calendar]:
         self.calendar_requests.append(filters)
         self._maybe_raise("get_calendar")
-        return self.calendar_response
+        # Filter by the request's own start/end, like the real Alpaca API does: a test
+        # that sets `calendar_response` to more days than the request actually asked
+        # for used to get all of them back regardless, which masked a real
+        # `AlpacaBacktestData.sessions()` bug (its calendar cache never grew to cover a
+        # widened query range -- see `tests/backtesting/data/test_alpaca.py`'s warmup
+        # test). `build_calendar_request` always sets both bounds, so every real caller
+        # already provides them.
+        return [day for day in self.calendar_response if filters.start <= day.date <= filters.end]
 
     def replace_order_by_id(
         self, order_id: str, order_data: ReplaceOrderRequest

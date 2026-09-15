@@ -57,6 +57,12 @@ class AlpacaBacktestData(BacktestDataSource):
         self._end = end
         self._frames: dict[Asset, pd.DataFrame] = {}
         self._sessions_cache: list[MarketSession] | None = None
+        # The [start, end] the cached calendar actually covers -- starts as the
+        # constructor's own window and grows (never shrinks) to the union of every
+        # range `sessions()` has ever been asked about. See `sessions()`'s docstring
+        # for why this must track queried ranges rather than staying fixed.
+        self._calendar_start = start
+        self._calendar_end = end
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
         for asset in assets:
@@ -74,13 +80,35 @@ class AlpacaBacktestData(BacktestDataSource):
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
-        if self._sessions_cache is None:
-            request = account.build_calendar_request(self._start.date(), self._end.date())
+        """Sessions in `[start, end]`, fetched from Alpaca's calendar and cached.
+
+        The cache is keyed by the UNION of every range ever asked for, not the fixed
+        constructor window (Critical review finding, Task 6): `_fetch` calls this with
+        whatever `start`/`end` its own caller used, which for `load()` can be wider
+        than the constructor's `self._start`/`self._end` (e.g. `runner._run`'s
+        warmup-widened eager benchmark load). A cache request fixed at the constructor
+        window would silently omit any date `load()` widened past it, so
+        `reindex_to_bar_close` would raise `BacktestDataError` for those bars('no
+        trading session found') even though the requested warm-up range is completely
+        valid -- not a cosmetic gap: it made `AlpacaBacktestData` incompatible with the
+        exact widened-eager-load mechanism `warmup_trading_days` relies on. Re-fetches
+        only when the requested range isn't already covered, so the common case (every
+        query within `[self._start, self._end]`) still costs exactly one calendar call.
+        """
+        if (
+            self._sessions_cache is None
+            or start < self._calendar_start
+            or end > self._calendar_end
+        ):
+            fetch_start = min(start, self._calendar_start)
+            fetch_end = max(end, self._calendar_end)
+            request = account.build_calendar_request(fetch_start.date(), fetch_end.date())
             try:
                 days = self._trading_client.get_calendar(filters=request)
             except Exception as exc:
                 raise BacktestDataError(f"failed to fetch the Alpaca calendar: {exc}") from exc
             self._sessions_cache = account.parse_calendar(days, market_data.MARKET_TZ)
+            self._calendar_start, self._calendar_end = fetch_start, fetch_end
         return [s for s in self._sessions_cache if s.open >= start and s.close <= end]
 
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
