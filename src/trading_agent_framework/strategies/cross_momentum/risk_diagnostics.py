@@ -7,6 +7,7 @@ return scalars or None. Designed for daily observation without triggering trades
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -285,7 +286,7 @@ def identify_drawdown_episodes(
         drawdowns = df["drawdown"].values
     elif equity_curve is not None:
         rolling_peak = equity_curve.cummax()
-        drawdowns = equity_curve.values / rolling_peak.values - 1.0
+        drawdowns = equity_curve.values / rolling_peak.values - 1.0 # pyright: ignore[reportOperatorIssue]
     else:
         return []
 
@@ -297,25 +298,25 @@ def identify_drawdown_episodes(
     episodes_raw: list[dict] = []
     i = 0
     while i < n:
-        if drawdowns[i] >= 0:
+        if drawdowns[i] >= 0: # pyright: ignore[reportOperatorIssue]
             i += 1
             continue
 
         # Start of an episode — find prior peak (last time dd >= 0)
         peak_idx = i - 1
-        while peak_idx >= 0 and drawdowns[peak_idx] < 0:
+        while peak_idx >= 0 and drawdowns[peak_idx] < 0: # pyright: ignore[reportOperatorIssue]
             peak_idx -= 1
         if peak_idx < 0:
             peak_idx = 0  # never at peak — start of data
 
         # Scan forward to end of episode (dd >= 0 or end of data)
         j = i
-        while j < n and drawdowns[j] < 0:
+        while j < n and drawdowns[j] < 0: # pyright: ignore[reportOperatorIssue]
             j += 1
 
         # Trough = minimum drawdown within this episode
         episode_slice = drawdowns[i:j]
-        trough_offset = int(np.argmin(episode_slice))
+        trough_offset = int(np.argmin(episode_slice)) # pyright: ignore[reportArgumentType]
         trough_idx = i + trough_offset
 
         # Recovery (first row after episode where dd >= 0)
@@ -328,7 +329,7 @@ def identify_drawdown_episodes(
                 "trough_idx": trough_idx,
                 "end_idx": j - 1,
                 "recovery_idx": recovery_idx,
-                "drawdown_at_trough": float(drawdowns[trough_idx]),
+                "drawdown_at_trough": float(drawdowns[trough_idx]), # pyright: ignore[reportArgumentType]
                 "drawdown_duration": j - peak_idx,
                 "recovery_duration": (recovery_idx - trough_idx) if recovery_idx is not None else None,
             }
@@ -382,7 +383,7 @@ def identify_drawdown_episodes(
                 for col in metric_cols:
                     if col in df.columns:
                         val = df.loc[idx, col]
-                        snap[col] = float(val) if not pd.isna(val) else None
+                        snap[col] = float(cast(Any, val)) if not pd.isna(val) else None
                 # Also include largest_sector if available
                 if "largest_sector" in df.columns:
                     snap["largest_sector"] = str(df.loc[idx, "largest_sector"])

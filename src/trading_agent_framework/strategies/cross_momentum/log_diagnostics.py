@@ -18,8 +18,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from lumibot_trading_agent.support.alpaca_support import AlpacaApiRateLimiter
-from lumibot_trading_agent.support.helpers import TradingMode
+from trading_agent_framework.brokers.alpaca.alpaca_support import AlpacaApiRateLimiter
+from trading_agent_framework.config import TradingMode
 
 from .risk_diagnostics import (
     PortfolioRiskDiagnostics,

@@ -8,9 +8,9 @@ import json
 import logging
 import math
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pandas as pd
@@ -163,7 +163,7 @@ def inverse_volatility_weights(
     return selected
 
 
-def compute_atr_from_df(df: "pd.DataFrame", period: int = 14) -> float | None:
+def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
     """Compute Average True Range over `period` days from a DataFrame with OHLC columns."""
     if len(df) < period + 1:
         return None
@@ -183,7 +183,7 @@ def compute_atr_from_df(df: "pd.DataFrame", period: int = 14) -> float | None:
     return sum(tr_values[-period:]) / period
 
 
-def diagnostics_to_dict(diag: "PortfolioRiskDiagnostics") -> dict:
+def diagnostics_to_dict(diag: PortfolioRiskDiagnostics) -> dict:
     """Convert a PortfolioRiskDiagnostics instance to a plain dict for serialization."""
     return {
         "date": diag.date,
@@ -373,7 +373,7 @@ def compute_momentum_breadth_exposure(
 
     # Find the first matching band (bands are sorted descending by threshold)
     exposure = 1.0  # default if no band matches (shouldn't happen)
-    for threshold, mult in bands:
+    for threshold, mult in cast(list[tuple[float, float]], bands):
         if breadth >= threshold:
             exposure = mult
             break
@@ -555,7 +555,7 @@ def load_cross_momentum_universe() -> list[str]:
     return []
 
 
-def get_cross_momentum_universe_last_date() -> datetime:
+def get_cross_momentum_universe_last_date() -> datetime | None:
     """Get the last date of the pre-computed universe for cross-sectional momentum.
 
     Reads data/universe/stock_universe.json (produced by batch_stock_universe.py).
@@ -569,7 +569,7 @@ def get_cross_momentum_universe_last_date() -> datetime:
             data = json.loads(_UNIVERSE_FILE.read_text())
             date_str = data.get("date")
             if date_str:
-                return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                return datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=UTC)
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error("Failed to parse universe file %s: %s", _UNIVERSE_FILE, e)
     return None

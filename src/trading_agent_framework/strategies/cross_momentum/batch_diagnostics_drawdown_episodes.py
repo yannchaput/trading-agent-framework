@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from lumibot_trading_agent.strategies.candidates.cross_momentum.risk_diagnostics import (
+from trading_agent_framework.strategies.cross_momentum.risk_diagnostics import (
     compute_baseline_stats,
     identify_drawdown_episodes,
 )

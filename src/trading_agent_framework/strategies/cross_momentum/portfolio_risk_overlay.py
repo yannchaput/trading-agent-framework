@@ -117,7 +117,7 @@ def _build_aligned_returns(
         truncated = closes[-min_len:]
         r = pd.Series(truncated).pct_change().dropna().values
         if len(r) > 0:
-            returns_map[sym] = r
+            returns_map[sym] = r  # pyright: ignore[reportArgumentType]
 
     if not returns_map:
         return None, None, None
