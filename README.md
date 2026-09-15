@@ -221,3 +221,52 @@ Run: `uv run agent opening_range_breakout backtesting`
 
 
 
+## Backtesting
+
+`Strategy.run_backtesting(start=..., end=...)` runs a strategy against simulated time
+and simulated fills -- no network calls to a broker, and (with the default data
+source) no Alpaca account needed at all.
+
+```python
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+end = datetime.now(ET)
+
+result = my_strategy.run_backtesting(
+    start=end - timedelta(days=365),
+    end=end,
+)
+print(result.metrics["sharpe_strategy"], result.run_dir)
+```
+
+`start` and `end` must be **timezone-aware** (trading sessions carry a market
+timezone, so a naive bound cannot be compared against them) -- `datetime.now(ET)`,
+not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
+
+`start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
+`backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
+keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
+`benchmark_symbol` to `"SPY"` if neither is set). `run_backtesting` also accepts
+`data_source`, `timestep` (`"day"` by default), `commission`, `slippage` and
+`risk_free_rate` keyword arguments.
+
+- **Data source**: defaults to `YahooBacktestData(start, end)` -- free daily OHLCV, no
+  API key, requires the `backtesting-yahoo` extra (`uv sync --extra backtesting-yahoo`).
+  Pass `data_source=AlpacaBacktestData(...)` for feed parity with paper/live trading,
+  or wrap either in `backtesting.CachedDataSource(source, cache_dir)` to cache fetched
+  bars under `<cache_dir>/<source.name>/` for network-free reruns against the same
+  window (useful when iterating on an agent prompt against a fixed period).
+- **Fill model**: orders fill against the *next* bar's open (never the bar they were
+  submitted on), so a strategy can't trade a price it has already observed. Limit and
+  stop orders fill only when the bar's range actually touches the trigger price.
+- **Output**: `logs/<strategy>/backtesting/<timestamp>_backtesting/` -- `settings.json`,
+  `metrics.json` (Sharpe, Sortino, Calmar, max drawdown, and the rest of the standard
+  tearsheet), and three parquet files (`equity.parquet`, `trades.parquet`,
+  `indicators.parquet`). `run_backtesting` returns a `BacktestResult` with `run_dir`,
+  `settings` and `metrics` attributes pointing at the same data.
+- **No look-ahead, structurally**: every price the strategy can see is gated by
+  `clock.now()` -- a bar is visible only after it has *closed*. See
+  `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full
+  design and its guarantees.

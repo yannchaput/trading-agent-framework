@@ -30,9 +30,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Waits are sliced so clock drift (e.g. a suspended laptop) is corrected at least this often;
-# order events and stop() interrupt a slice through the wake event anyway.
-MAX_WAIT_SLICE_SECONDS = 60.0
 CALENDAR_RETRY_SECONDS = 60.0
 
 _KEYWORD_KINDS = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
@@ -101,7 +98,7 @@ class StrategyExecutor:
             remaining = (deadline - clock.now()).total_seconds()
             if remaining <= 0 or self._stop.is_set():
                 return False
-            clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
+            clock.wait(min(remaining, clock.max_wait_slice), self._wake)
             self._wake.clear()
 
     def wait_for(self, until: Callable[[], bool], timeout: float | None = None) -> bool:

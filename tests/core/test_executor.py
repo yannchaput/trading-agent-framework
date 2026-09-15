@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import signal
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import cast
 
 import pytest
@@ -352,3 +352,21 @@ def test_stop_stream_failure_still_removes_listener_and_restores_sigterm(
     assert signal.getsignal(signal.SIGTERM) == previous_handler
     assert strategy.hooks()[-1] == "on_strategy_end"
     assert "stop_stream failed during teardown" in caplog.text
+
+
+def test_wait_until_uses_the_clocks_max_wait_slice() -> None:
+    class Hello(Strategy):
+        sleeptime = "1D"
+
+        def on_trading_iteration(self) -> None:
+            pass
+
+    clock = FakeClock(et(2026, 1, 5, 9, 0))
+    clock.max_wait_slice = 10.0  # ty: ignore[invalid-assignment]
+    strategy = Hello(FakeBroker(clock))
+    executor = strategy.executor
+
+    executor.wait_until(clock.now() + timedelta(seconds=25))
+
+    # 10s, 10s, 5s -- never a bare 60s slice from the old module constant.
+    assert clock.waits == [10.0, 10.0, 5.0]

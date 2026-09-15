@@ -31,3 +31,11 @@ class MemoryValidationError(MemoryStoreError, ValueError):
 
 class AgentError(TradingFrameworkError):
     """Raised when building or running a LangChain agent fails (never a raw SDK exception)."""
+
+
+class BacktestError(TradingFrameworkError):
+    """Raised when the backtesting simulation cannot proceed (never a raw exception)."""
+
+
+class BacktestDataError(BacktestError):
+    """Raised when a BacktestDataSource cannot fetch, cache, or parse historical data."""
