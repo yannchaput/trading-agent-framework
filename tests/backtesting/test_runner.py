@@ -249,3 +249,97 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     old_total_return = float((1 + old_returns).prod() - 1)
     old_cagr = (1 + old_total_return) ** (252 / len(old_returns)) - 1
     assert result.metrics["cagr_strategy"] != pytest.approx(old_cagr, rel=1e-3)
+
+
+class LateCloseBuyOnceStrategy(BuyOnceStrategy):
+    """Same as `BuyOnceStrategy`, but with a non-default, publicly-overridable
+    `minutes_after_closing` -- the exact knob round 2 of this review finding is about.
+    """
+
+    minutes_after_closing = 5
+
+
+def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp_path: Path) -> None:
+    """Round 2 of the Critical review finding on Task 15. Round 1's fix
+    (`_session_equity_series`) bucketed equity samples with a `sample.time <=
+    session.close` cutoff. `StrategyExecutor._run_session` makes a final
+    `wait_until(session.close + minutes_after_closing)` call per session -- the one
+    that produces that session's TRUE, fully-settled post-close equity sample -- and
+    when `minutes_after_closing > 0` that sample's `time` is `> session.close`, so the
+    old cutoff wrongly bucketed it into the *next* session instead: every session's
+    recorded value lagged by one, and the last session's post-close sample was dropped
+    off the end entirely (no session exists after the last one to catch it).
+
+    This reuses the exact same 4-session/1-fill fixture as
+    `test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence`,
+    with `minutes_after_closing=5` instead of the default 0. The state at each
+    session's close (cash + position revalued at that session's own closing price)
+    does not depend on `minutes_after_closing` -- nothing trades between `close` and
+    `close + minutes_after_closing` -- so the CORRECT expected equity/returns are
+    identical to that default-timing test's. Only a buggy, shifted bucketing rule
+    would produce a different number here, which is exactly what round 1's fix did.
+    """
+    sessions = _sessions(date(2026, 3, 2), 4)  # Mon-Thu, 4 consecutive trading days
+    aapl_closes = [150.0, 151.0, 152.0, 154.0]
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, aapl_closes))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0, 399.0, 403.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(LateCloseBuyOnceStrategy, tmp_path, start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    broker = strategy.broker
+    raw_samples = broker.ledger.equity
+    assert len(raw_samples) > len(sessions)  # oversampling still occurs, as before
+
+    fills = broker.ledger.fills
+    assert len(fills) == 1
+    fill_time, fill_price = fills[0].time, fills[0].price
+    cash_after_fill = Decimal(10000) - 5 * fill_price
+
+    # Same ground-truth formula as the default-timing test: correct per-session
+    # equity, built from the broker's actual recorded fill, does not depend on
+    # `minutes_after_closing`.
+    expected_equity = [
+        10000.0
+        if session.close < fill_time
+        else float(cash_after_fill + 5 * Decimal(str(close)))
+        for session, close in zip(sessions, aapl_closes, strict=True)
+    ]
+    assert expected_equity == [10000.0, 10000.0, pytest.approx(10005.0), pytest.approx(10015.0)]
+
+    expected_returns = pd.Series(
+        expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])
+    ).pct_change().dropna()
+    expected_total_return = float((1 + expected_returns).prod() - 1)
+    expected_cagr = (1 + expected_total_return) ** (252 / len(expected_returns)) - 1
+
+    assert result.metrics["total_return_strategy"] == pytest.approx(expected_total_return, rel=1e-9)
+    assert result.metrics["cagr_strategy"] == pytest.approx(expected_cagr, rel=1e-6)
+
+    # And explicitly not what the round-1-only fix (cutoff at `session.close`, not
+    # `session[i+1].open`) would have computed -- proves the round-2 fix actually
+    # changed the number for this configuration, not that a plausible number happened
+    # to come out.
+    round1_index: list[datetime] = []
+    round1_values: list[float] = []
+    sample_index = 0
+    last_value: float | None = None
+    for session in sessions:
+        while sample_index < len(raw_samples) and raw_samples[sample_index].time <= session.close:
+            last_value = float(raw_samples[sample_index].portfolio_value)
+            sample_index += 1
+        if last_value is not None:
+            round1_index.append(session.close)
+            round1_values.append(last_value)
+    round1_returns = pd.Series(round1_values, index=pd.DatetimeIndex(round1_index)).pct_change().dropna()
+    round1_total_return = float((1 + round1_returns).prod() - 1)
+    round1_cagr = (1 + round1_total_return) ** (252 / len(round1_returns)) - 1
+    assert result.metrics["cagr_strategy"] != pytest.approx(round1_cagr, rel=1e-3)

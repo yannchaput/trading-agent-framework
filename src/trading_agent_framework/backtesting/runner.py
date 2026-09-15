@@ -231,13 +231,31 @@ def _session_equity_series(
     returns` (Critical review finding on Task 15: `cagr_strategy` off by ~3.5x in the
     reviewer's repro).
 
-    For each session, keeps the LAST sample at or before that session's close: the
-    fully-settled end-of-session equity, reflecting both that session's own fills and
-    its bar's freshly-closed price (earlier same-session samples still see the *prior*
-    session's closing price -- see `BacktestBroker._positions_value`/`_latest_bar`).
-    `equity_samples` and `sessions` are both expected in chronological order, which is
-    an existing invariant of `Ledger.equity` (append-only, written by a clock that only
-    ever advances) and `BacktestDataSource.sessions()`.
+    A session's bucket is every remaining sample with `time` strictly before the
+    NEXT session's `open` (not a cutoff at this session's own `close`): the final
+    `wait_until(session.close + minutes_after_closing)` `StrategyExecutor` makes per
+    session (`_run_session` in `core/executor.py`) produces that session's true
+    post-close equity sample, and when `minutes_after_closing > 0` that sample's
+    `time` is `> session.close` -- so a `time <= session.close` cutoff would wrongly
+    shove it into the *next* session's bucket, lagging every session's recorded value
+    by one and dropping the last session's post-close sample off the end entirely
+    (round 2 of this same review finding: `cagr_strategy` silently wrong for any
+    non-default `minutes_after_closing`, with no error). Using the next session's
+    `open` as the boundary is a safe, slightly-conservative choice: the executor's own
+    pre-open wait for session i+1 lands at `session[i+1].open - minutes_before_opening`,
+    which is always earlier than `session[i+1].open` itself, so nothing belonging to
+    session i+1 can have a `time` before that boundary. The LAST session has no next
+    session to bound it, so its bucket is simply everything not yet claimed -- with no
+    upper bound -- which correctly captures its post-close sample regardless of
+    `minutes_after_closing`.
+
+    Within each bucket, keeps the LAST sample: the fully-settled end-of-session
+    equity, reflecting both that session's own fills and its bar's freshly-closed
+    price (earlier same-session samples still see the *prior* session's closing price
+    -- see `BacktestBroker._positions_value`/`_latest_bar`). `equity_samples` and
+    `sessions` are both expected in chronological order, which is an existing
+    invariant of `Ledger.equity` (append-only, written by a clock that only ever
+    advances) and `BacktestDataSource.sessions()`.
     """
     import pandas as pd
 
@@ -245,12 +263,20 @@ def _session_equity_series(
     values: list[float] = []
     sample_index = 0
     last_value: float | None = None
-    for session in sessions:
-        session_close = session.close
-        while sample_index < len(equity_samples) and equity_samples[sample_index].time <= session_close:
-            last_value = float(equity_samples[sample_index].portfolio_value)
-            sample_index += 1
+    session_count = len(sessions)
+    for i, session in enumerate(sessions):
+        if i + 1 < session_count:
+            boundary = sessions[i + 1].open
+            while sample_index < len(equity_samples) and equity_samples[sample_index].time < boundary:
+                last_value = float(equity_samples[sample_index].portfolio_value)
+                sample_index += 1
+        else:
+            # Last session: no next session to bound it -- claim every remaining
+            # sample, however late, so its true post-close equity isn't dropped.
+            while sample_index < len(equity_samples):
+                last_value = float(equity_samples[sample_index].portfolio_value)
+                sample_index += 1
         if last_value is not None:
-            index.append(session_close)
+            index.append(session.close)
             values.append(last_value)
     return pd.Series(values, index=pd.DatetimeIndex(index, name="timestamp"))
