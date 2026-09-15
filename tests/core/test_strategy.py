@@ -86,6 +86,43 @@ def test_is_backtesting_follows_the_mode() -> None:
     assert Strategy(_broker(), mode=TradingMode.BACKTESTING).is_backtesting is True
 
 
+def test_backtest_class_attribute_defaults() -> None:
+    assert Strategy.backtesting_start is None
+    assert Strategy.backtesting_end is None
+    assert Strategy.budget == Decimal("10000")
+    assert Strategy.benchmark_symbol == "SPY"
+
+
+def test_add_line_is_a_no_op_outside_backtesting() -> None:
+    strategy = Strategy(_broker())  # mode defaults to PAPER
+
+    strategy.add_line("sma_200", 148.5)  # must not raise, must not touch anything
+
+    assert strategy.trading_mode is TradingMode.PAPER  # sanity: no exception occurred
+
+
+def test_add_line_records_an_indicator_line_in_backtesting() -> None:
+    from tests.backtesting.fakes import FakeBacktestDataSource
+
+    from trading_agent_framework.backtesting.broker import BacktestBroker
+    from trading_agent_framework.backtesting.clock import BacktestClock
+
+    source = FakeBacktestDataSource()
+    clock = BacktestClock(start=_START, sessions=[])
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=Decimal(10000))
+    strategy = Strategy(broker, mode=TradingMode.BACKTESTING)
+
+    strategy.add_line("sma_200", 148.5, color="red", style="dashed", plot_name="overlay")
+
+    [line] = broker.ledger.lines
+    assert line.name == "sma_200"
+    assert line.value == Decimal("148.5")
+    assert line.color == "red"
+    assert line.style == "dashed"
+    assert line.plot_name == "overlay"
+    assert line.time == clock.now()
+
+
 def test_final_statuses_includes_unknown_so_it_never_blocks_a_wait() -> None:
     """UNKNOWN is what map_status returns for an unrecognised Alpaca status; it must
     count as final or wait_for_order_execution would block on it for the full timeout."""

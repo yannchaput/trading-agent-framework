@@ -74,6 +74,12 @@ class Strategy:
     minutes_after_closing: int = 0
     parameters: Mapping[str, Any] = MappingProxyType({})
 
+    # backtesting defaults (Strategy.run_backtesting()), overridable per call
+    backtesting_start: datetime | None = None
+    backtesting_end: datetime | None = None
+    budget: Decimal = Decimal("10000")
+    benchmark_symbol: str = "SPY"
+
     def __init__(
         self,
         broker: Broker,
@@ -220,6 +226,26 @@ class Strategy:
     def stop(self) -> None:
         """End the run once the current hook returns; `on_strategy_end` still runs."""
         self.executor.stop()
+
+    def add_line(
+        self, name: str, value: Number, *, color: str | None = None,
+        style: str = "solid", plot_name: str = "default_plot",
+    ) -> None:
+        """Record a charted value at the current simulated time (lumibot-compatible
+        signature). No-op outside backtesting."""
+        if not self.is_backtesting:
+            return
+        from trading_agent_framework.backtesting.broker import BacktestBroker
+        from trading_agent_framework.backtesting.ledger import IndicatorLine
+
+        if not isinstance(self.broker, BacktestBroker):
+            return
+        self.broker.ledger.record_line(
+            IndicatorLine(
+                time=self.clock.now(), name=name, value=_to_decimal(value),
+                color=color, style=style, plot_name=plot_name,
+            )
+        )
 
     def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
         """Wait until `order` is filled, canceled, expired or rejected; False on timeout/stop.
