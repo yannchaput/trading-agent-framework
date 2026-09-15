@@ -235,7 +235,7 @@ def test_write_settings_wraps_non_finite_floats_instead_of_raising_raw_value_err
         report.write_settings(tmp_path, settings)
 
 
-def test_write_equity_with_empty_ledger_produces_a_valid_empty_file(tmp_path: Path) -> None:
+def test_write_equity_with_no_sessions_produces_a_valid_empty_file(tmp_path: Path) -> None:
     path = report.write_equity(tmp_path, [])
     df = pd.read_parquet(path)
     for column in ("portfolio_value", "cash", "positions_value", "return", "benchmark_close"):

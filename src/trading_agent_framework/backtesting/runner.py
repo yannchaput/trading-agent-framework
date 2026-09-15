@@ -213,7 +213,7 @@ def _run(
 
     if benchmark_returns is not None:
         # `portfolio_returns` and `benchmark_returns` are both meant to be one row per
-        # trading session at this point (see `_session_equity_series`'s docstring), but
+        # trading session at this point (see `_session_equity_samples`'s docstring), but
         # they come from two independent sources (the ledger vs. `data_source.bars`) --
         # a silent index mismatch here would misalign `compute_metrics`'s alpha/beta/
         # correlation/information-ratio math without either series looking obviously

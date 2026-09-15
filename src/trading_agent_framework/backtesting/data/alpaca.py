@@ -147,7 +147,7 @@ def reindex_to_bar_close(
         df.index = df.index + timedelta(minutes=1)
         return df.sort_index()
     close_by_date = {s.open.astimezone(market_data.MARKET_TZ).date(): s.close for s in sessions}
-    new_index = []
+    new_index: list[datetime] = []
     for ts in df.index:
         bar_date = ts.astimezone(UTC).date()
         close = close_by_date.get(bar_date)
