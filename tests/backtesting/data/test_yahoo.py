@@ -132,19 +132,13 @@ def test_a_download_failure_raises_backtest_data_error() -> None:
         source.bars(AAPL, END, 1, "day")
 
 
-def test_missing_yfinance_dependency_raises_backtest_data_error() -> None:
-    """No `download` injected and no real yfinance installed in this environment
-    (see repo note in CLAUDE.md about lazy yfinance import): the real
-    `_real_download()` path's `import yfinance` must not leak a raw
-    ModuleNotFoundError out of the public `bars()` method."""
-    source = YahooBacktestData(START, END)
-    with pytest.raises(BacktestDataError, match="yfinance"):
-        source.bars(AAPL, END, 1, "day")
-
-
 def test_an_injected_download_raising_module_not_found_is_wrapped() -> None:
-    """Same failure mode as above, reproduced via an injected `download` so the
-    test doesn't depend on yfinance actually being absent."""
+    """The real `_real_download()` path's `import yfinance` must not leak a raw
+    ModuleNotFoundError out of the public `bars()` method (see repo note in
+    CLAUDE.md about lazy yfinance import) -- reproduced via an injected
+    `download` so the test doesn't depend on yfinance actually being absent
+    from the environment (it may be installed for an unrelated extra, e.g.
+    `batch-universe`)."""
 
     def missing_yfinance(symbol: str, **kwargs: object) -> pd.DataFrame:
         raise ModuleNotFoundError("No module named 'yfinance'")
