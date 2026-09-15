@@ -22,6 +22,7 @@ class FakeBacktestDataSource(BacktestDataSource):
         self._frames: dict[Asset, pd.DataFrame] = {}
         self._sessions: list[MarketSession] = []
         self.load_calls: list[tuple[Asset, ...]] = []
+        self.load_windows: list[tuple[datetime, datetime]] = []
         self.bars_calls: list[tuple[Asset, datetime, int, str]] = []
 
     def set_bars(self, asset: Asset, df: pd.DataFrame) -> None:
@@ -32,6 +33,7 @@ class FakeBacktestDataSource(BacktestDataSource):
 
     def load(self, assets, start, end, timestep) -> None:
         self.load_calls.append(tuple(assets))
+        self.load_windows.append((start, end))
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         self.bars_calls.append((asset, cutoff, length, timestep))

@@ -16,6 +16,7 @@ from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock
 
 from trading_agent_framework.backtesting.runner import BacktestResult, run_backtest
+from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MarketSession
@@ -474,3 +475,96 @@ def test_equity_parquet_session_cadence_survives_nonzero_minutes_after_closing(
     """
     equity, sessions = _equity_parquet_for(tmp_path, LateCloseBuyOnceStrategy)
     _assert_session_cadence_equity(equity, sessions)
+
+
+def test_run_backtest_widens_only_the_eager_benchmark_load_by_warmup(tmp_path: Path) -> None:
+    """`warmup_trading_days` widens the eager benchmark `load()` call's start bound by
+    exactly `warmup_calendar_days`'s output, so warm-up history reaches the benchmark
+    asset even though it is only lazily fetched (via `get_historical_prices`) for other
+    tickers. The end bound and the exact call count are untouched.
+    """
+    sessions = _sessions(date(2026, 1, 5), 4)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0, 152.0, 153.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 402.0, 401.0, 405.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    end = sessions[-1].close
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+
+    run_backtest(
+        strategy, start=start, end=end,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        warmup_trading_days=10,
+    )
+
+    expected_start = start - timedelta(days=warmup_calendar_days(10))
+    assert source.load_windows == [(expected_start, end)]
+
+
+def test_run_backtest_warmup_never_becomes_an_extra_simulated_session(tmp_path: Path) -> None:
+    """Widening the eager benchmark load must never widen `sessions()`/the clock: the
+    number of simulated session rows in `equity.parquet` is identical whether or not
+    `warmup_trading_days` is passed.
+    """
+
+    def _run(warmup_trading_days: int, subdir: str) -> int:
+        sessions = _sessions(date(2026, 1, 5), 4)
+        source = FakeBacktestDataSource()
+        source.set_sessions(sessions)
+        source.set_bars(AAPL, _bars(sessions, [150.0, 151.0, 152.0, 153.0]))
+        source.set_bars(SPY, _bars(sessions, [400.0, 402.0, 401.0, 405.0]))
+
+        start = sessions[0].open - timedelta(hours=1)
+        strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / subdir, start)
+
+        result = run_backtest(
+            strategy, start=start, end=sessions[-1].close,
+            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+            warmup_trading_days=warmup_trading_days,
+        )
+        return len(pd.read_parquet(result.run_dir / "equity.parquet"))
+
+    assert _run(0, "no_warmup") == _run(10, "with_warmup")
+
+
+def test_run_backtest_records_warmup_trading_days_in_settings(tmp_path: Path) -> None:
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "explicit", start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        warmup_trading_days=10,
+    )
+    settings = json.loads((result.run_dir / "settings.json").read_text())
+    assert settings["warmup_trading_days"] == 10
+
+
+def test_run_backtest_defaults_warmup_trading_days_to_zero_in_settings(tmp_path: Path) -> None:
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "default", start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+    settings = json.loads((result.run_dir / "settings.json").read_text())
+    assert settings["warmup_trading_days"] == 0
