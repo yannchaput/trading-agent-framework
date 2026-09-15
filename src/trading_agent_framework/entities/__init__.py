@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from importlib.metadata import PackageNotFoundError, version
-
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -19,12 +17,10 @@ from trading_agent_framework.entities.enums import (
 from trading_agent_framework.entities.order import Order, Transaction
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
+from trading_agent_framework.utils import get_version
 
-try:
-    __version__ = version("trading_agent_framework")
-except PackageNotFoundError:
-    # Package is not installed (e.g., running from local source)
-    __version__ = "unknown"
+__version__ = get_version("trading_agent_framework")
+
 
 __all__ = [
     "ACTIVE_ORDER_STATUSES",

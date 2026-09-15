@@ -19,13 +19,10 @@ if TYPE_CHECKING:
     from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
     from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
 
-from importlib.metadata import PackageNotFoundError, version
+from trading_agent_framework.utils import get_version
 
-try:
-    __version__ = version("trading_agent_framework")
-except PackageNotFoundError:
-    # Package is not installed (e.g., running from local source)
-    __version__ = "unknown"
+__version__ = get_version("trading_agent_framework")
+
 
 __all__ = [
     "AlpacaBroker",
