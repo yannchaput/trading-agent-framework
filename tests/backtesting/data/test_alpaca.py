@@ -213,3 +213,55 @@ def test_bars_lazy_fetch_uses_the_constructor_fixed_window() -> None:
     request = data_client.bars_requests[0]
     assert request.start.replace(tzinfo=UTC) == START
     assert request.end.replace(tzinfo=UTC) == END
+
+
+def test_load_widened_for_warmup_reaches_bars_before_the_narrow_start() -> None:
+    """Task 6 (review-fix pass) belt-and-suspenders test: proves the exact
+    `load()`-then-`bars()` interaction `backtesting/runner.py`'s `_run` relies on for
+    `warmup_trading_days` actually works against `AlpacaBacktestData`, not just against
+    `tests/backtesting/fakes.FakeBacktestDataSource` (which `test_runner.py`'s own
+    warmup test uses).
+
+    Mirrors `runner._run`'s shape: `AlpacaBacktestData` is constructed with the narrow
+    simulation window (per `Strategy.run_backtesting`'s own docstring, an explicit
+    `data_source` is used as given and is not itself widened), then `load()` is called
+    with a start earlier than that narrow window -- exactly what `_run`'s widened
+    `warmup_start` does for the benchmark asset. `bars()` is then asked for history as
+    of the very first simulated session's open, before that session's own bar has
+    closed: the only bars it can legitimately return are the warm-up ones fetched by
+    the widened `load()` call, so seeing them here (and not the not-yet-closed narrow-
+    window bar) proves warm-up history genuinely reaches `bars()` rather than merely
+    being requested over HTTP (already covered by
+    `test_load_honors_its_own_start_and_end_arguments`).
+    """
+    trading_client = FakeTradingClient()
+    trading_client.calendar_response = [
+        make_alpaca_calendar("2026-01-02"),  # warm-up-only session, before the narrow start
+        make_alpaca_calendar("2026-01-05"),  # warm-up-only session, before the narrow start
+        make_alpaca_calendar("2026-01-06"),  # the narrow simulation's first session
+    ]
+    data_client = FakeStockHistoricalDataClient()
+    data_client.bars["SPY"] = [
+        bar_payload("2026-01-02T05:00:00Z", 400.0),
+        bar_payload("2026-01-05T05:00:00Z", 402.0),
+        bar_payload("2026-01-06T05:00:00Z", 405.0),
+    ]
+    narrow_start = datetime(2026, 1, 6, 9, 30, tzinfo=MARKET_TZ)
+    end = datetime(2026, 1, 6, 16, 0, tzinfo=MARKET_TZ)
+    # Constructed with the NARROW window -- an explicit data_source is never widened
+    # by `Strategy.run_backtesting` itself, only `runner._run`'s own eager benchmark
+    # `load()` call is.
+    source = AlpacaBacktestData(data_client, trading_client, narrow_start, end)
+    spy = Asset("SPY")
+
+    warmup_start = datetime(2026, 1, 2, 9, 30, tzinfo=MARKET_TZ)
+    source.load([spy], warmup_start, end, "day")
+
+    # Cutoff at the narrow start's session OPEN, before that session's own bar has
+    # closed -- only warm-up history can legitimately be visible yet.
+    result = source.bars(spy, narrow_start, 3, "day")
+
+    assert result is not None
+    assert list(result.df["close"]) == [400.0, 402.0]  # Jan-2 and Jan-5, not the un-closed Jan-6 bar
+    # And the fetch actually reached back to the widened start, not the narrow one.
+    assert data_client.bars_requests[0].start.replace(tzinfo=UTC) == warmup_start.astimezone(UTC)
