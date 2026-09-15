@@ -81,7 +81,7 @@ def main() -> int:
         # Strategy.run_backtesting() rebinds the broker before the first bar
         # is touched, so any Broker instance works as a placeholder.
         placeholder_broker = AlpacaBroker.from_credentials(
-            "smoke_backtest", creds, with_stream=False, project_root=PROJECT_ROOT
+            "smoke_backtest", creds, with_stream=False
         )
 
         strategy = BuyAndHold(placeholder_broker, mode=TradingMode.BACKTESTING, project_root=PROJECT_ROOT)
