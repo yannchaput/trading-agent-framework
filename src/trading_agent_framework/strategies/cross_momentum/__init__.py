@@ -1,9 +1,9 @@
 from trading_agent_framework.utils import get_version
 
-from .agent_cross_momentum_v5 import CrossMomentumStrategyV5
+from .agent_cross_momentum import CrossMomentumStrategy
 
 __all__ = [
-    "CrossMomentumStrategyV5",
+    "CrossMomentumStrategy",
 ]
 
 

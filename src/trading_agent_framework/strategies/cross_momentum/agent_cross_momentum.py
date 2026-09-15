@@ -26,16 +26,16 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from lumibot.entities import Asset, TradingFee
-
-from lumibot_trading_agent.support.alpaca_support import AlpacaApiRateLimiter, SafeAlpacaBacktesting
 from lumibot_trading_agent.support.broker_factory import BrokerFactory
-from lumibot_trading_agent.support.helpers import (
-    TradingMode,
+
+from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter, SafeAlpacaBacktesting
+from trading_agent_framework.config import TradingMode
+from trading_agent_framework.core import Strategy
+from trading_agent_framework.entities import Asset, AssetType, TradingFee
+from trading_agent_framework.utils.helpers import (
     build_logs,
     get_thread_capacity,
 )
-from lumibot_trading_agent.support.wrapping_strategy import WrappingStrategy
 
 from .log_diagnostics import DiagnosticLogger
 from .parameters import CONFIG
@@ -71,14 +71,14 @@ BACKTESTING_PARAMS = {
     # day one. Without it, every ticker trips min_trading_days=250 and the
     # first ~year of the backtest can never pass filters.
     "warm_up_trading_days": 300,
-    "benchmark_asset": Asset("SPY", Asset.AssetType.STOCK),
+    "benchmark_asset": Asset("SPY", asset_type=AssetType.STOCK),
     "budget": 10000,
     "buy_trading_fees": [TradingFee(percent_fee=0.001)],
     "sell_trading_fees": [TradingFee(percent_fee=0.001)],
 }
 
 
-class CrossMomentumStrategyV5(WrappingStrategy):
+class CrossMomentumStrategy(Strategy):
     """Cross-sectional momentum strategy V5 — copy of V2 with fractional share support.
 
     Tracks actual daily portfolio equity to compute realized volatility
@@ -100,10 +100,7 @@ class CrossMomentumStrategyV5(WrappingStrategy):
         self.params = {**CONFIG, **BACKTESTING_PARAMS}
 
         if not len(universe):
-            self.log_message(
-                "No universe provided to the strategy, this is a mandatory parameter",
-                color="red",
-            )
+            self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
             sys.exit(1)
         self.__universe = universe or []
 
@@ -120,7 +117,7 @@ class CrossMomentumStrategyV5(WrappingStrategy):
         self._alpaca_rate_limiter = AlpacaApiRateLimiter(trading_mode=self._trading_mode)
 
         self.log_info(
-            f"CrossMomentumStrategyV5 initialized with {len(self.__universe)} symbols",
+            f"CrossMomentumStrategy initialized with {len(self.__universe)} symbols",
         )
 
     def initialize(self):
@@ -345,7 +342,7 @@ class CrossMomentumStrategyV5(WrappingStrategy):
                     sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
                     self.submit_order(sell_order)
                     last_price = self.get_last_price(symbol) or 0.0
-                    estimated_sell_proceeds += pos.quantity * last_price
+                    estimated_sell_proceeds += float(pos.quantity) * float(last_price)
                 except Exception as e:
                     self.log_error(f"Failed to submit sell order for {symbol}: {e}")
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
@@ -353,7 +350,7 @@ class CrossMomentumStrategyV5(WrappingStrategy):
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
 
         # Phase 2: Buy
-        available_cash = self.get_cash() + estimated_sell_proceeds
+        available_cash = float(self.get_cash()) + estimated_sell_proceeds
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
             if available_cash <= 0:
@@ -425,7 +422,7 @@ class CrossMomentumStrategyV5(WrappingStrategy):
         equity = self.portfolio_value or 0.0
         if equity > 0:
             # Compute history file name based on trading mode
-            self._equity_history.append(equity)
+            self._equity_history.append(float(equity))
             today_str = self.get_datetime().strftime("%Y-%m-%d")
             save_equity_history(self._equity_history, today_str, self._history_file_path)
 
@@ -477,9 +474,8 @@ class CrossMomentumStrategyV5(WrappingStrategy):
                     target_weights,
                     spy_closes,
                 )
-                self.log_message(
-                    f"Risk overlay: {risk_state.upper()} (beta={risk_metrics.get('beta_63d')}, vol={risk_metrics.get('vol_20d')}, corr={risk_metrics.get('corr_20d')}, exposure={risk_exposure:.0%})",
-                    color="cyan" if risk_state == "normal" else "red",
+                self.log_info(
+                    f"Risk overlay: {risk_state.upper()} (beta={risk_metrics.get('beta_63d')}, vol={risk_metrics.get('vol_20d')}, corr={risk_metrics.get('corr_20d')}, exposure={risk_exposure:.0%})"
                 )
 
         # Step 4: Fast/Slow Volatility Targeting — compute realized vol
