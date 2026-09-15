@@ -22,6 +22,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
@@ -30,7 +31,7 @@ import pandas as pd
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
-from trading_agent_framework.entities import Asset, AssetType, TradingFee
+from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -58,19 +59,15 @@ logger = logging.getLogger(__name__)
 
 # ── Backtesting params ───────────────────────────────────────────────────────
 BACKTESTING_PARAMS = {
-    "backtesting_start": datetime(2026, 5, 27),
-    "backtesting_end": datetime(2026, 5, 31),
-    # "backtesting_start": datetime(2016, 1, 1),
-    # "backtesting_end": datetime(2026, 8, 15),
-    "benchmark_asset": Asset("SPY", asset_type=AssetType.STOCK),
+    "backtesting_start": datetime(2026, 5, 27, tzinfo=MARKET_TZ),
+    "backtesting_end": datetime(2026, 5, 31, tzinfo=MARKET_TZ),
+    "benchmark_symbol": "SPY",
     # Warm-up extends the data window before backtesting_start so the 12-1m
     # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
     # day one. Without it, every ticker trips min_trading_days=250 and the
     # first ~year of the backtest can never pass filters.
-    "warm_up_trading_days": 300,
+    "warmup_trading_days": 300,
     "budget": 10000,
-    "buy_trading_fees": [TradingFee(percent_fee=0.001)],
-    "sell_trading_fees": [TradingFee(percent_fee=0.001)],
 }
 
 
@@ -512,40 +509,12 @@ class CrossMomentumStrategy(Strategy):
         self.rebalance(target, all_ranks)
 
     def run_backtesting(self):
-        """Run the strategy in backtesting mode using AlpacaBacktesting."""
-        super().run_backtesting(
+        """Run the strategy in backtesting mode."""
+        return super().run_backtesting(
             start=self.params["backtesting_start"],
             end=self.params["backtesting_end"],
             budget=self.params["budget"],
-            benchmark=self.params["benchmark_asset"],
+            benchmark=self.params["benchmark_symbol"],
+            commission=Decimal("0.001"),
+            warmup_trading_days=self.params["warmup_trading_days"],
         )
-        # super().run_backtesting()
-        # log_dir: Path = build_logs(f"agent_{self.name}", TradingMode.BACKTESTING)
-        # diagnostics_file_path = str(log_dir / "diagnostics.parquet")
-        # self.log_info(f"Logs will be saved to: {log_dir}")
-
-        # # Delete equity curve history file from the previous run if exists, to ensure a clean backtest
-        # self.log_debug(f"Checking for existing equity history file: {self._history_file_path}")
-        # if self._history_file_path.exists():
-        #     self.log_debug(f"Found existing equity history file: {self._history_file_path}")
-        #     self._history_file_path.unlink()
-        #     self.log_info(f"Deleted previous equity history file: {self._history_file_path}")
-
-        # self.backtest(
-        #     SafeAlpacaBacktesting,
-        #     name=self.name,
-        #     backtesting_start=self.params["backtesting_start"],
-        #     backtesting_end=self.params["backtesting_end"],
-        #     warm_up_trading_days=self.params["warm_up_trading_days"],
-        #     benchmark_asset=self.params["benchmark_asset"],
-        #     buy_trading_fees=self.params["buy_trading_fees"],
-        #     sell_trading_fees=self.params["sell_trading_fees"],
-        #     budget=self.params["budget"],
-        #     quiet_logs=False,
-        #     logfile=str(log_dir / "backtest.log"),
-        #     stats_file=str(log_dir / "stats.csv"),
-        #     save_logfile=True,
-        #     config=BrokerFactory.get_alpaca_config(),
-        #     universe=self.__universe or [],
-        #     diagnostics_file_path=diagnostics_file_path,
-        # )
