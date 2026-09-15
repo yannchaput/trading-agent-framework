@@ -41,8 +41,12 @@ from trading_agent_framework.utils.errors import BacktestError
 from trading_agent_framework.utils.log import setup_strategy_logging
 
 if TYPE_CHECKING:
+    import pandas as pd
+
     from trading_agent_framework.backtesting.data.base import BacktestDataSource
+    from trading_agent_framework.backtesting.ledger import EquitySample
     from trading_agent_framework.core.strategy import Strategy
+    from trading_agent_framework.utils.clock import MarketSession
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,10 +172,19 @@ def _run(
     report.write_trades(run_dir, broker.ledger)
     report.write_indicators(run_dir, broker.ledger)
 
-    equity_index = [sample.time for sample in broker.ledger.equity]
-    equity_values = [float(sample.portfolio_value) for sample in broker.ledger.equity]
-    portfolio_returns = pd.Series(equity_values, index=equity_index).pct_change().dropna()
+    session_equity = _session_equity_series(broker.ledger.equity, sessions)
+    portfolio_returns = session_equity.pct_change().dropna()
     benchmark_returns = benchmark_series.pct_change().dropna() if benchmark_series is not None else None
+
+    if benchmark_returns is not None:
+        # `portfolio_returns` and `benchmark_returns` are both meant to be one row per
+        # trading session at this point (see `_session_equity_series`'s docstring), but
+        # they come from two independent sources (the ledger vs. `data_source.bars`) --
+        # a silent index mismatch here would misalign `compute_metrics`'s alpha/beta/
+        # correlation/information-ratio math without either series looking obviously
+        # wrong on its own. Align explicitly so any such mismatch degrades to "fewer
+        # overlapping rows" instead of "wrong rows paired together".
+        portfolio_returns, benchmark_returns = portfolio_returns.align(benchmark_returns, join="inner")
 
     computed_metrics = metrics_module.compute_metrics(
         portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate
@@ -199,3 +212,45 @@ def _run(
     report.write_settings(run_dir, settings)
 
     return BacktestResult(run_dir=run_dir, settings=settings, metrics=computed_metrics)
+
+
+def _session_equity_series(
+    equity_samples: list[EquitySample], sessions: list[MarketSession]
+) -> pd.Series:
+    """Reduce `equity_samples` down to exactly one sample per trading session.
+
+    `BacktestBroker.on_advance` samples equity on every clock advance, not just at
+    session boundaries: under `Strategy`'s default timing (`minutes_before_opening=60`,
+    `minutes_before_closing=1`, `minutes_after_closing=0`), `StrategyExecutor` makes
+    several distinct `wait_until()` calls per session (pre-open, session-open,
+    pre-close, close), each producing its own `EquitySample`. Feeding all of those into
+    `portfolio_returns` (as an earlier version of this module did) oversamples the
+    strategy side relative to `benchmark_returns` -- which is built from
+    `data_source.bars(...)` and is naturally one row per session -- and silently
+    understates every annualised metric `compute_metrics` derives from `portfolio_
+    returns` (Critical review finding on Task 15: `cagr_strategy` off by ~3.5x in the
+    reviewer's repro).
+
+    For each session, keeps the LAST sample at or before that session's close: the
+    fully-settled end-of-session equity, reflecting both that session's own fills and
+    its bar's freshly-closed price (earlier same-session samples still see the *prior*
+    session's closing price -- see `BacktestBroker._positions_value`/`_latest_bar`).
+    `equity_samples` and `sessions` are both expected in chronological order, which is
+    an existing invariant of `Ledger.equity` (append-only, written by a clock that only
+    ever advances) and `BacktestDataSource.sessions()`.
+    """
+    import pandas as pd
+
+    index: list[datetime] = []
+    values: list[float] = []
+    sample_index = 0
+    last_value: float | None = None
+    for session in sessions:
+        session_close = session.close
+        while sample_index < len(equity_samples) and equity_samples[sample_index].time <= session_close:
+            last_value = float(equity_samples[sample_index].portfolio_value)
+            sample_index += 1
+        if last_value is not None:
+            index.append(session_close)
+            values.append(last_value)
+    return pd.Series(values, index=pd.DatetimeIndex(index, name="timestamp"))
