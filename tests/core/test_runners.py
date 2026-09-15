@@ -190,6 +190,56 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
     assert isinstance(strategy.broker, BacktestBroker)  # rebound by run_backtesting
 
 
+def test_run_backtesting_widens_default_yahoo_source_for_warmup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import timedelta
+
+    from tests.backtesting.fakes import FakeBacktestDataSource, make_close_indexed_frame
+
+    import trading_agent_framework.backtesting.data.yahoo as yahoo_module
+    from trading_agent_framework.backtesting.warmup import warmup_calendar_days
+
+    sessions = weekday_sessions(date(2026, 1, 5), 3)
+    df = make_close_indexed_frame([150.0, 151.0, 152.0], start=sessions[0].close, freq="1D")
+    captured: dict[str, datetime] = {}
+
+    class CapturingDataSource(FakeBacktestDataSource):
+        def __init__(self, start: datetime, end: datetime, **kwargs: object) -> None:
+            super().__init__()
+            captured["start"] = start
+            captured["end"] = end
+            self.set_sessions(sessions)
+            self.set_bars(Asset("SPY"), df)
+
+    monkeypatch.setattr(yahoo_module, "YahooBacktestData", CapturingDataSource)
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    start = sessions[0].open
+    end = sessions[-1].close
+
+    strategy.run_backtesting(start=start, end=end, warmup_trading_days=10, benchmark="SPY")
+
+    assert captured["start"] == start - timedelta(days=warmup_calendar_days(10))
+    assert captured["end"] == end
+
+
+def test_run_backtesting_forwards_warmup_trading_days_with_explicit_data_source(tmp_path: Path) -> None:
+    from tests.backtesting.fakes import FakeBacktestDataSource, make_close_indexed_frame
+
+    sessions = weekday_sessions(date(2026, 1, 5), 3)
+    df = make_close_indexed_frame([150.0, 151.0, 152.0], start=sessions[0].close, freq="1D")
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(Asset("SPY"), df)
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    result = strategy.run_backtesting(
+        start=sessions[0].open, end=sessions[-1].close,
+        data_source=source, benchmark="SPY", warmup_trading_days=10,
+    )
+
+    assert result.settings["warmup_trading_days"] == 10
+
+
 def test_core_package_reexports() -> None:
     assert core.Strategy is strategy_module.Strategy
     assert core.StrategyExecutor is executor_module.StrategyExecutor

@@ -448,6 +448,7 @@ class Strategy:
         commission: Number = Decimal(0),
         slippage: Number = Decimal(0),
         risk_free_rate: float = 0.0,
+        warmup_trading_days: int = 0,
     ) -> BacktestResult:
         """Run this strategy against simulated time and simulated fills.
 
@@ -466,16 +467,29 @@ class Strategy:
             commission: per-trade commission (default 0), a single symmetric commission rate — a Decimal fraction of trade notional, applied identically to buys and sells.
             slippage: per-trade slippage (default 0)
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
+            warmup_trading_days: extra trading days of history to make available before
+                `start` (default 0, i.e. no widening) so a strategy's indicators aren't
+                starved near `backtesting_start`. Only widens the *default* Yahoo
+                source's own construction window (via
+                `backtesting.warmup.warmup_calendar_days`) -- an explicit `data_source`
+                is used as given and is not widened by this method; it is still
+                forwarded to `run_backtest`, which independently widens its own eager
+                benchmark load regardless of which source is passed.
         """
         from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
         from trading_agent_framework.backtesting.runner import run_backtest
+        from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
         resolved_start = start if start is not None else self.backtesting_start
         resolved_end = end if end is not None else self.backtesting_end
         if resolved_start is None or resolved_end is None:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
-        resolved_source = data_source if data_source is not None else YahooBacktestData(resolved_start, resolved_end)
+        if data_source is not None:
+            resolved_source = data_source
+        else:
+            warmup_start = resolved_start - timedelta(days=warmup_calendar_days(warmup_trading_days))
+            resolved_source = YahooBacktestData(warmup_start, resolved_end)
         return run_backtest(
             self,
             start=resolved_start,
@@ -487,6 +501,7 @@ class Strategy:
             commission=_to_decimal(commission),
             slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
+            warmup_trading_days=warmup_trading_days,
         )
 
     def _run_trading(self, mode: TradingMode) -> None:
