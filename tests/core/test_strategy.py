@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from decimal import Decimal
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
@@ -23,8 +24,8 @@ from trading_agent_framework.entities.position import Position
 _START = et(2026, 9, 14, 9, 0)
 
 
-def _broker(**kwargs: object) -> FakeBroker:
-    return FakeBroker(FakeClock(_START), **kwargs)  # ty: ignore[invalid-argument-type]
+def _broker(**kwargs: Any) -> FakeBroker:
+    return FakeBroker(FakeClock(_START), **kwargs)
 
 
 def _position(symbol: str) -> Position:

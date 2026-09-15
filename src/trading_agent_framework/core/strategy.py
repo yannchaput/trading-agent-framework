@@ -236,8 +236,13 @@ class Strategy:
         self.executor.stop()
 
     def add_line(
-        self, name: str, value: Number, *, color: str | None = None,
-        style: str = "solid", plot_name: str = "default_plot",
+        self,
+        name: str,
+        value: Number,
+        *,
+        color: str | None = None,
+        style: str = "solid",
+        plot_name: str = "default_plot",
     ) -> None:
         """Record a charted value at the current simulated time (lumibot-compatible
         signature). No-op outside backtesting."""
@@ -250,8 +255,12 @@ class Strategy:
             return
         self.broker.ledger.record_line(
             IndicatorLine(
-                time=self.clock.now(), name=name, value=_to_decimal(value),
-                color=color, style=style, plot_name=plot_name,
+                time=self.clock.now(),
+                name=name,
+                value=_to_decimal(value),
+                color=color,
+                style=style,
+                plot_name=plot_name,
             )
         )
 
@@ -446,6 +455,17 @@ class Strategy:
         `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
         `data_source` defaults to a Yahoo daily source over [start, end] (no on-disk
         cache by default -- wrap it in `backtesting.CachedDataSource` for repeat runs).
+
+        Args:
+            start: first simulated datetime (inclusive)
+            end: last simulated datetime (inclusive)
+            budget: starting cash for the backtest
+            data_source: source of historical market data; defaults to Yahoo daily bars
+            benchmark: symbol to use for the backtest's benchmark performance (e.g SPY)
+            timestep: "minute" or "day" bars for the backtest
+            commission: per-trade commission (default 0), a single symmetric commission rate — a Decimal fraction of trade notional, applied identically to buys and sells.
+            slippage: per-trade slippage (default 0)
+            risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
         """
         from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
         from trading_agent_framework.backtesting.runner import run_backtest
@@ -453,19 +473,19 @@ class Strategy:
         resolved_start = start if start is not None else self.backtesting_start
         resolved_end = end if end is not None else self.backtesting_end
         if resolved_start is None or resolved_end is None:
-            raise ConfigurationError(
-                "run_backtesting needs start/end, either as arguments or as "
-                "backtesting_start/backtesting_end class attributes"
-            )
+            raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
-        resolved_source = (
-            data_source if data_source is not None
-            else YahooBacktestData(resolved_start, resolved_end)
-        )
+        resolved_source = data_source if data_source is not None else YahooBacktestData(resolved_start, resolved_end)
         return run_backtest(
-            self, start=resolved_start, end=resolved_end, budget=resolved_budget,
-            data_source=resolved_source, benchmark=benchmark or self.benchmark_symbol,
-            timestep=timestep, commission=_to_decimal(commission), slippage=_to_decimal(slippage),
+            self,
+            start=resolved_start,
+            end=resolved_end,
+            budget=resolved_budget,
+            data_source=resolved_source,
+            benchmark=benchmark or self.benchmark_symbol,
+            timestep=timestep,
+            commission=_to_decimal(commission),
+            slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
         )
 
