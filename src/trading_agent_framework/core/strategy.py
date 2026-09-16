@@ -99,7 +99,7 @@ class Strategy:
         # This attribute only accepts framework dependant parameters.
         self.parameters = {**type(self).parameters, **(parameters or {})}
         self.clock = clock if clock is not None else broker.clock
-        self.project_root = project_root
+        self.project_root = project_root or find_project_root()
         # A container for strategy-specific variables that can be set and read by the user; not persisted.
         # It is not used by the framework.
         self.vars = SimpleNamespace()

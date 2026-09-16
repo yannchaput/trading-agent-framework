@@ -6,6 +6,7 @@ backtests with Yahoo data never pays for its 12 transitive dependencies.
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -54,10 +55,49 @@ class YahooBacktestData(BacktestDataSource):
         self._frames: dict[Asset, pd.DataFrame] = {}
         self._calendar_asset = Asset(calendar_symbol)
         self._session_dates_cache: list[date] | None = None
+        # Serializes calls into `download` on the lazy single-asset path (`_fetch`) --
+        # an asset requested outside a `load()`-preloaded batch (e.g. a position held
+        # from a prior run) still goes through `bars()`'s lazy fetch, possibly from a
+        # strategy's own thread pool, and firing several `yf.download` calls at once
+        # races yfinance's shared session/crumb handling.
+        self._download_lock = threading.Lock()
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
-        for asset in assets:
-            self._fetch(asset, timestep, start, end)
+        """Batch-fetch `assets` in one `download` call instead of one per ticker --
+        a strategy filtering a large universe (e.g. cross_momentum, hundreds of
+        tickers) calling this once up front avoids ever falling back to `bars()`'s
+        lazy per-asset fetch from its own thread pool, which would otherwise fire many
+        concurrent `yf.download` calls, race yfinance's shared session/crumb handling,
+        and trip Yahoo's rate limiting -- surfacing as the whole backtest stalling
+        partway through the universe rather than a clean error.
+        """
+        missing = [asset for asset in assets if asset not in self._frames]
+        if not missing:
+            return
+        symbols = [asset.symbol for asset in missing]
+        try:
+            download = self._download if self._download is not None else self._real_download()
+            with self._download_lock:
+                raw = download(
+                    symbols,
+                    start=start.date().isoformat(),
+                    end=(end.date() + timedelta(days=1)).isoformat(),
+                    auto_adjust=True,
+                    progress=False,
+                    group_by="ticker",
+                )
+        except ImportError as exc:
+            raise BacktestDataError(
+                "yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra"
+            ) from exc
+        except Exception as exc:
+            raise BacktestDataError(
+                f"failed to batch-fetch Yahoo data for {len(symbols)} tickers "
+                f"(starting {symbols[0]!r}): {exc}"
+            ) from exc
+
+        for asset in missing:
+            self._frames[asset] = parse_yahoo_frame(_extract_ticker_frame(raw, asset.symbol))
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         if timestep != "day":
@@ -122,13 +162,14 @@ class YahooBacktestData(BacktestDataSource):
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
         try:
             download = self._download if self._download is not None else self._real_download()
-            raw = download(
-                asset.symbol,
-                start=start.date().isoformat(),
-                end=(end.date() + timedelta(days=1)).isoformat(),
-                auto_adjust=True,
-                progress=False,
-            )
+            with self._download_lock:
+                raw = download(
+                    asset.symbol,
+                    start=start.date().isoformat(),
+                    end=(end.date() + timedelta(days=1)).isoformat(),
+                    auto_adjust=True,
+                    progress=False,
+                )
             df = parse_yahoo_frame(raw)
         except ImportError as exc:
             raise BacktestDataError(
@@ -143,6 +184,23 @@ class YahooBacktestData(BacktestDataSource):
         import yfinance as yf
 
         return yf.download
+
+
+def _extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Slice one ticker's OHLCV out of a batched `download(symbols, group_by="ticker")`
+    result. Columns come back as a `(ticker, field)` MultiIndex -- `raw[symbol]` drops
+    the ticker level, leaving the same flat shape `parse_yahoo_frame` already expects
+    from a single-ticker download. A symbol Yahoo had no data for at all is simply
+    absent from the batch rather than raising (yfinance prints its own "Failed
+    download" notice and moves on); treated the same as any other no-data ticker.
+    """
+    import pandas as pd
+
+    if isinstance(raw.columns, pd.MultiIndex):
+        if symbol not in raw.columns.get_level_values(0):
+            return pd.DataFrame()
+        return raw[symbol]
+    return raw  # a length-1 batch some yfinance versions return flat, not nested
 
 
 def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:

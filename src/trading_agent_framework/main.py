@@ -1,5 +1,4 @@
 import sys
-from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -7,9 +6,11 @@ from rich.panel import Panel
 from rich.text import Text
 
 import trading_agent_framework as tr
+from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.config import find_project_root, load_strategy_env
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 
 # MAPPING OF STRATEGY NAMES TO CLASSES
 AGENT_STRATEGIES = {
@@ -81,25 +82,24 @@ def main() -> None:
 
     # Load strategy class
     strategy_class = AGENT_STRATEGIES[strategy_name]
+    project_root = find_project_root()
     # Get environment file
-    env_file_path: Path = load_strategy_env(strategy_name, enum_mode.value, find_project_root())
-    print(env_file_path.as_uri)
-    # if strategy_name == "warren_buffett":
-    #     # For some strategies like Warren Buffet, we need to pass the backtesting universe to the strategy constructor
-    #     strategy = strategy_class(mode=mode, broker=broker, name=strategy_name, universe=WARREN_BUFFETT_BACKTEST_UNIVERSE)
-    # elif strategy_name.startswith("cross_momentum"):
-    #     # Load pre-computed universe from batch script (data/universe/stock_universe.json).
-    #     # Falls back to broker's full equity list if the file doesn't exist yet.
-    #     universe = load_cross_momentum_universe()
-    #     if universe:
-    #         strategy = strategy_class(mode=mode, broker=broker, name=strategy_name, universe=universe)
-    #     else:
-    #         console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
-    #         return
+    load_strategy_env(strategy_name, enum_mode.value, project_root)
+    creds = AlpacaCredentials.from_env()
+    if not creds.api_key or not creds.api_secret:
+        console.print("No credentials are sent as environment variables for the broker.", style="bold red")
+        raise SystemExit(1)
+    broker = AlpacaBroker.from_credentials(strategy_name, creds)
+    # TODO: change strategy init argument order: no need of *args at the beginning any more
+    universe = load_cross_momentum_universe()
+    if universe:
+        strategy = strategy_class(broker=broker, mode=enum_mode, universe=universe)
+    else:
+        console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
+        return
 
-    # else:
-    #     strategy = strategy_class(mode=mode, broker=broker, name=strategy_name)
-    # strategy.run_strategy()
+    # run strategy according to the trading mode
+    strategy.run_strategy()
 
 
 if __name__ == "__main__":

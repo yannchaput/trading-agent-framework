@@ -21,16 +21,19 @@ import calendar
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
+from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
+from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
@@ -59,8 +62,8 @@ logger = logging.getLogger(__name__)
 
 # ── Backtesting params ───────────────────────────────────────────────────────
 BACKTESTING_PARAMS = {
-    "backtesting_start": datetime(2026, 5, 27, tzinfo=MARKET_TZ),
-    "backtesting_end": datetime(2026, 5, 31, tzinfo=MARKET_TZ),
+    "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
+    "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
     "benchmark_symbol": "SPY",
     # Warm-up extends the data window before backtesting_start so the 12-1m
     # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
@@ -85,14 +88,14 @@ class CrossMomentumStrategy(Strategy):
         self,
         *args,
         mode: TradingMode = TradingMode.BACKTESTING,
-        universe: list[str] = [],
+        universe: list[str] | None = None,
         diagnostics_file_path: str | None = None,
         **kwargs,
     ):
         super().__init__(*args, mode=mode, **kwargs)
         self.params = {**CONFIG, **BACKTESTING_PARAMS}
 
-        if not len(universe):
+        if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
             sys.exit(1)
         self.__universe = universe or []
@@ -175,7 +178,8 @@ class CrossMomentumStrategy(Strategy):
             return None
 
         df = bars.pandas_df if hasattr(bars, "pandas_df") else bars
-        if df is None or df.empty:
+        if not isinstance(df, pd.DataFrame) or df.empty:
+            self.log_error("The Bars instance has not the right type: consider using a pandas Dataframe.")
             return None
 
         closes = df["close"].tolist()
@@ -513,11 +517,29 @@ class CrossMomentumStrategy(Strategy):
         if self._history_file_path.exists():
             self.log_info(f"Deleting previous equity history file for a clean backtest: {self._history_file_path}")
             self._history_file_path.unlink()
+
+        start = self.params["backtesting_start"]
+        end = self.params["backtesting_end"]
+        warmup_trading_days = self.params["warmup_trading_days"]
+        warmup_start = start - timedelta(days=warmup_calendar_days(warmup_trading_days))
+
+        # Preload the whole universe in one batched Yahoo call up front, rather than
+        # letting `compute_target_portfolio`'s thread pool fetch it one ticker at a
+        # time: hundreds of concurrent `yf.download` calls race yfinance's shared
+        # session/crumb handling and trip Yahoo's rate limiting, which surfaces as the
+        # backtest stalling partway through the universe instead of a clean error.
+        data_source = YahooBacktestData(warmup_start, end)
+        universe_assets = [Asset(ticker) for ticker in self.__universe]
+        if universe_assets:
+            self.log_info(f"Preloading OHLCV for {len(universe_assets)} tickers...")
+            data_source.load(universe_assets, warmup_start, end, "day")
+
         return super().run_backtesting(
-            start=self.params["backtesting_start"],
-            end=self.params["backtesting_end"],
+            start=start,
+            end=end,
             budget=self.params["budget"],
+            data_source=data_source,
             benchmark=self.params["benchmark_symbol"],
             commission=Decimal("0.001"),
-            warmup_trading_days=self.params["warmup_trading_days"],
+            warmup_trading_days=warmup_trading_days,
         )

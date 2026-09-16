@@ -99,19 +99,70 @@ def test_bars_never_returns_a_nan_row_to_the_broker() -> None:
 def test_load_and_bars_use_the_injected_download_function() -> None:
     calls: list[tuple] = []
 
-    def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
-        calls.append((symbol, kwargs))
+    def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
+        calls.append((symbols, kwargs))
         return _raw_yahoo_frame()
 
     source = YahooBacktestData(START, END, download=fake_download)
     source.load([AAPL], START, END, "day")
 
     assert len(calls) == 1
-    assert calls[0][0] == "AAPL"
+    assert calls[0][0] == ["AAPL"]
 
     result = source.bars(AAPL, END, 2, "day")
     assert result is not None
     assert list(result.df["close"]) == [151.5, 152.5]
+
+
+def test_load_batches_multiple_assets_into_one_download_call() -> None:
+    """The whole point: filtering a large universe must not fire one `yf.download`
+    per ticker -- `load()` fetches every requested asset in a single call."""
+    calls: list[list[str]] = []
+    MSFT = Asset("MSFT")
+
+    def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
+        calls.append(symbols)
+        raw = _raw_yahoo_frame()
+        return pd.concat({"AAPL": raw, "MSFT": raw + 10}, axis=1)
+
+    source = YahooBacktestData(START, END, download=fake_download)
+    source.load([AAPL, MSFT], START, END, "day")
+
+    assert calls == [["AAPL", "MSFT"]]
+    aapl_bars = source.bars(AAPL, END, 3, "day")
+    msft_bars = source.bars(MSFT, END, 3, "day")
+    assert aapl_bars is not None and list(aapl_bars.df["close"]) == [150.5, 151.5, 152.5]
+    assert msft_bars is not None and list(msft_bars.df["close"]) == [160.5, 161.5, 162.5]
+
+
+def test_load_skips_a_ticker_yahoo_has_no_data_for_without_failing_the_batch() -> None:
+    """A ticker absent from the batch response (yfinance's own "Failed download"
+    case, e.g. a delisted symbol) must not take down the other tickers in the same
+    call, and must come back as "no data" rather than raising."""
+    GONE = Asset("GONE")
+
+    def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
+        return pd.concat({"AAPL": _raw_yahoo_frame()}, axis=1)  # GONE absent entirely
+
+    source = YahooBacktestData(START, END, download=fake_download)
+    source.load([AAPL, GONE], START, END, "day")
+
+    assert source.bars(AAPL, END, 3, "day") is not None
+    assert source.bars(GONE, END, 3, "day") is None
+
+
+def test_load_already_cached_assets_makes_no_download_call() -> None:
+    calls: list[list[str]] = []
+
+    def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
+        calls.append(symbols)
+        return pd.concat({"AAPL": _raw_yahoo_frame()}, axis=1)
+
+    source = YahooBacktestData(START, END, download=fake_download)
+    source.load([AAPL], START, END, "day")
+    source.load([AAPL], START, END, "day")
+
+    assert calls == [["AAPL"]]
 
 
 def test_bars_fetches_lazily_when_load_was_never_called() -> None:
@@ -232,7 +283,7 @@ def test_sessions_skip_a_market_holiday_that_has_no_daily_bar() -> None:
     session_dates = [s.open.date() for s in sessions]
     assert session_dates == [date(2026, 1, 16), date(2026, 1, 20), date(2026, 1, 21)]
     assert date(2026, 1, 19) not in session_dates  # the holiday, explicitly
-    # The calendar comes from SPY's bars, and is fetched once and cached.
+    # The calendar comes from SPY's bars, fetched lazily (not via `load()`) once and cached.
     assert calls == ["SPY"]
     source.sessions(datetime(2026, 1, 16, tzinfo=ET), datetime(2026, 1, 21, tzinfo=ET))
     assert calls == ["SPY"]
@@ -242,20 +293,20 @@ def test_sessions_reuse_an_already_loaded_calendar_frame_without_refetching() ->
     """`sessions()` must not introduce a redundant fetch: the runner pre-loads the
     benchmark (SPY by default) before asking for sessions, so the calendar frame is
     already cached by then."""
-    calls: list[str] = []
+    calls: list[list[str]] = []
 
-    def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
-        calls.append(symbol)
+    def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
+        calls.append(symbols)
         return _frame_for_dates(["2026-01-05", "2026-01-06"])
 
     source = YahooBacktestData(START, END, download=fake_download)
     source.load([Asset("SPY")], START, END, "day")
-    assert calls == ["SPY"]
+    assert calls == [["SPY"]]
 
     sessions = source.sessions(START, END)
 
     assert len(sessions) == 2
-    assert calls == ["SPY"]  # no second download
+    assert calls == [["SPY"]]  # no second download
 
 
 def test_constructing_the_source_fetches_nothing() -> None:
@@ -273,3 +324,38 @@ def test_constructing_the_source_fetches_nothing() -> None:
 
 def test_name_is_yahoo() -> None:
     assert YahooBacktestData(START, END).name == "yahoo"
+
+
+def test_concurrent_fetches_are_serialized() -> None:
+    """A strategy filtering a large universe fetches per ticker from a thread pool.
+    Firing many `yf.download` calls at once races yfinance's shared session/crumb
+    handling and trips Yahoo's rate limiting -- surfacing as the whole backtest
+    stalling partway through the universe. `YahooBacktestData` must serialize its
+    downloads so only one is ever in flight."""
+    import threading
+    import time
+
+    active = 0
+    max_active = 0
+    lock = threading.Lock()
+
+    def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
+        nonlocal active, max_active
+        with lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.05)
+        with lock:
+            active -= 1
+        return _raw_yahoo_frame()
+
+    source = YahooBacktestData(START, END, download=fake_download)
+    tickers = [Asset(f"T{i}") for i in range(8)]
+
+    threads = [threading.Thread(target=source.bars, args=(t, END, 1, "day")) for t in tickers]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert max_active == 1

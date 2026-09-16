@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from trading_agent_framework import __version__
 from trading_agent_framework.backtesting.broker import BacktestBroker
@@ -151,10 +151,7 @@ def run_backtest(
 def _require_aware(**moments: datetime) -> None:
     """Reject naive `start`/`end` with a message that names the offending argument and
     shows the fix, rather than letting a downstream comparison fail obscurely."""
-    naive = [
-        name for name, value in moments.items()
-        if value.tzinfo is None or value.tzinfo.utcoffset(value) is None
-    ]
+    naive = [name for name, value in moments.items() if value.tzinfo is None or value.tzinfo.utcoffset(value) is None]
     if naive:
         raise BacktestError(
             f"run_backtest needs timezone-aware datetimes; {', '.join(naive)} "
@@ -211,8 +208,13 @@ def _run(
 
     clock = BacktestClock(start=start, sessions=sessions)
     broker = BacktestBroker(
-        name, data_source=data_source, clock=clock, budget=budget,
-        timestep=timestep, commission=commission, slippage=slippage,
+        name,
+        data_source=data_source,
+        clock=clock,
+        budget=budget,
+        timestep=timestep,
+        commission=commission,
+        slippage=slippage,
     )
     clock.on_advance = broker.on_advance
 
@@ -228,14 +230,8 @@ def _run(
     elapsed = time.monotonic() - started
 
     benchmark_bars = data_source.bars(benchmark_asset, end, FULL_HISTORY, timestep)
-    benchmark_series = (
-        pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index)
-        if benchmark_bars is not None
-        else None
-    )
-    benchmark_by_time = (
-        {ts: Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
-    )
+    benchmark_series = pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index) if benchmark_bars is not None else None
+    benchmark_by_time: dict[datetime, Decimal] | None = {cast(datetime, ts): Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
 
     # ONE session-reduced equity series, shared by equity.parquet and metrics.json.
     # They used to be built from different things -- metrics from this reduction,
@@ -262,9 +258,7 @@ def _run(
         # overlapping rows" instead of "wrong rows paired together".
         portfolio_returns, benchmark_returns = portfolio_returns.align(benchmark_returns, join="inner")
 
-    computed_metrics = metrics_module.compute_metrics(
-        portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate
-    )
+    computed_metrics = metrics_module.compute_metrics(portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate)
     report.write_metrics(run_dir, computed_metrics)
 
     settings = {
@@ -307,9 +301,7 @@ def _session_equity_series(session_samples: Sequence[EquitySample]) -> pd.Series
     )
 
 
-def _session_equity_samples(
-    equity_samples: list[EquitySample], sessions: list[MarketSession]
-) -> list[EquitySample]:
+def _session_equity_samples(equity_samples: list[EquitySample], sessions: list[MarketSession]) -> list[EquitySample]:
     """Reduce `equity_samples` down to exactly one sample per trading session.
 
     Each surviving sample is re-stamped with its session's `close`, so the result is

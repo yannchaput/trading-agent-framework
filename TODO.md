@@ -20,7 +20,7 @@
 * ~~Backtesting (vectorbt)~~
 * Cache management
 * dashboard
-* Fix `Bar.empty`, `bars.pandas_df`.
+* ~~Fix `Bar.empty`, `bars.pandas_df`.~~
 * Add warmup_trading_days to AlpacaBacktestDataSource
 
 
