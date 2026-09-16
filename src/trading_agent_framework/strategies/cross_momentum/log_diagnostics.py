@@ -137,7 +137,7 @@ class DiagnosticLogger:
         eff_n = compute_effective_n(weights)
 
         # Drawdown — track rolling peak across days (not single-point Series)
-        equity = self._strategy.portfolio_value or 0.0
+        equity = float(self._strategy.portfolio_value or 0.0)
         if equity > self._rolling_peak:
             self._rolling_peak = equity
         dd = equity / self._rolling_peak - 1.0 if self._rolling_peak > 0 else 0.0

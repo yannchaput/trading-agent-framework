@@ -596,3 +596,39 @@ def test_run_backtest_rejects_negative_warmup_trading_days_with_value_error(tmp_
             warmup_trading_days=-1,
         )
     assert not source.load_calls  # rejected before any data was even requested
+
+
+def test_run_backtest_captures_warnings_logged_during_the_eager_data_load(tmp_path: Path) -> None:
+    """A `data_source.load(...)` that logs a WARNING (e.g. `YahooBacktestData` logging
+    "no data for ticker") must have that warning land in the run's log file, not be
+    lost to `logging.lastResort`'s raw stderr dump -- which is what happens if logging
+    is configured (`setup_strategy_logging`) only after this eager, pre-executor load
+    call, since `run_backtest`'s `data_source.load(...)` happens before the strategy's
+    `on_trading_iteration` ever runs.
+    """
+    import logging
+
+    class WarningOnLoadDataSource(FakeBacktestDataSource):
+        def load(self, assets, start, end, timestep) -> None:
+            super().load(assets, start, end, timestep)
+            logging.getLogger("trading_agent_framework.backtesting.data.yahoo").warning(
+                "No Yahoo data for %s in range %s to %s", "GONE", start.date(), end.date()
+            )
+
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = WarningOnLoadDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "warn_on_load", start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    log_content = (result.run_dir / "backtest.log").read_text(encoding="utf-8")
+    assert "No Yahoo data for GONE" in log_content

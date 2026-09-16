@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -135,20 +136,50 @@ def test_load_batches_multiple_assets_into_one_download_call() -> None:
     assert msft_bars is not None and list(msft_bars.df["close"]) == [160.5, 161.5, 162.5]
 
 
-def test_load_skips_a_ticker_yahoo_has_no_data_for_without_failing_the_batch() -> None:
+def test_load_skips_a_ticker_yahoo_has_no_data_for_without_failing_the_batch(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """A ticker absent from the batch response (yfinance's own "Failed download"
     case, e.g. a delisted symbol) must not take down the other tickers in the same
-    call, and must come back as "no data" rather than raising."""
+    call, must come back as "no data" rather than raising, and must be logged as a
+    WARNING through this project's own logging rather than left to yfinance's raw
+    stdout notice."""
     GONE = Asset("GONE")
 
     def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
         return pd.concat({"AAPL": _raw_yahoo_frame()}, axis=1)  # GONE absent entirely
 
     source = YahooBacktestData(START, END, download=fake_download)
-    source.load([AAPL, GONE], START, END, "day")
+    with caplog.at_level(logging.WARNING):
+        source.load([AAPL, GONE], START, END, "day")
 
     assert source.bars(AAPL, END, 3, "day") is not None
     assert source.bars(GONE, END, 3, "day") is None
+    assert any(
+        record.levelno == logging.WARNING and "GONE" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_bars_lazy_fetch_logs_a_warning_when_yahoo_has_no_data(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The lazy single-asset fetch path (`bars()` without a prior `load()`) must
+    log the same WARNING as the batch path when Yahoo returns no data at all."""
+    GONE = Asset("GONE")
+
+    def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
+        return pd.DataFrame()
+
+    source = YahooBacktestData(START, END, download=fake_download)
+    with caplog.at_level(logging.WARNING):
+        result = source.bars(GONE, END, 3, "day")
+
+    assert result is None
+    assert any(
+        record.levelno == logging.WARNING and "GONE" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_load_already_cached_assets_makes_no_download_call() -> None:

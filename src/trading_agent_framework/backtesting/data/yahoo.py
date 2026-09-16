@@ -6,6 +6,7 @@ backtests with Yahoo data never pays for its 12 transitive dependencies.
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
@@ -20,6 +21,8 @@ from trading_agent_framework.utils.errors import BacktestDataError
 
 if TYPE_CHECKING:
     import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 MARKET_TZ = ZoneInfo("America/New_York")
 SESSION_OPEN = time(9, 30)
@@ -97,7 +100,12 @@ class YahooBacktestData(BacktestDataSource):
             ) from exc
 
         for asset in missing:
-            self._frames[asset] = parse_yahoo_frame(_extract_ticker_frame(raw, asset.symbol))
+            frame = parse_yahoo_frame(_extract_ticker_frame(raw, asset.symbol))
+            if frame.empty:
+                logger.warning(
+                    "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
+                )
+            self._frames[asset] = frame
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         if timestep != "day":
@@ -177,11 +185,25 @@ class YahooBacktestData(BacktestDataSource):
             ) from exc
         except Exception as exc:
             raise BacktestDataError(f"failed to fetch Yahoo data for {asset.symbol}: {exc}") from exc
+        if df.empty:
+            logger.warning(
+                "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
+            )
         self._frames[asset] = df
         return df
 
     def _real_download(self) -> DownloadFn:
         import yfinance as yf
+
+        # yfinance's own "Failed download"/"Data doesn't exist" notices go through
+        # a "yfinance"-named logger with no handler of its own, which falls back to
+        # `logging.lastResort` -- a raw, unformatted dump to stderr that bypasses this
+        # project's log file entirely. Silence it here; `load()`/`_fetch()` already
+        # log their own WARNING for a ticker that comes back with no data.
+        yf_logger = logging.getLogger("yfinance")
+        if not yf_logger.handlers:
+            yf_logger.addHandler(logging.NullHandler())
+            yf_logger.propagate = False
 
         return yf.download
 
@@ -191,8 +213,8 @@ def _extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     result. Columns come back as a `(ticker, field)` MultiIndex -- `raw[symbol]` drops
     the ticker level, leaving the same flat shape `parse_yahoo_frame` already expects
     from a single-ticker download. A symbol Yahoo had no data for at all is simply
-    absent from the batch rather than raising (yfinance prints its own "Failed
-    download" notice and moves on); treated the same as any other no-data ticker.
+    absent from the batch rather than raising; `load()` logs a WARNING for it and
+    treats it the same as any other no-data ticker.
     """
     import pandas as pd
 

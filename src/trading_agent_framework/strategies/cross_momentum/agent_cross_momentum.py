@@ -315,7 +315,7 @@ class CrossMomentumStrategy(Strategy):
         target_symbols = {entry["symbol"] for entry in target}
 
         sell_threshold = self.params["sell_rank_threshold"]
-        portfolio_value = self.portfolio_value or 1.0
+        portfolio_value = float(self.portfolio_value or 1.0)
 
         current_positions = self.get_positions()
 
@@ -358,7 +358,7 @@ class CrossMomentumStrategy(Strategy):
             target_value = portfolio_value * target_weight
 
             current_pos = next((p for p in current_positions if p.asset.symbol == symbol), None)
-            current_value = current_pos.quantity * entry["price"] if current_pos else 0.0
+            current_value = float(current_pos.quantity) * entry["price"] if current_pos else 0.0
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value

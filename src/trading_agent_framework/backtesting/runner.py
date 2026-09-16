@@ -207,6 +207,15 @@ def _run(
     # strategy with exists only to carry that name (see docstring/tests).
     name = strategy.name
 
+    # Configured before the eager data_source.load() below (not after
+    # strategy/broker/clock wiring, where it used to sit): a WARNING logged during
+    # that load -- e.g. YahooBacktestData reporting a ticker with no data -- would
+    # otherwise fire before any handler is attached to the package logger, fall
+    # through to `logging.lastResort`'s raw, unformatted stderr dump, and never
+    # reach the run's log file at all.
+    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root)
+    run_dir = log_file.parent
+
     benchmark_asset = Asset(benchmark)
     # Widened ONLY for this one eager load() call -- see warmup.py and the
     # module docstring above for why the benchmark specifically needs this
@@ -235,9 +244,6 @@ def _run(
     strategy.trading_mode = TradingMode.BACKTESTING
     strategy.broker = broker
     strategy.clock = clock
-
-    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root)
-    run_dir = log_file.parent
 
     started = time.monotonic()
     strategy.executor.run()
