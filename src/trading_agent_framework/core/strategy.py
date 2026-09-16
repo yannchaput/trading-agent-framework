@@ -8,7 +8,7 @@ facade over the broker, so strategy code reads like lumibot strategy code.
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -442,7 +442,8 @@ class Strategy:
         start: datetime | None = None,
         end: datetime | None = None,
         budget: Number | None = None,
-        data_source: BacktestDataSource | None = None,
+        data_source: BacktestDataSource | Callable[[datetime, datetime], BacktestDataSource] | None = None,
+        preload_assets: Sequence[Asset] = (),
         benchmark: str | None = None,
         timestep: str = "day",
         commission: Number = Decimal(0),
@@ -454,14 +455,27 @@ class Strategy:
 
         `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
         `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
-        `data_source` defaults to a Yahoo daily source over [start, end] (no on-disk
-        cache by default -- wrap it in `backtesting.CachedDataSource` for repeat runs).
 
         Args:
             start: first simulated datetime (inclusive)
             end: last simulated datetime (inclusive)
             budget: starting cash for the backtest
-            data_source: source of historical market data; defaults to Yahoo daily bars
+            data_source: source of historical market data. One of:
+                - omitted/`None` -- defaults to `YahooBacktestData`, constructed with
+                  the warmup-widened `[start, end]` window described below.
+                - a class/callable taking `(start, end)` -- called with that same
+                  widened window, e.g. `data_source=YahooBacktestData`, or
+                  `lambda s, e: AlpacaBacktestData(client, trading_client, s, e)` for
+                  a source whose constructor needs more than the window.
+                - an already-built `BacktestDataSource` instance -- used as given,
+                  NOT widened for warmup (construct it with your own window first).
+                No on-disk cache by default -- wrap the result in
+                `backtesting.CachedDataSource` for repeat runs.
+            preload_assets: extra assets (e.g. a strategy's universe) to batch-fetch
+                up front alongside the benchmark, in the same warmup-widened
+                `load(...)` call `run_backtest` already makes -- avoids a strategy
+                having to construct and preload its own data source just to avoid
+                the per-ticker lazy-fetch path.
             benchmark: symbol to use for the backtest's benchmark performance (e.g SPY)
             timestep: "minute" or "day" bars for the backtest
             commission: per-trade commission (default 0), a single symmetric commission rate — a Decimal fraction of trade notional, applied identically to buys and sells.
@@ -469,13 +483,13 @@ class Strategy:
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
             warmup_trading_days: extra trading days of history to make available before
                 `start` (default 0, i.e. no widening) so a strategy's indicators aren't
-                starved near `backtesting_start`. Only widens the *default* Yahoo
-                source's own construction window (via
-                `backtesting.warmup.warmup_calendar_days`) -- an explicit `data_source`
-                is used as given and is not widened by this method; it is still
-                forwarded to `run_backtest`, which independently widens its own eager
-                benchmark load regardless of which source is passed.
+                starved near `backtesting_start`. Computed once, here, via
+                `backtesting.warmup.warmup_calendar_days`, and used both to construct
+                a `data_source` class/callable and to widen `run_backtest`'s own eager
+                preload call -- an explicit `data_source` instance is used as given
+                and is not widened by this method.
         """
+        from trading_agent_framework.backtesting.data.base import BacktestDataSource as _BacktestDataSource
         from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
         from trading_agent_framework.backtesting.runner import run_backtest
         from trading_agent_framework.backtesting.warmup import warmup_calendar_days
@@ -485,17 +499,20 @@ class Strategy:
         if resolved_start is None or resolved_end is None:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
-        if data_source is not None:
+        warmup_start = resolved_start - timedelta(days=warmup_calendar_days(warmup_trading_days))
+        if data_source is None:
+            resolved_source = YahooBacktestData(warmup_start, resolved_end)
+        elif isinstance(data_source, _BacktestDataSource):
             resolved_source = data_source
         else:
-            warmup_start = resolved_start - timedelta(days=warmup_calendar_days(warmup_trading_days))
-            resolved_source = YahooBacktestData(warmup_start, resolved_end)
+            resolved_source = data_source(warmup_start, resolved_end)
         return run_backtest(
             self,
             start=resolved_start,
             end=resolved_end,
             budget=resolved_budget,
             data_source=resolved_source,
+            preload_assets=preload_assets,
             benchmark=benchmark or self.benchmark_symbol,
             timestep=timestep,
             commission=_to_decimal(commission),

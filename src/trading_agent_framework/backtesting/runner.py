@@ -74,6 +74,7 @@ def run_backtest(
     slippage: Decimal,
     risk_free_rate: float,
     warmup_trading_days: int = 0,
+    preload_assets: Sequence[Asset] = (),
 ) -> BacktestResult:
     """Run `strategy` through a full simulated `[start, end]` backtest.
 
@@ -104,13 +105,21 @@ def run_backtest(
     README's own quickstart example used `datetime.now()` and hit exactly that).
 
     `warmup_trading_days` (default `0`, preserving every existing caller) widens ONLY
-    the one eager benchmark `data_source.load(...)` call's start bound, by
+    the one eager `data_source.load(...)` call's start bound, by
     `warmup.warmup_calendar_days(warmup_trading_days)` calendar days, so warm-up
-    history for the benchmark asset is available to a strategy's indicators from the
-    very first simulated session (see `_run`'s docstring for why the benchmark
-    specifically needs this). It never affects `sessions()`/the `BacktestClock`: the
-    simulated `[start, end]` window a strategy actually trades through is unchanged,
-    so warm-up history never becomes an extra simulated trading session.
+    history for the benchmark asset (and any `preload_assets`) is available to a
+    strategy's indicators from the very first simulated session (see `_run`'s
+    docstring for why the benchmark specifically needs this). It never affects
+    `sessions()`/the `BacktestClock`: the simulated `[start, end]` window a strategy
+    actually trades through is unchanged, so warm-up history never becomes an extra
+    simulated trading session.
+
+    `preload_assets` are batched into that same eager `load(...)` call alongside the
+    benchmark, so a strategy with a large universe (e.g. cross_momentum) gets one
+    combined fetch instead of a separate preload plus the runner's own benchmark
+    load. Pass the benchmark asset in `preload_assets` too if it's part of your
+    universe and you want it fetched only once -- `YahooBacktestData.load()` skips
+    already-cached assets, but the ABC contract doesn't require every source to.
 
     Never raises a raw exception: anything other than an existing `BacktestError`
     is wrapped in one -- except `warmup_trading_days` itself, which is validated
@@ -141,6 +150,7 @@ def run_backtest(
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,
             warmup_days=warmup_days,
+            preload_assets=preload_assets,
         )
     except BacktestError:
         raise
@@ -176,10 +186,12 @@ def _run(
     risk_free_rate: float,
     warmup_trading_days: int = 0,
     warmup_days: int = 0,
+    preload_assets: Sequence[Asset] = (),
 ) -> BacktestResult:
     """The unvalidated body of `run_backtest` -- see that function's docstring for the
     full contract, including `warmup_trading_days`'s scope: it widens only the eager
-    benchmark `data_source.load(...)` call below, never `sessions()`/the clock.
+    `data_source.load(...)` call below (benchmark plus `preload_assets`), never
+    `sessions()`/the clock.
 
     `warmup_days` is `warmup.warmup_calendar_days(warmup_trading_days)`, already
     computed (and validated) once by `run_backtest` -- `warmup_trading_days` itself
@@ -199,9 +211,11 @@ def _run(
     # Widened ONLY for this one eager load() call -- see warmup.py and the
     # module docstring above for why the benchmark specifically needs this
     # (CrossMomentumStrategy's benchmark is "SPY", which it also reads directly
-    # for its risk overlay).
+    # for its risk overlay). `preload_assets` rides along in the same batched
+    # call rather than a separate one the caller would otherwise have to make.
     warmup_start = start - timedelta(days=warmup_days)
-    data_source.load([benchmark_asset], warmup_start, end, timestep)
+    assets_to_load = [benchmark_asset, *(a for a in preload_assets if a != benchmark_asset)]
+    data_source.load(assets_to_load, warmup_start, end, timestep)
     # sessions()/BacktestClock stay on the exact, narrow [start, end] -- warm-up
     # history must never become an extra simulated trading session.
     sessions = data_source.sessions(start, end)

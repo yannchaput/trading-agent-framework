@@ -21,7 +21,7 @@ import calendar
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -29,7 +29,6 @@ import numpy as np
 import pandas as pd
 
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
-from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
@@ -518,28 +517,19 @@ class CrossMomentumStrategy(Strategy):
             self.log_info(f"Deleting previous equity history file for a clean backtest: {self._history_file_path}")
             self._history_file_path.unlink()
 
-        start = self.params["backtesting_start"]
-        end = self.params["backtesting_end"]
-        warmup_trading_days = self.params["warmup_trading_days"]
-        warmup_start = start - timedelta(days=warmup_calendar_days(warmup_trading_days))
-
-        # Preload the whole universe in one batched Yahoo call up front, rather than
-        # letting `compute_target_portfolio`'s thread pool fetch it one ticker at a
-        # time: hundreds of concurrent `yf.download` calls race yfinance's shared
-        # session/crumb handling and trip Yahoo's rate limiting, which surfaces as the
-        # backtest stalling partway through the universe instead of a clean error.
-        data_source = YahooBacktestData(warmup_start, end)
-        universe_assets = [Asset(ticker) for ticker in self.__universe]
-        if universe_assets:
-            self.log_info(f"Preloading OHLCV for {len(universe_assets)} tickers...")
-            data_source.load(universe_assets, warmup_start, end, "day")
-
+        # Preloading the whole universe (via `preload_assets`) avoids
+        # `compute_target_portfolio`'s thread pool falling back to fetching it one
+        # ticker at a time: hundreds of concurrent `yf.download` calls race
+        # yfinance's shared session/crumb handling and trip Yahoo's rate limiting,
+        # which surfaces as the backtest stalling partway through the universe
+        # instead of a clean error.
         return super().run_backtesting(
-            start=start,
-            end=end,
+            start=self.params["backtesting_start"],
+            end=self.params["backtesting_end"],
             budget=self.params["budget"],
-            data_source=data_source,
+            data_source=YahooBacktestData,
+            preload_assets=[Asset(ticker) for ticker in self.__universe], # preload the ticker universe in memory
             benchmark=self.params["benchmark_symbol"],
             commission=Decimal("0.001"),
-            warmup_trading_days=warmup_trading_days,
+            warmup_trading_days=self.params["warmup_trading_days"],
         )
