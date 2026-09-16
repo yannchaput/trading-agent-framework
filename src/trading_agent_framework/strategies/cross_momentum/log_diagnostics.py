@@ -8,7 +8,7 @@ variant. Strategies hold a single :class:`DiagnosticLogger` reference instead.
 
 The logger duck-types the strategy — it only reads the public surface
 (``get_historical_prices``, ``get_datetime``, ``portfolio_value``, ``params``,
-``log_message``) rather than importing the strategy classes, which keeps this
+``log_warning``) rather than importing the strategy classes, which keeps this
 module free of circular imports.
 """
 
@@ -103,9 +103,8 @@ class DiagnosticLogger:
         n_held = len(holdings)
         n_fetched = returns_df.shape[1]
         if n_fetched < n_held * 0.75:
-            self._strategy.log_message(
+            self._strategy.log_warning(
                 f"Diagnostics: only {n_fetched}/{n_held} holdings have price data — skipping today to avoid concentration bias.",
-                color="yellow",
             )
             return
 
@@ -204,9 +203,8 @@ class DiagnosticLogger:
             closes_map[symbol] = df["close"]
 
         if len(closes_map) < 2:
-            self._strategy.log_message(
+            self._strategy.log_warning(
                 f"Diagnostics: only {len(closes_map)}/{len(holdings)} holdings fetched price data",
-                color="yellow",
             )
             return None, benchmark_returns
 

@@ -21,3 +21,19 @@ class Bars:
     asset: Asset
     timestep: str
     df: pd.DataFrame
+
+    @property
+    def empty(self) -> bool:
+        """Lumibot-compatible alias for `df.empty`."""
+        return self.df.empty
+
+    @property
+    def pandas_df(self) -> pd.DataFrame:
+        """Lumibot-compatible alias for `df` (this entity is pandas-only, no polars)."""
+        return self.df
+
+    def __len__(self) -> int:
+        return len(self.df)
+
+    def __getitem__(self, key):
+        return self.df[key]
