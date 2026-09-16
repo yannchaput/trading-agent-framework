@@ -568,3 +568,31 @@ def test_run_backtest_defaults_warmup_trading_days_to_zero_in_settings(tmp_path:
     )
     settings = json.loads((result.run_dir / "settings.json").read_text())
     assert settings["warmup_trading_days"] == 0
+
+
+def test_run_backtest_rejects_negative_warmup_trading_days_with_value_error(tmp_path: Path) -> None:
+    """A negative `warmup_trading_days` must raise `ValueError` (from
+    `warmup_calendar_days`'s own validation), not get wrapped into a `BacktestError`
+    by `run_backtest`'s catch-all -- and that must hold regardless of which
+    `data_source` is passed, since prior to this fix a caller reaching this through
+    `Strategy.run_backtesting()`'s default data source saw a raw `ValueError` while a
+    caller passing an explicit `data_source` saw the exact same bad input wrapped into
+    a `BacktestError` instead.
+    """
+    sessions = _sessions(date(2026, 1, 5), 2)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "negative_warmup", start)
+
+    with pytest.raises(ValueError, match="trading_days must be >= 0"):
+        run_backtest(
+            strategy, start=start, end=sessions[-1].close,
+            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+            warmup_trading_days=-1,
+        )
+    assert not source.load_calls  # rejected before any data was even requested

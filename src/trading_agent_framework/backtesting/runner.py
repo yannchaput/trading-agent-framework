@@ -37,6 +37,7 @@ from trading_agent_framework import __version__
 from trading_agent_framework.backtesting.broker import BacktestBroker
 from trading_agent_framework.backtesting.clock import BacktestClock
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY
+from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.errors import BacktestError
@@ -112,9 +113,20 @@ def run_backtest(
     so warm-up history never becomes an extra simulated trading session.
 
     Never raises a raw exception: anything other than an existing `BacktestError`
-    is wrapped in one.
+    is wrapped in one -- except `warmup_trading_days` itself, which is validated
+    up front (see below) so a bad value always raises the same `ValueError`
+    regardless of which `data_source` the caller passed in.
     """
     _require_aware(start=start, end=end)
+    # Computed once, here, before the try/except below: `warmup_calendar_days`
+    # raises `ValueError` for a negative `warmup_trading_days`, and that must
+    # propagate as-is rather than get wrapped into a `BacktestError` by the
+    # catch-all below -- a caller reaching this through the default data source
+    # never entered a try/except at all, so wrapping only when an explicit
+    # `data_source` happens to be passed would make the same bad input raise two
+    # different exception types depending on an unrelated caller choice. The
+    # result is threaded into `_run` so it isn't recomputed there.
+    warmup_days = warmup_calendar_days(warmup_trading_days)
     try:
         return _run(
             strategy,
@@ -128,6 +140,7 @@ def run_backtest(
             slippage=slippage,
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,
+            warmup_days=warmup_days,
         )
     except BacktestError:
         raise
@@ -165,16 +178,20 @@ def _run(
     slippage: Decimal,
     risk_free_rate: float,
     warmup_trading_days: int = 0,
+    warmup_days: int = 0,
 ) -> BacktestResult:
     """The unvalidated body of `run_backtest` -- see that function's docstring for the
     full contract, including `warmup_trading_days`'s scope: it widens only the eager
     benchmark `data_source.load(...)` call below, never `sessions()`/the clock.
+
+    `warmup_days` is `warmup.warmup_calendar_days(warmup_trading_days)`, already
+    computed (and validated) once by `run_backtest` -- `warmup_trading_days` itself
+    is only carried through here to be recorded verbatim in `settings.json`.
     """
     import pandas as pd
 
     from trading_agent_framework.backtesting import metrics as metrics_module
     from trading_agent_framework.backtesting import report
-    from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
     # Captured before any rebinding below: `strategy.name` reads `strategy.broker
     # .strategy_name`, and the placeholder broker the caller constructed the
@@ -186,7 +203,7 @@ def _run(
     # module docstring above for why the benchmark specifically needs this
     # (CrossMomentumStrategy's benchmark is "SPY", which it also reads directly
     # for its risk overlay).
-    warmup_start = start - timedelta(days=warmup_calendar_days(warmup_trading_days))
+    warmup_start = start - timedelta(days=warmup_days)
     data_source.load([benchmark_asset], warmup_start, end, timestep)
     # sessions()/BacktestClock stay on the exact, narrow [start, end] -- warm-up
     # history must never become an extra simulated trading session.

@@ -40,7 +40,9 @@ class AlpacaBacktestData(BacktestDataSource):
     """Exact Alpaca calendar sessions; IEX daily/minute bars, fetched lazily per asset
     over the fixed `[start, end]` window given at construction (`bars()`'s own
     lazy-fetch path, which carries no window of its own, uses that fixed window;
-    `load()` always honors its own caller-supplied `start`/`end`)."""
+    `load()` always honors its own caller-supplied `start`/`end`). The calendar cache
+    backing `sessions()` is NOT fixed to that window, though: it grows on demand to
+    cover the union of every range it's ever been queried with (see `sessions()`)."""
 
     name = "alpaca"
 
@@ -107,6 +109,15 @@ class AlpacaBacktestData(BacktestDataSource):
                 days = self._trading_client.get_calendar(filters=request)
             except Exception as exc:
                 raise BacktestDataError(f"failed to fetch the Alpaca calendar: {exc}") from exc
+            # Assign the cache BEFORE widening the bounds it's keyed by, and preserve
+            # this order: `CrossMomentumStrategy` fans out `get_historical_prices`
+            # across a `ThreadPoolExecutor`, so `sessions()` can race here. A reader
+            # that sees the new `_sessions_cache` but still the OLD `_calendar_start`/
+            # `_calendar_end` only over-fetches (re-runs this branch for a range the
+            # cache already covers) -- safe. The reverse order would let a racing
+            # reader see bounds that claim coverage the cache doesn't actually contain
+            # yet, and skip a fetch it needed -- an under-covering read, which is the
+            # failure mode this whole module exists to prevent.
             self._sessions_cache = account.parse_calendar(days, market_data.MARKET_TZ)
             self._calendar_start, self._calendar_end = fetch_start, fetch_end
         return [s for s in self._sessions_cache if s.open >= start and s.close <= end]

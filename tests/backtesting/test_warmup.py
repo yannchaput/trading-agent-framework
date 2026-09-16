@@ -2,10 +2,7 @@
 
 import pytest
 
-from trading_agent_framework.backtesting.warmup import (
-    DEFAULT_HOLIDAY_BUFFER_DAYS,
-    warmup_calendar_days,
-)
+from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
 
 class TestWarmupCalendarDays:

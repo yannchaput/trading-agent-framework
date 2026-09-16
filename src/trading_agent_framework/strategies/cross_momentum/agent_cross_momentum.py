@@ -510,6 +510,9 @@ class CrossMomentumStrategy(Strategy):
 
     def run_backtesting(self):
         """Run the strategy in backtesting mode."""
+        if self._history_file_path.exists():
+            self.log_info(f"Deleting previous equity history file for a clean backtest: {self._history_file_path}")
+            self._history_file_path.unlink()
         return super().run_backtesting(
             start=self.params["backtesting_start"],
             end=self.params["backtesting_end"],
