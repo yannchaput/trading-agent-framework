@@ -3,7 +3,6 @@
 ## General
 * Migrate projects to the 2nd hard dreive (with the models)
 * Enable IBKR broker
-* Make a factory out of the various cross_momentum strategies to select one
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
 * Compose strategies, e.g news sentiment analysis + momentum
 * Use "https://data.alpaca.markets/v1beta1/screener/stocks/movers" to screen values from NASDAQ and explore potentials.
@@ -21,12 +20,13 @@
 * ~~Backtesting (vectorbt)~~
 * Cache management
 * dashboard
-* Check Executor:_initialize method. All the parameters are supposed to be assigned automatically to Strategy parameters instance. But they are not. Is it a bug?
+* Fix `Bar.empty`, `bars.pandas_df`.
+* Add warmup_trading_days to AlpacaBacktestDataSource
+
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
 * Investigate why indicators are not logged any more in "backtesting"
-* Check if wrapping order account methods are still needed in "WrappingStrategy"
 * Replace every instance variable `self.` with `self.vars` to avoid namespace collisions
 
 

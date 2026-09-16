@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from rich import box
 from rich.console import Console
@@ -6,16 +7,13 @@ from rich.panel import Panel
 from rich.text import Text
 
 import trading_agent_framework as tr
+from trading_agent_framework.config import find_project_root, load_strategy_env
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 
 # MAPPING OF STRATEGY NAMES TO CLASSES
 AGENT_STRATEGIES = {
-    "TEST1": "test",
-    "TEST2": "Test2",
-    "TEST3": "Test3",
-    "TEST4": "Test4",
-    "TEST5": "Test5",
-    "TEST6": "Test6",
+    "cross_momentum": CrossMomentumStrategy,
 }
 
 
@@ -80,6 +78,28 @@ def main() -> None:
     enum_mode = TradingMode(trading_mode)
 
     console.print(f"Running strategy: [bold cyan2]{strategy_name}[/bold cyan2] in [bold dark_red]{enum_mode.value}[/bold dark_red] mode")
+
+    # Load strategy class
+    strategy_class = AGENT_STRATEGIES[strategy_name]
+    # Get environment file
+    env_file_path: Path = load_strategy_env(strategy_name, enum_mode.value, find_project_root())
+    print(env_file_path.as_uri)
+    # if strategy_name == "warren_buffett":
+    #     # For some strategies like Warren Buffet, we need to pass the backtesting universe to the strategy constructor
+    #     strategy = strategy_class(mode=mode, broker=broker, name=strategy_name, universe=WARREN_BUFFETT_BACKTEST_UNIVERSE)
+    # elif strategy_name.startswith("cross_momentum"):
+    #     # Load pre-computed universe from batch script (data/universe/stock_universe.json).
+    #     # Falls back to broker's full equity list if the file doesn't exist yet.
+    #     universe = load_cross_momentum_universe()
+    #     if universe:
+    #         strategy = strategy_class(mode=mode, broker=broker, name=strategy_name, universe=universe)
+    #     else:
+    #         console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
+    #         return
+
+    # else:
+    #     strategy = strategy_class(mode=mode, broker=broker, name=strategy_name)
+    # strategy.run_strategy()
 
 
 if __name__ == "__main__":
