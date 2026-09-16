@@ -464,9 +464,10 @@ class Strategy:
                 - omitted/`None` -- defaults to `YahooBacktestData`, constructed with
                   the warmup-widened `[start, end]` window described below.
                 - a class/callable taking `(start, end)` -- called with that same
-                  widened window, e.g. `data_source=YahooBacktestData`, or
-                  `lambda s, e: AlpacaBacktestData(client, trading_client, s, e)` for
-                  a source whose constructor needs more than the window.
+                  widened window, e.g. `data_source=YahooBacktestData` or
+                  `data_source=AlpacaBacktestData` (both default their remaining
+                  constructor args -- Alpaca's client/trading_client are built from
+                  `AlpacaCredentials.from_env()` when omitted).
                 - an already-built `BacktestDataSource` instance -- used as given,
                   NOT widened for warmup (construct it with your own window first).
                 No on-disk cache by default -- wrap the result in

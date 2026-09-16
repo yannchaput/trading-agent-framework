@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
@@ -61,8 +61,10 @@ logger = logging.getLogger(__name__)
 
 # ── Backtesting params ───────────────────────────────────────────────────────
 BACKTESTING_PARAMS = {
-    "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
-    "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
+    # "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
+    # "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
+    "backtesting_start": datetime(2016, 1, 1, tzinfo=MARKET_TZ),
+    "backtesting_end": datetime(2026, 8, 15, tzinfo=MARKET_TZ),
     "benchmark_symbol": "SPY",
     # Warm-up extends the data window before backtesting_start so the 12-1m
     # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
@@ -527,8 +529,8 @@ class CrossMomentumStrategy(Strategy):
             start=self.params["backtesting_start"],
             end=self.params["backtesting_end"],
             budget=self.params["budget"],
-            data_source=YahooBacktestData,
-            preload_assets=[Asset(ticker) for ticker in self.__universe], # preload the ticker universe in memory
+            data_source=AlpacaBacktestData,
+            preload_assets=[Asset(ticker) for ticker in self.__universe],  # preload the ticker universe in memory
             benchmark=self.params["benchmark_symbol"],
             commission=Decimal("0.001"),
             warmup_trading_days=self.params["warmup_trading_days"],

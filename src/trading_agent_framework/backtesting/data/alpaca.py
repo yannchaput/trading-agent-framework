@@ -9,16 +9,23 @@ bar-CLOSE convention (see `data/base.py`): a daily bar's index becomes its
 session's actual close (handling early closes correctly); a minute bar's index
 becomes `timestamp + 1 minute` (Alpaca minute bars are exactly 1-minute windows
 starting at `timestamp`).
+
+Mirrors `YahooBacktestData`'s shape on purpose (same `(start, end)`-first
+constructor, same lazy-default-client/batched-`load`/locked-fetch pattern) so the
+two sources are interchangeable wherever `Strategy.run_backtesting`'s `data_source`
+parameter accepts a bare class.
 """
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY, BacktestDataSource
 from trading_agent_framework.brokers.alpaca import account, market_data
+from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.utils.clock import MarketSession
@@ -48,15 +55,16 @@ class AlpacaBacktestData(BacktestDataSource):
 
     def __init__(
         self,
-        client: market_data.AlpacaStockDataClient,
-        trading_client: AlpacaTradingCalendarClient,
         start: datetime,
         end: datetime,
+        *,
+        client: market_data.AlpacaStockDataClient | None = None,
+        trading_client: AlpacaTradingCalendarClient | None = None,
     ) -> None:
-        self._client = client
-        self._trading_client = trading_client
         self._start = start
         self._end = end
+        self._client = client  # injected in tests; built from env credentials otherwise
+        self._trading_client = trading_client  # ditto
         self._frames: dict[Asset, pd.DataFrame] = {}
         self._sessions_cache: list[MarketSession] | None = None
         # The [start, end] the cached calendar actually covers -- starts as the
@@ -65,10 +73,26 @@ class AlpacaBacktestData(BacktestDataSource):
         # for why this must track queried ranges rather than staying fixed.
         self._calendar_start = start
         self._calendar_end = end
+        # Serializes calls into the Alpaca clients -- mirrors `YahooBacktestData
+        # ._download_lock`: `CrossMomentumStrategy` fans out data fetches across a
+        # `ThreadPoolExecutor`, so an asset requested outside a `load()`-preloaded
+        # batch (e.g. a position held from a prior run) still goes through `bars()`'s
+        # lazy fetch, possibly from several worker threads at once, and firing several
+        # Alpaca requests concurrently races the shared client's session state.
+        self._client_lock = threading.Lock()
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
-        for asset in assets:
-            self._fetch(asset, timestep, start, end)
+        """Batch-fetch `assets` in one Alpaca request instead of one per ticker --
+        mirrors `YahooBacktestData.load()`: a strategy filtering a large universe
+        (e.g. cross_momentum, hundreds of tickers) calling this once up front gets a
+        single `get_stock_bars` call rather than falling back to `bars()`'s lazy
+        per-asset fetch for each one. Already-cached assets are skipped, same as
+        `YahooBacktestData.load()`.
+        """
+        missing = [asset for asset in assets if asset not in self._frames]
+        if not missing:
+            return
+        self._fetch_many(missing, timestep, start, end)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         df = self._frames.get(asset)
@@ -84,10 +108,26 @@ class AlpacaBacktestData(BacktestDataSource):
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
         """Sessions in `[start, end]`, fetched from Alpaca's calendar and cached.
 
+        Membership is by CALENDAR DATE, not exact clock time -- `first_date <=
+        session_date <= last_date`, mirroring `YahooBacktestData.sessions()` exactly
+        (same design-spec date granularity for `start`/`end`). This module used to
+        compare exact datetimes (`s.open >= start and s.close <= end`), which made it
+        incompatible with the normal, framework-wide way callers spell a backtest's
+        last day: `Strategy.backtesting_end`/`BACKTESTING_PARAMS` are conventionally a
+        bare midnight `datetime` (e.g. `datetime(2026, 4, 24, tzinfo=MARKET_TZ)`),
+        meaning "through the end of April 24th" the same way `YahooBacktestData`
+        already reads it -- not "stop at the stroke of midnight, before that day's
+        session even opens". Under the old exact-time filter, that midnight `end`
+        excluded April 24th's own session while the bars fetch (a separate, date-only
+        Alpaca request) still returned its daily bar, so `reindex_to_bar_close` raised
+        `BacktestDataError` -- not a fetch failure, an outside-market-hours
+        `backtesting_end` alone reliably broke the run before a single log line was
+        written (Bug report: 2026-09-17 cross_momentum backtest, empty log file).
+
         The cache is keyed by the UNION of every range ever asked for, not the fixed
-        constructor window (Critical review finding, Task 6): `_fetch` calls this with
-        whatever `start`/`end` its own caller used, which for `load()` can be wider
-        than the constructor's `self._start`/`self._end` (e.g. `runner._run`'s
+        constructor window (Critical review finding, Task 6): `_fetch_many` calls this
+        with whatever `start`/`end` its own caller used, which for `load()` can be
+        wider than the constructor's `self._start`/`self._end` (e.g. `runner._run`'s
         warmup-widened eager benchmark load). A cache request fixed at the constructor
         window would silently omit any date `load()` widened past it, so
         `reindex_to_bar_close` would raise `BacktestDataError` for those bars('no
@@ -106,7 +146,7 @@ class AlpacaBacktestData(BacktestDataSource):
             fetch_end = max(end, self._calendar_end)
             request = account.build_calendar_request(fetch_start.date(), fetch_end.date())
             try:
-                days = self._trading_client.get_calendar(filters=request)
+                days = self._real_trading_client().get_calendar(filters=request)
             except Exception as exc:
                 raise BacktestDataError(f"failed to fetch the Alpaca calendar: {exc}") from exc
             # Assign the cache BEFORE widening the bounds it's keyed by, and preserve
@@ -120,28 +160,65 @@ class AlpacaBacktestData(BacktestDataSource):
             # failure mode this whole module exists to prevent.
             self._sessions_cache = account.parse_calendar(days, market_data.MARKET_TZ)
             self._calendar_start, self._calendar_end = fetch_start, fetch_end
-        return [s for s in self._sessions_cache if s.open >= start and s.close <= end]
+        first_date = start.astimezone(market_data.MARKET_TZ).date()
+        last_date = end.astimezone(market_data.MARKET_TZ).date()
+        return [
+            s for s in self._sessions_cache
+            if first_date <= s.open.astimezone(market_data.MARKET_TZ).date() <= last_date
+        ]
 
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
+        self._fetch_many([asset], timestep, start, end)
+        return self._frames.get(asset)
+
+    def _fetch_many(self, assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> None:
+        """Batch-fetch `assets`, chunked to `market_data.MAX_SYMBOLS_PER_REQUEST` per
+        Alpaca request -- the same `chunk_assets` split `AlpacaBroker.get_bars`/
+        `get_last_prices` already use, so a universe larger than one request's symbol
+        limit (e.g. cross_momentum's) still costs a handful of calls, not one per
+        ticker.
+        """
         import pandas as pd
 
-        request = market_data.build_bars_request([asset], timestep, start, end)
-        try:
-            barset = self._client.get_stock_bars(request)
-            parsed = market_data.parse_bars(barset, [asset], timestep, FULL_HISTORY)
-        except Exception as exc:
-            raise BacktestDataError(f"failed to fetch Alpaca bars for {asset.symbol}: {exc}") from exc
-        source_bars = parsed.get(asset)
-        if source_bars is None:
-            df = pd.DataFrame()
-        else:
-            # Calendar failures here surface as BacktestDataError from sessions()
-            # itself (message already mentions "calendar") -- kept outside the
-            # try/except above so that message isn't swallowed by the generic one.
-            sessions = self.sessions(start, end)
-            df = reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)
-        self._frames[asset] = df
-        return df
+        parsed: dict[Asset, Bars] = {}
+        for chunk in market_data.chunk_assets(assets):
+            request = market_data.build_bars_request(chunk, timestep, start, end)
+            try:
+                with self._client_lock:
+                    barset = self._real_client().get_stock_bars(request)
+                parsed.update(market_data.parse_bars(barset, chunk, timestep, FULL_HISTORY))
+            except Exception as exc:
+                raise BacktestDataError(
+                    f"failed to fetch Alpaca bars for {len(chunk)} ticker(s) "
+                    f"(starting {chunk[0].symbol!r}): {exc}"
+                ) from exc
+        # Calendar failures here surface as BacktestDataError from sessions() itself
+        # (message already mentions "calendar"), and a daily bar with no matching
+        # session surfaces as BacktestDataError from reindex_to_bar_close itself
+        # (message already names the symbol/date) -- both kept outside the try/except
+        # above so those messages aren't swallowed by the generic one.
+        sessions = self.sessions(start, end)
+        for asset in assets:
+            source_bars = parsed.get(asset)
+            self._frames[asset] = (
+                pd.DataFrame()
+                if source_bars is None
+                else reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)
+            )
+
+    def _real_client(self) -> market_data.AlpacaStockDataClient:
+        if self._client is None:
+            from trading_agent_framework.brokers.alpaca.client import build_stock_data_client
+
+            self._client = build_stock_data_client(AlpacaCredentials.from_env())
+        return self._client
+
+    def _real_trading_client(self) -> AlpacaTradingCalendarClient:
+        if self._trading_client is None:
+            from trading_agent_framework.brokers.alpaca.client import build_trading_client
+
+            self._trading_client = build_trading_client(AlpacaCredentials.from_env())
+        return self._trading_client
 
 
 def reindex_to_bar_close(
@@ -171,11 +248,12 @@ def reindex_to_bar_close(
     finding): that original index is midnight ET, i.e. ~9.5 hours before the session
     it belongs to even OPENS, so the bar would become visible to the strategy through
     `bars(..., cutoff)` most of a day early -- silently, and looking entirely
-    plausible. The situation is reachable whenever `sessions()`'s window filter drops
-    a date the bars fetch kept (e.g. an `end` set mid-session, so that day's session
-    fails the `s.close <= end` test while Alpaca still returns its partial daily bar),
-    so failing loudly is the only safe answer -- there is no correct close time to
-    re-index to.
+    plausible. `sessions()` filters by calendar date (not exact clock time -- see its
+    own docstring), so this is no longer reachable merely from an `end` that lands
+    mid-session or at midnight; it now only fires for a genuine calendar/data mismatch
+    (e.g. Alpaca's calendar has no entry at all for a date its own bars endpoint
+    returned a bar for). Still worth failing loudly rather than guessing, since there
+    is no correct close time to re-index to.
     """
     import pandas as pd
 
