@@ -1307,8 +1307,15 @@ def run_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return _build_full_run(logs_dir)
 
 
+APP_PATH = Path(__file__).resolve().parents[2] / "src" / "trading_agent_framework" / "dashboard" / "app.py"
+
+
 def test_app_boots_and_scorecard_lists_the_run(run_dir: Path) -> None:
-    at = AppTest.from_file("src/trading_agent_framework/dashboard/app.py", default_timeout=30)
+    # Use an absolute path anchored on this test file's own location, not a
+    # cwd-relative one: the `run_dir` fixture does `monkeypatch.chdir(tmp_path)`
+    # (needed for scan_runs("logs") to resolve), which would otherwise break a
+    # repo-root-relative path to app.py.
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30)
     at.run()
 
     assert not at.exception
