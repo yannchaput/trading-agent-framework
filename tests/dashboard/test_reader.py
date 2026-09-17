@@ -6,7 +6,7 @@ from tests.backtesting.dashboard_contract import METRIC_SET_FIELDS
 
 from trading_agent_framework.backtesting import report
 from trading_agent_framework.dashboard.models import RunRef
-from trading_agent_framework.dashboard.reader import load_metrics
+from trading_agent_framework.dashboard.reader import get_benchmark_symbol, load_metrics, load_parameters, load_settings
 
 
 def _run_dir(tmp_path: Path, strategy: str = "momentum", run_ts: str = "2026-06-22_194053") -> Path:
@@ -52,3 +52,49 @@ def test_load_metrics_defaults_a_benchmark_less_runs_null_fields_to_zero(tmp_pat
 def test_load_metrics_returns_none_when_metrics_json_is_missing(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     assert load_metrics(_ref(run_dir)) is None
+
+
+def _settings_payload(**overrides) -> dict:
+    payload = {
+        "name": "momentum", "mode": "backtesting", "run_ts": "2026-06-22_194053",
+        "backtesting_start": "2026-01-01T09:30:00-05:00", "backtesting_end": "2026-06-01T16:00:00-04:00",
+        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
+        "backtest_time_seconds": 12.5, "timestep": "day", "sleeptime": "1D",
+        "commission": 0.0, "slippage": 0.0, "warmup_trading_days": 20,
+        "benchmark_symbol": "QQQ", "framework_version": "0.1.0",
+        "parameters": {"lookback": 20},
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_get_benchmark_symbol_reads_the_flat_settings_key(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload())
+
+    assert get_benchmark_symbol(_ref(run_dir)) == "QQQ"
+
+
+def test_get_benchmark_symbol_falls_back_to_spy_when_settings_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert get_benchmark_symbol(_ref(run_dir)) == "SPY"
+
+
+def test_load_settings_reads_settings_json(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload())
+
+    settings = load_settings(_ref(run_dir))
+
+    assert settings is not None
+    assert settings.budget == 10000.0
+    assert settings.backtesting_data_sources == "yahoo"
+
+
+def test_load_parameters_reports_the_framework_version(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(framework_version="0.1.0"))
+
+    rows = load_parameters(_ref(run_dir))
+
+    assert ("Run", "Framework version", "0.1.0") in rows

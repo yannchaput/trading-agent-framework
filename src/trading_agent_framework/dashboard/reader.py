@@ -49,32 +49,28 @@ def save_description(ref: RunRef, description: str) -> None:
 
 
 def get_benchmark_symbol(ref: RunRef) -> str:
-    """Extract benchmark ticker from ``*_settings.json``.
+    """Extract the benchmark ticker from settings.json's flat `benchmark_symbol` field.
 
-    Reads ``benchmark_asset.symbol`` from the settings JSON.  Falls back to
-    ``"SPY"`` when the settings file is missing, the key is absent, or the
-    value is empty/falsy.
-
-    This is the **single** source of truth for the benchmark ticker used
-    throughout the dashboard — every label, legend, and chart that needs the
-    name of the benchmark instrument calls this function.
+    Falls back to "SPY" when the settings file is missing or the key is absent/empty.
+    This is the single source of truth for the benchmark ticker shown throughout the
+    dashboard.
     """
-    path = _find_file(ref.path, "*_settings.json")
-    if path is None:
+    path = os.path.join(ref.path, "settings.json")
+    if not os.path.isfile(path):
         return "SPY"
     try:
         with open(path) as f:
             data = json.load(f)
-        symbol = data.get("benchmark_asset", {}).get("symbol", "")
+        symbol = data.get("benchmark_symbol", "")
         return symbol if symbol else "SPY"
-    except Exception:
+    except (OSError, json.JSONDecodeError):
         return "SPY"
 
 
 def load_settings(ref: RunRef) -> Settings | None:
-    """Load backtesting settings from *_settings.json."""
-    path = _find_file(ref.path, "*_settings.json")
-    if path is None:
+    """Load backtesting settings from settings.json."""
+    path = os.path.join(ref.path, "settings.json")
+    if not os.path.isfile(path):
         return None
     with open(path) as f:
         data = json.load(f)
@@ -82,14 +78,14 @@ def load_settings(ref: RunRef) -> Settings | None:
 
 
 def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
-    """Load parameters from *_settings.json for display in the Parameters tab.
+    """Load parameters from settings.json for display in the Parameters tab.
 
     Returns a list of (section, parameter, value) tuples where section groups
     related fields (e.g. "Model", "Tokens", "Latency"). Values are formatted
     for readability (tokens with commas, latency in seconds, etc.).
     """
-    path = _find_file(ref.path, "*_settings.json")
-    if path is None:
+    path = os.path.join(ref.path, "settings.json")
+    if not os.path.isfile(path):
         return []
 
     with open(path) as f:
@@ -100,7 +96,7 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
     # ── Run config ──
     rows.append(("Run", "Strategy", data.get("name", "")))
     rows.append(("Run", "Data source", data.get("backtesting_data_sources", "")))
-    rows.append(("Run", "Lumibot version", data.get("lumibot_version", "")))
+    rows.append(("Run", "Framework version", data.get("framework_version", "")))
     budget = data.get("budget", 0)
     rows.append(("Run", "Budget", f"${budget:,.0f}"))
     rf = data.get("risk_free_rate", 0)
