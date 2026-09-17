@@ -82,20 +82,11 @@ def page_detail():
 
     with tab1:
         st.subheader("Returns")
-        cols = st.columns(5)
+        cols = st.columns(2)
         with cols[0]:
             render_metric_card("Total Return", m.total_return_strategy)
         with cols[1]:
             render_metric_card("CAGR", m.cagr_strategy)
-        with cols[2]:
-            ey = m.raw.get("Expected Yearly%", {}).get("Strategy", 0)
-            render_metric_card("Expected Yearly", float(ey) if ey else 0)
-        with cols[3]:
-            bd = m.raw.get("Best Day", {}).get("Strategy", 0)
-            render_metric_card("Best Day", float(bd) if bd else 0)
-        with cols[4]:
-            wd = m.raw.get("Worst Day", {}).get("Strategy", 0)
-            render_metric_card("Worst Day", float(wd) if wd else 0)
 
         st.subheader("Risk-Adjusted")
         cols = st.columns(4)
