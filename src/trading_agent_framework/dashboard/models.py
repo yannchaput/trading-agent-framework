@@ -25,31 +25,19 @@ class RunRef:
     def from_path(cls, path: str) -> "RunRef":
         """Extract strategy_name, run_ts, and mode from a directory path.
 
-        Expected pattern: logs/agent_{strategy_name}/{mode}/{run_ts}_{mode}/
-        or legacy:        logs/agent_{strategy_name}/{run_ts}/
+        Expected pattern: logs/{strategy_name}/{mode}/{run_ts}_{mode}/
+        (trading_agent_framework.utils.log.setup_strategy_logging's layout;
+        run_ts is "%Y-%m-%d_%H%M%S", e.g. "2026-06-22_194053").
         """
-        parts = path.replace("\\", "/").rstrip("/").split("/")
+        parts = [p for p in path.replace("\\", "/").rstrip("/").split("/") if p]
+        if len(parts) < 3:
+            raise ValueError(f"Cannot parse run directory from path: {path}")
 
-        # Find the strategy directory (the one starting with "agent_")
-        strategy_idx = None
-        for i, part in enumerate(parts):
-            if part.startswith("agent_"):
-                strategy_idx = i
-                break
-        if strategy_idx is None:
-            raise ValueError(f"Cannot parse strategy name from path: {path}")
+        run_dir, mode, strategy_name = parts[-1], parts[-2], parts[-3]
+        if mode not in ("backtesting", "paper", "live"):
+            raise ValueError(f"Cannot parse mode from path: {path}")
 
-        strategy_name = parts[strategy_idx].replace("agent_", "")
-
-        # The run timestamp is the last directory component
-        run_dir = parts[-1]
         run_ts = "_".join(run_dir.split("_")[:2]) if "_" in run_dir else run_dir
-
-        # Determine mode from the path
-        mode = "backtesting"  # default
-        for part in parts[strategy_idx:]:
-            if part in ("backtesting", "paper", "live"):
-                mode = part
 
         return cls(strategy_name=strategy_name, run_ts=run_ts, mode=mode, path=path)
 
