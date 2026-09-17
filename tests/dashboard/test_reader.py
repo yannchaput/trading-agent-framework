@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from tests.backtesting.dashboard_contract import METRIC_SET_FIELDS
 
 from trading_agent_framework.backtesting import report
@@ -11,12 +12,14 @@ from trading_agent_framework.backtesting.ledger import EquitySample
 from trading_agent_framework.dashboard.models import RunRef
 from trading_agent_framework.dashboard.reader import (
     get_benchmark_symbol,
+    load_cumulative_returns,
     load_equity_curve,
     load_metrics,
     load_parameters,
     load_portfolio_breakdown,
     load_run,
     load_settings,
+    load_yearly_returns,
 )
 
 
@@ -166,3 +169,56 @@ def test_load_run_populates_equity_curve_from_equity_parquet(tmp_path: Path) -> 
     assert run.metrics is not None
     assert len(run.equity_curve) == 2
     assert run.equity_curve[0]["value"] == 10000.0
+
+
+def test_load_cumulative_returns_uses_the_persisted_benchmark_columns(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    benchmark = {NOW: Decimal("400.0"), LATER: Decimal("404.0")}
+    report.write_equity(run_dir, _equity_samples(), benchmark)
+    report.write_settings(run_dir, _settings_payload(benchmark_symbol="QQQ"))
+
+    result = load_cumulative_returns(_ref(run_dir))
+
+    assert result is not None
+    assert result["benchmark_symbol"] == "QQQ"
+    assert result["benchmark"] is not None
+    assert result["strategy"][-1] == pytest.approx(0.05, rel=1e-6)  # 10500/10000 - 1
+    assert result["benchmark_daily_returns"][-1] == pytest.approx(0.01, rel=1e-6)  # 404/400 - 1
+
+
+def test_load_cumulative_returns_handles_a_benchmark_less_run_without_network_access(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_equity(run_dir, _equity_samples())  # no benchmark passed
+    report.write_settings(run_dir, _settings_payload())
+
+    result = load_cumulative_returns(_ref(run_dir))
+
+    assert result is not None
+    assert result["benchmark"] is None
+    assert result["strategy"][-1] == pytest.approx(0.05, rel=1e-6)
+
+
+def test_load_cumulative_returns_returns_none_when_equity_parquet_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_cumulative_returns(_ref(run_dir)) is None
+
+
+def test_load_yearly_returns_reads_the_precomputed_summary_table(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    metrics = dict.fromkeys(METRIC_SET_FIELDS - {"raw"}, 0.0)
+    metrics["raw"] = {
+        "summary_tables": {
+            "eoy_returns_vs_benchmark": [{"year": 2026, "strategy": 0.1, "benchmark": 0.05, "won": True}],
+            "drawdowns": [],
+        }
+    }
+    report.write_metrics(run_dir, metrics)
+
+    yearly = load_yearly_returns(_ref(run_dir))
+
+    assert yearly == [{"year": 2026, "strategy": 0.1, "benchmark": 0.05, "won": True}]
+
+
+def test_load_yearly_returns_returns_none_when_metrics_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_yearly_returns(_ref(run_dir)) is None

@@ -292,128 +292,58 @@ def _compound_monthly_returns(daily_returns: pd.Series) -> list[float] | None:
     return [round(float(v) * 100, 4) for v in monthly.to_numpy()]
 
 
-def _cumret_no_benchmark(
-    daily_pv: pd.Series,
-    daily_ret: pd.Series,
-    strategy_cum: pd.Series,
-    strategy_return_source: str,
-) -> dict[str, Any]:
-    """Return cumulative returns dict when benchmark data is unavailable."""
-    return {
-        "dates": [d.strftime("%Y-%m-%d") for d in daily_pv.index],
-        "strategy": [round(float(v), 6) for v in strategy_cum.to_numpy()],
-        "benchmark": None,
-        "benchmark_source": "yfinance (live) — unavailable",
-        "strategy_return_source": strategy_return_source,
-        "benchmark_daily_close": None,
-        "strategy_monthly": _compound_monthly_returns(daily_ret),
-        "benchmark_monthly": None,
-        "strategy_daily_returns": [round(float(v), 6) for v in daily_ret.to_numpy()],
-        "benchmark_daily_returns": None,
-    }
-
-
 def load_cumulative_returns(ref: RunRef) -> dict[str, Any] | None:
-    """Build cumulative returns for both strategy and benchmark.
+    """Build cumulative returns for strategy and benchmark from equity.parquet.
 
-    Strategy daily returns use the ``return`` column from stats.parquet when
-    available (cash-flow-adjusted, matching quantstats).  Falls back to
-    computing ``pct_change()`` on ``portfolio_value`` for older runs that lack
-    a ``return`` column.
-
-    Benchmark returns are fetched live from yfinance for the same date range
-    using the symbol stored in ``*_settings.json`` (``benchmark_asset.symbol``).
-
-    Returns a dict with keys:
-        - dates: list[str] — daily dates
-        - strategy: list[float] — cumulative strategy returns (0.10 = +10%)
-        - benchmark: list[float] or None — cumulative benchmark returns
-        - benchmark_symbol: str — ticker used (e.g. "SPY", "QQQ")
-        - benchmark_source: "yfinance (live)" or an unavailable note
-        - strategy_return_source: "return column" or "pct_change fallback"
-        - benchmark_daily_close: list[float] or None
-        - strategy_monthly: list[float] or None — monthly returns in %
-        - benchmark_monthly: list[float] or None
-        - strategy_daily_returns: list[float] or None — daily fractional returns
-        - benchmark_daily_returns: list[float] or None
+    Both series come from backtesting.report.write_equity's own `return`/
+    `benchmark_return`/`benchmark_close` columns -- the exact series
+    backtesting.metrics.compute_metrics used to derive this run's own Sharpe/Alpha/
+    Beta -- rather than a live re-fetch that could silently disagree with them (and
+    that would violate this project's "tests never touch the network" rule).
     """
-    stats_path = _find_file(ref.path, "stats.parquet")
-    if stats_path is None:
-        stats_path = _find_file(ref.path, "stats.csv")
-    if stats_path is None:
+    path = os.path.join(ref.path, "equity.parquet")
+    if not os.path.isfile(path):
         return None
-
     try:
-        if stats_path.endswith(".parquet"):
-            df = pd.read_parquet(stats_path)
-        else:
-            df = pd.read_csv(stats_path, parse_dates=["datetime"], index_col="datetime")
+        df = pd.read_parquet(path)
     except Exception:
         return None
-
-    if df.empty or "portfolio_value" not in df.columns:
+    if df.empty or "return" not in df.columns:
         return None
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
 
-    pv = df["portfolio_value"]
-    if not isinstance(pv.index, pd.DatetimeIndex):
-        if "datetime" in df.columns:
-            pv.index = pd.to_datetime(df["datetime"])
-        else:
-            return None
-
-    # Resample portfolio_value to daily (last value per day)
-    daily_pv = pv.resample("D").last().dropna()
-    if daily_pv.empty:
-        return None
-
-    # Use the cash-flow-adjusted return column when available.
-    # Compound intraday returns to daily: (1+r₁)*(1+r₂)*… − 1,
-    # then reindex to daily_pv.index so strategy and benchmark share dates.
-    has_return_col = "return" in df.columns
-    if has_return_col:
-        ret_series = df["return"]
-        if not isinstance(ret_series.index, pd.DatetimeIndex):
-            ret_series.index = pv.index
-        daily_ret = ((1.0 + ret_series.fillna(0.0)).resample("D").prod(min_count=1) - 1.0).fillna(0.0)
-        daily_ret = daily_ret.reindex(daily_pv.index).fillna(0.0)
-        strategy_return_source = "return column (cash-flow-adjusted)"
-    else:
-        daily_ret = daily_pv.pct_change(fill_method=None).fillna(0.0)
-        strategy_return_source = "pct_change fallback"
-
+    daily_ret = df["return"].fillna(0.0)
     strategy_cum = (1 + daily_ret).cumprod() - 1
-
-    # Fetch benchmark from yfinance (live data, source of truth)
     benchmark_symbol = get_benchmark_symbol(ref)
-    start = daily_pv.index[0].strftime("%Y-%m-%d")
-    end = daily_pv.index[-1].strftime("%Y-%m-%d")
-    try:
-        import yfinance as yf
+    dates = [d.strftime("%Y-%m-%d") for d in df.index]
 
-        bm = yf.download(benchmark_symbol, start=start, end=end, progress=False, auto_adjust=True)
-        if isinstance(bm.columns, pd.MultiIndex):
-            bm = bm.droplevel(1, axis=1)
-        if bm.empty or "Close" not in bm.columns:
-            return _cumret_no_benchmark(daily_pv, daily_ret, strategy_cum, strategy_return_source)
-        bm_daily = bm["Close"].resample("D").last()
-        # Align timezones — stats index is tz-aware (America/New_York) but
-        # yfinance returns tz-naive. Localize BEFORE reindex so dates match.
-        bm_daily.index = bm_daily.index.tz_localize(daily_pv.index.tz)
-        bm_daily = bm_daily.reindex(daily_pv.index).ffill()
-    except Exception:
-        return _cumret_no_benchmark(daily_pv, daily_ret, strategy_cum, strategy_return_source)
+    has_benchmark = "benchmark_close" in df.columns and df["benchmark_close"].notna().any()
+    if not has_benchmark:
+        return {
+            "dates": dates,
+            "strategy": [round(float(v), 6) for v in strategy_cum.to_numpy()],
+            "benchmark": None,
+            "benchmark_symbol": benchmark_symbol,
+            "benchmark_source": "unavailable (no benchmark recorded for this run)",
+            "benchmark_daily_close": None,
+            "strategy_monthly": _compound_monthly_returns(daily_ret),
+            "benchmark_monthly": None,
+            "strategy_daily_returns": [round(float(v), 6) for v in daily_ret.to_numpy()],
+            "benchmark_daily_returns": None,
+        }
 
-    bm_daily_ret = bm_daily.pct_change(fill_method=None).fillna(0.0)
+    bm_daily_ret = df["benchmark_return"].fillna(0.0)
     bm_cum = (1 + bm_daily_ret).cumprod() - 1
 
     return {
-        "dates": [d.strftime("%Y-%m-%d") for d in daily_pv.index],
+        "dates": dates,
         "strategy": [round(float(v), 6) for v in strategy_cum.to_numpy()],
         "benchmark": [round(float(v), 6) for v in bm_cum.to_numpy()],
         "benchmark_symbol": benchmark_symbol,
-        "benchmark_source": "yfinance (live)",
-        "strategy_return_source": strategy_return_source,
-        "benchmark_daily_close": [round(float(v), 6) for v in bm_daily.to_numpy()],
+        "benchmark_source": "equity.parquet (recorded at backtest time)",
+        "benchmark_daily_close": [round(float(v), 6) if pd.notna(v) else None for v in df["benchmark_close"].to_numpy()],
         "strategy_monthly": _compound_monthly_returns(daily_ret),
         "benchmark_monthly": _compound_monthly_returns(bm_daily_ret),
         "strategy_daily_returns": [round(float(v), 6) for v in daily_ret.to_numpy()],
@@ -422,54 +352,16 @@ def load_cumulative_returns(ref: RunRef) -> dict[str, Any] | None:
 
 
 def load_yearly_returns(ref: RunRef) -> list[dict[str, Any]] | None:
-    """Compute yearly strategy and benchmark returns from stats.parquet.
-
-    Compounds daily returns (from the ``return`` column when available, or
-    ``pct_change`` fallback) within each calendar year.  Benchmark returns
-    use the same yfinance data as ``load_cumulative_returns()``.
-
-    This replaces reading from the JSON tearsheet's
-    ``summary_tables.eoy_returns_vs_benchmark``, which is generated with
-    ``match_dates=True`` and can trim the first year when the strategy sits
-    in cash while the benchmark is active.
-
-    Returns a list of dicts with keys: year (int), strategy (float), benchmark
-    (float or None), won (bool).
+    """Yearly strategy/benchmark returns, read directly from metrics.json's
+    `raw.summary_tables.eoy_returns_vs_benchmark` -- computed once, in
+    backtesting.metrics.compute_metrics, from the exact same returns series used for
+    every other headline metric on this page. No independent recomputation here.
     """
-    cum_ret = load_cumulative_returns(ref)
-    if cum_ret is None:
+    metrics = load_metrics(ref)
+    if metrics is None:
         return None
-
-    dates = pd.to_datetime(cum_ret["dates"])
-    strategy_daily = pd.Series(cum_ret["strategy_daily_returns"], index=dates)
-    benchmark_daily: pd.Series | None = None
-    if cum_ret.get("benchmark_daily_returns"):
-        benchmark_daily = pd.Series(cum_ret["benchmark_daily_returns"], index=dates)
-
-    years = sorted(set(d.year for d in dates))
-    result: list[dict[str, Any]] = []
-    for year in years:
-        mask = dates.year == year
-        strat_ret = (1 + strategy_daily[mask]).prod() - 1
-
-        bench_ret: float | None = None
-        won = False
-        if benchmark_daily is not None and not benchmark_daily.empty:
-            b_year = benchmark_daily[mask]
-            if not b_year.empty:
-                bench_ret = (1 + b_year).prod() - 1
-                won = strat_ret > bench_ret
-
-        result.append(
-            {
-                "year": year,
-                "strategy": round(float(strat_ret), 6),
-                "benchmark": round(float(bench_ret), 6) if bench_ret is not None else None,
-                "won": won,
-            }
-        )
-
-    return result
+    table = metrics.raw.get("summary_tables", {}).get("eoy_returns_vs_benchmark")
+    return table or None
 
 
 def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
