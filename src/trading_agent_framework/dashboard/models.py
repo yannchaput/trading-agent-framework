@@ -61,7 +61,8 @@ class Settings(BaseModel):
 
 
 class MetricSet(BaseModel):
-    """All scalar performance metrics from *_tearsheet_metrics.json."""
+    """All scalar performance metrics from metrics.json (backtesting.report.write_metrics
+    writes this keyed exactly by these field names; see tests/backtesting/dashboard_contract.py)."""
 
     total_return_strategy: float = 0.0
     total_return_benchmark: float = 0.0
@@ -102,73 +103,6 @@ class MetricSet(BaseModel):
     recovery_factor_strategy: float = 0.0
     recovery_factor_benchmark: float = 0.0
     raw: dict[str, Any] = Field(default_factory=dict)
-
-    @classmethod
-    def from_scalars(cls, scalar_metrics: dict[str, dict[str, float]], *, summary_tables: dict[str, Any] | None = None) -> "MetricSet":
-        """Build a MetricSet from the scalar_metrics dict in tearsheet_metrics.json.
-
-        The optional *summary_tables* dict (eoy_returns_vs_benchmark, drawdowns) is
-        stored as raw["summary_tables"] so the dashboard "Yearly Returns" tab can
-        access it.
-        """
-
-        def _get(metric_name: str, column: str = "Strategy") -> float:
-            entry = scalar_metrics.get(metric_name, {})
-            if isinstance(entry, dict):
-                val = entry.get(column, 0.0)
-            elif isinstance(entry, (int, float)):
-                val = entry
-            else:
-                val = 0.0
-            if val is None:
-                return 0.0
-            return float(val) if isinstance(val, (int, float)) else 0.0
-
-        raw = dict(scalar_metrics)
-        if summary_tables:
-            raw["summary_tables"] = summary_tables
-
-        return cls(
-            total_return_strategy=_get("Total Return"),
-            total_return_benchmark=_get("Total Return", "Benchmark"),
-            cagr_strategy=_get("CAGR% (Annual Return)"),
-            cagr_benchmark=_get("CAGR% (Annual Return)", "Benchmark"),
-            sharpe_strategy=_get("Sharpe"),
-            sharpe_benchmark=_get("Sharpe", "Benchmark"),
-            sortino_strategy=_get("Sortino"),
-            sortino_benchmark=_get("Sortino", "Benchmark"),
-            calmar_strategy=_get("Calmar"),
-            calmar_benchmark=_get("Calmar", "Benchmark"),
-            omega_strategy=_get("Omega"),
-            omega_benchmark=_get("Omega", "Benchmark"),
-            max_drawdown_strategy=_get("Max Drawdown"),
-            max_drawdown_benchmark=_get("Max Drawdown", "Benchmark"),
-            volatility_strategy=_get("Volatility (ann.)"),
-            volatility_benchmark=_get("Volatility (ann.)", "Benchmark"),
-            beta=_get("Beta"),
-            alpha=_get("Alpha"),
-            correlation=_get("Correlation"),
-            treynor_ratio=_get("Treynor Ratio"),
-            information_ratio_strategy=_get("Information Ratio"),
-            information_ratio_benchmark=_get("Information Ratio", "Benchmark"),
-            r_squared_strategy=_get("R^2"),
-            r_squared_benchmark=_get("R^2", "Benchmark"),
-            skew_strategy=_get("Skew"),
-            skew_benchmark=_get("Skew", "Benchmark"),
-            kurtosis_strategy=_get("Kurtosis"),
-            kurtosis_benchmark=_get("Kurtosis", "Benchmark"),
-            win_days_pct_strategy=_get("Win Days%"),
-            win_days_pct_benchmark=_get("Win Days%", "Benchmark"),
-            win_month_pct_strategy=_get("Win Month%"),
-            win_month_pct_benchmark=_get("Win Month%", "Benchmark"),
-            longest_dd_days_strategy=_get("Longest DD Days"),
-            longest_dd_days_benchmark=_get("Longest DD Days", "Benchmark"),
-            avg_drawdown_strategy=_get("Avg. Drawdown"),
-            avg_drawdown_benchmark=_get("Avg. Drawdown", "Benchmark"),
-            recovery_factor_strategy=_get("Recovery Factor"),
-            recovery_factor_benchmark=_get("Recovery Factor", "Benchmark"),
-            raw=raw,
-        )
 
 
 @dataclass
