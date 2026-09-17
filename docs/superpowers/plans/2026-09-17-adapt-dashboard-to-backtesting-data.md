@@ -1151,16 +1151,33 @@ with:
 
 (No other changes needed in this function — the rest of the reconstruction logic already matches this project's `side.value` (`"buy"`/`"sell"`), `status == "fill"`, and column names.)
 
-- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 4: Delete `_find_file` — this is its last remaining caller**
+
+Ruling recorded during Task 5 (see ledger): Task 5's brief originally said to delete `_find_file` entirely, but Tasks 6/7/8's functions (`load_equity_from_indicators`/`load_equity_from_trades`/`load_portfolio_breakdown`/`load_cumulative_returns`/`load_trades_curve`) still called it at that point, so Task 5 correctly left it in place instead of breaking those not-yet-fixed call sites. By this step, Task 6 has deleted `load_equity_from_indicators`/`load_equity_from_trades` outright and rewritten `load_portfolio_breakdown` to use a fixed path; Task 7 has rewritten `load_cumulative_returns` to use a fixed path. This step's `load_trades_curve` fix above (Step 3) removes the last remaining call to `_find_file` in the whole file.
+
+Run this to confirm no callers remain before deleting:
+```bash
+grep -n "_find_file" src/trading_agent_framework/dashboard/reader.py
+```
+Expected: only the function's own definition line remains (no call sites).
+
+Delete the `_find_file` function definition entirely from `reader.py`.
+
+- [ ] **Step 5: Run test to verify it passes**
 
 Run: `uv run pytest tests/dashboard/test_reader.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Run the full dashboard test suite to confirm no other function silently depended on `_find_file`**
+
+Run: `uv run pytest tests/dashboard/ -v`
+Expected: all pass — every other function that used to call `_find_file` was already migrated to a fixed path by Tasks 5, 6, and 7.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add tests/dashboard/test_reader.py src/trading_agent_framework/dashboard/reader.py
-git commit -m "fix: read trades.parquet by its fixed name"
+git commit -m "fix: read trades.parquet by its fixed name; remove now-unused _find_file glob helper"
 ```
 
 ---
