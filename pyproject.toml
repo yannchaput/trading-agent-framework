@@ -22,7 +22,7 @@ backtesting-yahoo = ["yfinance>=0.2.61"]
 [project.scripts]
 agent = "trading_agent_framework.main:main"
 batch-universe = "trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe:main"
-dashboard = "lumibot_trading_agent.dashboard.cli:main"
+dashboard = "trading_agent_framework.dashboard.cli:main"
 
 [build-system]
 requires = ["hatchling"]

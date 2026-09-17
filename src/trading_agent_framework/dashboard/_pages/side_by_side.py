@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from lumibot_trading_agent.dashboard.reader import load_portfolio_breakdown, load_run
+from trading_agent_framework.dashboard.reader import load_portfolio_breakdown, load_run
 
 
 def page_side_by_side():

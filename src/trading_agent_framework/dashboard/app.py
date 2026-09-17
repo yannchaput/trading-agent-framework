@@ -1,13 +1,13 @@
 """Streamlit dashboard — strategy comparison.
 
 Run via: uv run dashboard
-Or:      uv run streamlit run src/lumibot_trading_agent/dashboard/app.py
+Or:      uv run streamlit run src/trading_agent_framework/dashboard/app.py
 """
 
 import streamlit as st
 
-from lumibot_trading_agent.dashboard.reader import load_description, save_description
-from lumibot_trading_agent.dashboard.theme import apply_theme
+from trading_agent_framework.dashboard.reader import load_description, save_description
+from trading_agent_framework.dashboard.theme import apply_theme
 
 # Must be first Streamlit call
 st.set_page_config(
@@ -117,15 +117,15 @@ def main():
     # Route to the selected page
     page_name = st.session_state.current_page
     if page_name == "Scorecard":
-        from lumibot_trading_agent.dashboard._pages.scorecard import page_scorecard
+        from trading_agent_framework.dashboard._pages.scorecard import page_scorecard
 
         page_scorecard()
     elif page_name == "Run Detail":
-        from lumibot_trading_agent.dashboard._pages.detail import page_detail
+        from trading_agent_framework.dashboard._pages.detail import page_detail
 
         page_detail()
     elif page_name == "Side-by-Side":
-        from lumibot_trading_agent.dashboard._pages.side_by_side import page_side_by_side
+        from trading_agent_framework.dashboard._pages.side_by_side import page_side_by_side
 
         page_side_by_side()
 

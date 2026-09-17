@@ -2,9 +2,9 @@
 
 import streamlit as st
 
-from lumibot_trading_agent.dashboard.components.tables import render_scorecard_table
-from lumibot_trading_agent.dashboard.discovery import scan_runs
-from lumibot_trading_agent.dashboard.reader import load_description, load_metrics, load_settings
+from trading_agent_framework.dashboard.components.tables import render_scorecard_table
+from trading_agent_framework.dashboard.discovery import scan_runs
+from trading_agent_framework.dashboard.reader import load_description, load_metrics, load_settings
 
 
 def page_scorecard():

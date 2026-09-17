@@ -9,7 +9,7 @@ from typing import Any
 
 import pandas as pd
 
-from lumibot_trading_agent.dashboard.models import MetricSet, Run, RunRef, Settings
+from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
 
 
 def _find_file(run_dir: str, pattern: str) -> str | None:
@@ -33,7 +33,7 @@ def load_description(ref: RunRef) -> str | None:
             data = json.load(f)
         desc = data.get("description")
         return desc if isinstance(desc, str) else None
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return None
 
 
@@ -285,7 +285,7 @@ def _parse_tearsheet_cell(raw: object) -> float | None:
         if s.endswith("%"):
             return float(s[:-1].replace(",", "")) / 100.0
         return float(s.replace(",", ""))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         return None
 
 

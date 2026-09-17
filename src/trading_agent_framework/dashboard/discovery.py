@@ -5,7 +5,7 @@ from __future__ import annotations
 import glob
 import os
 
-from lumibot_trading_agent.dashboard.models import RunIndex, RunRef
+from trading_agent_framework.dashboard.models import RunIndex, RunRef
 
 
 def scan_runs(base_path: str = "logs") -> RunIndex:

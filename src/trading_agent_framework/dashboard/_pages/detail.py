@@ -3,7 +3,7 @@
 import pandas as pd
 import streamlit as st
 
-from lumibot_trading_agent.dashboard.components.charts import (
+from trading_agent_framework.dashboard.components.charts import (
     cumulative_returns_chart,
     drawdown_chart,
     equity_curve_chart,
@@ -15,8 +15,8 @@ from lumibot_trading_agent.dashboard.components.charts import (
     rolling_volatility_chart,
     trades_chart,
 )
-from lumibot_trading_agent.dashboard.components.metric_cards import render_header_card, render_metric_card
-from lumibot_trading_agent.dashboard.reader import load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
+from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
+from trading_agent_framework.dashboard.reader import load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
 
 
 def page_detail():
