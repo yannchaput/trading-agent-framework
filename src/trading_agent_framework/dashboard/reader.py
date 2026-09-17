@@ -231,143 +231,48 @@ def load_metrics(ref: RunRef) -> MetricSet | None:
     return MetricSet.model_validate({**scalars, "raw": raw})
 
 
-def load_equity_from_indicators(ref: RunRef) -> list[dict[str, Any]] | None:
-    """Extract portfolio_value lines from *_indicators.parquet (or CSV fallback)."""
-    path = _find_file(ref.path, "*_indicators.parquet")
-    if path is None:
-        path = _find_file(ref.path, "*_indicators.csv")
-    if path is None:
-        return None
-    try:
-        if path.endswith(".parquet"):
-            df = pd.read_parquet(path)
-        else:
-            df = pd.read_csv(path)
-    except Exception:
-        return None
-    if df.empty or "name" not in df.columns:
-        return None
-    portfolio = df[df["name"] == "portfolio_value"]
-    if portfolio.empty:
-        return None
-    return portfolio[["datetime", "value"]].to_dict(orient="records")
-
-
-def load_equity_from_trades(ref: RunRef, budget: float) -> list[dict[str, Any]]:
-    """Reconstruct daily portfolio equity curve from *_trades.parquet.
-
-    Falls back to *_trades.csv if parquet unavailable.
-    """
-    trades_path = _find_file(ref.path, "*_trades.parquet")
-    if trades_path is None:
-        trades_path = _find_file(ref.path, "*_trades.csv")
-    if trades_path is None:
-        return []
-
-    try:
-        if trades_path.endswith(".parquet"):
-            df = pd.read_parquet(trades_path)
-        else:
-            df = pd.read_csv(trades_path)
-    except Exception:
-        return []
-
-    if df.empty:
-        return []
-
-    if "time" in df.columns:
-        df["time"] = pd.to_datetime(df["time"], utc=True)
-        df = df.sort_values("time")
-
-    cash = budget
-    positions: dict[str, dict[str, Any]] = {}
-    daily_values: dict[str, float] = {}
-
-    for _, row in df.iterrows():
-        dt = row.get("time")
-        if dt is None:
-            continue
-        date_key = dt.strftime("%Y-%m-%d") if hasattr(dt, "strftime") else str(dt)[:10]
-
-        side = str(row.get("side", "")).lower()
-        qty = float(row.get("filled_quantity", 0) or 0)
-        price = float(row.get("price", 0) or 0)
-        cost = float(row.get("trade_cost", 0) or 0)
-        symbol = str(row.get("symbol", ""))
-        status = str(row.get("status", ""))
-        event_kind = str(row.get("event_kind", ""))
-
-        if status == "fill" and side in ("buy", "sell"):
-            if side == "buy":
-                cash -= qty * price + cost
-                positions.setdefault(symbol, {"qty": 0.0, "mark_price": price})
-                positions[symbol]["qty"] += qty
-                positions[symbol]["mark_price"] = price
-            else:
-                cash += qty * price - cost
-                positions.setdefault(symbol, {"qty": 0.0, "mark_price": price})
-                positions[symbol]["qty"] -= qty
-                positions[symbol]["mark_price"] = price
-                if abs(positions[symbol]["qty"]) < 1e-10:
-                    del positions[symbol]
-
-        if event_kind == "cash_event":
-            cash += float(row.get("cash_event_amount", 0) or 0)
-
-        position_value = sum(p["qty"] * p["mark_price"] for p in positions.values())
-        daily_values[date_key] = cash + position_value
-
-    if not daily_values:
-        return []
-
-    return [{"date": k, "value": v} for k, v in sorted(daily_values.items())]
-
-
 def load_portfolio_breakdown(ref: RunRef) -> dict[str, Any] | None:
-    """Load daily portfolio decomposition (total value, cash, assets) from stats.
+    """Load daily portfolio decomposition (total value, cash, assets) from equity.parquet.
 
-    Reads stats.parquet (or stats.csv fallback), resamples to daily, and returns
-    a dict with dates, portfolio_value, cash, and assets (portfolio_value - cash).
-    Assets are the estimated market value of held positions on each day.
-
-    Returns None if the stats file is unavailable or missing required columns.
+    `positions_value` is read directly rather than derived as `portfolio_value - cash`:
+    backtesting.report.write_equity already computes it exactly from the ledger, so
+    subtracting would only reintroduce float rounding drift for no benefit.
     """
-    stats_path = _find_file(ref.path, "stats.parquet")
-    if stats_path is None:
-        stats_path = _find_file(ref.path, "stats.csv")
-    if stats_path is None:
+    path = os.path.join(ref.path, "equity.parquet")
+    if not os.path.isfile(path):
         return None
-
     try:
-        if stats_path.endswith(".parquet"):
-            df = pd.read_parquet(stats_path)
-        else:
-            df = pd.read_csv(stats_path, parse_dates=["datetime"], index_col="datetime")
+        df = pd.read_parquet(path)
     except Exception:
         return None
-
-    if df.empty or "portfolio_value" not in df.columns or "cash" not in df.columns:
+    if df.empty or "portfolio_value" not in df.columns:
         return None
-
-    pv = df["portfolio_value"]
-    cash = df["cash"]
-    if not isinstance(pv.index, pd.DatetimeIndex):
-        if "datetime" in df.columns:
-            pv.index = pd.to_datetime(df["datetime"])
-            cash.index = pv.index
-        else:
-            return None
-
-    daily_pv = pv.resample("D").last().dropna()
-    daily_cash = cash.resample("D").last().reindex(daily_pv.index).ffill().fillna(0.0)
-    daily_assets = daily_pv - daily_cash
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
 
     return {
-        "dates": [d.strftime("%Y-%m-%d") for d in daily_pv.index],
-        "portfolio_value": [round(float(v), 2) for v in daily_pv.to_numpy()],
-        "cash": [round(float(v), 2) for v in daily_cash.to_numpy()],
-        "assets": [round(float(v), 2) for v in daily_assets.to_numpy()],
+        "dates": [d.strftime("%Y-%m-%d") for d in df.index],
+        "portfolio_value": [round(float(v), 2) for v in df["portfolio_value"].to_numpy()],
+        "cash": [round(float(v), 2) for v in df["cash"].to_numpy()],
+        "assets": [round(float(v), 2) for v in df["positions_value"].to_numpy()],
     }
+
+
+def load_equity_curve(ref: RunRef) -> list[dict[str, Any]]:
+    """Load the portfolio-value curve from equity.parquet (one row per trading session)."""
+    path = os.path.join(ref.path, "equity.parquet")
+    if not os.path.isfile(path):
+        return []
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return []
+    if df.empty or "portfolio_value" not in df.columns:
+        return []
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    return [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in df["portfolio_value"].sort_index().items()]
 
 
 def _compound_monthly_returns(daily_returns: pd.Series) -> list[float] | None:
@@ -669,14 +574,8 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
 
 
 def load_run(ref: RunRef) -> Run:
-    """Load all data for a run: settings, metrics, equity curve.
-
-    Equity curve: indicators CSV first (most accurate), trades reconstruction as fallback.
-    """
+    """Load all data for a run: settings, metrics, and the equity curve (from equity.parquet)."""
     settings = load_settings(ref)
     metrics = load_metrics(ref)
-    equity = load_equity_from_indicators(ref)
-    if equity is None:
-        budget = settings.budget if settings else 10000.0
-        equity = load_equity_from_trades(ref, budget)
+    equity = load_equity_curve(ref)
     return Run(ref=ref, settings=settings, metrics=metrics, equity_curve=equity)

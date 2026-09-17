@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 from tests.backtesting.dashboard_contract import METRIC_SET_FIELDS
 
 from trading_agent_framework.backtesting import report
+from trading_agent_framework.backtesting.ledger import EquitySample
 from trading_agent_framework.dashboard.models import RunRef
-from trading_agent_framework.dashboard.reader import get_benchmark_symbol, load_metrics, load_parameters, load_settings
+from trading_agent_framework.dashboard.reader import (
+    get_benchmark_symbol,
+    load_equity_curve,
+    load_metrics,
+    load_parameters,
+    load_portfolio_breakdown,
+    load_run,
+    load_settings,
+)
 
 
 def _run_dir(tmp_path: Path, strategy: str = "momentum", run_ts: str = "2026-06-22_194053") -> Path:
@@ -98,3 +109,60 @@ def test_load_parameters_reports_the_framework_version(tmp_path: Path) -> None:
     rows = load_parameters(_ref(run_dir))
 
     assert ("Run", "Framework version", "0.1.0") in rows
+
+
+NOW = datetime(2026, 1, 5, 21, tzinfo=UTC)
+LATER = datetime(2026, 1, 6, 21, tzinfo=UTC)
+
+
+def _equity_samples() -> list[EquitySample]:
+    return [
+        EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)),
+        EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)),
+    ]
+
+
+def test_load_portfolio_breakdown_reads_equity_parquet(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_equity(run_dir, _equity_samples())
+
+    breakdown = load_portfolio_breakdown(_ref(run_dir))
+
+    assert breakdown is not None
+    assert breakdown["portfolio_value"] == [10000.0, 10500.0]
+    assert breakdown["cash"] == [10000.0, 500.0]
+    assert breakdown["assets"] == [0.0, 10000.0]
+    assert len(breakdown["dates"]) == 2
+
+
+def test_load_portfolio_breakdown_returns_none_when_equity_parquet_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_portfolio_breakdown(_ref(run_dir)) is None
+
+
+def test_load_equity_curve_reads_portfolio_value_from_equity_parquet(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_equity(run_dir, _equity_samples())
+
+    curve = load_equity_curve(_ref(run_dir))
+
+    assert curve == [
+        {"date": NOW.strftime("%Y-%m-%d"), "value": 10000.0},
+        {"date": LATER.strftime("%Y-%m-%d"), "value": 10500.0},
+    ]
+
+
+def test_load_run_populates_equity_curve_from_equity_parquet(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_equity(run_dir, _equity_samples())
+    report.write_settings(run_dir, _settings_payload())
+    metrics = dict.fromkeys(METRIC_SET_FIELDS - {"raw"}, 0.0)
+    metrics["raw"] = {}
+    report.write_metrics(run_dir, metrics)
+
+    run = load_run(_ref(run_dir))
+
+    assert run.settings is not None
+    assert run.metrics is not None
+    assert len(run.equity_curve) == 2
+    assert run.equity_curve[0]["value"] == 10000.0
