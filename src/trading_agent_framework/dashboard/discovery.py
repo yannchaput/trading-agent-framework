@@ -9,7 +9,7 @@ from trading_agent_framework.dashboard.models import RunIndex, RunRef
 
 
 def scan_runs(base_path: str = "logs") -> RunIndex:
-    """Discover all runs by finding *_tearsheet_metrics.json files under base_path."""
+    """Discover all backtesting runs by finding metrics.json files under base_path."""
     pattern = os.path.join(base_path, "**", "metrics.json")
     matches = glob.glob(pattern, recursive=True)
 

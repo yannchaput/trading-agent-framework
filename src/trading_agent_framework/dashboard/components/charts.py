@@ -15,7 +15,7 @@ def equity_curve_chart(
     """Build a cumulative equity curve chart.
 
     When *breakdown* is provided (from load_portfolio_breakdown), all data —
-    portfolio value, cash, and assets — is sourced from stats.parquet for
+    portfolio value, cash, and assets — is sourced from equity.parquet for
     consistency.  Falls back to the indicator-based *equity* list otherwise.
     """
     has_breakdown = bool(breakdown and breakdown.get("dates") and breakdown.get("portfolio_value"))
@@ -57,7 +57,7 @@ def equity_curve_chart(
                 )
             )
 
-        # Portfolio value line (sourced from stats.parquet, filled to zero)
+        # Portfolio value line (sourced from equity.parquet, filled to zero)
         fig.add_trace(
             go.Scatter(
                 x=bd_dates,
@@ -205,7 +205,7 @@ def returns_distribution(
     equity: list[dict[str, Any]],
     title: str = "Daily Returns",
     daily_returns: list[float] | None = None,
-    daily_dates: "pd.DatetimeIndex | None" = None,
+    daily_dates: pd.DatetimeIndex | None = None,
 ) -> go.Figure:
     """Build a daily returns time-series bar chart matching the tearsheet view.
 
@@ -214,7 +214,7 @@ def returns_distribution(
 
     When *daily_returns* (list of percentage values) and *daily_dates* are
     provided they are used directly — this is the preferred path because the
-    caller can source cash-flow-adjusted returns from stats.parquet's
+    caller can source cash-flow-adjusted returns from equity.parquet's
     ``return`` column.  Otherwise falls back to computing ``pct_change()`` on
     the *equity* curve.
     """

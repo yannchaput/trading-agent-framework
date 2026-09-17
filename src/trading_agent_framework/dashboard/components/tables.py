@@ -27,7 +27,7 @@ def render_metric_table(metrics: dict[str, tuple[float, float]], title: str = ""
     )
 
 
-def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], "pd.DataFrame"]:
+def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFrame]:
     """Render the scorecard comparison table with native row-click selection.
 
     Returns a tuple of ``(selected_indices, display_df)`` where

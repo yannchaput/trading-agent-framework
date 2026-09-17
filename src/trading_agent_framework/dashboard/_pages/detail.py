@@ -45,13 +45,16 @@ def page_detail():
     m = run.metrics
     s = run.settings
 
-    # Build a stats-based equity list for charts that derive from portfolio_value
-    # (drawdown, heatmap, daily returns).  Falls back to indicators only when
-    # stats.parquet is absent.
+    # Build an equity list for charts that derive from portfolio_value
+    # (drawdown, heatmap, daily returns), sourced from equity.parquet via
+    # load_portfolio_breakdown.
     breakdown = load_portfolio_breakdown(ref)
     bpv: list[dict] = []
     if breakdown:
-        bpv = [{"date": d, "value": v} for d, v in zip(breakdown["dates"], breakdown["portfolio_value"])]
+        bpv = [
+            {"date": d, "value": v}
+            for d, v in zip(breakdown["dates"], breakdown["portfolio_value"], strict=False)
+        ]
 
     # Load cumulative returns once — used by rolling-metric charts (Charts tab)
     # and the Returns tab.

@@ -1,6 +1,6 @@
 """Test-only mirror of the dashboard's Settings/MetricSet field names -- see the
 docstring in tests/backtesting/test_report.py's Task description for why this exists
-and how to keep it in sync. Source: lumibot_trading_agent/dashboard/models.py.
+and how to keep it in sync. Source: trading_agent_framework/dashboard/models.py.
 """
 
 from __future__ import annotations

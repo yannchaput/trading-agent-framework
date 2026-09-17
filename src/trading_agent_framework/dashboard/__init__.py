@@ -1,1 +1,1 @@
-"""Dashboard package for lumibot-trading-agent."""
+"""Dashboard package for trading_agent_framework."""

@@ -34,7 +34,7 @@ def page_side_by_side():
         st.error("Failed to load any of the selected runs.")
         return
 
-    # Unified equity curve — uses stats.parquet (same source as Detail page)
+    # Unified equity curve — uses equity.parquet (same source as Detail page)
     st.subheader("Equity Curves Overlay")
     colors = ["#0891b2", "#e74c3c", "#27ae60", "#f39c12", "#8e44ad", "#2c3e50"]
     fig = go.Figure()
@@ -96,7 +96,7 @@ def page_side_by_side():
         with cols[i + 1]:
             st.markdown(f"**{run.ref.strategy_name}**")
             st.caption(run.ref.run_ts[:10])
-            for label, attr, is_pct in metrics_spec:
+            for _label, attr, is_pct in metrics_spec:
                 val = getattr(run.metrics, attr, 0)
                 if is_pct:
                     st.markdown(f"{val * 100:.2f}%")

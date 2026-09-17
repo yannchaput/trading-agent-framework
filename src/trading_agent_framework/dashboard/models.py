@@ -22,7 +22,7 @@ class RunRef:
     path: str  # absolute or relative path to the run directory
 
     @classmethod
-    def from_path(cls, path: str) -> "RunRef":
+    def from_path(cls, path: str) -> RunRef:
         """Extract strategy_name, run_ts, and mode from a directory path.
 
         Expected pattern: logs/{strategy_name}/{mode}/{run_ts}_{mode}/
@@ -46,7 +46,7 @@ class RunRef:
 
 
 class Settings(BaseModel):
-    """Parsed from *_settings.json."""
+    """Parsed from settings.json."""
 
     name: str = ""
     backtesting_start: datetime | None = None
