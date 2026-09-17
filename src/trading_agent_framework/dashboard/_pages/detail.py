@@ -190,7 +190,7 @@ def page_detail():
             if bs:
                 st.caption(f"Benchmark data ({bm_label}): {bs}")
         else:
-            st.info("No cumulative return data available (missing stats file).")
+            st.info("No cumulative return data available (missing equity.parquet).")
 
         st.subheader("Monthly Returns Heatmap")
         st.caption(

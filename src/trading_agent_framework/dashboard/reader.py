@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import glob
 import json
 import os
 from typing import Any
@@ -10,13 +9,6 @@ from typing import Any
 import pandas as pd
 
 from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
-
-
-def _find_file(run_dir: str, pattern: str) -> str | None:
-    """Find the first file matching a glob pattern in run_dir."""
-    full_pattern = os.path.join(run_dir, pattern)
-    matches = glob.glob(full_pattern)
-    return matches[0] if matches else None
 
 
 def load_description(ref: RunRef) -> str | None:
@@ -365,7 +357,7 @@ def load_yearly_returns(ref: RunRef) -> list[dict[str, Any]] | None:
 
 
 def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
-    """Load filled trades from ``*_trades.parquet`` and reconstruct the
+    """Load filled trades from ``trades.parquet`` and reconstruct the
     intra-trade portfolio value curve with buy/sell markers.
 
     Returns a dict with two keys:
@@ -379,17 +371,12 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
 
     Returns None when the trades file is missing or contains no fills.
     """
-    trades_path = _find_file(ref.path, "*_trades.parquet")
-    if trades_path is None:
-        trades_path = _find_file(ref.path, "*_trades.csv")
-    if trades_path is None:
+    trades_path = os.path.join(ref.path, "trades.parquet")
+    if not os.path.isfile(trades_path):
         return None
 
     try:
-        if trades_path.endswith(".parquet"):
-            df = pd.read_parquet(trades_path)
-        else:
-            df = pd.read_csv(trades_path)
+        df = pd.read_parquet(trades_path)
     except Exception:
         return None
 

@@ -8,7 +8,7 @@ import pytest
 from tests.backtesting.dashboard_contract import METRIC_SET_FIELDS
 
 from trading_agent_framework.backtesting import report
-from trading_agent_framework.backtesting.ledger import EquitySample
+from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord, Ledger
 from trading_agent_framework.dashboard.models import RunRef
 from trading_agent_framework.dashboard.reader import (
     get_benchmark_symbol,
@@ -19,8 +19,10 @@ from trading_agent_framework.dashboard.reader import (
     load_portfolio_breakdown,
     load_run,
     load_settings,
+    load_trades_curve,
     load_yearly_returns,
 )
+from trading_agent_framework.entities.enums import OrderSide, OrderType
 
 
 def _run_dir(tmp_path: Path, strategy: str = "momentum", run_ts: str = "2026-06-22_194053") -> Path:
@@ -222,3 +224,33 @@ def test_load_yearly_returns_reads_the_precomputed_summary_table(tmp_path: Path)
 def test_load_yearly_returns_returns_none_when_metrics_missing(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     assert load_yearly_returns(_ref(run_dir)) is None
+
+
+def test_load_trades_curve_reads_trades_parquet(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(backtesting_start=NOW.isoformat(), budget=10000.0))
+    ledger = Ledger()
+    ledger.record_fill(FillRecord(
+        time=NOW, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
+        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("100"),
+        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.0"),
+    ))
+    report.write_trades(run_dir, ledger)
+
+    curve = load_trades_curve(_ref(run_dir), budget=10000.0)
+
+    assert curve is not None
+    assert len(curve["trades"]) == 1
+    assert curve["trades"][0]["side"] == "buy"
+    assert curve["trades"][0]["symbol"] == "AAPL"
+
+
+def test_load_trades_curve_returns_none_when_no_fills(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_trades(run_dir, Ledger())
+    assert load_trades_curve(_ref(run_dir), budget=10000.0) is None
+
+
+def test_load_trades_curve_returns_none_when_file_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_trades_curve(_ref(run_dir), budget=10000.0) is None
