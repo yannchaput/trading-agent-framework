@@ -37,9 +37,9 @@
 
 ### Cross sectional momentum
 * Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
-* When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)
+* ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~
 * Too much sector correlation, add a sector isolation strategy
-* Restrain the number of positions to a hard cap of 20: do not buy if more than 20
+* ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~
 * Compute the residual volatility compared to the market (cf chatgpt thread)
 
 ### Opening range breakout

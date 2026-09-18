@@ -10,12 +10,10 @@ import math
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
-
-from .parameters import CONFIG
 
 if TYPE_CHECKING:
     from .risk_diagnostics import PortfolioRiskDiagnostics
@@ -343,44 +341,6 @@ def compute_residual_momentum(
     return residual_cumulative
 
 
-def compute_momentum_breadth_exposure(
-    scored: list[dict],
-    bands: list[tuple[float, float]] | None = None,
-) -> tuple[float, float, int, int]:
-    """Compute momentum breadth and the resulting exposure multiplier.
-
-    Momentum breadth = fraction of scored stocks with a positive momentum score.
-    The first matching band determines the exposure multiplier.
-
-    Args:
-        scored: List of scored stock dicts, each with a "score" key (float).
-        bands: Breadth bands as [(min_breadth, exposure), ...]. Defaults to
-               MOMENTUM_BREADTH_BANDS.
-
-    Returns:
-        (breadth, exposure, positive_count, total_count) tuple.
-        breadth is in [0, 1]. exposure is in [0, 1].
-    """
-    if bands is None:
-        bands = CONFIG["MOMENTUM_BREADTH_BANDS"]
-
-    total = len(scored)
-    if total == 0:
-        return 0.0, 1.0, 0, 0
-
-    positive_count = sum(1 for s in scored if s.get("score", 0) > 0)
-    breadth = positive_count / total
-
-    # Find the first matching band (bands are sorted descending by threshold)
-    exposure = 1.0  # default if no band matches (shouldn't happen)
-    for threshold, mult in cast(list[tuple[float, float]], bands):
-        if breadth >= threshold:
-            exposure = mult
-            break
-
-    return breadth, exposure, positive_count, total
-
-
 def _read_raw_entries(path: Path) -> list[dict]:
     """Read the raw list of {date, ptf_value} dicts from a JSON file.
 
@@ -390,7 +350,7 @@ def _read_raw_entries(path: Path) -> list[dict]:
         return []
     try:
         data = json.loads(path.read_text())
-    except json.JSONDecodeError, OSError:
+    except (json.JSONDecodeError, OSError):
         return []
     if not isinstance(data, list):
         return []
@@ -525,13 +485,13 @@ def parse_insufficient_buying_power(error: Exception) -> float | None:
     """
     try:
         payload = json.loads(str(error))
-    except json.JSONDecodeError, TypeError:
+    except (json.JSONDecodeError, TypeError):
         return None
     if not isinstance(payload, dict) or payload.get("message") != "insufficient buying power":
         return None
     try:
         return float(payload["buying_power"])
-    except KeyError, TypeError, ValueError:
+    except (KeyError, TypeError, ValueError):
         return None
 
 
