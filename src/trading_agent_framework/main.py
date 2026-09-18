@@ -1,3 +1,4 @@
+import logging
 import sys
 
 from rich import box
@@ -18,11 +19,52 @@ AGENT_STRATEGIES = {
 }
 
 
+def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: str) -> None:
+    """
+    Load and run the selected strategy.
+
+    Args:
+        console (Console): the standard output
+        trading_mode (TradingMode): the trading mode.
+        strategy_name (str) : the strategy name
+
+    Returns:
+        None
+    """
+    console.print(f"Running strategy: [bold cyan2]{strategy_name}[/bold cyan2] in [bold dark_red]{trading_mode.value}[/bold dark_red] mode")
+
+    # Load strategy class
+    strategy_class = AGENT_STRATEGIES[strategy_name]
+    project_root = find_project_root()
+    # Get environment file
+    load_strategy_env(strategy_name, trading_mode.value, project_root)
+    creds = AlpacaCredentials.from_env()
+    if not creds.api_key or not creds.api_secret:
+        console.print("No credentials are sent as environment variables for the broker.", style="bold red")
+        raise SystemExit(1)
+    broker = AlpacaBroker.from_credentials(strategy_name, creds)
+    # TODO: change strategy init argument order: no need of *args at the beginning any more
+    universe = load_cross_momentum_universe()
+    if universe:
+        strategy = strategy_class(broker=broker, mode=trading_mode, universe=universe)
+    else:
+        console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
+        return
+
+    # run strategy according to the trading mode
+    strategy.run_strategy()
+
+
 def main() -> None:
     """
     Main entry point of the program.
     It checks the command-line arguments for the strategy name and trading mode, validates them, and then runs the selected strategy.
     """
+    # Temporary bootstrap logger: root has no handlers until setup_strategy_logging
+    # runs (inside Strategy.run_strategy), so early config-loading logs (e.g.
+    # load_strategy_env) would otherwise be dropped.
+    logging.basicConfig(level=logging.INFO)
+
     console = Console()
     panel_text = Text()
     panel_text.append("🤖 Yann trading bot 🤖", style="bold green")
@@ -77,29 +119,7 @@ def main() -> None:
 
     # Get the trading mode from the command-line argument and convert it to the TradingMode enum
     enum_mode = TradingMode(trading_mode)
-
-    console.print(f"Running strategy: [bold cyan2]{strategy_name}[/bold cyan2] in [bold dark_red]{enum_mode.value}[/bold dark_red] mode")
-
-    # Load strategy class
-    strategy_class = AGENT_STRATEGIES[strategy_name]
-    project_root = find_project_root()
-    # Get environment file
-    load_strategy_env(strategy_name, enum_mode.value, project_root)
-    creds = AlpacaCredentials.from_env()
-    if not creds.api_key or not creds.api_secret:
-        console.print("No credentials are sent as environment variables for the broker.", style="bold red")
-        raise SystemExit(1)
-    broker = AlpacaBroker.from_credentials(strategy_name, creds)
-    # TODO: change strategy init argument order: no need of *args at the beginning any more
-    universe = load_cross_momentum_universe()
-    if universe:
-        strategy = strategy_class(broker=broker, mode=enum_mode, universe=universe)
-    else:
-        console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
-        return
-
-    # run strategy according to the trading mode
-    strategy.run_strategy()
+    _run_strategy(console, enum_mode, strategy_name)
 
 
 if __name__ == "__main__":

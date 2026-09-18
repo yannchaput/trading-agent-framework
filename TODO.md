@@ -19,14 +19,13 @@
 * Account configuration (no short sell, no margin trading)
 * ~~Backtesting (vectorbt)~~
 * Cache management
-* dashboard
+* ~~dashboard~~
 * ~~Fix `Bar.empty`, `bars.pandas_df`.~~
-* Add warmup_trading_days to AlpacaBacktestDataSource
+* ~~Add warmup_trading_days to AlpacaBacktestDataSource~~
 
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
-* Investigate why indicators are not logged any more in "backtesting"
 * Replace every instance variable `self.` with `self.vars` to avoid namespace collisions
 
 
