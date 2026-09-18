@@ -51,6 +51,7 @@ from trading_agent_framework.utils.errors import OrderValidationError
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from alpaca.trading.models import AccountConfiguration as AlpacaAccountConfiguration
     from alpaca.trading.models import Calendar as AlpacaCalendarModel
     from alpaca.trading.models import ClosePositionResponse as AlpacaClosePositionResponse
     from alpaca.trading.models import Order as AlpacaOrderModel
@@ -88,6 +89,10 @@ class AlpacaTradingClient(Protocol):
         self, symbol_or_asset_id: str, close_options: ClosePositionRequest
     ) -> AlpacaOrderModel: ...
     def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
+    def get_account_configurations(self) -> AlpacaAccountConfiguration: ...
+    def set_account_configurations(
+        self, account_configurations: AlpacaAccountConfiguration
+    ) -> AlpacaAccountConfiguration: ...
 
 
 # --- status / event maps -----------------------------------------------------

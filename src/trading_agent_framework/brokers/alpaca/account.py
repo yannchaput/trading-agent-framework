@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from datetime import date, datetime
-from typing import cast
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 from alpaca.trading.requests import GetCalendarRequest
@@ -17,6 +17,9 @@ from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.utils.clock import MarketSession
 from trading_agent_framework.utils.errors import BrokerError
+
+if TYPE_CHECKING:
+    from alpaca.trading.models import AccountConfiguration as AlpacaAccountConfiguration
 
 
 def parse_account(response: object) -> AccountBalances:
@@ -33,6 +36,25 @@ def parse_account(response: object) -> AccountBalances:
 
 def build_calendar_request(start: date, end: date) -> GetCalendarRequest:
     return GetCalendarRequest(start=start, end=end)
+
+
+def apply_account_restrictions(
+    configuration: AlpacaAccountConfiguration,
+    *,
+    no_shorting: bool,
+    max_margin_multiplier: str,
+    fractional_trading: bool,
+) -> AlpacaAccountConfiguration:
+    """Set shorting/margin/fractional-trading fields on `configuration` in place and return it.
+
+    Alpaca's `set_account_configurations` only accepts a full `AccountConfiguration`, so the
+    caller must fetch the current one first and pass it through here rather than building one
+    from scratch -- this leaves every other field (PDT checks, trade-confirm email, ...) untouched.
+    """
+    configuration.no_shorting = no_shorting
+    configuration.max_margin_multiplier = max_margin_multiplier
+    configuration.fractional_trading = fractional_trading
+    return configuration
 
 
 def parse_calendar(responses: Iterable[object], tz: ZoneInfo) -> list[MarketSession]:

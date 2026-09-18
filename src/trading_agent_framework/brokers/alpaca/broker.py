@@ -151,6 +151,27 @@ class AlpacaBroker(Broker):
             raise BrokerError(f"Failed to fetch the Alpaca account: {exc}") from exc
         return account.parse_account(response)
 
+    def configure_account(
+        self,
+        *,
+        no_shorting: bool = True,
+        max_margin_multiplier: str = "1",
+        fractional_trading: bool = True,
+    ) -> None:
+        """Restrict the Alpaca account: no shorting, no margin (by default), fractional shares."""
+        try:
+            configuration = self._client.get_account_configurations()
+            account.apply_account_restrictions(
+                configuration,
+                no_shorting=no_shorting,
+                max_margin_multiplier=max_margin_multiplier,
+                fractional_trading=fractional_trading,
+            )
+            updated = self._client.set_account_configurations(configuration)
+        except Exception as exc:
+            raise BrokerError(f"Failed to configure the Alpaca account: {exc}") from exc
+        logger.info("Account configuration: %s", updated.model_dump_json())
+
     def modify_order(
         self,
         order: Order,

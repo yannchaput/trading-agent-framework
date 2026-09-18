@@ -9,6 +9,7 @@ from alpaca.trading.requests import GetOrdersRequest
 from tests.fakes import (
     FakeTradingClient,
     make_alpaca_account,
+    make_alpaca_account_configuration,
     make_alpaca_order,
     make_api_error,
     make_close_position_response,
@@ -73,6 +74,41 @@ def test_get_account_wraps_client_errors() -> None:
     client.raises["get_account"] = make_api_error(500)
     with pytest.raises(BrokerError, match="account"):
         _broker(client).get_account()
+
+
+def test_configure_account_applies_restrictions_and_pushes_them_back() -> None:
+    client = FakeTradingClient()
+    client.account_configuration_response = make_alpaca_account_configuration(
+        no_shorting=False, max_margin_multiplier="4", fractional_trading=False
+    )
+
+    _broker(client).configure_account()
+
+    [pushed] = client.set_account_configuration_calls
+    assert pushed.no_shorting is True
+    assert pushed.max_margin_multiplier == "1"
+    assert pushed.fractional_trading is True
+
+
+def test_configure_account_accepts_explicit_overrides() -> None:
+    client = FakeTradingClient()
+    client.account_configuration_response = make_alpaca_account_configuration()
+
+    _broker(client).configure_account(
+        no_shorting=False, max_margin_multiplier="2", fractional_trading=False
+    )
+
+    [pushed] = client.set_account_configuration_calls
+    assert pushed.no_shorting is False
+    assert pushed.max_margin_multiplier == "2"
+    assert pushed.fractional_trading is False
+
+
+def test_configure_account_wraps_client_errors() -> None:
+    client = FakeTradingClient()
+    client.raises["get_account_configurations"] = make_api_error(500)
+    with pytest.raises(BrokerError, match="configure"):
+        _broker(client).configure_account()
 
 
 def test_modify_order_replaces_and_tracks_the_new_order() -> None:

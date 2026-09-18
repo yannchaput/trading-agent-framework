@@ -16,7 +16,7 @@
 * ~~Agentic framework - langchain foundation~~
 * Tools
 * ~~Memory~~
-* Account configuration (no short sell, no margin trading)
+* ~~Account configuration (no short sell, no margin trading)~~
 * ~~Backtesting (vectorbt)~~
 * Cache management
 * ~~dashboard~~

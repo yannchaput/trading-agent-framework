@@ -115,6 +115,22 @@ def make_alpaca_account(**overrides: object) -> alpaca_models.TradeAccount:
     return alpaca_models.TradeAccount(**defaults)  # ty: ignore[invalid-argument-type]
 
 
+def make_alpaca_account_configuration(**overrides: object) -> alpaca_models.AccountConfiguration:
+    """Build a real `alpaca.trading.models.AccountConfiguration` with all required fields set."""
+    defaults: dict[str, object] = {
+        "dtbp_check": alpaca_enums.DTBPCheck.ENTRY,
+        "fractional_trading": False,
+        "max_margin_multiplier": "4",
+        "no_shorting": False,
+        "pdt_check": alpaca_enums.PDTCheck.ENTRY,
+        "suspend_trade": False,
+        "trade_confirm_email": alpaca_enums.TradeConfirmationEmail.ALL,
+        "ptp_no_exception_entry": False,
+    }
+    defaults.update(overrides)
+    return alpaca_models.AccountConfiguration(**defaults)  # ty: ignore[invalid-argument-type]
+
+
 def make_alpaca_calendar(
     day: str, open_at: str = "09:30", close_at: str = "16:00"
 ) -> alpaca_models.Calendar:
@@ -249,6 +265,9 @@ class FakeTradingClient:
         self.close_all_calls: list[bool] = []
         self.close_all_response: list[alpaca_models.ClosePositionResponse] = []
 
+        self.account_configuration_response: alpaca_models.AccountConfiguration | None = None
+        self.set_account_configuration_calls: list[alpaca_models.AccountConfiguration] = []
+
     def submit_order(self, order_data: OrderRequest) -> alpaca_models.Order:
         self.submitted.append(order_data)
         if self.on_submit_order is not None:
@@ -320,6 +339,20 @@ class FakeTradingClient:
         self.close_all_calls.append(cancel_orders)
         self._maybe_raise("close_all_positions")
         return self.close_all_response
+
+    def get_account_configurations(self) -> alpaca_models.AccountConfiguration:
+        self._maybe_raise("get_account_configurations")
+        assert self.account_configuration_response is not None, (
+            "test must set client.account_configuration_response"
+        )
+        return self.account_configuration_response
+
+    def set_account_configurations(
+        self, account_configurations: alpaca_models.AccountConfiguration
+    ) -> alpaca_models.AccountConfiguration:
+        self.set_account_configuration_calls.append(account_configurations)
+        self._maybe_raise("set_account_configurations")
+        return account_configurations
 
 
 def _requested_symbols(

@@ -5,7 +5,13 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
-from tests.fakes import ET, make_alpaca_account, make_alpaca_calendar, make_session
+from tests.fakes import (
+    ET,
+    make_alpaca_account,
+    make_alpaca_account_configuration,
+    make_alpaca_calendar,
+    make_session,
+)
 
 from trading_agent_framework.brokers.alpaca import account
 from trading_agent_framework.entities.account import AccountBalances
@@ -56,3 +62,21 @@ def test_parse_calendar_converts_aware_times() -> None:
     )
     [session] = account.parse_calendar([day], ET)
     assert session == make_session(date(2024, 11, 29), close_at=time(13, 0))
+
+
+def test_apply_account_restrictions_sets_the_three_fields_only() -> None:
+    configuration = make_alpaca_account_configuration(
+        no_shorting=False, max_margin_multiplier="4", fractional_trading=False
+    )
+
+    updated = account.apply_account_restrictions(
+        configuration, no_shorting=True, max_margin_multiplier="1", fractional_trading=True
+    )
+
+    assert updated is configuration
+    assert updated.no_shorting is True
+    assert updated.max_margin_multiplier == "1"
+    assert updated.fractional_trading is True
+    # untouched fields survive the round-trip
+    assert updated.pdt_check == configuration.pdt_check
+    assert updated.suspend_trade == configuration.suspend_trade
