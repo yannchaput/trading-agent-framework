@@ -102,7 +102,7 @@ class Strategy:
         self.project_root = project_root or find_project_root()
         # A container for strategy-specific variables that can be set and read by the user; not persisted.
         # It is not used by the framework.
-        self.vars = SimpleNamespace()
+        self.vars = SimpleNamespace()  # Store all strategy specific parameters
         self.first_iteration = True
         self._log = ColorLogger(logger, self.name)
         self._indicators: Indicators | None = None

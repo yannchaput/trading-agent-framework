@@ -26,7 +26,7 @@
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
-* Replace every instance variable `self.` with `self.vars` to avoid namespace collisions
+* ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 
 
 ## Strategies to test

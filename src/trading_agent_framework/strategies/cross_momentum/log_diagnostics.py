@@ -72,7 +72,7 @@ class DiagnosticLogger:
 
     def compute_and_persist(self) -> None:
         """Compute portfolio risk diagnostics for today and persist to parquet."""
-        diag_config = self._strategy.params.get("risk_diagnostics", {})
+        diag_config = self._strategy.parameters.get("risk_diagnostics", {})
         if not diag_config.get("enabled", False):
             return
 

@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
@@ -56,23 +57,10 @@ from .utils import (
     save_equity_history,
 )
 
+if TYPE_CHECKING:
+    from trading_agent_framework.brokers.base import Broker
+
 logger = logging.getLogger(__name__)
-
-
-# ── Backtesting params ───────────────────────────────────────────────────────
-BACKTESTING_PARAMS = {
-    # "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
-    # "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
-    "backtesting_start": datetime(2016, 1, 1, tzinfo=MARKET_TZ),
-    "backtesting_end": datetime(2026, 8, 15, tzinfo=MARKET_TZ),
-    "benchmark_symbol": "SPY",
-    # Warm-up extends the data window before backtesting_start so the 12-1m
-    # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
-    # day one. Without it, every ticker trips min_trading_days=250 and the
-    # first ~year of the backtest can never pass filters.
-    "warmup_trading_days": 300,
-    "budget": 10000,
-}
 
 
 class CrossMomentumStrategy(Strategy):
@@ -85,36 +73,52 @@ class CrossMomentumStrategy(Strategy):
     determines the final exposure multiplier.
     """
 
+    # ── Backtesting params ───────────────────────────────────────────────────────
+    parameters = {
+        # "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
+        # "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
+        "backtesting_start": datetime(2016, 1, 1, tzinfo=MARKET_TZ),
+        "backtesting_end": datetime(2026, 8, 15, tzinfo=MARKET_TZ),
+        "benchmark_symbol": "SPY",
+        # Warm-up extends the data window before backtesting_start so the 12-1m
+        # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
+        # day one. Without it, every ticker trips min_trading_days=250 and the
+        # first ~year of the backtest can never pass filters.
+        "warmup_trading_days": 300,
+        "budget": 10000,
+    }
+
     def __init__(
         self,
-        *args,
+        broker: Broker,
+        *,
         mode: TradingMode = TradingMode.BACKTESTING,
         universe: list[str] | None = None,
         diagnostics_file_path: str | None = None,
         **kwargs,
     ):
-        super().__init__(*args, mode=mode, **kwargs)
-        self.params = {**CONFIG, **BACKTESTING_PARAMS}
+        super().__init__(broker, mode=mode, **kwargs)
+        self.parameters = {**CONFIG, **self.parameters}
 
         if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
             sys.exit(1)
-        self.__universe = universe or []
+        self.vars.universe = universe or []
 
         # Diagnostics (delegated to DiagnosticLogger)
-        self._diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
-        self._target_closes: dict[str, list[float]] = {}
+        self.vars.diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
+        self.vars.target_closes = {}
 
         # Track actual portfolio equity for realized-vol computation
-        self._equity_history: list[float] = []
-        self._history_file_path: Path = Path(f"data/cross_momentum_ptf_history_{self.trading_mode.value}.json")
+        self.vars.equity_history = []
+        self.vars.history_file_path = Path(f"data/cross_momentum_ptf_history_{self.trading_mode.value}.json")
 
         # Rate limiter for Alpaca market-data calls (universe filtering bursts
         # past Alpaca's ~200 req/min limit; see support/alpaca_support.py).
-        self._alpaca_rate_limiter = AlpacaApiRateLimiter(trading_mode=self.trading_mode)
+        self.vars.alpaca_rate_limiter = AlpacaApiRateLimiter(trading_mode=self.trading_mode)
 
         self.log_info(
-            f"CrossMomentumStrategy initialized with {len(self.__universe)} symbols",
+            f"CrossMomentumStrategy initialized with {len(self.vars.universe)} symbols",
         )
 
     def initialize(self):
@@ -122,8 +126,8 @@ class CrossMomentumStrategy(Strategy):
         self.sleeptime = "1D"
         self.log_info(f"Sleeptime set to {self.sleeptime}")
         # Track actual portfolio equity for realized-vol computation
-        self._equity_history = load_equity_history(self._history_file_path)
-        self.log_info(f"Initialize equity history for volatility exposure compute {self._equity_history}")
+        self.vars.equity_history = load_equity_history(self.vars.history_file_path)
+        self.log_info(f"Initialize equity history for volatility exposure compute {self.vars.equity_history}")
 
     # ── Fast/Slow realized volatility from equity curve ────────────────────
 
@@ -142,10 +146,10 @@ class CrossMomentumStrategy(Strategy):
             Annualized volatility as a float, or None if insufficient history.
         """
         # Need at least 63 + 1 observations for the slow window
-        if len(self._equity_history) < 64:
+        if len(self.vars.equity_history) < 64:
             return None
 
-        equity_series = pd.Series(self._equity_history)
+        equity_series = pd.Series(self.vars.equity_history)
         daily_returns = equity_series.pct_change().dropna()
 
         if len(daily_returns) < 63:
@@ -169,11 +173,11 @@ class CrossMomentumStrategy(Strategy):
     def is_rebalance_day(self) -> bool:
         """True if today is a rebalance day."""
         dt = self.get_datetime()
-        return dt.weekday() == self.params["day_of_week"]
+        return dt.weekday() == self.parameters["day_of_week"]
 
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
-        self._alpaca_rate_limiter.wait()
+        self.vars.alpaca_rate_limiter.wait()
         bars = self.get_historical_prices(ticker, length=300, timestep="day")
         if bars is None or bars.empty:
             return None
@@ -187,12 +191,12 @@ class CrossMomentumStrategy(Strategy):
         volumes = df["volume"].tolist()
         trading_days = len(closes)
 
-        if trading_days < self.params["min_trading_days"]:
+        if trading_days < self.parameters["min_trading_days"]:
             return None
 
         current_price = closes[-1] if closes else 0.0
 
-        skip = self.params["skip_days"]
+        skip = self.parameters["skip_days"]
         ret_12_1m = compute_return_from_prices(closes, 252, skip)
         ret_6_1m = compute_return_from_prices(closes, 126, skip)
         ret_3m = compute_return_from_prices(closes, 63, 0)
@@ -200,7 +204,7 @@ class CrossMomentumStrategy(Strategy):
         if ret_12_1m is None or ret_6_1m is None or ret_3m is None:
             return None
 
-        vol = annualized_volatility(closes, self.params["volatility_window"])
+        vol = annualized_volatility(closes, self.parameters["volatility_window"])
 
         if len(volumes) >= 20:
             avg_volume = sum(volumes[-20:]) / 20
@@ -228,11 +232,11 @@ class CrossMomentumStrategy(Strategy):
 
         Uses ThreadPoolExecutor for parallel processing of the universe.
         """
-        self.log_info(f"Computing target portfolio for {len(self.__universe)} tickers...")
+        self.log_info(f"Computing target portfolio for {len(self.vars.universe)} tickers...")
 
         scored: list[dict] = []
         skip_count = 0
-        total = len(self.__universe)
+        total = len(self.vars.universe)
 
         max_workers = get_thread_capacity()
         self.log_info(f"Using {max_workers} threads for parallel processing")
@@ -247,7 +251,7 @@ class CrossMomentumStrategy(Strategy):
                 result["avg_dollar_volume"],
                 result["volatility"],
                 result["trading_days"],
-                self.params,
+                dict(self.parameters),
             ):
                 return None
 
@@ -255,14 +259,14 @@ class CrossMomentumStrategy(Strategy):
                 result["ret_12_1m"],
                 result["ret_6_1m"],
                 result["ret_3m"],
-                self.params["w_12m"],
-                self.params["w_6m"],
-                self.params["w_3m"],
+                self.parameters["w_12m"],
+                self.parameters["w_6m"],
+                self.parameters["w_3m"],
             )
             return result
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ticker = {executor.submit(_process_ticker, ticker): ticker for ticker in self.__universe}
+            future_to_ticker = {executor.submit(_process_ticker, ticker): ticker for ticker in self.vars.universe}
 
             for i, future in enumerate(as_completed(future_to_ticker), 1):
                 result = future.result()
@@ -286,16 +290,16 @@ class CrossMomentumStrategy(Strategy):
 
         all_ranks = {entry["symbol"]: entry["rank"] for entry in scored}
 
-        top_n = self.params["top_n"]
+        top_n = self.parameters["top_n"]
         selected = scored[:top_n]
 
         # Store closes for the selected stocks (consumed by portfolio risk overlay)
-        self._target_closes = {entry["symbol"]: entry["closes"] for entry in selected}
+        self.vars.target_closes = {entry["symbol"]: entry["closes"] for entry in selected}
 
         selected = inverse_volatility_weights(
             selected,
-            self.params["max_position_pct"],
-            self.params["min_position_pct"],
+            self.parameters["max_position_pct"],
+            self.parameters["min_position_pct"],
         )
 
         if selected:
@@ -316,7 +320,7 @@ class CrossMomentumStrategy(Strategy):
 
         target_symbols = {entry["symbol"] for entry in target}
 
-        sell_threshold = self.params["sell_rank_threshold"]
+        sell_threshold = self.parameters["sell_rank_threshold"]
         portfolio_value = float(self.portfolio_value or 1.0)
 
         current_positions = self.get_positions()
@@ -420,9 +424,9 @@ class CrossMomentumStrategy(Strategy):
         equity = self.portfolio_value or 0.0
         if equity > 0:
             # Compute history file name based on trading mode
-            self._equity_history.append(float(equity))
+            self.vars.equity_history.append(float(equity))
             today_str = self.get_datetime().strftime("%Y-%m-%d")
-            save_equity_history(self._equity_history, today_str, self._history_file_path)
+            save_equity_history(self.vars.equity_history, today_str, self.vars.history_file_path)
 
         today: datetime = self.get_datetime()
         last_universe_date = get_cross_momentum_universe_last_date()
@@ -435,11 +439,11 @@ class CrossMomentumStrategy(Strategy):
                 self.log_warning(f"Warning: universe is {(today - last_universe_date).days} days old (last update: {last_universe_date:%Y-%m-%d}). Consider refreshing.")
 
         # Step 1: Daily diagnostics (observation only — backtesting only)
-        if self.params.get("enable_diagnostics", True) and self.trading_mode is TradingMode.BACKTESTING:
-            self._diagnostics_logger.compute_and_persist()
+        if self.parameters.get("enable_diagnostics", True) and self.trading_mode is TradingMode.BACKTESTING:
+            self.vars.diagnostics_logger.compute_and_persist()
 
         # Step 2: Weekly rebalance
-        rebalance_day = calendar.day_name[self.params["day_of_week"]]
+        rebalance_day = calendar.day_name[self.parameters["day_of_week"]]
         self.log_info(f"Today is a {today.strftime('%A')} and the rebalance day is {rebalance_day}")
         if not self.is_rebalance_day():
             self.log_warning("Not a rebalance day — skipping.")
@@ -454,8 +458,8 @@ class CrossMomentumStrategy(Strategy):
         # risk of today's portfolio" leg.
         risk_exposure = 1.0
         risk_metrics = {}
-        if target and self._target_closes:
-            self._alpaca_rate_limiter.wait()
+        if target and self.vars.target_closes:
+            self.vars.alpaca_rate_limiter.wait()
             spy_bars = self.get_historical_prices("SPY", length=300, timestep="day")
             spy_closes = None
             if spy_bars is not None and not spy_bars.empty:
@@ -468,7 +472,7 @@ class CrossMomentumStrategy(Strategy):
             else:
                 target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
                 risk_state, risk_exposure, risk_metrics = compute_risk_overlay(
-                    self._target_closes,
+                    self.vars.target_closes,
                     target_weights,
                     spy_closes,
                 )
@@ -478,7 +482,7 @@ class CrossMomentumStrategy(Strategy):
 
         # Step 4: Fast/Slow Volatility Targeting — compute realized vol
         # from actual equity curve using max(vol_20d, 0.75 * vol_63d).
-        vt_config = self.params.get("volatility_targeting", {})
+        vt_config = self.parameters.get("volatility_targeting", {})
         vol_exposure = 1.0
         realized_vol = None
         if vt_config.get("enabled", False):
@@ -492,7 +496,7 @@ class CrossMomentumStrategy(Strategy):
                 )
                 self.log_info(f"Vol targeting (fast/slow): risk_vol={realized_vol:.1%}, target={vt_config['target_volatility']:.0%}, vol_exposure={vol_exposure:.0%}")
             else:
-                self.log_warning(f"Vol targeting: insufficient equity history ({len(self._equity_history)} days, need 64) — defaulting to 100% exposure")
+                self.log_warning(f"Vol targeting: insufficient equity history ({len(self.vars.equity_history)} days, need 64) — defaulting to 100% exposure")
 
         # Step 5: Combine exposures via min() — most conservative leg wins.
         # Using min() rather than multiplication avoids two overlays
@@ -508,16 +512,16 @@ class CrossMomentumStrategy(Strategy):
             self.log_info(f"Target weights scaled to {final_exposure:.0%} exposure (total weight: {sum(e['target_weight'] for e in target):.1%})")
 
         # Step 7: Store target weights for next week's diagnostics
-        self._diagnostics_logger.set_last_rebalance_weights({entry["symbol"]: entry["target_weight"] for entry in target})
+        self.vars.diagnostics_logger.set_last_rebalance_weights({entry["symbol"]: entry["target_weight"] for entry in target})
 
         # Step 8: Rebalance
         self.rebalance(target, all_ranks)
 
     def run_backtesting(self):
         """Run the strategy in backtesting mode."""
-        if self._history_file_path.exists():
-            self.log_info(f"Deleting previous equity history file for a clean backtest: {self._history_file_path}")
-            self._history_file_path.unlink()
+        if self.vars.history_file_path.exists():
+            self.log_info(f"Deleting previous equity history file for a clean backtest: {self.vars.history_file_path}")
+            self.vars.history_file_path.unlink()
 
         # Preloading the whole universe (via `preload_assets`) avoids
         # `compute_target_portfolio`'s thread pool falling back to fetching it one
@@ -526,12 +530,12 @@ class CrossMomentumStrategy(Strategy):
         # which surfaces as the backtest stalling partway through the universe
         # instead of a clean error.
         return super().run_backtesting(
-            start=self.params["backtesting_start"],
-            end=self.params["backtesting_end"],
-            budget=self.params["budget"],
-            data_source=YahooBacktestData, # AlpacaBacktestData has no enough history, approximatively 6 year history
-            preload_assets=[Asset(ticker) for ticker in self.__universe],  # preload the ticker universe in memory
-            benchmark=self.params["benchmark_symbol"],
+            start=self.parameters["backtesting_start"],
+            end=self.parameters["backtesting_end"],
+            budget=self.parameters["budget"],
+            data_source=YahooBacktestData,  # AlpacaBacktestData has no enough history, approximatively 6 year history
+            preload_assets=[Asset(symbol=ticker) for ticker in self.vars.universe],  # preload the ticker universe in memory
+            benchmark=self.parameters["benchmark_symbol"],
             commission=Decimal("0.001"),
-            warmup_trading_days=self.params["warmup_trading_days"],
+            warmup_trading_days=self.parameters["warmup_trading_days"],
         )
