@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
+from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
@@ -529,7 +529,7 @@ class CrossMomentumStrategy(Strategy):
             start=self.params["backtesting_start"],
             end=self.params["backtesting_end"],
             budget=self.params["budget"],
-            data_source=AlpacaBacktestData,
+            data_source=YahooBacktestData, # AlpacaBacktestData has no enough history, approximatively 6 year history
             preload_assets=[Asset(ticker) for ticker in self.__universe],  # preload the ticker universe in memory
             benchmark=self.params["benchmark_symbol"],
             commission=Decimal("0.001"),
