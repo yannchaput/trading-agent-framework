@@ -29,7 +29,8 @@ def scan_runs(base_path: str = "logs") -> RunIndex:
         except ValueError:
             continue
 
-    # Sort by strategy name, then by timestamp descending within each group
+    # Sort by strategy name, then by timestamp ascending within each group
+    # (run_ts is "%Y-%m-%d_%H%M%S", so lexical order is chronological order).
     runs.sort(key=lambda r: (r.strategy_name, r.run_ts))
 
     return RunIndex(runs=runs)

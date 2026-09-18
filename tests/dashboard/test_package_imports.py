@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 
 import pytest
 
@@ -24,8 +25,6 @@ def test_dashboard_module_imports_cleanly(module_name: str) -> None:
 
 
 def test_pyproject_dashboard_script_points_at_the_real_package() -> None:
-    import pathlib
-
-    text = pathlib.Path("pyproject.toml").read_text(encoding="utf-8")
+    text = Path("pyproject.toml").read_text(encoding="utf-8")
     assert "trading_agent_framework.dashboard.cli:main" in text
     assert "lumibot_trading_agent" not in text

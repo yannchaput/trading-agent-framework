@@ -116,6 +116,44 @@ def test_load_parameters_reports_the_framework_version(tmp_path: Path) -> None:
     assert ("Run", "Framework version", "0.1.0") in rows
 
 
+def test_load_parameters_reports_the_strategys_own_parameters(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(parameters={"lookback": 20, "symbol": "AAPL"}))
+
+    rows = load_parameters(_ref(run_dir))
+
+    assert ("Parameters", "lookback", "20") in rows
+    assert ("Parameters", "symbol", "AAPL") in rows
+
+
+def test_load_parameters_json_encodes_nested_parameter_values(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(parameters={"weights": [1, 2, 3]}))
+
+    rows = load_parameters(_ref(run_dir))
+
+    assert ("Parameters", "weights", "[1, 2, 3]") in rows
+
+
+def test_load_parameters_returns_only_run_rows_when_settings_missing(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_parameters(_ref(run_dir)) == []
+
+
+def test_load_parameters_returns_empty_list_on_corrupt_settings_json(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    (run_dir / "settings.json").write_text("{not valid json", encoding="utf-8")
+
+    assert load_parameters(_ref(run_dir)) == []
+
+
+def test_load_settings_returns_none_on_corrupt_settings_json(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    (run_dir / "settings.json").write_text("{not valid json", encoding="utf-8")
+
+    assert load_settings(_ref(run_dir)) is None
+
+
 NOW = datetime(2026, 1, 5, 21, tzinfo=UTC)
 LATER = datetime(2026, 1, 6, 21, tzinfo=UTC)
 

@@ -71,16 +71,14 @@ def equity_curve_chart(
             )
         )
     else:
-        # Fallback: indicator-based equity curve only
+        # Fallback: load_equity_curve's own {"date", "value"} rows
         df = pd.DataFrame(equity)
-        date_col = "date" if "date" in df.columns else "datetime"
-        val_col = "value" if "value" in df.columns else "close"
 
-        if date_col in df.columns and val_col in df.columns:
+        if "date" in df.columns and "value" in df.columns:
             fig.add_trace(
                 go.Scatter(
-                    x=df[date_col],
-                    y=df[val_col],
+                    x=df["date"],
+                    y=df["value"],
                     mode="lines",
                     name="Portfolio Value",
                     line=dict(color="#0891b2", width=2.5),
@@ -111,17 +109,15 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
         return fig
 
     df = pd.DataFrame(equity)
-    val_col = "value" if "value" in df.columns else "close"
-    date_col = "date" if "date" in df.columns else "datetime"
 
-    if val_col not in df.columns:
+    if "value" not in df.columns:
         return go.Figure()
 
-    values = df[val_col].values
+    values = df["value"].values
     running_max = np.maximum.accumulate(values)
     drawdown = (values - running_max) / running_max * 100
 
-    x_vals = df[date_col] if date_col in df.columns else list(range(len(drawdown)))
+    x_vals = df["date"] if "date" in df.columns else list(range(len(drawdown)))
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
@@ -154,15 +150,13 @@ def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly 
         return fig
 
     df = pd.DataFrame(equity)
-    val_col = "value" if "value" in df.columns else "close"
-    date_col = "date" if "date" in df.columns else "datetime"
 
-    if date_col not in df.columns or val_col not in df.columns:
+    if "date" not in df.columns or "value" not in df.columns:
         return go.Figure()
 
-    df[date_col] = pd.to_datetime(df[date_col])
-    df = df.set_index(date_col).sort_index()
-    monthly = df[val_col].resample("ME").last()
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    monthly = df["value"].resample("ME").last()
     returns = monthly.pct_change(fill_method=None).dropna() * 100
 
     if returns.empty:
@@ -231,15 +225,13 @@ def returns_distribution(
         return fig
     else:
         df = pd.DataFrame(equity)
-        val_col = "value" if "value" in df.columns else "close"
-        date_col = "date" if "date" in df.columns else "datetime"
 
-        if date_col not in df.columns or val_col not in df.columns:
+        if "date" not in df.columns or "value" not in df.columns:
             return go.Figure()
 
-        df[date_col] = pd.to_datetime(df[date_col])
-        df = df.set_index(date_col).sort_index()
-        daily_pct = df[val_col].pct_change(fill_method=None).dropna() * 100
+        df["date"] = pd.to_datetime(df["date"])
+        df = df.set_index("date").sort_index()
+        daily_pct = df["value"].pct_change(fill_method=None).dropna() * 100
 
         if daily_pct.empty:
             return go.Figure()

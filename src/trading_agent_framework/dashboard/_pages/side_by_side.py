@@ -45,10 +45,8 @@ def page_side_by_side():
             values = breakdown["portfolio_value"]
         elif run.equity_curve:
             df = pd.DataFrame(run.equity_curve)
-            date_col = "date" if "date" in df.columns else "datetime"
-            val_col = "value" if "value" in df.columns else "close"
-            dates = df[date_col]
-            values = df[val_col]
+            dates = df["date"]
+            values = df["value"]
         else:
             continue
 

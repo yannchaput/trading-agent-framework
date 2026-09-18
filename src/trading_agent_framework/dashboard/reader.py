@@ -64,24 +64,33 @@ def load_settings(ref: RunRef) -> Settings | None:
     path = os.path.join(ref.path, "settings.json")
     if not os.path.isfile(path):
         return None
-    with open(path) as f:
-        data = json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
     return Settings.model_validate(data)
 
 
 def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
     """Load parameters from settings.json for display in the Parameters tab.
 
-    Returns a list of (section, parameter, value) tuples where section groups
-    related fields (e.g. "Model", "Tokens", "Latency"). Values are formatted
-    for readability (tokens with commas, latency in seconds, etc.).
+    Returns a list of (section, parameter, value) tuples: "Run" for backtest
+    configuration (budget, dates, data source, ...), and "Parameters" for each
+    key in settings.json's `parameters` field -- this project's
+    `strategy.parameters`, an arbitrary flat mapping the strategy author
+    defines (see backtesting/runner.py's write_settings call). Values are
+    stringified for display; dicts/lists are JSON-encoded.
     """
     path = os.path.join(ref.path, "settings.json")
     if not os.path.isfile(path):
         return []
 
-    with open(path) as f:
-        data = json.load(f)
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
 
     rows: list[tuple[str, str, str]] = []
 
@@ -100,101 +109,12 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
     if end:
         rows.append(("Run", "Backtesting end", end))
 
-    # ── Per-agent telemetry ──
-    strat_params: dict[str, Any] = data.get("parameters", {})
-
-    # Detect the per-agent prefix (e.g. "agent_liquidity_research_")
-    # by finding the first key that matches the known suffix pattern
-    agent_prefix = ""
-    for key in strat_params:
-        if key.startswith("agent_") and key.endswith("_calls") and key != "agent_model_calls":
-            # Strip the "_calls" suffix to get the prefix
-            agent_prefix = key[: -len("calls")]
-            break
-
-    def _p(key: str) -> Any:
-        """Look up a parameter under the agent prefix, with fallback."""
-        full = agent_prefix + key if agent_prefix else None
-        if full and full in strat_params:
-            return strat_params[full]
-        if key in strat_params:
-            return strat_params[key]
-        return None
-
-    def _fmt_int(val: Any) -> str:
-        if val is None:
-            return "—"
-        return f"{int(val):,}"
-
-    def _fmt_ms(val: Any) -> str:
-        if val is None:
-            return "—"
-        ms = float(val)
-        if ms >= 1000:
-            return f"{ms / 1000:,.1f} s"
-        return f"{ms:,.0f} ms"
-
-    # Model
-    model = _p("model")
-    if model is not None:
-        rows.append(("Model", "Model", str(model)))
-
-    # Calls
-    total_calls = strat_params.get("agent_model_calls")
-    agent_calls = _p("calls")
-    cache_hits = _p("cache_hits")
-    tool_calls = _p("tool_calls")
-
-    if total_calls is not None:
-        rows.append(("Calls", "Total model calls", _fmt_int(total_calls)))
-    if agent_calls is not None:
-        rows.append(("Calls", "Agent calls", _fmt_int(agent_calls)))
-    if cache_hits is not None:
-        rows.append(("Calls", "Cache hits", _fmt_int(cache_hits)))
-    if tool_calls is not None:
-        rows.append(("Calls", "Tool calls", _fmt_int(tool_calls)))
-
-    # Tokens
-    input_tok = _p("input_tokens")
-    output_tok = _p("output_tokens")
-    total_tok = _p("total_tokens")
-    thinking_tok = _p("thinking_tokens")
-
-    if input_tok is not None:
-        rows.append(("Tokens", "Input tokens", _fmt_int(input_tok)))
-    if output_tok is not None:
-        rows.append(("Tokens", "Output tokens", _fmt_int(output_tok)))
-    if total_tok is not None:
-        rows.append(("Tokens", "Total tokens", _fmt_int(total_tok)))
-    if thinking_tok is not None:
-        rows.append(("Tokens", "Thinking tokens", _fmt_int(thinking_tok)))
-
-    # Token breakdown (cache utilisation)
-    cached_in = _p("cached_input_tokens")
-    uncached_in = _p("uncached_input_tokens")
-    cache_write = _p("cache_write_input_tokens")
-    tool_use_in = _p("tool_use_input_tokens")
-
-    if cached_in is not None:
-        rows.append(("Tokens", "Cached input tokens", _fmt_int(cached_in)))
-    if uncached_in is not None:
-        rows.append(("Tokens", "Uncached input tokens", _fmt_int(uncached_in)))
-    if cache_write is not None:
-        rows.append(("Tokens", "Cache write input tokens", _fmt_int(cache_write)))
-    if tool_use_in is not None:
-        rows.append(("Tokens", "Tool-use input tokens", _fmt_int(tool_use_in)))
-
-    # Latency
-    total_lat = _p("latency_ms_total")
-    avg_lat = _p("latency_ms_avg")
-    first_event_lat = _p("first_event_latency_ms_avg")
-
-    if total_lat is not None:
-        rows.append(("Latency", "Total latency", _fmt_ms(total_lat)))
-    if avg_lat is not None:
-        rows.append(("Latency", "Avg latency per call", _fmt_ms(avg_lat)))
-    if first_event_lat is not None:
-        rows.append(("Latency", "Avg time-to-first-token", _fmt_ms(first_event_lat)))
+    # ── Strategy parameters ──
+    strat_params: dict[str, Any] = data.get("parameters") or {}
+    for key in sorted(strat_params):
+        value = strat_params[key]
+        value_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+        rows.append(("Parameters", key, value_str))
 
     return rows
 

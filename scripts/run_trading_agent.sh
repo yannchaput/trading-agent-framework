@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.1.3
+VERSION=0.1.0
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-WHEEL="$PROJECT_DIR/dist/lumibot_trading_agent-$VERSION-py3-none-any.whl"
+WHEEL="$PROJECT_DIR/dist/trading_agent_framework-$VERSION-py3-none-any.whl"
 
 echo "Script directory: $SCRIPT_DIR"
 echo "Project directory: $PROJECT_DIR"
@@ -55,4 +55,4 @@ echo "Running $STRATEGY in $MODE mode from wheel..."
 # stdout through tee instead, so the log file stays free of script's own
 # "Script started/done" header/footer. `-e` + `pipefail` propagate the child's
 # exit code.
-script -qefc "uv run python -m lumibot_trading_agent.main \"$STRATEGY\" \"$MODE\"" /dev/null | tee "$OUTPUT_FILE"
+script -qefc "uv run python -m trading_agent_framework.main \"$STRATEGY\" \"$MODE\"" /dev/null | tee "$OUTPUT_FILE"

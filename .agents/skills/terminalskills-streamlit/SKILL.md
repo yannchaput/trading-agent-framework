@@ -1,5 +1,5 @@
 ---
-name: streamlit
+name: terminalskills-streamlit
 description: Expert guidance for Streamlit, the Python framework for building interactive data applications and dashboards. Helps developers create web apps for data exploration, ML model demos, and internal tools using pure Python — no frontend skills required.
 license: Apache-2.0
 compatibility: No special requirements
