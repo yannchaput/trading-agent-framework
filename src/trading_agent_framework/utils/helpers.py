@@ -5,8 +5,6 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-import pandas as pd
-
 from trading_agent_framework.config import TradingMode
 
 logger = logging.getLogger(__name__)
@@ -38,23 +36,3 @@ def build_logs(strategy_name: str, trading_mode: TradingMode = TradingMode.BACKT
     log_dir = Path("logs") / strategy_name / trading_mode.value / f"{run_ts}_{trading_mode.value}"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
-
-
-def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
-    """Compute Average True Range over `period` bars from a DataFrame with OHLC columns."""
-    if len(df) < period + 1:
-        return None
-    highs = df["high"].tolist()
-    lows = df["low"].tolist()
-    closes = df["close"].tolist()
-    tr_values = []
-    for i in range(1, len(highs)):
-        tr = max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        )
-        tr_values.append(tr)
-    if len(tr_values) < period:
-        return None
-    return sum(tr_values[-period:]) / period
