@@ -2476,6 +2476,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
     { name = "fredapi" },
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-openai" },
     { name = "pandas-ta-classic" },
@@ -2510,6 +2511,7 @@ dev = [
 requires-dist = [
     { name = "alpaca-py", specifier = ">=0.44.0,<0.45" },
     { name = "fredapi", specifier = ">=0.5,<0.6" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "langchain", specifier = ">=1.0,<2.0" },
     { name = "langchain-openai", specifier = ">=1.0" },
     { name = "pandas-ta-classic", specifier = ">=0.6.52,<0.7" },

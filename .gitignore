@@ -232,3 +232,6 @@ __marimo__/
 # Strategy specific data files (data/<strategy>/<mode>/cross_momentum_ptf_history_*.json)
 data/cross_momentum_ptf_history_*.json
 data/universe/us_stock_universe*.json
+
+# SEC EDGAR fundamentals cache (company-level, not strategy/mode scoped)
+/cache/
