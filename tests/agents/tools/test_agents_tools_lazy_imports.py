@@ -77,14 +77,15 @@ def test_importing_agents_tools_package_does_not_import_alpaca_or_httpx() -> Non
     assert "OK" in result.stdout
 
 
-def test_accessing_news_tools_lazily_imports_alpaca() -> None:
+def test_accessing_news_tools_does_not_import_alpaca() -> None:
+    """news.py goes through `Broker.news_provider()`, so it no longer pulls in `alpaca`."""
     result = subprocess.run(
         [
             sys.executable,
             "-c",
             "from trading_agent_framework.agents.tools import news_tools\n"
             "import sys\n"
-            "assert 'alpaca' in sys.modules\n"
+            "assert 'alpaca' not in sys.modules\n"
             "print('OK')\n",
         ],
         capture_output=True,

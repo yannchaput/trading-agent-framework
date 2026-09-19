@@ -41,6 +41,8 @@ FEED = DataFeed.IEX
 ADJUSTMENT = Adjustment.ALL  # split- and dividend-adjusted, like lumibot's default
 MAX_SYMBOLS_PER_REQUEST = 150
 MAX_NEWS_LIMIT = 50
+MAX_NEWS_CONTENT_CHARS = 6000
+TRUNCATION_MARKER = "... [truncated]"
 TIMESTEPS = ("minute", "day")
 _MINUTES_PER_SESSION = 390
 _OHLCV = ("open", "high", "low", "close", "volume")
@@ -216,6 +218,13 @@ def _book_price(value: object) -> Decimal | None:
     return price if price is not None and price > 0 else None
 
 
+def _truncate_content(content: str) -> str:
+    """Cap a news article body so a full-content read stays within the LLM token budget."""
+    if len(content) <= MAX_NEWS_CONTENT_CHARS:
+        return content
+    return content[:MAX_NEWS_CONTENT_CHARS] + TRUNCATION_MARKER
+
+
 def parse_news(news_set: object) -> list[dict[str, object]]:
     """Lean articles: id, headline, summary, source, created_at, symbols, and content when present."""
     articles = cast(Mapping[str, Sequence[object]], _field(news_set, "data") or {}).get("news", [])
@@ -231,6 +240,6 @@ def parse_news(news_set: object) -> list[dict[str, object]]:
         }
         content = _field(article, "content")
         if content:
-            item["content"] = content
+            item["content"] = _truncate_content(str(content))
         parsed.append(item)
     return parsed

@@ -8,12 +8,15 @@ from tests.fakes import (
     bar_payload,
     et,
     make_alpaca_barset,
+    make_alpaca_news_article,
     make_alpaca_quote,
     make_alpaca_trade,
     make_session,
 )
 
 from trading_agent_framework.brokers.alpaca.market_data import (
+    MAX_NEWS_CONTENT_CHARS,
+    TRUNCATION_MARKER,
     parse_bars,
     parse_latest_trades,
     parse_news,
@@ -200,3 +203,19 @@ def test_parse_news_includes_content_only_when_present() -> None:
     [article] = parse_news(news_set)
 
     assert article["content"] == "full article text"
+
+
+def test_parse_news_truncates_oversized_content() -> None:
+    news_set = NewsSet({"news": [make_alpaca_news_article(content="x" * 7000)], "next_page_token": None})
+
+    [article] = parse_news(news_set)
+
+    assert article["content"] == "x" * MAX_NEWS_CONTENT_CHARS + TRUNCATION_MARKER
+
+
+def test_parse_news_leaves_short_content_untouched() -> None:
+    news_set = NewsSet({"news": [make_alpaca_news_article(content="short body")], "next_page_token": None})
+
+    [article] = parse_news(news_set)
+
+    assert article["content"] == "short body"

@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from tests.fakes import FakeClock, FakeNewsClient, FakeTradingClient, et, make_alpaca_news_article
+from tests.fakes import FakeBroker, FakeClock, FakeNewsClient, FakeTradingClient, et, make_alpaca_news_article
 
-from trading_agent_framework.agents.tools.news import news_tools
+from trading_agent_framework.agents.tools.news import MAX_CONTENT_LIMIT, news_tools
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
-from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.utils.errors import BrokerError
 
 
 def _now() -> datetime:
@@ -24,6 +24,25 @@ def _tool(strategy: Strategy):
     return tool
 
 
+class _StubProvider:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
+        self.calls.append({"symbols": list(symbols), "start": start, "end": end, "limit": limit, "include_content": include_content})
+        return [{"id": 1, "headline": "Stub headline"}]
+
+
+def _provider_strategy(provider: object = None, *, lookup_error: BrokerError | None = None) -> Strategy:
+    class _Broker(FakeBroker):
+        def news_provider(self):
+            if lookup_error is not None:
+                raise lookup_error
+            return provider
+
+    return Strategy(_Broker(FakeClock(_now())))
+
+
 def test_search_news_returns_articles_from_the_broker() -> None:
     news = FakeNewsClient()
     news.articles = [make_alpaca_news_article(headline="Rates cut")]
@@ -35,6 +54,17 @@ def test_search_news_returns_articles_from_the_broker() -> None:
     assert result["articles"][0]["headline"] == "Rates cut"
     [request] = news.news_requests
     assert request.symbols == "SPY,QQQ"
+
+
+def test_search_news_works_with_any_broker_that_provides_news() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+
+    result = tool(symbols="SPY")
+
+    assert result == {"count": 1, "articles": [{"id": 1, "headline": "Stub headline"}]}
+    assert provider.calls[0]["symbols"] == ["SPY"]
+    assert provider.calls[0]["end"] == _now()
 
 
 def test_search_news_defaults_end_to_the_strategy_clock() -> None:
@@ -59,6 +89,17 @@ def test_search_news_clamps_end_that_is_after_the_clock() -> None:
     assert request.end == _now().astimezone(UTC).replace(tzinfo=None)
 
 
+def test_search_news_clamps_limit_to_the_content_cap_when_content_is_requested() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+
+    tool(limit=30, include_content=True)
+    tool(limit=30, include_content=False)
+
+    assert provider.calls[0]["limit"] == MAX_CONTENT_LIMIT
+    assert provider.calls[1]["limit"] == 30
+
+
 def test_search_news_returns_an_error_dict_on_broker_failure() -> None:
     news = FakeNewsClient()
     news.raises = RuntimeError("boom")
@@ -69,29 +110,16 @@ def test_search_news_returns_an_error_dict_on_broker_failure() -> None:
     assert "error" in result
 
 
-def test_search_news_without_an_alpaca_broker_returns_an_error() -> None:
-    class _OtherBroker(Broker):
-        name = "other"
-        def _conform_order(self, order): return order
-        def _submit_order(self, order): return order
-        def cancel_order(self, order): pass
-        def pull_order(self, identifier): return None
-        def pull_orders(self, limit=100): return []
-        def pull_positions(self): return []
-        def get_account(self): raise NotImplementedError
-        def modify_order(self, order, *, limit_price=None, stop_price=None): raise NotImplementedError
-        def close_position(self, asset, fraction=1): return None
-        def close_all_positions(self, cancel_orders=True): return []
-        def sync_open_orders(self): return []
-        def get_last_price(self, asset): return None
-        def get_last_prices(self, assets): return {}
-        def get_quote(self, asset): return None
-        def get_bars(self, assets, length, timestep="day", *, include_after_hours=True): return {}
+def test_search_news_without_a_news_provider_returns_an_error() -> None:
+    strategy = Strategy(FakeBroker(FakeClock(_now())))
 
-    strategy = Strategy(_OtherBroker("momentum", clock=FakeClock(_now())))
-    tool = _tool(strategy)
+    assert _tool(strategy)() == {"error": "no news provider for this broker"}
 
-    assert tool() == {"error": "news requires an Alpaca broker"}
+
+def test_search_news_reports_a_failing_provider_lookup_as_an_error() -> None:
+    strategy = _provider_strategy(lookup_error=BrokerError("no news source configured"))
+
+    assert _tool(strategy)() == {"error": "no news source configured"}
 
 
 def test_search_news_returns_an_error_on_naive_datetime_end() -> None:
