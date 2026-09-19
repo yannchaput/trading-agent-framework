@@ -1,5 +1,6 @@
 import logging
 import sys
+from collections.abc import Callable
 
 from rich import box
 from rich.console import Console
@@ -10,12 +11,30 @@ import trading_agent_framework as tr
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.config import find_project_root, load_strategy_env
 from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
+from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
+from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
 
-# MAPPING OF STRATEGY NAMES TO CLASSES
-AGENT_STRATEGIES = {
-    "cross_momentum": CrossMomentumStrategy,
+StrategyBuilder = Callable[[AlpacaBroker, TradingMode], Strategy | None]
+
+
+def _build_cross_momentum(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
+    universe = load_cross_momentum_universe()
+    if not universe:
+        Console().print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
+        return None
+    return CrossMomentumStrategy(broker=broker, mode=mode, universe=universe)
+
+
+def _build_news_builtin(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
+    return NewsBuiltinStrategy(broker=broker, mode=mode)
+
+
+# MAPPING OF STRATEGY NAMES TO STRATEGY BUILDERS
+AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
+    "cross_momentum": _build_cross_momentum,
+    "news_builtin": _build_news_builtin,
 }
 
 
@@ -33,8 +52,8 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: st
     """
     console.print(f"Running strategy: [bold cyan2]{strategy_name}[/bold cyan2] in [bold dark_red]{trading_mode.value}[/bold dark_red] mode")
 
-    # Load strategy class
-    strategy_class = AGENT_STRATEGIES[strategy_name]
+    # Load strategy builder
+    builder = AGENT_STRATEGIES[strategy_name]
     project_root = find_project_root()
     # Get environment file
     load_strategy_env(strategy_name, trading_mode.value, project_root)
@@ -43,12 +62,8 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: st
         console.print("No credentials are sent as environment variables for the broker.", style="bold red")
         raise SystemExit(1)
     broker = AlpacaBroker.from_credentials(strategy_name, creds)
-    # TODO: change strategy init argument order: no need of *args at the beginning any more
-    universe = load_cross_momentum_universe()
-    if universe:
-        strategy = strategy_class(broker=broker, mode=trading_mode, universe=universe)
-    else:
-        console.print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
+    strategy = builder(broker, trading_mode)
+    if strategy is None:
         return
 
     # run strategy according to the trading mode
