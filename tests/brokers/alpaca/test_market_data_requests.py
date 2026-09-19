@@ -7,11 +7,13 @@ from alpaca.data.enums import Adjustment, DataFeed
 from tests.fakes import ET, et, weekday_sessions
 
 from trading_agent_framework.brokers.alpaca.market_data import (
+    MAX_NEWS_LIMIT,
     MAX_SYMBOLS_PER_REQUEST,
     bars_start,
     build_bars_request,
     build_latest_quote_request,
     build_latest_trade_request,
+    build_news_request,
     calendar_lookback_start,
     chunk_assets,
     parse_timestep,
@@ -113,3 +115,23 @@ def test_latest_requests_use_the_iex_feed(build) -> None:
 
     assert request.symbol_or_symbols == ["AAPL", "MSFT"]
     assert request.feed == DataFeed.IEX
+
+
+def test_build_news_request_joins_symbols_and_clamps_limit() -> None:
+    start = et(2026, 9, 8)
+    end = et(2026, 9, 10)
+
+    request = build_news_request(["SPY", "QQQ"], start=start, end=end, limit=999, include_content=True)
+
+    assert request.symbols == "SPY,QQQ"
+    assert request.limit == MAX_NEWS_LIMIT
+    assert request.include_content is True
+    assert request.start == start.astimezone(UTC).replace(tzinfo=None)
+    assert request.end == end.astimezone(UTC).replace(tzinfo=None)
+
+
+def test_build_news_request_with_no_symbols_omits_them() -> None:
+    request = build_news_request([], start=None, end=_END, limit=5, include_content=False)
+
+    assert request.symbols is None
+    assert request.start is None

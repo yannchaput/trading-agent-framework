@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Iterator, Mapping, Sequence
-from datetime import date, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Protocol, cast
 from zoneinfo import ZoneInfo
@@ -16,6 +16,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.requests import (
+    NewsRequest,
     StockBarsRequest,
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
@@ -33,11 +34,13 @@ if TYPE_CHECKING:
     from alpaca.data.models import BarSet
     from alpaca.data.models import Quote as AlpacaQuote
     from alpaca.data.models import Trade as AlpacaTrade
+    from alpaca.data.models.news import NewsSet
 
 MARKET_TZ = ZoneInfo("America/New_York")
 FEED = DataFeed.IEX
 ADJUSTMENT = Adjustment.ALL  # split- and dividend-adjusted, like lumibot's default
 MAX_SYMBOLS_PER_REQUEST = 150
+MAX_NEWS_LIMIT = 50
 TIMESTEPS = ("minute", "day")
 _MINUTES_PER_SESSION = 390
 _OHLCV = ("open", "high", "low", "close", "volume")
@@ -52,6 +55,12 @@ class AlpacaStockDataClient(Protocol):
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet: ...
     def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]: ...
     def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]: ...
+
+
+class AlpacaNewsClient(Protocol):
+    """What `AlpacaBroker` calls on a `NewsClient` (or a test fake)."""
+
+    def get_news(self, request_params: NewsRequest) -> NewsSet: ...
 
 
 def parse_timestep(timestep: str) -> TimeFrame:
@@ -117,6 +126,23 @@ def build_latest_trade_request(assets: Sequence[Asset]) -> StockLatestTradeReque
 
 def build_latest_quote_request(assets: Sequence[Asset]) -> StockLatestQuoteRequest:
     return StockLatestQuoteRequest(symbol_or_symbols=_symbols(assets), feed=FEED)
+
+
+def build_news_request(
+    symbols: Sequence[str],
+    *,
+    start: datetime | None,
+    end: datetime,
+    limit: int,
+    include_content: bool,
+) -> NewsRequest:
+    return NewsRequest(
+        symbols=",".join(symbols) if symbols else None,
+        start=start.astimezone(UTC).replace(tzinfo=None) if start else None,
+        end=end.astimezone(UTC).replace(tzinfo=None),
+        limit=min(max(int(limit), 1), MAX_NEWS_LIMIT),
+        include_content=include_content,
+    )
 
 
 # --- response parsing ------------------------------------------------------------
@@ -188,3 +214,23 @@ def _book_price(value: object) -> Decimal | None:
     """Alpaca reports an empty book side as 0: that means "no price", not a price of zero."""
     price = _to_decimal(value)
     return price if price is not None and price > 0 else None
+
+
+def parse_news(news_set: object) -> list[dict[str, object]]:
+    """Lean articles: id, headline, summary, source, created_at, symbols, and content when present."""
+    articles = cast(Mapping[str, Sequence[object]], _field(news_set, "data") or {}).get("news", [])
+    parsed: list[dict[str, object]] = []
+    for article in articles:
+        item: dict[str, object] = {
+            "id": _field(article, "id"),
+            "headline": _field(article, "headline"),
+            "summary": _field(article, "summary"),
+            "source": _field(article, "source"),
+            "created_at": cast(datetime, _field(article, "created_at")).isoformat(),
+            "symbols": list(cast(Sequence[str], _field(article, "symbols") or [])),
+        }
+        content = _field(article, "content")
+        if content:
+            item["content"] = content
+        parsed.append(item)
+    return parsed

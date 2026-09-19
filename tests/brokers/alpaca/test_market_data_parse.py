@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time
 from decimal import Decimal
 
+from alpaca.data.models.news import NewsSet
 from tests.fakes import (
     bar_payload,
     et,
@@ -15,6 +16,7 @@ from tests.fakes import (
 from trading_agent_framework.brokers.alpaca.market_data import (
     parse_bars,
     parse_latest_trades,
+    parse_news,
     parse_quote,
 )
 from trading_agent_framework.entities.asset import Asset
@@ -144,3 +146,57 @@ def test_an_empty_book_side_is_none_not_zero() -> None:
 
 def test_no_quote_for_the_symbol_is_none() -> None:
     assert parse_quote({}, AAPL) is None
+
+
+def test_parse_news_extracts_lean_articles() -> None:
+    news_set = NewsSet(
+        {
+            "news": [
+                {
+                    "id": 123,
+                    "headline": "Fed cuts rates",
+                    "source": "benzinga",
+                    "url": "https://example.com/a",
+                    "summary": "Rates fall.",
+                    "created_at": "2026-09-10T13:30:00Z",
+                    "updated_at": "2026-09-10T13:30:00Z",
+                    "symbols": ["SPY", "QQQ"],
+                    "author": "Jane Doe",
+                    "content": "",
+                }
+            ],
+            "next_page_token": None,
+        }
+    )
+
+    articles = parse_news(news_set)
+
+    assert articles == [
+        {
+            "id": 123,
+            "headline": "Fed cuts rates",
+            "summary": "Rates fall.",
+            "source": "benzinga",
+            "created_at": "2026-09-10T13:30:00+00:00",
+            "symbols": ["SPY", "QQQ"],
+        }
+    ]
+
+
+def test_parse_news_includes_content_only_when_present() -> None:
+    news_set = NewsSet(
+        {
+            "news": [
+                {
+                    "id": 1, "headline": "h", "source": "s", "url": None, "summary": "sum",
+                    "created_at": "2026-09-10T00:00:00Z", "updated_at": "2026-09-10T00:00:00Z",
+                    "symbols": [], "author": "a", "content": "full article text",
+                }
+            ],
+            "next_page_token": None,
+        }
+    )
+
+    [article] = parse_news(news_set)
+
+    assert article["content"] == "full article text"
