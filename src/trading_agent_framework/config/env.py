@@ -113,3 +113,16 @@ class AlpacaCredentials:
         is_paper = raw_is_paper.strip().lower() not in _FALSE_PAPER_VALUES
 
         return cls(api_key=api_key, api_secret=api_secret, is_paper=is_paper)
+
+
+@dataclass(frozen=True, slots=True)
+class FredCredentials:
+    api_key: str = field(repr=False)
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str] | None = None) -> FredCredentials:
+        source = env if env is not None else os.environ
+        api_key = source.get("FRED_API_KEY")
+        if not api_key or not api_key.strip():
+            raise ConfigurationError("Missing or blank FRED_API_KEY environment variable")
+        return cls(api_key=api_key)

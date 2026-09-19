@@ -7,6 +7,7 @@ import pytest
 from trading_agent_framework.config.env import (
     TRADING_MODES,
     AlpacaCredentials,
+    FredCredentials,
     TradingMode,
     load_strategy_env,
 )
@@ -145,3 +146,19 @@ def test_trading_modes_are_derived_from_the_enum() -> None:
 def test_trading_mode_is_a_plain_string() -> None:
     assert TradingMode("paper") is TradingMode.PAPER
     assert f"{TradingMode.LIVE}" == "live"
+
+
+def test_fred_credentials_from_env() -> None:
+    creds = FredCredentials.from_env({"FRED_API_KEY": "abc123"})
+    assert creds.api_key == "abc123"
+
+
+@pytest.mark.parametrize("value", [None, "", "   "])
+def test_fred_credentials_missing_or_blank_key_raises(value) -> None:
+    env = {} if value is None else {"FRED_API_KEY": value}
+    with pytest.raises(ConfigurationError, match="FRED_API_KEY"):
+        FredCredentials.from_env(env)
+
+
+def test_fred_credentials_repr_does_not_leak_the_key() -> None:
+    assert "supersecret" not in repr(FredCredentials(api_key="supersecret"))

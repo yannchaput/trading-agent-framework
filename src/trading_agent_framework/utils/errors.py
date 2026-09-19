@@ -39,3 +39,7 @@ class BacktestError(TradingFrameworkError):
 
 class BacktestDataError(BacktestError):
     """Raised when a BacktestDataSource cannot fetch, cache, or parse historical data."""
+
+
+class MacroDataError(TradingFrameworkError):
+    """Raised when a macro (FRED) data lookup fails."""
