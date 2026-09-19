@@ -255,3 +255,15 @@ def test_get_news_wraps_client_failures_as_broker_error() -> None:
 
     with pytest.raises(BrokerError, match="Failed to fetch news"):
         broker.get_news(end=_NOW)
+
+
+def test_news_provider_is_available_when_a_news_client_is_configured() -> None:
+    broker = _broker_with_news(FakeNewsClient())
+
+    assert broker.news_provider() is not None
+
+
+def test_news_provider_is_none_without_a_news_client() -> None:
+    broker = AlpacaBroker("momentum", FakeTradingClient(), clock=FakeClock(_NOW))
+
+    assert broker.news_provider() is None

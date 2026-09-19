@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from decimal import Decimal
 from typing import ClassVar
 
+from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
@@ -52,6 +53,10 @@ class Broker(ABC):
 
     def get_tracked_order(self, identifier: str) -> Order | None:
         return self.tracker.get_tracked_order(identifier)
+
+    def news_provider(self) -> NewsProvider | None:
+        """This broker's news source, or `None` when it has none (`news_tools` then reports an error)."""
+        return None
 
     @abstractmethod
     def _conform_order(self, order: Order) -> Order: ...

@@ -25,11 +25,13 @@ from trading_agent_framework.brokers.alpaca.client import (
     build_trading_stream,
 )
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
+from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider
 from trading_agent_framework.brokers.alpaca.stream import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     AlpacaTradeStream,
 )
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
@@ -75,7 +77,7 @@ class AlpacaBroker(Broker):
         )
         self._client = client
         self._data_client = data_client
-        self._news_client = news_client
+        self._news_provider = AlpacaNewsProvider(news_client) if news_client is not None else None
         self._stream = stream
         self._alpaca_stream: AlpacaTradeStream | None = None
 
@@ -254,13 +256,8 @@ class AlpacaBroker(Broker):
             )
         return self._data_client
 
-    def _require_news_client(self) -> market_data.AlpacaNewsClient:
-        if self._news_client is None:
-            raise BrokerError(
-                "no news client configured; construct the broker with news_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
-        return self._news_client
+    def news_provider(self) -> NewsProvider | None:
+        return self._news_provider
 
     def get_news(
         self,
@@ -271,15 +268,12 @@ class AlpacaBroker(Broker):
         limit: int = 10,
         include_content: bool = False,
     ) -> list[dict[str, object]]:
-        client = self._require_news_client()
-        request = market_data.build_news_request(
-            symbols, start=start, end=end, limit=limit, include_content=include_content
-        )
-        try:
-            response = client.get_news(request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch news: {exc}") from exc
-        return market_data.parse_news(response)
+        if self._news_provider is None:
+            raise BrokerError(
+                "no news client configured; construct the broker with news_client=... "
+                "or use AlpacaBroker.from_credentials(...)"
+            )
+        return self._news_provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
         return self.get_last_prices([asset])[asset]

@@ -50,3 +50,7 @@ def test_fake_broker_modify_marks_the_original_replaced() -> None:
 def test_market_data_methods_are_part_of_the_broker_interface() -> None:
     expected = {"get_last_price", "get_last_prices", "get_quote", "get_bars"}
     assert expected <= Broker.__abstractmethods__
+
+
+def test_news_provider_defaults_to_none() -> None:
+    assert FakeBroker(FakeClock(et(2026, 9, 14, 10))).news_provider() is None
