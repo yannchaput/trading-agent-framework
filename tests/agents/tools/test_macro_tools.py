@@ -12,10 +12,23 @@ class _FakeFred:
         self._series = series
         self._calls = calls
 
-    def get_series(self, series_id: str, **kwargs: object) -> object:
-        call_data = {"series_id": series_id}
-        call_data.update(kwargs)
-        self._calls.append(call_data)
+    def get_series(
+        self,
+        series_id: str,
+        observation_start: object = None,
+        observation_end: object = None,
+        realtime_start: object = None,
+        realtime_end: object = None,
+    ) -> object:
+        self._calls.append(
+            {
+                "series_id": series_id,
+                "observation_start": observation_start,
+                "observation_end": observation_end,
+                "realtime_start": realtime_start,
+                "realtime_end": realtime_end,
+            }
+        )
         return self._series
 
 
@@ -72,7 +85,14 @@ def test_get_fred_series_clamps_limit_to_the_last_n_observations() -> None:
 
 def test_get_fred_series_returns_an_error_dict_on_failure() -> None:
     class _Boom:
-        def get_series(self, *args, **kwargs):
+        def get_series(
+            self,
+            series_id: str,
+            observation_start: object = None,
+            observation_end: object = None,
+            realtime_start: object = None,
+            realtime_end: object = None,
+        ) -> object:
             raise RuntimeError("network down")
 
     strategy = _strategy()

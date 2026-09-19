@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from datetime import date
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from trading_agent_framework.config.env import FredCredentials
 from trading_agent_framework.utils.errors import MacroDataError
@@ -15,13 +15,20 @@ MAX_LIMIT = 250
 
 
 class FredSeriesClient(Protocol):
-    def get_series(self, series_id: str, **kwargs: object) -> Any: ...
+    def get_series(
+        self,
+        series_id: str,
+        observation_start: object = None,
+        observation_end: object = None,
+        realtime_start: object = None,
+        realtime_end: object = None,
+    ) -> Any: ...
 
 
 def _default_fred_client() -> FredSeriesClient:
     import fredapi  # deferred: a strategy that never wires in the macro tool doesn't pay for it
 
-    return fredapi.Fred(api_key=FredCredentials.from_env().api_key)
+    return cast(FredSeriesClient, fredapi.Fred(api_key=FredCredentials.from_env().api_key))
 
 
 def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | None, cutoff: date) -> Any:
@@ -30,6 +37,7 @@ def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | No
             series_id,
             observation_start=start_date,
             observation_end=cutoff,
+            realtime_start=None,
             realtime_end=cutoff,
         )
     except Exception as exc:
