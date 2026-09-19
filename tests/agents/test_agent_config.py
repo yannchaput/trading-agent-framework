@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from trading_agent_framework.agents.config import LLMCredentials
+from trading_agent_framework.agents.config import PLACEHOLDER_API_KEY, LLMCredentials, normalize_base_url
 from trading_agent_framework.utils.errors import ConfigurationError
 
 
@@ -48,13 +48,36 @@ def test_from_env_missing_or_blank_base_url_raises(base_url_value: str | None) -
 
 
 @pytest.mark.parametrize("api_key_value", [None, "", "   "])
-def test_from_env_missing_or_blank_api_key_raises(api_key_value: str | None) -> None:
+def test_from_env_missing_or_blank_api_key_falls_back_to_the_placeholder(api_key_value: str | None) -> None:
     env = {"LLM_BASE_URL": "http://localhost:8000/v1"}
     if api_key_value is not None:
         env["LLM_API_KEY"] = api_key_value
 
-    with pytest.raises(ConfigurationError):
-        LLMCredentials.from_env(env)
+    credentials = LLMCredentials.from_env(env)
+
+    assert credentials.api_key == PLACEHOLDER_API_KEY
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("http://localhost:8005//v1/chat/completions", "http://localhost:8005/v1"),
+        ("http://localhost:8005/v1/chat/completions", "http://localhost:8005/v1"),
+        ("http://localhost:8005/v1/chat/completions/", "http://localhost:8005/v1"),
+        ("http://localhost:8005/v1/", "http://localhost:8005/v1"),
+        ("http://localhost:8005//v1", "http://localhost:8005/v1"),
+        ("  http://localhost:8005/v1  ", "http://localhost:8005/v1"),
+        ("https://api.example.com/v1", "https://api.example.com/v1"),
+    ],
+)
+def test_normalize_base_url(raw: str, expected: str) -> None:
+    assert normalize_base_url(raw) == expected
+
+
+def test_from_env_normalizes_the_base_url() -> None:
+    env = {"LLM_BASE_URL": "http://localhost:8005//v1/chat/completions"}
+
+    assert LLMCredentials.from_env(env).base_url == "http://localhost:8005/v1"
 
 
 def test_from_env_defaults_to_os_environ_when_no_mapping_given(monkeypatch: pytest.MonkeyPatch) -> None:
