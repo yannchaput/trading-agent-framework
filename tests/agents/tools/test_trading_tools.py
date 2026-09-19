@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from decimal import Decimal
+from typing import Any
 
 from tests.fakes import FakeBroker, FakeClock, et
 
@@ -17,7 +19,7 @@ def _strategy() -> tuple[Strategy, FakeBroker]:
     return Strategy(broker), broker
 
 
-def _tools(strategy: Strategy) -> dict[str, object]:
+def _tools(strategy: Strategy) -> dict[str, Callable[..., dict[str, Any]]]:
     return {tool.__name__: tool for tool in trading_tools(strategy)}
 
 

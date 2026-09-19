@@ -5,8 +5,6 @@ on every call. Broker/order-validation failures come back as `{"error": ...}` so
 correct itself, mirroring `memory/tools.py`.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -38,7 +36,7 @@ def _lean_order(order: Order) -> dict[str, Any]:
     return lean
 
 
-def trading_tools(strategy: Strategy) -> list[Callable[..., dict[str, Any]]]:
+def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
     """Order tools bound to `strategy`."""
 
     def submit_order(
