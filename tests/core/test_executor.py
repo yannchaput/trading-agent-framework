@@ -9,7 +9,7 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError
 
 MONDAY = date(2026, 9, 14)
 
@@ -247,6 +247,22 @@ def test_iteration_crash_calls_on_bot_crash_and_trading_continues() -> None:
     assert "on_abrupt_closing" in strategy.hooks()  # lumibot's default on_bot_crash
     assert len(strategy.times("on_trading_iteration")) == 4
     assert strategy.hooks()[-1] == "on_strategy_end"
+
+
+def test_a_fatal_strategy_error_aborts_the_run_after_the_usual_crash_bookkeeping() -> None:
+    class GivesUp(Recorder):
+        def on_trading_iteration(self) -> None:
+            super().on_trading_iteration()
+            raise FatalStrategyError("give up")
+
+    strategy = _strategy(GivesUp)
+
+    with pytest.raises(FatalStrategyError, match="give up"):
+        strategy.executor.run()
+
+    assert len(strategy.times("on_trading_iteration")) == 1  # an ordinary crash would have gone on to 4
+    assert [str(e) for e in strategy.errors] == ["give up"]  # on_bot_crash ran, as for a failed initialize
+    assert strategy.hooks()[-1] == "on_strategy_end"  # the run still winds down cleanly
 
 
 def test_lifecycle_hook_crash_is_reported_and_the_session_goes_on() -> None:

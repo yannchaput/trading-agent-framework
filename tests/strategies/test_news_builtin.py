@@ -1,23 +1,26 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from langchain_core.messages import AIMessage
-from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et
+from tests.backtesting.fakes import FakeBacktestDataSource
+from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et, weekday_sessions
 
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
 from trading_agent_framework.strategies.news_builtin.agent_news_builtin import AGENT_NAME, MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, ConfigurationError
+from trading_agent_framework.utils.errors import AgentError, BacktestError, ConfigurationError, FatalStrategyError
 
 _START = et(2026, 9, 14, 9, 0)
 
@@ -129,11 +132,32 @@ def test_backtest_fails_fast_after_three_consecutive_agent_errors(tmp_path: Path
 
     strategy.on_trading_iteration()
     strategy.on_trading_iteration()
-    with pytest.raises(AgentError, match="bad LLM_BASE_URL"):
+    with pytest.raises(FatalStrategyError, match="bad LLM_BASE_URL") as excinfo:
         strategy.on_trading_iteration()
 
+    assert isinstance(excinfo.value.__cause__, AgentError)
     assert MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS == 3
     assert len(handle.runs) == 3
+
+
+def test_a_dead_llm_aborts_a_real_backtest_instead_of_writing_a_flat_report(tmp_path: Path) -> None:
+    sessions = weekday_sessions(date(2026, 1, 5), 6)
+    closes = [100.0 + i for i in range(len(sessions))]
+    bars = pd.DataFrame(
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
+        index=pd.DatetimeIndex([session.close for session in sessions], name="timestamp"),
+    )
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(Asset("SPY"), bars)
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    handle.error = AgentError("llm down")
+
+    with pytest.raises(BacktestError, match="llm down"):
+        Strategy.run_backtesting(strategy, start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close, data_source=source, benchmark="SPY")
+
+    assert len(handle.runs) == MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS  # it stopped; it did not grind through all six sessions
+    assert list(tmp_path.rglob("metrics.json")) == []  # and left no report that could pass for a real (flat) run
 
 
 def test_backtest_agent_error_counter_is_reset_by_a_success(tmp_path: Path) -> None:

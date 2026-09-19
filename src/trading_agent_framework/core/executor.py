@@ -23,7 +23,7 @@ from trading_agent_framework.core.events import OrderEventQueue, QueuedOrderEven
 from trading_agent_framework.core.timing import next_tick, parse_sleeptime
 from trading_agent_framework.entities.enums import OrderEvent
 from trading_agent_framework.utils.clock import MarketSession
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -206,6 +206,12 @@ class StrategyExecutor:
         logger.debug("Trading iteration of %s at %s", strategy.name, self._now().isoformat())
         try:
             strategy.on_trading_iteration()
+        except FatalStrategyError as exc:
+            # The one deliberate way for an iteration to end the run (any other failure is survivable, e.g. live
+            # trading must ride out a bad tick). Same handling as a failed `initialize`: report, then propagate.
+            logger.exception("on_trading_iteration aborted strategy %s", strategy.name)
+            self._on_bot_crash(exc)
+            raise
         except Exception as exc:
             logger.exception("on_trading_iteration failed for strategy %s", strategy.name)
             self._on_bot_crash(exc)

@@ -33,6 +33,10 @@ class AgentError(TradingFrameworkError):
     """Raised when building or running a LangChain agent fails (never a raw SDK exception)."""
 
 
+class FatalStrategyError(TradingFrameworkError):
+    """Raised from `on_trading_iteration` to abort the run; the executor otherwise logs an iteration failure and carries on."""
+
+
 class BacktestError(TradingFrameworkError):
     """Raised when the backtesting simulation cannot proceed (never a raw exception)."""
 

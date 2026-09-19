@@ -17,10 +17,11 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.news_builtin.prompts import TASK_PROMPT, build_system_prompt
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError
+from trading_agent_framework.utils.errors import AgentError, FatalStrategyError
 
 AGENT_NAME = "news_trader"
-# A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest.
+# A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest,
+# so a backtest aborts (FatalStrategyError, which the executor propagates) after this many failed runs in a row.
 MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
 
 
@@ -60,11 +61,11 @@ class NewsBuiltinStrategy(Strategy):
         try:
             result = self.agents[AGENT_NAME].run(TASK_PROMPT, context={"current_datetime": self.get_datetime().isoformat()})
         except AgentError as exc:
-            # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest; ConfigurationError still propagates.
+            # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest.
             self.vars.consecutive_agent_errors += 1
             self.log_error(f"[{AGENT_NAME}] run failed: {exc}")
             if self.is_backtesting and self.vars.consecutive_agent_errors >= MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS:
-                raise
+                raise FatalStrategyError(f"[{AGENT_NAME}] failed {self.vars.consecutive_agent_errors} runs in a row, aborting the backtest; last error: {exc}") from exc
             return
         self.vars.consecutive_agent_errors = 0
         self.log_info(f"[{AGENT_NAME}] {result.output}")
