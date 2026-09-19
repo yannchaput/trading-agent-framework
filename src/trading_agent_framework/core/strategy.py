@@ -41,6 +41,7 @@ from trading_agent_framework.utils.log import ColorLogger, setup_strategy_loggin
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.data.base import BacktestDataSource
     from trading_agent_framework.backtesting.runner import BacktestResult
+    from trading_agent_framework.brokers.news import NewsProvider
 
 logger = logging.getLogger(__name__)
 
@@ -450,6 +451,7 @@ class Strategy:
         slippage: Number = Decimal(0),
         risk_free_rate: float = 0.0,
         warmup_trading_days: int = 0,
+        news_source: NewsProvider | None = None,
     ) -> BacktestResult:
         """Run this strategy against simulated time and simulated fills.
 
@@ -489,6 +491,9 @@ class Strategy:
                 a `data_source` class/callable and to widen `run_backtest`'s own eager
                 preload call -- an explicit `data_source` instance is used as given
                 and is not widened by this method.
+            news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
+                Alpaca provider built lazily from `AlpacaCredentials.from_env()`; the tool's own
+                `strategy.clock.now()` cutoff still applies, so no future article leaks.
         """
         from trading_agent_framework.backtesting.data.base import BacktestDataSource as _BacktestDataSource
         from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
@@ -520,6 +525,7 @@ class Strategy:
             slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,
+            news_source=news_source,
         )
 
     def _run_trading(self, mode: TradingMode) -> None:

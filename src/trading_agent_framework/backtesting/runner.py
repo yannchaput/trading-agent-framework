@@ -48,6 +48,7 @@ if TYPE_CHECKING:
 
     from trading_agent_framework.backtesting.data.base import BacktestDataSource
     from trading_agent_framework.backtesting.ledger import EquitySample
+    from trading_agent_framework.brokers.news import NewsProvider
     from trading_agent_framework.core.strategy import Strategy
     from trading_agent_framework.utils.clock import MarketSession
 
@@ -75,6 +76,7 @@ def run_backtest(
     risk_free_rate: float,
     warmup_trading_days: int = 0,
     preload_assets: Sequence[Asset] = (),
+    news_source: NewsProvider | None = None,
 ) -> BacktestResult:
     """Run `strategy` through a full simulated `[start, end]` backtest.
 
@@ -121,6 +123,8 @@ def run_backtest(
     universe and you want it fetched only once -- `YahooBacktestData.load()` skips
     already-cached assets, but the ABC contract doesn't require every source to.
 
+    `news_source` is handed to the `BacktestBroker` (default: an Alpaca provider built lazily from the env credentials).
+
     Never raises a raw exception: anything other than an existing `BacktestError`
     is wrapped in one -- except `warmup_trading_days` itself, which is validated
     up front (see below) so a bad value always raises the same `ValueError`
@@ -151,6 +155,7 @@ def run_backtest(
             warmup_trading_days=warmup_trading_days,
             warmup_days=warmup_days,
             preload_assets=preload_assets,
+            news_source=news_source,
         )
     except BacktestError:
         raise
@@ -187,6 +192,7 @@ def _run(
     warmup_trading_days: int = 0,
     warmup_days: int = 0,
     preload_assets: Sequence[Asset] = (),
+    news_source: NewsProvider | None = None,
 ) -> BacktestResult:
     """The unvalidated body of `run_backtest` -- see that function's docstring for the
     full contract, including `warmup_trading_days`'s scope: it widens only the eager
@@ -238,6 +244,7 @@ def _run(
         timestep=timestep,
         commission=commission,
         slippage=slippage,
+        news_source=news_source,
     )
     clock.on_advance = broker.on_advance
 

@@ -178,16 +178,23 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
     source.set_bars(Asset("AAPL"), df)
     source.set_bars(Asset("SPY"), df)
 
+    class _NewsSource:
+        def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
+            return []
+
+    news = _NewsSource()
+
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(
         start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
-        data_source=source, benchmark="SPY",
+        data_source=source, benchmark="SPY", news_source=news,
     )
 
     assert result.run_dir.is_dir()
     assert (result.run_dir / "metrics.json").is_file()
     assert (result.run_dir / "settings.json").is_file()
     assert isinstance(strategy.broker, BacktestBroker)  # rebound by run_backtesting
+    assert strategy.broker.news_provider() is news
 
 
 def test_run_backtesting_widens_default_yahoo_source_for_warmup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -20,6 +20,7 @@ from trading_agent_framework.backtesting import fills
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
 from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord, Ledger
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
@@ -29,7 +30,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BacktestDataError, BacktestError, OrderValidationError
+from trading_agent_framework.utils.errors import BacktestDataError, BacktestError, BrokerError, ConfigurationError, OrderValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ class BacktestBroker(Broker):
         commission: Decimal = Decimal(0),
         slippage: Decimal = Decimal(0),
         tracker: OrderTracker | None = None,
+        news_source: NewsProvider | None = None,
     ) -> None:
         super().__init__(strategy_name, tracker, clock=clock, is_paper=True)
         self._data_source = data_source
@@ -70,6 +72,7 @@ class BacktestBroker(Broker):
         self._slippage = slippage
         self._cash = budget
         self._positions: dict[Asset, Position] = {}
+        self._news_source = news_source
         self._pending: dict[str, _PendingOrder] = {}
         self.ledger = Ledger()
 
@@ -111,6 +114,20 @@ class BacktestBroker(Broker):
 
     def pull_positions(self) -> list[Position]:
         return list(self._positions.values())
+
+    def news_provider(self) -> NewsProvider | None:
+        """The injected news source, else an Alpaca provider built from the env credentials on first use."""
+        if self._news_source is None:
+            # Deferred: importing this module must not pull in `alpaca`, and a backtest that never
+            # calls the news tool needs no Alpaca credentials for news.
+            from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider
+            from trading_agent_framework.config.env import AlpacaCredentials
+
+            try:
+                self._news_source = AlpacaNewsProvider.from_credentials(AlpacaCredentials.from_env())
+            except ConfigurationError as exc:
+                raise BrokerError(f"no news source available for backtesting: {exc}") from exc
+        return self._news_source
 
     def get_account(self) -> AccountBalances:
         portfolio_value = self._portfolio_value(self.clock.now())
