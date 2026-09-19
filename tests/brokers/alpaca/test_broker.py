@@ -189,6 +189,36 @@ def test_pull_positions_maps_through_parse_broker_position() -> None:
     assert positions[0].side is PositionSide.SHORT
 
 
+# Final-review fix: cancel_order/pull_orders/pull_positions wrap SDK exceptions as BrokerError
+def test_cancel_order_wraps_sdk_exception_as_broker_error() -> None:
+    client = FakeTradingClient()
+    client.raises["cancel_order_by_id"] = RuntimeError("boom")
+    broker = AlpacaBroker("momentum", client)
+    order = _make_order()
+    order.set_identifier("broker-1")
+
+    with pytest.raises(BrokerError, match="boom"):
+        broker.cancel_order(order)
+
+
+def test_pull_orders_wraps_sdk_exception_as_broker_error() -> None:
+    client = FakeTradingClient()
+    client.raises["get_orders"] = RuntimeError("boom")
+    broker = AlpacaBroker("momentum", client)
+
+    with pytest.raises(BrokerError, match="boom"):
+        broker.pull_orders()
+
+
+def test_pull_positions_wraps_sdk_exception_as_broker_error() -> None:
+    client = FakeTradingClient()
+    client.raises["get_all_positions"] = RuntimeError("boom")
+    broker = AlpacaBroker("momentum", client)
+
+    with pytest.raises(BrokerError, match="boom"):
+        broker.pull_positions()
+
+
 # Test 79
 def test_submit_orders_submits_each_in_order() -> None:
     client = FakeTradingClient()

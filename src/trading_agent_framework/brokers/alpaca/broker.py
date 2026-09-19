@@ -125,7 +125,10 @@ class AlpacaBroker(Broker):
         return order
 
     def cancel_order(self, order: Order) -> None:
-        self._client.cancel_order_by_id(order.identifier)
+        try:
+            self._client.cancel_order_by_id(order.identifier)
+        except Exception as exc:
+            raise BrokerError(f"Failed to cancel order {order.identifier}: {exc}") from exc
 
     def pull_order(self, identifier: str) -> Order | None:
         try:
@@ -140,14 +143,18 @@ class AlpacaBroker(Broker):
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
         request = orders.build_get_orders_request(limit)
-        responses = self._client.get_orders(filter=request)
+        try:
+            responses = self._client.get_orders(filter=request)
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch orders: {exc}") from exc
         return orders.parse_broker_orders(responses, self.strategy_name)
 
     def pull_positions(self) -> list[Position]:
-        return [
-            orders.parse_broker_position(p, self.strategy_name)
-            for p in self._client.get_all_positions()
-        ]
+        try:
+            responses = self._client.get_all_positions()
+        except Exception as exc:
+            raise BrokerError(f"Failed to fetch positions: {exc}") from exc
+        return [orders.parse_broker_position(p, self.strategy_name) for p in responses]
 
     def get_account(self) -> AccountBalances:
         try:

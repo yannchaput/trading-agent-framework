@@ -15,6 +15,15 @@ MAX_LIMIT = 250
 
 
 class FredSeriesClient(Protocol):
+    """Documented interface for what this module needs from a FRED client.
+
+    Not a literal match to `fredapi.Fred.get_series`'s real signature (`get_series(self,
+    series_id, observation_start=None, observation_end=None, **kwargs)`) -- the real method
+    accepts `realtime_start`/`realtime_end` only via `**kwargs`, with no `None` filtering, so
+    passing `None` for either gets URL-encoded literally and FRED rejects it. See
+    `_fetch_series` below, which always pins both to a concrete date.
+    """
+
     def get_series(
         self,
         series_id: str,
@@ -33,11 +42,18 @@ def _default_fred_client() -> FredSeriesClient:
 
 def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | None, cutoff: date) -> Any:
     try:
+        # Pin the vintage to a closed [cutoff, cutoff] interval. `fredapi.Fred.get_series`
+        # takes `realtime_start`/`realtime_end` only via **kwargs with no None-filtering, so
+        # passing `realtime_start=None` gets URL-encoded literally as "None" and FRED 400s.
+        # Omitting it entirely isn't safe either: FRED then defaults realtime_start to today,
+        # and rejects realtime_start > realtime_end -- which a backtest's past `cutoff` would
+        # trigger. Pinning both to `cutoff` avoids both failure modes and returns the series
+        # as it was known on that date (no future revisions leaking into a backtest).
         return client.get_series(
             series_id,
             observation_start=start_date,
             observation_end=cutoff,
-            realtime_start=None,
+            realtime_start=cutoff,
             realtime_end=cutoff,
         )
     except Exception as exc:
@@ -45,9 +61,16 @@ def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | No
 
 
 def macro_tools(
-    strategy: "Strategy", *, fred_client_factory: Callable[[], FredSeriesClient] = _default_fred_client  # noqa: UP037
+    strategy: "Strategy", *, fred_client_factory: Callable[[], FredSeriesClient] | None = None  # noqa: UP037
 ) -> list[Callable[..., dict[str, Any]]]:
     """FRED macro tool bound to `strategy`."""
+    if fred_client_factory is None:
+        # Fail fast at wiring time -- consistent with `fundamentals_tools`, which validates
+        # its own credentials (SEC_EDGAR_USER_AGENT) at construction time rather than
+        # deferring to the first tool call. A caller who supplies their own factory (e.g. a
+        # test double) doesn't need FRED_API_KEY, so this check only applies to the default.
+        FredCredentials.from_env()
+        fred_client_factory = _default_fred_client
 
     def get_fred_series(series_id: str, start_date: str | None = None, limit: int = 60) -> dict[str, Any]:
         """Fetch a FRED macro time series (e.g. M2SL, FEDFUNDS, CPIAUCSL, UNRATE) up to the current date."""

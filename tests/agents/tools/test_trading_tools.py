@@ -4,6 +4,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.tools.trading import trading_tools
@@ -155,3 +156,36 @@ def test_get_order_known_id_returns_the_lean_order() -> None:
     result = tools["get_order"](submitted["identifier"])
 
     assert result["identifier"] == submitted["identifier"]
+
+
+# Final-review fix: strategy.get_order can fall through to a raw SDK lookup
+# (AlpacaBroker.pull_order re-raises a raw APIError for a non-404 failure); the tool
+# must not let that escape and crash on_trading_iteration().
+def test_get_order_returns_an_error_dict_when_the_lookup_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+
+    def _boom(identifier: str) -> Order:
+        raise RuntimeError("malformed order_id")
+
+    monkeypatch.setattr(broker, "pull_order", _boom)
+
+    result = tools["get_order"]("not-a-real-id")
+
+    assert "error" in result
+    assert "not-a-real-id" in result["error"]
+
+
+def test_cancel_order_returns_an_error_dict_when_the_lookup_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+
+    def _boom(identifier: str) -> Order:
+        raise RuntimeError("malformed order_id")
+
+    monkeypatch.setattr(broker, "pull_order", _boom)
+
+    result = tools["cancel_order"]("not-a-real-id")
+
+    assert "error" in result
+    assert "not-a-real-id" in result["error"]

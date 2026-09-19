@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import pandas as pd
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.utils.errors import ConfigurationError
 
 
 class _FakeFred:
@@ -72,6 +74,23 @@ def test_get_fred_series_pins_realtime_and_observation_end_to_the_clock() -> Non
     assert call["realtime_end"] == cutoff
 
 
+def test_get_fred_series_pins_realtime_start_to_the_cutoff_not_none() -> None:
+    """Regression test for the FRED 400 bug: `fredapi.Fred.get_series` only declares
+    `observation_start`/`observation_end`; `realtime_start`/`realtime_end` fall into its
+    `**kwargs` and get URL-encoded with no `None` filtering, so `realtime_start=None`
+    becomes a literal "&realtime_start=None" query param that FRED rejects. The tool must
+    always pass a concrete date for `realtime_start`, never `None`."""
+    calls: list[dict[str, object]] = []
+    tool, strategy = _tool(pd.Series(dtype=float), calls)
+
+    tool("FEDFUNDS")
+
+    [call] = calls
+    cutoff = strategy.clock.now().date()
+    assert call["realtime_start"] == cutoff
+    assert call["realtime_start"] is not None
+
+
 def test_get_fred_series_clamps_limit_to_the_last_n_observations() -> None:
     series = pd.Series([float(i) for i in range(10)], index=pd.date_range("2026-01-01", periods=10, freq="D"))
     calls: list[dict[str, object]] = []
@@ -81,6 +100,20 @@ def test_get_fred_series_clamps_limit_to_the_last_n_observations() -> None:
 
     assert len(result["observations"]) == 3
     assert result["observations"][-1]["value"] == 9.0
+
+
+def test_macro_tools_raises_configuration_error_eagerly_without_fred_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression test: `macro_tools` must fail fast at wiring time (like `fundamentals_tools`
+    does for SEC_EDGAR_USER_AGENT) rather than deferring a missing FRED_API_KEY to the first
+    `get_fred_series(...)` call, where a raised `ConfigurationError` would otherwise crash
+    `on_trading_iteration()` mid-run instead of surfacing at strategy setup."""
+    monkeypatch.delenv("FRED_API_KEY", raising=False)
+    strategy = _strategy()
+
+    with pytest.raises(ConfigurationError, match="FRED_API_KEY"):
+        macro_tools(strategy)
 
 
 def test_get_fred_series_returns_an_error_dict_on_failure() -> None:

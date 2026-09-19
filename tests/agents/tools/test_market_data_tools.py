@@ -19,14 +19,14 @@ def _strategy() -> tuple[Strategy, FakeBroker]:
 
 
 def _tools(strategy: Strategy) -> dict[str, Callable[..., dict[str, Any]]]:
-    return {tool.__name__: tool for tool in market_data_tools(strategy)}  # type: ignore[unresolved-attribute]
+    return {tool.__name__: tool for tool in market_data_tools(strategy)}  # ty: ignore[unresolved-attribute]
 
 
 def test_returns_three_tools_with_one_line_docstrings() -> None:
     tools = market_data_tools(_strategy()[0])
-    assert [t.__name__ for t in tools] == ["get_last_price", "get_quote", "get_bars"]  # type: ignore[unresolved-attribute]
+    assert [t.__name__ for t in tools] == ["get_last_price", "get_quote", "get_bars"]  # ty: ignore[unresolved-attribute]
     for tool in tools:
-        assert len(tool.__doc__.splitlines()) == 1  # type: ignore[unresolved-attribute]
+        assert len(tool.__doc__.splitlines()) == 1  # ty: ignore[unresolved-attribute]
 
 
 def test_get_last_price_returns_the_price() -> None:

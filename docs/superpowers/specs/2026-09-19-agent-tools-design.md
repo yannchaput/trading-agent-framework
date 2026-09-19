@@ -367,3 +367,22 @@ mirroring `scripts/tests/smoke_alpaca_data.py`.
   var docs.
 - `TODO.md`: user strikes "Tools" from the MIGRATION list themselves (per the memory spec's precedent —
   this file carries the user's own uncommitted changes and isn't edited by implementation work).
+
+## 9. Amendments made after implementation
+
+These override the sections they name.
+
+1. **§2 "Backtesting" row — news is live/paper-only, not backtest-capable.** The row above overstates the
+   claim: it says "all three research tools" have "full support from day one" for backtesting. That is
+   true for `macro_tools` and `fundamentals_tools` (FRED and SEC EDGAR are called directly, independent of
+   which broker the strategy holds), but not for `news_tools`. `search_news` (`agents/tools/news.py`)
+   hard-requires `isinstance(strategy.broker, AlpacaBroker)` and returns `{"error": "news requires an
+   Alpaca broker"}` when it isn't — and `BacktestBroker` (`backtesting/broker.py`) does not subclass
+   `AlpacaBroker` and has no `get_news` method. So during a backtest `search_news` always returns that
+   soft error; it never raises, and it never leaks future information (the no-look-ahead invariant in §3.3
+   still holds), but it also never returns real news. This is working-as-implemented behavior, not a bug:
+   building actual backtest-capable news support (e.g. routing through the `BacktestDataSource` layer)
+   would be a new feature requiring its own design and is out of scope here. §2's "Backtesting" row should
+   be read as: macro and fundamentals are genuinely backtest-capable as designed; news is live/paper-trading
+   only by design, gated on `strategy.clock.now()` the same as its siblings but additionally gated on the
+   broker type in a way that always fails closed during a backtest.

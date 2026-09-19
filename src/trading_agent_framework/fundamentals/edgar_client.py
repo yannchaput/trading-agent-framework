@@ -44,6 +44,16 @@ class SecEdgarClient:
         self._last_request_at = 0.0
         self._client = httpx.Client(transport=transport, timeout=30.0)
 
+    def close(self) -> None:
+        """Close the underlying `httpx.Client` and its connection pool."""
+        self._client.close()
+
+    def __enter__(self) -> SecEdgarClient:
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
     def _headers(self) -> dict[str, str]:
         return {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
 
@@ -60,13 +70,21 @@ class SecEdgarClient:
     def get_json(self, url: str, cache_key: tuple[str, ...]) -> dict[str, Any]:
         cache_path = self._cache_path(*cache_key)
         if cache_path.exists():
-            return json.loads(cache_path.read_text(encoding="utf-8"))
+            try:
+                return json.loads(cache_path.read_text(encoding="utf-8"))
+            except ValueError:
+                # A corrupt/truncated cache entry (e.g. from an interrupted write) is
+                # treated as a cache miss so it self-heals on the next fetch, rather than
+                # permanently wedging the tool until someone deletes the file by hand.
+                pass
         self._rate_limit()
         try:
             response = self._client.get(url, headers=self._headers())
             response.raise_for_status()
             payload = response.json()
-        except httpx.HTTPError as exc:
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError also covers json.JSONDecodeError: SEC's fair-access throttling
+            # sometimes serves an HTML block page with a 2xx status instead of JSON.
             raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(payload), encoding="utf-8")

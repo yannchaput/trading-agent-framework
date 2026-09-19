@@ -282,6 +282,7 @@ class FakeTradingClient:
         return self.submit_response
 
     def cancel_order_by_id(self, order_id: str) -> None:
+        self._maybe_raise("cancel_order_by_id")
         self.canceled.append(order_id)
 
     def get_orders(self, filter: object = None) -> list[alpaca_models.Order]:
@@ -297,6 +298,7 @@ class FakeTradingClient:
         return self.order_by_id_response
 
     def get_all_positions(self) -> list[alpaca_models.Position]:
+        self._maybe_raise("get_all_positions")
         return self.positions_response
 
     def _maybe_raise(self, method: str) -> None:

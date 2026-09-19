@@ -53,7 +53,7 @@ def main() -> int:
     creds = _load_credentials()
     broker = AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False)
     strategy = Strategy(broker)
-    tools = {tool.__name__: tool for tool in fundamentals_tools(strategy)}  # type: ignore[unresolved-attribute]
+    tools = {tool.__name__: tool for tool in fundamentals_tools(strategy)}  # ty: ignore[unresolved-attribute]
 
     facts = tools["get_company_facts"](SYMBOL)
     print(f"get_company_facts({SYMBOL}) -> cik={facts.get('cik')} fact_count={facts.get('fact_count')}")

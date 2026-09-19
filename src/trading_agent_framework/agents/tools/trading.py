@@ -60,7 +60,10 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
 
     def cancel_order(order_id: str) -> dict[str, Any]:
         """Cancel a tracked order by its identifier."""
-        order = strategy.get_order(order_id)
+        try:
+            order = strategy.get_order(order_id)
+        except Exception as exc:  # strategy.get_order can fall through to a raw SDK lookup
+            return {"error": f"failed to look up order_id {order_id!r}: {exc}"}
         if order is None:
             return {"error": f"unknown order_id {order_id!r}"}
         try:
@@ -99,7 +102,10 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
 
     def get_order(order_id: str) -> dict[str, Any]:
         """Look up one order by its identifier."""
-        order = strategy.get_order(order_id)
+        try:
+            order = strategy.get_order(order_id)
+        except Exception as exc:  # strategy.get_order can fall through to a raw SDK lookup
+            return {"error": f"failed to look up order_id {order_id!r}: {exc}"}
         return _lean_order(order) if order is not None else {"error": f"unknown order_id {order_id!r}"}
 
     for tool in (submit_order, cancel_order, cancel_open_orders, close_position, sell_all):
