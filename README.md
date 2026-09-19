@@ -128,7 +128,7 @@ Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 | Field | Value |
 |---|---|
 | **File** | `strategies/news_builtin/agent_news_builtin.py` |
-| **Model** | `openai/deepseek-v4-flash` |
+| **Model** | from `LLM_MODEL` in the env file |
 | **Agent** | `news_trader` |
 | **Tools** | `PrebuiltTools.all(strategy)` + `news_tools(strategy)` (`search_news`) |
 | **Asset universe** | SPY, QQQ, DIA, IWM + defensive ETF |
@@ -136,7 +136,7 @@ Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 | **Trading modes** | backtest, paper |
 | **Benchmark** | SPY |
 
-News-driven trading using Lumibot's built-in Alpaca news tool (no custom REST wrapper). The agent scans broad-market headlines and summaries, fetches the full article for the most relevant story, then decides to buy SPY/QQQ (bullish) or a defensive ETF (negative/unclear). Validates article timestamps against the simulated datetime.
+News-driven trading through the framework's `search_news` tool (broker-agnostic `NewsProvider`; works in backtests, gated on the simulated clock). The agent scans broad-market headlines with `search_news`, reads the most relevant article in full (article content is capped), then holds SPY/QQQ when the regime is bullish or the defensive ETF (SHV) when it is negative or unclear. It uses the framework's memory tools to record decisions and its regime thesis, and compares article timestamps against the simulated datetime.
 
 Needs `LLM_BASE_URL` and `LLM_MODEL` (OpenAI-compatible server, e.g. vLLM) plus Alpaca credentials in `env/.env.news_builtin.<mode>`; defensive ETF is `SHV`.
 
