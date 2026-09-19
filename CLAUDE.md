@@ -30,6 +30,8 @@ Layered, broker-agnostic by design:
 - `brokers/alpaca/orders.py` -- **pure** translation functions only (status/event maps, price conforming, request building, response parsing). No I/O, no state, no client instances. Together with `account.py`, the only modules allowed to import `alpaca.trading.requests` (`market_data.py` is the only one allowed to import `alpaca.data.requests`).
 - `brokers/alpaca/broker.py` -- `AlpacaBroker`: wires the real `TradingClient` and `StockHistoricalDataClient` I/O to the pure modules plus tracker bookkeeping. Contains no translation logic itself.
 - `brokers/alpaca/client.py` -- trivial factory functions for building Alpaca SDK clients from credentials, so tests can inject fakes instead.
+- `brokers/news.py` -- `NewsProvider` protocol (no alpaca import, no I/O), reached through `Broker.news_provider()`.
+- `brokers/alpaca/news.py` -- `AlpacaNewsProvider`: the I/O wrapper over the pure `market_data` news functions (imports `client` only, never `alpaca.data.requests`).
 - `brokers/alpaca/stream.py` -- `AlpacaTradeStream`: trade-update handler and thread lifecycle for the live order stream.
 - `config/env.py` -- strategy/mode env file resolution and `AlpacaCredentials`.
 - `brokers/__init__.py` -- lazy-imports `AlpacaBroker`/`AlpacaTradeStream` via module `__getattr__` so `import trading_agent_framework.brokers` alone doesn't pull in `alpaca`/pandas.

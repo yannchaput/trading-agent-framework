@@ -20,6 +20,8 @@ from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError
 
 AGENT_NAME = "news_trader"
+# A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest.
+MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
 
 
 class NewsBuiltinStrategy(Strategy):
@@ -39,6 +41,7 @@ class NewsBuiltinStrategy(Strategy):
     def initialize(self) -> None:
         self.sleeptime = "1D" if self.is_backtesting else "2H"
         self.vars.iteration_count = 0
+        self.vars.consecutive_agent_errors = 0
         self.agents.create(
             name=AGENT_NAME,
             system_prompt=build_system_prompt(
@@ -57,9 +60,13 @@ class NewsBuiltinStrategy(Strategy):
         try:
             result = self.agents[AGENT_NAME].run(TASK_PROMPT, context={"current_datetime": self.get_datetime().isoformat()})
         except AgentError as exc:
-            # A failed LLM call must not kill a multi-week backtest or a live loop; ConfigurationError still propagates.
+            # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest; ConfigurationError still propagates.
+            self.vars.consecutive_agent_errors += 1
             self.log_error(f"[{AGENT_NAME}] run failed: {exc}")
+            if self.is_backtesting and self.vars.consecutive_agent_errors >= MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS:
+                raise
             return
+        self.vars.consecutive_agent_errors = 0
         self.log_info(f"[{AGENT_NAME}] {result.output}")
 
     def _backtest_iteration_is_due(self) -> bool:

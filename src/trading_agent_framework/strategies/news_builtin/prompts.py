@@ -19,7 +19,10 @@ def build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_s
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
         f"5. Decide the regime: bullish evidence means hold {' or '.join(symbols)}; negative or unclear evidence means hold {defensive_symbol}.\n"
         "6. Check get_positions and get_orders, then trade only the difference. Sell the current position before buying "
-        "the other. Quantity = floor(cash / last price). Keep position sizing reasonable and never place a duplicate order.\n"
+        "the other. Size a buy at no more than 95% of the cash reported by get_account_balance (quantity = floor(0.95 * cash / last price)), "
+        "leaving room for fees. Orders fill on a later bar, so cash does not yet include proceeds of a sell you submitted in this run: "
+        "if you sold this run, do not buy in the same run; the next run completes the rotation. "
+        "Keep position sizing reasonable and never place a duplicate order.\n"
         "7. Record the outcome: call remember_decision after every decision, and open_thesis or close_thesis when the "
         "regime call changes."
     )

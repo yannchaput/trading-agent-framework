@@ -15,7 +15,7 @@ from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
-from trading_agent_framework.strategies.news_builtin.agent_news_builtin import AGENT_NAME
+from trading_agent_framework.strategies.news_builtin.agent_news_builtin import AGENT_NAME, MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError
 
@@ -26,9 +26,15 @@ class _FakeHandle:
     def __init__(self) -> None:
         self.runs: list[tuple[str, object]] = []
         self.error: Exception | None = None
+        self.script: list[Exception | None] = []  # per-run outcome (None = success); overrides `error` while non-empty
 
     def run(self, task_prompt: str, *, context: object = None) -> AgentRunResult:
         self.runs.append((task_prompt, context))
+        if self.script:
+            outcome = self.script.pop(0)
+            if outcome is not None:
+                raise outcome
+            return AgentRunResult(output="Hold SHV.", tool_calls=[])
         if self.error is not None:
             raise self.error
         return AgentRunResult(output="Hold SHV.", tool_calls=[])
@@ -47,8 +53,8 @@ class _FakeAgents:
         return self.handle
 
 
-def _strategy(tmp_path: Path, mode: TradingMode) -> tuple[NewsBuiltinStrategy, _FakeAgents, _FakeHandle]:
-    strategy = NewsBuiltinStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=mode, project_root=tmp_path)
+def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] | None = None) -> tuple[NewsBuiltinStrategy, _FakeAgents, _FakeHandle]:
+    strategy = NewsBuiltinStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=mode, project_root=tmp_path, parameters=parameters)
     handle = _FakeHandle()
     agents = _FakeAgents(handle)
     strategy._agents = agents  # ty: ignore[invalid-assignment]
@@ -116,6 +122,42 @@ def test_an_agent_error_is_logged_and_does_not_stop_the_run(tmp_path: Path, capl
     assert "llm exploded" in caplog.text
 
 
+def test_backtest_fails_fast_after_three_consecutive_agent_errors(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    strategy.initialize()
+    handle.error = AgentError("bad LLM_BASE_URL")
+
+    strategy.on_trading_iteration()
+    strategy.on_trading_iteration()
+    with pytest.raises(AgentError, match="bad LLM_BASE_URL"):
+        strategy.on_trading_iteration()
+
+    assert MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS == 3
+    assert len(handle.runs) == 3
+
+
+def test_backtest_agent_error_counter_is_reset_by_a_success(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    strategy.initialize()
+    handle.script = [AgentError("x"), None, AgentError("x"), AgentError("x")]
+
+    for _ in range(4):
+        strategy.on_trading_iteration()
+
+    assert len(handle.runs) == 4
+
+
+def test_paper_never_raises_on_repeated_agent_errors(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.error = AgentError("llm down")
+
+    for _ in range(5):
+        strategy.on_trading_iteration()
+
+    assert len(handle.runs) == 5
+
+
 def test_a_configuration_error_propagates(tmp_path: Path) -> None:
     strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
     strategy.initialize()
@@ -149,3 +191,20 @@ def test_run_backtesting_wires_yahoo_data_preload_and_fees(tmp_path: Path, monke
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
     assert captured["commission"] == Decimal("0.001")
     assert captured["warmup_trading_days"] == 0
+
+
+def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    [created] = agents.created
+    prompt = str(created["system_prompt"])
+    tool_names = {tool.__name__ for tool in created["tools"]}  # ty: ignore[unresolved-attribute]
+
+    assert "95%" in prompt
+    assert "get_account_balance" in prompt
+    assert "Orders fill on a later bar" in prompt
+    assert "do not buy in the same run" in prompt
+    assert "SHV" in prompt
+    mentioned = {"search_memory", "search_news", "get_positions", "get_orders", "remember_decision", "open_thesis", "close_thesis", "get_account_balance"}
+    assert all(name in prompt for name in mentioned)
+    assert mentioned <= tool_names
