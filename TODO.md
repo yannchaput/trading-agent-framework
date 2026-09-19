@@ -14,7 +14,7 @@
 * ~~Orchestration framework (scheduling, lifecycle,...)~~
 * ~~Data and accountig tools~~
 * ~~Agentic framework - langchain foundation~~
-* Tools
+* ~~Tools~~
 * ~~Memory~~
 * ~~Account configuration (no short sell, no margin trading)~~
 * ~~Backtesting (vectorbt)~~
@@ -37,9 +37,9 @@
 
 ### Cross sectional momentum
 * Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
-* ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~
+* ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~ => Poor results
 * Too much sector correlation, add a sector isolation strategy
-* ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~
+* ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * Compute the residual volatility compared to the market (cf chatgpt thread)
 
 ### Opening range breakout
@@ -52,3 +52,5 @@
 * Fix indicators not showing up
 * Add more indicators than portfolio value (e.g SMA 200)
 * Automatize deletion of memory sqllite db before running a backtest
+
+### VWAP + idiosyncratic mean reversion
