@@ -8,6 +8,7 @@
 * Use "https://data.alpaca.markets/v1beta1/screener/stocks/movers" to screen values from NASDAQ and explore potentials.
 * Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)
 * Add agent call telemetry (token counts, latency, cache hits) to backtesting settings.json, matching what the old lumibot dashboard's Parameters tab showed (design spec section 1.3)
+* Create a batch to run all the smoke tests altogether
 
 ## MIGRATION
 * ~~Alpaca broker~~

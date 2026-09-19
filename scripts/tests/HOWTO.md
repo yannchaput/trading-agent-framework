@@ -69,3 +69,14 @@ that must always hold: SPY has a last trade, daily bars come back full-length, r
 minute bars stay inside 09:30-16:00, and the indicators return values. It also prints two things
 no fake can show: what Alpaca does with an unknown symbol, and how many minute bars the
 include_after_hours=False filter keeps.
+
+## Tools
+
+### Smoke Fundamentals
+
+### Smoke Macro
+
+### Smoke News
+Smoke test of the news tool.
+
+    `uv run python scripts/tests/smoke_news.py`
