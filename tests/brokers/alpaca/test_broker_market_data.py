@@ -8,11 +8,13 @@ import pytest
 from alpaca.data.enums import DataFeed
 from tests.fakes import (
     FakeClock,
+    FakeNewsClient,
     FakeStockHistoricalDataClient,
     FakeTradingClient,
     bar_payload,
     et,
     make_alpaca_calendar,
+    make_alpaca_news_article,
     make_alpaca_quote,
     make_alpaca_trade,
 )
@@ -216,3 +218,40 @@ def test_from_credentials_wires_the_stock_data_client(monkeypatch: pytest.Monkey
     broker = AlpacaBroker.from_credentials("momentum", creds, with_stream=False)
 
     assert broker.get_last_price(AAPL) == Decimal("101.0")
+
+
+# --- news -------------------------------------------------------------------
+
+
+def _broker_with_news(news: FakeNewsClient) -> AlpacaBroker:
+    return AlpacaBroker(
+        "momentum", FakeTradingClient(), clock=FakeClock(_NOW), news_client=news
+    )
+
+
+def test_get_news_builds_a_request_and_parses_the_response() -> None:
+    news = FakeNewsClient()
+    news.articles = [make_alpaca_news_article(headline="Rates cut")]
+    broker = _broker_with_news(news)
+
+    articles = broker.get_news(["SPY"], start=None, end=_NOW, limit=5, include_content=False)
+
+    assert articles[0]["headline"] == "Rates cut"
+    [request] = news.news_requests
+    assert request.symbols == "SPY"
+
+
+def test_get_news_without_a_configured_client_raises() -> None:
+    broker = AlpacaBroker("momentum", FakeTradingClient(), clock=FakeClock(_NOW))
+
+    with pytest.raises(BrokerError, match="no news client configured"):
+        broker.get_news(end=_NOW)
+
+
+def test_get_news_wraps_client_failures_as_broker_error() -> None:
+    news = FakeNewsClient()
+    news.raises = RuntimeError("rate limited")
+    broker = _broker_with_news(news)
+
+    with pytest.raises(BrokerError, match="Failed to fetch news"):
+        broker.get_news(end=_NOW)

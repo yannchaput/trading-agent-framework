@@ -21,11 +21,13 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import alpaca.data.models as alpaca_data_models
+import alpaca.data.models.news as _alpaca_news_models  # noqa: F401  -- registers alpaca_data_models.news
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
 import pandas as pd
 from alpaca.common.exceptions import APIError
 from alpaca.data.requests import (
+    NewsRequest,
     StockBarsRequest,
     StockLatestQuoteRequest,
     StockLatestTradeRequest,
@@ -405,6 +407,37 @@ class FakeStockHistoricalDataClient:
         self._maybe_raise("get_stock_latest_quote")
         wanted = _requested_symbols(request_params)
         return {s: self.quotes[s] for s in wanted if s in self.quotes}
+
+
+def make_alpaca_news_article(**overrides: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": 123,
+        "headline": "Fed cuts rates",
+        "source": "benzinga",
+        "url": "https://example.com/a",
+        "summary": "Rates fall.",
+        "created_at": "2026-09-10T13:30:00Z",
+        "updated_at": "2026-09-10T13:30:00Z",
+        "symbols": ["SPY"],
+        "author": "Jane Doe",
+        "content": "",
+    }
+    return payload | overrides
+
+
+class FakeNewsClient:
+    """A hand-written stand-in for `alpaca.data.historical.news.NewsClient`."""
+
+    def __init__(self) -> None:
+        self.articles: list[dict[str, object]] = []
+        self.news_requests: list[NewsRequest] = []
+        self.raises: BaseException | None = None
+
+    def get_news(self, request_params: NewsRequest) -> alpaca_data_models.news.NewsSet:
+        self.news_requests.append(request_params)
+        if self.raises is not None:
+            raise self.raises
+        return alpaca_data_models.news.NewsSet({"news": self.articles, "next_page_token": None})
 
 
 ET = ZoneInfo("America/New_York")
