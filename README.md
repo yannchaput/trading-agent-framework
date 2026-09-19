@@ -64,6 +64,12 @@ cp env/.env.example env/.env.momentum.paper
 Never commit the copy -- it is already covered by the `env/.env.*` gitignore
 pattern, so a plain `git add` will not pick it up.
 
+## Environment variables
+
+`FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
+
+`SEC_EDGAR_USER_AGENT` is needed only if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
+
 ## Components
 
 ### 📊 Strategy Dashboard   
