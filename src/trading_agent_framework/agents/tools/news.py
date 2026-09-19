@@ -28,9 +28,24 @@ def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # 
         """Search recent news headlines and summaries, optionally filtered to symbols."""
         if not isinstance(strategy.broker, AlpacaBroker):
             return {"error": "news requires an Alpaca broker"}
-        now = strategy.clock.now()
-        end_dt = min(datetime.fromisoformat(end), now) if end else now
-        start_dt = datetime.fromisoformat(start) if start else end_dt - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+        try:
+            now = strategy.clock.now()
+            if end:
+                end_parsed = datetime.fromisoformat(end)
+                if end_parsed.tzinfo is None:
+                    return {"error": "end date must include timezone information"}
+                end_dt = min(end_parsed, now)
+            else:
+                end_dt = now
+            if start:
+                start_parsed = datetime.fromisoformat(start)
+                if start_parsed.tzinfo is None:
+                    return {"error": "start date must include timezone information"}
+                start_dt = start_parsed
+            else:
+                start_dt = end_dt - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
+        except ValueError as exc:
+            return {"error": f"invalid date format: {exc}"}
         clamped_limit = min(max(int(limit), MIN_LIMIT), MAX_LIMIT)
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
         try:

@@ -92,3 +92,23 @@ def test_search_news_without_an_alpaca_broker_returns_an_error() -> None:
     tool = _tool(strategy)
 
     assert tool() == {"error": "news requires an Alpaca broker"}
+
+
+def test_search_news_returns_an_error_on_naive_datetime_end() -> None:
+    news = FakeNewsClient()
+    tool = _tool(_alpaca_strategy(news))
+
+    # Naive datetime strings (no offset) should return error, not raise TypeError
+    result = tool(end="2026-09-20T00:00:00")
+
+    assert "error" in result
+
+
+def test_search_news_returns_an_error_on_naive_datetime_start() -> None:
+    news = FakeNewsClient()
+    tool = _tool(_alpaca_strategy(news))
+
+    # Naive datetime strings (no offset) should return error, not raise TypeError
+    result = tool(start="2026-09-10T00:00:00")
+
+    assert "error" in result
