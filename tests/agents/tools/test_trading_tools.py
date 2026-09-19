@@ -83,6 +83,26 @@ def test_submit_order_returns_an_error_dict_on_broker_failure() -> None:
     assert result == {"error": "submit failed"}
 
 
+# Same defect class as the get_order/cancel_order final-review fix above: AlpacaBroker._submit_order
+# deliberately ends in a bare `raise` after order.set_error(exc) (lumibot compatibility contract), so a
+# raw Alpaca SDK exception (e.g. a rejected order) must not escape submit_order and crash
+# on_trading_iteration().
+def test_submit_order_returns_an_error_dict_when_the_broker_raises_a_raw_exception() -> None:
+    strategy, broker = _strategy()
+    broker.market_data_error = None  # submit doesn't use market data
+    tools = _tools(strategy)
+
+    def _boom(order: Order) -> Order:
+        raise RuntimeError("insufficient buying power")
+
+    broker._submit_order = _boom  # ty: ignore[invalid-assignment]
+
+    result = tools["submit_order"]("SPY", 1, "buy")
+
+    assert "error" in result
+    assert "insufficient buying power" in result["error"]
+
+
 def test_cancel_order_unknown_id_returns_error() -> None:
     strategy, _ = _strategy()
     tools = _tools(strategy)

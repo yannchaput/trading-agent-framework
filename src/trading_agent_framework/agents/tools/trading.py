@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.utils.errors import BrokerError, OrderValidationError
+from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -54,7 +54,7 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
                 limit_price=limit_price, stop_price=stop_price, time_in_force=time_in_force,
             )
             submitted = strategy.submit_order(order)
-        except (OrderValidationError, BrokerError) as exc:
+        except Exception as exc:  # AlpacaBroker._submit_order re-raises a raw SDK exception on rejection
             return {"error": str(exc)}
         return _lean_order(submitted)
 
