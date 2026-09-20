@@ -126,6 +126,7 @@ def test_setup_isolates_package_logger_and_quiets_noisy_libraries(tmp_path: Path
     assert logging.getLogger(PACKAGE_LOGGER_NAME).propagate is False
     assert logging.getLogger("urllib3").level == logging.WARNING
     assert logging.getLogger("websockets").level == logging.WARNING
+    assert logging.getLogger("httpx2").level == logging.WARNING
 
 
 def test_reset_restores_default_logger_state(tmp_path: Path) -> None:

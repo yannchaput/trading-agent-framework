@@ -34,17 +34,15 @@ LOG_FILE_NAMES: dict[TradingMode, str] = {
     TradingMode.BACKTESTING: "backtest.log",
 }
 
-_NOISY_LOGGERS = ("urllib3", "websockets")
+_NOISY_LOGGERS = ("urllib3", "websockets", "httpx2")
 _installed_handlers: list[logging.Handler] = []
 
 
 class LumibotStyleFormatter(logging.Formatter):
     """lumibot's line format: the source location is shown for WARNING and above only."""
 
-    _short = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    _long = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(filename)s:%(funcName)s:%(lineno)d | %(message)s"
-    )
+    _short = logging.Formatter("%(asctime)s | %(levelname)s | %(filename)s | %(message)s")
+    _long = logging.Formatter("%(asctime)s | %(levelname)s | %(filename)s:%(funcName)s:%(lineno)d | %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
         formatter = self._long if record.levelno >= logging.WARNING else self._short
