@@ -1,10 +1,9 @@
 """Pure result types for the agent framework, and the LangChain message-list parser.
 
 Deliberately duck-typed instead of importing `langchain_core.messages`: an assistant message is
-anything with a `tool_calls` attribute (even an empty list), a tool-result message is anything
-with a `tool_call_id` attribute. Neither attribute is unique to this framework's use of LangChain,
-but the combination reliably distinguishes `AIMessage` / `ToolMessage` / everything else without
-this module depending on `langchain_core` at all.
+anything whose `type` is `"ai"` (its `tool_calls`, if any, are collected separately), a tool-result
+message is anything with a `tool_call_id` attribute. This distinguishes `AIMessage` / `ToolMessage` /
+everything else without this module depending on `langchain_core` at all.
 """
 
 from __future__ import annotations
@@ -38,10 +37,7 @@ def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
     tool_calls: list[ToolCallRecord] = []
     output = ""
     for message in messages:
-        calls = getattr(message, "tool_calls", None)
-        if calls is None:
-            continue
-        for call in calls:
+        for call in getattr(message, "tool_calls", None) or []:
             tool_calls.append(
                 ToolCallRecord(
                     name=call["name"],
@@ -49,8 +45,11 @@ def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
                     result=tool_results.get(call["id"], ""),
                 )
             )
-        text = getattr(message, "text", None)
-        output = text if isinstance(text, str) else _as_text(message.content)
+
+    last_message = messages[-1]
+    if getattr(last_message, "type", None) == "ai":
+        text = getattr(last_message, "text", None)
+        output = text if isinstance(text, str) else _as_text(last_message.content)
 
     return AgentRunResult(output=output, tool_calls=tool_calls)
 

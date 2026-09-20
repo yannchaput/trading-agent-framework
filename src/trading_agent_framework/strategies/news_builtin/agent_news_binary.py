@@ -53,7 +53,7 @@ class NewsBinaryStrategy(Strategy):
     TASK_PROMPT = "Research current broad-market news and rebalance if needed. The current datetime is in the context below."
 
     parameters = {
-        "backtesting_start": datetime(2021, 1, 1, tzinfo=MARKET_TZ),
+        "backtesting_start": datetime(2025, 1, 1, tzinfo=MARKET_TZ),
         "backtesting_end": datetime(2026, 8, 14, tzinfo=MARKET_TZ),
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 300,
@@ -65,7 +65,7 @@ class NewsBinaryStrategy(Strategy):
         "symbols": ("SPY", "QQQ"),
         "defensive_symbol": "SHV",
         "news_symbols": "SPY,QQQ,DIA,IWM",
-        "backtest_every_n_iterations": 5,  # Number of days between 2 effective iterations
+        "backtest_every_n_iterations": 1,  # Number of days between 2 effective iterations
     }
 
     def initialize(self) -> None:

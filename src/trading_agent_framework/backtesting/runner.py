@@ -25,6 +25,7 @@ keep `sleeptime` at least as fine-grained as `timestep` when using minute bars.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -219,7 +220,7 @@ def _run(
     # otherwise fire before any handler is attached to the package logger, fall
     # through to `logging.lastResort`'s raw, unformatted stderr dump, and never
     # reach the run's log file at all.
-    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root)
+    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root, level=logging.INFO)
     run_dir = log_file.parent
 
     benchmark_asset = Asset(benchmark)

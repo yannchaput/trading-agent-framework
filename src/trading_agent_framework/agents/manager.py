@@ -7,16 +7,20 @@ it) does not pull LangChain into a strategy that never calls `strategy.agents.cr
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError
+from trading_agent_framework.utils.log import ColorLogger
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.tools import BaseTool
+
+logger = ColorLogger(logging.getLogger(__name__), "AgentRunResult")
 
 
 class AgentHandle:
@@ -30,6 +34,7 @@ class AgentHandle:
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         try:
             raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
+            logger.log_debug(f"Model returned this raw messages: {str(raw_result)}")
             return parse_agent_messages(raw_result["messages"])
         except Exception as exc:
             raise AgentError(f"agent {self.name!r} failed: {exc}") from exc
@@ -87,10 +92,7 @@ class AgentManager:
         credentials = self._credentials_source()
         model_id = model if model is not None else credentials.default_model
         if not model_id:
-            raise ConfigurationError(
-                "No model id given and LLM_MODEL is not set; "
-                "pass model=... explicitly or set LLM_MODEL in the strategy's env file"
-            )
+            raise ConfigurationError("No model id given and LLM_MODEL is not set; pass model=... explicitly or set LLM_MODEL in the strategy's env file")
         try:
             return ChatOpenAI(
                 model=model_id,

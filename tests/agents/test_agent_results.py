@@ -7,15 +7,15 @@ from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecor
 
 
 def _human(content: str) -> SimpleNamespace:
-    return SimpleNamespace(content=content)
+    return SimpleNamespace(type="human", content=content)
 
 
 def _ai(content: str, tool_calls: list[dict[str, Any]] | None = None) -> SimpleNamespace:
-    return SimpleNamespace(content=content, tool_calls=tool_calls or [])
+    return SimpleNamespace(type="ai", content=content, tool_calls=tool_calls or [])
 
 
 def _tool_result(tool_call_id: str, content: str) -> SimpleNamespace:
-    return SimpleNamespace(content=content, tool_call_id=tool_call_id)
+    return SimpleNamespace(type="tool", content=content, tool_call_id=tool_call_id)
 
 
 def test_text_only_reply_has_no_tool_calls() -> None:
@@ -90,6 +90,20 @@ def test_only_the_last_ai_message_content_becomes_output() -> None:
     assert result.output == "final answer"
 
 
+def test_output_is_the_last_ai_message_even_without_a_tool_calls_attribute() -> None:
+    messages = [
+        _human("go"),
+        _ai("first", tool_calls=[{"name": "remember", "args": {}, "id": "call_1"}]),
+        _tool_result("call_1", '{"id": "memory_abc"}'),
+        SimpleNamespace(type="ai", content="last"),
+    ]
+
+    result = parse_agent_messages(messages)
+
+    assert result.output == "last"
+    assert [call.name for call in result.tool_calls] == ["remember"]
+
+
 def test_no_ai_messages_gives_empty_output_and_no_tool_calls() -> None:
     result = parse_agent_messages([_human("hello")])
 
@@ -97,7 +111,7 @@ def test_no_ai_messages_gives_empty_output_and_no_tool_calls() -> None:
 
 
 def _ai_with_list_content(list_content: list[dict[str, Any]], text: str) -> SimpleNamespace:
-    return SimpleNamespace(content=list_content, tool_calls=[], text=text)
+    return SimpleNamespace(type="ai", content=list_content, tool_calls=[], text=text)
 
 
 def test_list_content_uses_the_text_property_not_the_raw_content() -> None:
