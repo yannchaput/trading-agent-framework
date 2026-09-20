@@ -352,7 +352,10 @@ class CrossMomentumStrategy(Strategy):
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
 
         # Phase 2: Buy
-        available_cash = float(self.get_cash()) + estimated_sell_proceeds
+        # The estimate is priced at the last close, but orders fill at a later open plus commission, so hold
+        # a fixed reserve back: it is what lets the last buys land when prices gap or sells fill lower.
+        cash_reserve = (float(self.get_cash()) + estimated_sell_proceeds) * self.parameters["cash_buffer_pct"]
+        available_cash = float(self.get_cash()) + estimated_sell_proceeds - cash_reserve
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
             if available_cash <= 0:
@@ -385,17 +388,15 @@ class CrossMomentumStrategy(Strategy):
                 continue
 
             cost = quantity * entry["price"]
-            # Estimate the cost of the remaining quantity to buy, if it exceeds 95% of available cash, reduce the quantity to fit within 95% of available cash
-            if cost > available_cash * 0.95:
-                quantity = fractional_qty(available_cash * 0.95 / entry["price"])
+            # If the cost exceeds the remaining spendable cash (the reserve is already excluded), reduce the quantity to fit
+            if cost > available_cash:
+                quantity = fractional_qty(available_cash / entry["price"])
                 cost = quantity * entry["price"]
-            # quantity can be equal to 0 for very tiny amount passed to fractional_qty or available cash can become negative due to substraction below in the loop
-            # provoking a negative division
+            # quantity can be equal to 0 for very tiny amount passed to fractional_qty
             if quantity <= 0:
                 continue
 
-            # If we reach this line: either the cost < available cash * 0.95 and so available_cash will be positive
-            # or the cost > available cash * 0.95 and so we reduced the quantity to fit within 95% of available cash and so available_cash will be positive
+            # cost <= available_cash here (fractional_qty floors), so available_cash stays non-negative
             available_cash -= cost
 
             self.log_info(f"Buying {quantity} {symbol} @ ${entry['price']:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
@@ -413,7 +414,7 @@ class CrossMomentumStrategy(Strategy):
                 real_buying_power = parse_insufficient_buying_power(e)
                 if real_buying_power is not None:
                     self.log_warning(f"Resyncing available cash to broker-reported buying power: ${real_buying_power:.2f}")
-                    available_cash = real_buying_power
+                    available_cash = real_buying_power * (1 - self.parameters["cash_buffer_pct"])
 
     # ── Main iteration ────────────────────────────────────────────────────────
 
