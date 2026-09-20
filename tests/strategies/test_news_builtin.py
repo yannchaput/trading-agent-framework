@@ -17,8 +17,8 @@ from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
-from trading_agent_framework.strategies.news_builtin.agent_news_builtin import AGENT_NAME, MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
+from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.strategies.news_builtin.agent_news_binary import AGENT_NAME, MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, ConfigurationError, FatalStrategyError
 
@@ -56,8 +56,8 @@ class _FakeAgents:
         return self.handle
 
 
-def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] | None = None) -> tuple[NewsBuiltinStrategy, _FakeAgents, _FakeHandle]:
-    strategy = NewsBuiltinStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=mode, project_root=tmp_path, parameters=parameters)
+def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] | None = None) -> tuple[NewsBinaryStrategy, _FakeAgents, _FakeHandle]:
+    strategy = NewsBinaryStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=mode, project_root=tmp_path, parameters=parameters)
     handle = _FakeHandle()
     agents = _FakeAgents(handle)
     strategy._agents = agents  # ty: ignore[invalid-assignment]
@@ -65,10 +65,10 @@ def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] |
 
 
 def test_backtest_defaults_match_the_original_strategy() -> None:
-    assert NewsBuiltinStrategy.backtesting_start == datetime(2025, 1, 1, tzinfo=MARKET_TZ)
-    assert NewsBuiltinStrategy.backtesting_end == datetime(2026, 4, 1, tzinfo=MARKET_TZ)
-    assert NewsBuiltinStrategy.budget == Decimal("10000")
-    assert NewsBuiltinStrategy.benchmark_symbol == "SPY"
+    assert NewsBinaryStrategy.backtesting_start == datetime(2025, 1, 1, tzinfo=MARKET_TZ)
+    assert NewsBinaryStrategy.backtesting_end == datetime(2026, 4, 1, tzinfo=MARKET_TZ)
+    assert NewsBinaryStrategy.budget == Decimal("10000")
+    assert NewsBinaryStrategy.benchmark_symbol == "SPY"
 
 
 @pytest.mark.parametrize(("mode", "expected"), [(TradingMode.BACKTESTING, "1D"), (TradingMode.PAPER, "2H"), (TradingMode.LIVE, "2H")])
@@ -194,7 +194,7 @@ def test_a_configuration_error_propagates(tmp_path: Path) -> None:
 def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     model = FakeToolCallingChatModel(messages=iter([AIMessage("Hold SHV.")]))
     monkeypatch.setattr(AgentManager, "_resolve_model", lambda self, model_arg, timeout: model)
-    strategy = NewsBuiltinStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=TradingMode.PAPER, project_root=tmp_path)
+    strategy = NewsBinaryStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=TradingMode.PAPER, project_root=tmp_path)
 
     with caplog.at_level(logging.INFO):
         strategy.initialize()

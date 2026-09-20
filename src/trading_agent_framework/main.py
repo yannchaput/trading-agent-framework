@@ -14,7 +14,7 @@ from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
-from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
+from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 StrategyBuilder = Callable[[AlpacaBroker, TradingMode], Strategy | None]
 
@@ -27,14 +27,14 @@ def _build_cross_momentum(broker: AlpacaBroker, mode: TradingMode) -> Strategy |
     return CrossMomentumStrategy(broker=broker, mode=mode, universe=universe)
 
 
-def _build_news_builtin(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
-    return NewsBuiltinStrategy(broker=broker, mode=mode)
+def _build_news_binary(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
+    return NewsBinaryStrategy(broker=broker, mode=mode)
 
 
 # MAPPING OF STRATEGY NAMES TO STRATEGY BUILDERS
 AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
     "cross_momentum": _build_cross_momentum,
-    "news_builtin": _build_news_builtin,
+    "news_binary": _build_news_binary,
 }
 
 

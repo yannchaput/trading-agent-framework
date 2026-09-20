@@ -5,7 +5,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework import main as main_module
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
+from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 
 def test_registry_lists_both_strategies() -> None:
@@ -17,7 +17,7 @@ def test_news_builtin_builder_returns_the_strategy() -> None:
 
     strategy = main_module._build_news_builtin(broker, TradingMode.BACKTESTING)  # ty: ignore[invalid-argument-type]
 
-    assert isinstance(strategy, NewsBuiltinStrategy)
+    assert isinstance(strategy, NewsBinaryStrategy)
     assert strategy.is_backtesting
 
 

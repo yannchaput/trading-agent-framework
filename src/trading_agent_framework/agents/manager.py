@@ -80,6 +80,7 @@ class AgentManager:
 
         try:
             from langchain_openai import ChatOpenAI
+            from pydantic import SecretStr
         except Exception as exc:
             raise AgentError(f"could not import langchain_openai: {exc}") from exc
 
@@ -94,7 +95,7 @@ class AgentManager:
             return ChatOpenAI(
                 model=model_id,
                 base_url=credentials.base_url,
-                api_key=credentials.api_key,
+                api_key=SecretStr(credentials.api_key),
                 timeout=timeout_seconds,
             )
         except Exception as exc:

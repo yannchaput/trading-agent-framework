@@ -1,5 +1,5 @@
-from .agent_news_builtin import NewsBuiltinStrategy
+from .agent_news_binary import NewsBinaryStrategy
 
 __all__ = [
-    "NewsBuiltinStrategy",
+    "NewsBinaryStrategy",
 ]

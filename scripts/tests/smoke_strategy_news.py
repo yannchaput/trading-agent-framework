@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.config import load_strategy_env
 from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
-from trading_agent_framework.strategies.news_builtin import NewsBuiltinStrategy
+from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.utils.clock import MARKET_TZ
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -43,7 +43,7 @@ def _iteration() -> None:
     creds = AlpacaCredentials.from_env()
     if not creds.is_paper:
         raise SmokeTestFailure("Refusing to run one agent iteration against a live account.")
-    strategy = NewsBuiltinStrategy(AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False), mode=TradingMode.PAPER)
+    strategy = NewsBinaryStrategy(AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False), mode=TradingMode.PAPER)
     strategy.initialize()
     strategy.on_trading_iteration()
     print("PASS: one agent iteration completed (see the log line above for the agent's answer).")
@@ -52,7 +52,7 @@ def _iteration() -> None:
 def _backtest() -> None:
     load_strategy_env(STRATEGY_NAME, TradingMode.BACKTESTING.value, PROJECT_ROOT)
     creds = AlpacaCredentials.from_env()
-    strategy = NewsBuiltinStrategy(AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False), mode=TradingMode.BACKTESTING)
+    strategy = NewsBinaryStrategy(AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False), mode=TradingMode.BACKTESTING)
     strategy.backtesting_start = datetime(2025, 3, 3, tzinfo=MARKET_TZ)
     strategy.backtesting_end = datetime(2025, 3, 14, tzinfo=MARKET_TZ)
     result = strategy.run_backtesting()
