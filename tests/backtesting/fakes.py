@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -10,6 +11,8 @@ from trading_agent_framework.backtesting.data.base import BacktestDataSource
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.utils.clock import MarketSession
+
+_MARKET_TZ = ZoneInfo("America/New_York")
 
 
 class FakeBacktestDataSource(BacktestDataSource):
@@ -46,7 +49,11 @@ class FakeBacktestDataSource(BacktestDataSource):
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
-        return [s for s in self._sessions if s.open >= start and s.close <= end]
+        # By CALENDAR DATE, exactly like YahooBacktestData/AlpacaBacktestData: a bare-midnight `end`
+        # (the conventional way to spell a backtest's last day) means "through the end of that day".
+        first_date = start.astimezone(_MARKET_TZ).date()
+        last_date = end.astimezone(_MARKET_TZ).date()
+        return [s for s in self._sessions if first_date <= s.open.astimezone(_MARKET_TZ).date() <= last_date]
 
 
 def make_close_indexed_frame(

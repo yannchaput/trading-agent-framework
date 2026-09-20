@@ -256,7 +256,12 @@ def _run(
     strategy.executor.run()
     elapsed = time.monotonic() - started
 
-    benchmark_bars = data_source.bars(benchmark_asset, end, FULL_HISTORY, timestep)
+    # A bare-midnight `end` means "through the end of that day" (both real data sources include that
+    # date's session), but a bar is stamped at its CLOSE, i.e. after that midnight. Reading the benchmark
+    # up to the exact instant `end` therefore dropped the last session's bar (NaN benchmark_close, and
+    # that session silently missing from metrics.json); read it up to the last session's close instead.
+    benchmark_cutoff = max(end, sessions[-1].close) if sessions else end
+    benchmark_bars = data_source.bars(benchmark_asset, benchmark_cutoff, FULL_HISTORY, timestep)
     benchmark_series = pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index) if benchmark_bars is not None else None
     benchmark_by_time: dict[datetime, Decimal] | None = {cast(datetime, ts): Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
 

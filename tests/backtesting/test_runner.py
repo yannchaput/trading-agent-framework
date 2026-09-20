@@ -368,6 +368,36 @@ def test_run_backtest_writes_a_session_cadence_equity_parquet_with_a_fully_joine
     _assert_session_cadence_equity(equity, sessions)
 
 
+def test_run_backtest_reaches_the_last_session_when_end_is_a_bare_midnight(tmp_path: Path) -> None:
+    """A bare-midnight `end` (how `Strategy.backtesting_end` is conventionally spelled) means "through
+    the end of that day": both real data sources include that date's session. The benchmark series
+    was read with `bars(benchmark, end, ...)`, an exact-instant cutoff, so it stopped BEFORE the last
+    session's own 16:00 bar: `benchmark_close` was NaN on the last row of equity.parquet, and
+    `metrics.json` silently dropped that session (benchmark return through the day before).
+    """
+    sessions = _sessions(date(2026, 3, 2), 6)
+    spy_closes = [400.0, 402.0, 401.0, 405.0, 407.0, 410.0]
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0 + i for i in range(6)]))
+    source.set_bars(SPY, _bars(sessions, spy_closes))
+
+    start = sessions[0].open - timedelta(hours=1)
+    end = datetime.combine(sessions[-1].close.date(), time(0), tzinfo=ET)  # midnight BEFORE the last session opens
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+    result = run_backtest(
+        strategy, start=start, end=end,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    equity = pd.read_parquet(result.run_dir / "equity.parquet")
+    _assert_session_cadence_equity(equity, sessions)  # 6 rows, every benchmark_close present
+    assert equity["benchmark_close"].iloc[-1] == spy_closes[-1]
+    metrics = json.loads((result.run_dir / "metrics.json").read_text())
+    assert metrics["total_return_benchmark"] == pytest.approx(spy_closes[-1] / spy_closes[0] - 1)
+
+
 class LateCloseBuyOnceStrategy(BuyOnceStrategy):
     """Same as `BuyOnceStrategy`, but with a non-default, publicly-overridable
     `minutes_after_closing` -- the exact knob round 2 of this review finding is about.
