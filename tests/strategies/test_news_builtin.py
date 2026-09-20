@@ -13,12 +13,12 @@ from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et, wee
 
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
-from trading_agent_framework.strategies.news_builtin.agent_news_binary import AGENT_NAME, MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
+from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, ConfigurationError, FatalStrategyError
 
@@ -65,13 +65,14 @@ def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] |
 
 
 def test_backtest_defaults_match_the_original_strategy() -> None:
-    assert NewsBinaryStrategy.backtesting_start == datetime(2025, 1, 1, tzinfo=MARKET_TZ)
-    assert NewsBinaryStrategy.backtesting_end == datetime(2026, 4, 1, tzinfo=MARKET_TZ)
-    assert NewsBinaryStrategy.budget == Decimal("10000")
-    assert NewsBinaryStrategy.benchmark_symbol == "SPY"
+    parameters = NewsBinaryStrategy.parameters
+    assert parameters["backtesting_start"] == datetime(2025, 1, 1, tzinfo=MARKET_TZ)
+    assert parameters["backtesting_end"] == datetime(2026, 8, 14, tzinfo=MARKET_TZ)
+    assert parameters["budget"] == 10000
+    assert parameters["benchmark_symbol"] == "SPY"
 
 
-@pytest.mark.parametrize(("mode", "expected"), [(TradingMode.BACKTESTING, "1D"), (TradingMode.PAPER, "2H"), (TradingMode.LIVE, "2H")])
+@pytest.mark.parametrize(("mode", "expected"), [(TradingMode.BACKTESTING, "1D"), (TradingMode.PAPER, "1H"), (TradingMode.LIVE, "1H")])
 def test_initialize_sets_sleeptime_per_mode(tmp_path: Path, mode: TradingMode, expected: str) -> None:
     strategy, _, _ = _strategy(tmp_path, mode)
 
@@ -87,13 +88,14 @@ def test_initialize_creates_the_agent_with_prebuilt_memory_and_news_tools(tmp_pa
 
     [created] = agents.created
     names = {tool.__name__ for tool in created["tools"]}  # ty: ignore[unresolved-attribute]
-    assert created["name"] == AGENT_NAME
+    assert created["name"] == NewsBinaryStrategy.AGENT_NAME
     assert {"search_news", "remember_decision", "search_memory", "submit_order", "get_positions", "get_bars", "get_last_price"} <= names
     assert "SHV" in created["system_prompt"]  # ty: ignore[unsupported-operator]
 
 
 def test_backtest_runs_the_agent_on_the_first_and_every_fifth_iteration(tmp_path: Path) -> None:
     strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
+    strategy.strategy_parameters = {**NewsBinaryStrategy.strategy_parameters, "backtest_every_n_iterations": 5}
     strategy.initialize()
 
     for _ in range(10):
@@ -126,7 +128,7 @@ def test_an_agent_error_is_logged_and_does_not_stop_the_run(tmp_path: Path, capl
 
 
 def test_backtest_fails_fast_after_three_consecutive_agent_errors(tmp_path: Path) -> None:
-    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
     strategy.initialize()
     handle.error = AgentError("bad LLM_BASE_URL")
 
@@ -150,7 +152,7 @@ def test_a_dead_llm_aborts_a_real_backtest_instead_of_writing_a_flat_report(tmp_
     source = FakeBacktestDataSource()
     source.set_sessions(sessions)
     source.set_bars(Asset("SPY"), bars)
-    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
     handle.error = AgentError("llm down")
 
     with pytest.raises(BacktestError, match="llm down"):
@@ -161,7 +163,7 @@ def test_a_dead_llm_aborts_a_real_backtest_instead_of_writing_a_flat_report(tmp_
 
 
 def test_backtest_agent_error_counter_is_reset_by_a_success(tmp_path: Path) -> None:
-    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING, {"backtest_every_n_iterations": 1})
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
     strategy.initialize()
     handle.script = [AgentError("x"), None, AgentError("x"), AgentError("x")]
 
@@ -200,21 +202,45 @@ def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path,
         strategy.initialize()
         strategy.on_trading_iteration()
 
-    assert AGENT_NAME in strategy.agents
+    assert NewsBinaryStrategy.AGENT_NAME in strategy.agents
     assert "Hold SHV." in caplog.text
 
 
-def test_run_backtesting_wires_yahoo_data_preload_and_fees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)  # run_backtesting clears a cwd-relative memory file; never touch the real one
     captured: dict[str, object] = {}
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
     strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
 
     strategy.run_backtesting()
 
-    assert captured["data_source"] is YahooBacktestData
+    assert captured["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
     assert captured["commission"] == Decimal("0.001")
-    assert captured["warmup_trading_days"] == 0
+    assert captured["warmup_trading_days"] == 300
+
+
+def test_run_backtesting_clears_a_memory_left_by_a_previous_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)
+    strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
+    memory_file = tmp_path / "memory" / strategy.name / "backtesting" / "memory.sqlite"
+    memory_file.parent.mkdir(parents=True)
+    memory_file.write_text("stale")
+
+    strategy.run_backtesting()
+
+    assert not memory_file.exists()
+
+
+def test_run_backtesting_needs_no_memory_from_a_previous_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `memory_path.exists` (no call) is always truthy, so this used to raise FileNotFoundError on
+    # the first run, before the backtest had even started.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)
+    strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
+
+    strategy.run_backtesting()
 
 
 def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:
@@ -228,6 +254,11 @@ def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Pat
     assert "get_account_balance" in prompt
     assert "Orders fill on a later bar" in prompt
     assert "do not buy in the same run" in prompt
+    # `buying_power` is a multiple of cash on a live margin account, so it may only ever be named as
+    # the smaller-of bound alongside `cash` -- never as the amount to size against on its own.
+    assert "SMALLER of the 'cash' and 'buying_power'" in prompt
+    assert "buying on margin is forbidden" in prompt
+    assert "'error'" in prompt
     assert "SHV" in prompt
     mentioned = {"search_memory", "search_news", "get_positions", "get_orders", "remember_decision", "open_thesis", "close_thesis", "get_account_balance"}
     assert all(name in prompt for name in mentioned)

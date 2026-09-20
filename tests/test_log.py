@@ -69,7 +69,7 @@ def test_info_line_keeps_ansi_colour_in_file(tmp_path: Path) -> None:
     returned = _color_logger().log_info("hello")
     line = _last_line(log_file)
     assert returned == "hello"
-    pattern = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} \| INFO \| \[momentum\] "
+    pattern = r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d,\d{3} \| INFO \| test_log\.py \| \[momentum\] "
     assert re.fullmatch(pattern + re.escape(f"{ANSI_BLUE}hello{ANSI_RESET}"), line)
 
 

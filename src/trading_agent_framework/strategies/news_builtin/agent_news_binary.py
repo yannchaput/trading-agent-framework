@@ -116,7 +116,7 @@ class NewsBinaryStrategy(Strategy):
     def run_backtesting(self):
         # Clean memory before backtest
         memory_path = Path(Path.cwd() / "memory" / self.name / "backtesting" / "memory.sqlite")
-        if memory_path and memory_path.exists:
+        if memory_path.exists():
             self.log_warning("A memory remains from previous backtest. Deleting it.")
             memory_path.unlink()
         # use class strategy parameters as the strategy constructor is not run yet
@@ -126,7 +126,7 @@ class NewsBinaryStrategy(Strategy):
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
-            budget=Decimal(self.parameters["budget"]),
-            commission=Decimal(self.parameters["commission"]),
+            budget=Decimal(str(self.parameters["budget"])),
+            commission=Decimal(str(self.parameters["commission"])),
             warmup_trading_days=self.parameters["warmup_trading_days"],
         )

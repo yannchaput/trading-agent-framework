@@ -9,13 +9,13 @@ from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 
 def test_registry_lists_both_strategies() -> None:
-    assert set(main_module.AGENT_STRATEGIES) == {"cross_momentum", "news_builtin"}
+    assert set(main_module.AGENT_STRATEGIES) == {"cross_momentum", "news_binary"}
 
 
-def test_news_builtin_builder_returns_the_strategy() -> None:
-    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="news_builtin")
+def test_news_binary_builder_returns_the_strategy() -> None:
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="news_binary")
 
-    strategy = main_module._build_news_builtin(broker, TradingMode.BACKTESTING)  # ty: ignore[invalid-argument-type]
+    strategy = main_module._build_news_binary(broker, TradingMode.BACKTESTING)  # ty: ignore[invalid-argument-type]
 
     assert isinstance(strategy, NewsBinaryStrategy)
     assert strategy.is_backtesting
