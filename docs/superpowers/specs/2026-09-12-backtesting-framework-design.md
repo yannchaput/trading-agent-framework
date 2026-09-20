@@ -70,8 +70,8 @@ Three conclusions drove the design:
   `None` per missing key). The `agents/` layer has no counters today; adding them is a later task.
 - **Cache purge / TTL / remote (S3) caching.** The TODO's "Cache management" item. §4.3 builds only the
   local read-through cache the backtester needs.
-- **Options, futures, crypto, margin, short-selling costs, corporate actions.** US equities, long and
-  short at par, cash account.
+- **Options, futures, crypto, margin, short selling, corporate actions.** US equities, long-only cash
+  account (was "long and short at par" until 2026-09-20; see §6.1).
 - **Multi-strategy / portfolio-of-strategies backtests**, parameter sweeps, walk-forward optimisation.
 - **The dashboard migration itself.** §6.4 lists exactly what it will need to change; doing it is the
   separate "dashboard" TODO item.
@@ -303,8 +303,12 @@ Implements the `Broker` ABC against the ledger instead of a network:
   `sync_open_orders()` returns `[]` (no prior state to adopt). `start_stream`/`stop_stream` are no-ops.
 - `is_paper` is `True`; `_run_trading`'s live/paper guard is not on this path, but `run_backtesting()`
   asserts the mode is `BACKTESTING` for symmetry.
-- Short sales are allowed at par (no borrow cost) — consistent with "no margin/short-sell config yet"
-  being a separate TODO item.
+- **Long-only cash account (since 2026-09-20).** When an order would fill, a buy whose cost (commission
+  included) exceeds cash, or a sell larger than the held quantity, is rejected whole: the order gets an
+  error status and an `OrderEvent.ERROR`, and cash, positions and the ledger do not move. The check runs
+  at fill time, not at submission, because a rebalance submits its sells and buys together and sizes the
+  buys against the sells' proceeds; orders fill in submission order, so the sells free the cash first.
+  (Originally short sales were allowed at par and cash could go negative.)
 
 ### 6.2 Public API
 

@@ -325,17 +325,46 @@ class BacktestBroker(Broker):
                 continue
             if result is None:
                 continue  # still doesn't touch the trigger; retried on the next bar
+            rejection = self._rejection_reason(order, result.price)
+            if rejection is not None:
+                # Long-only cash account: the fill would overdraw cash or sell what isn't held. Like a
+                # real broker's rejection, the order fails whole and nothing (cash, positions, ledger) moves.
+                logger.warning("Rejected order %s at %s: %s", order.identifier, bar_time.isoformat(), rejection)
+                order.set_error(BrokerError(rejection))
+                self.tracker.process_trade_event(order, OrderEvent.ERROR)
+                del self._pending[identifier]
+                continue
             self._fill(order, result.price, bar_time)
             del self._pending[identifier]
 
-    def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
+    def _execution_terms(self, order: Order, raw_price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+        """`(execution_price, commission_cost, notional)` for filling `order` at `raw_price`."""
         assert order.quantity is not None  # notional orders are rejected at submission
         execution_price, commission_per_share = fills.apply_commission_and_slippage(
             raw_price, order.side, commission=self._commission, slippage=self._slippage
         )
+        return execution_price, commission_per_share * order.quantity, execution_price * order.quantity
+
+    def _rejection_reason(self, order: Order, raw_price: Decimal) -> str | None:
+        """Why filling `order` at `raw_price` is impossible for a long-only cash account, else `None`."""
+        assert order.quantity is not None
+        symbol = order.asset.symbol
+        _, commission_cost, notional = self._execution_terms(order, raw_price)
+        if order.side is OrderSide.BUY:
+            needed = notional + commission_cost
+            if needed > self._cash:
+                return f"insufficient cash: buying {order.quantity} {symbol} needs {needed} (commission included), cash is {self._cash}"
+            return None
+        existing = self._positions.get(order.asset)
+        held = existing.quantity if existing is not None and existing.side is PositionSide.LONG else Decimal(0)
+        if order.quantity > held:
+            return f"insufficient position: selling {order.quantity} {symbol}, holding {held}"
+        return None
+
+    def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
+        assert order.quantity is not None  # notional orders are rejected at submission
+        execution_price, commission_cost, notional = self._execution_terms(order, raw_price)
         quantity = order.quantity
-        commission_cost = commission_per_share * quantity
-        notional = execution_price * quantity
         if order.side is OrderSide.BUY:
             self._cash -= notional + commission_cost
         else:
@@ -354,17 +383,15 @@ class BacktestBroker(Broker):
 
     def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
         existing = self._positions.get(asset)
-        signed = quantity if side is OrderSide.BUY else -quantity
-        new_quantity = signed if existing is None else (
-            existing.quantity if existing.side is PositionSide.LONG else -existing.quantity
-        ) + signed
+        held = existing.quantity if existing is not None else Decimal(0)
+        new_quantity = held + quantity if side is OrderSide.BUY else held - quantity
+        assert new_quantity >= 0  # long-only: `_rejection_reason` never lets a sell exceed the holding
         if new_quantity == 0:
             self._positions.pop(asset, None)
             return
         self._positions[asset] = Position(
-            strategy_name=self.strategy_name, asset=asset, quantity=new_quantity.copy_abs(),
-            side=PositionSide.LONG if new_quantity > 0 else PositionSide.SHORT,
-            avg_fill_price=price,
+            strategy_name=self.strategy_name, asset=asset, quantity=new_quantity,
+            side=PositionSide.LONG, avg_fill_price=price,
         )
 
     def _sample_equity(self, cutoff: datetime) -> None:

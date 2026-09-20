@@ -228,22 +228,126 @@ def test_reducing_a_long_position_keeps_it_long_with_smaller_quantity() -> None:
     assert position.side is PositionSide.LONG
 
 
-def test_flipping_a_long_position_to_short_crosses_through_zero() -> None:
+# --- long-only cash account: unaffordable buys and unheld sells are rejected at fill time ------
+
+
+def _account(closes: list[float], *, budget: Decimal, commission: Decimal = Decimal(0)) -> tuple[BacktestBroker, BacktestClock]:
     source = FakeBacktestDataSource()
-    df = make_close_indexed_frame([150.0, 151.0, 152.0], start=DAY1, freq="1D")
-    source.set_bars(AAPL, df)
+    source.set_bars(AAPL, make_close_indexed_frame(closes, start=DAY1, freq="1D"))
     clock = BacktestClock(start=DAY1, sessions=[])
-    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=Decimal(100000))
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=budget, commission=commission)
     clock.on_advance = broker.on_advance
+    return broker, clock
 
-    broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
-    clock._now = DAY2
-    broker.on_advance(DAY1, DAY2)
 
-    broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.SELL, quantity=Decimal(15)))
-    clock._now = DAY3
-    broker.on_advance(DAY2, DAY3)
+def _order(side: OrderSide, quantity: int) -> Order:
+    return Order(strategy_name="momentum", asset=AAPL, side=side, quantity=Decimal(quantity))
 
-    position = broker.pull_positions()[0]
-    assert position.quantity == Decimal(5)
-    assert position.side is PositionSide.SHORT
+
+def _advance(broker: BacktestBroker, clock: BacktestClock, previous: datetime, now: datetime) -> None:
+    clock._now = now  # test-only direct time jump; production code goes through clock.wait()
+    broker.on_advance(previous, now)
+
+
+def test_a_buy_the_cash_cannot_cover_is_rejected_and_changes_nothing() -> None:
+    broker, clock = _account([150.0, 151.0], budget=Decimal(1000))
+    order = broker.submit_order(_order(OrderSide.BUY, 10))  # fills at 151 -> costs 1510
+
+    _advance(broker, clock, DAY1, DAY2)
+
+    assert order.status is OrderStatus.ERROR
+    assert "insufficient cash" in (order.error_message or "")
+    assert broker._cash == Decimal(1000)
+    assert broker.pull_positions() == []
+    assert broker.ledger.fills == []
+    assert order.identifier not in broker._pending
+
+
+def test_a_buy_costing_exactly_the_available_cash_fills_and_one_cent_more_is_rejected() -> None:
+    exact, exact_clock = _account([150.0, 151.0], budget=Decimal("1510"))
+    exact_order = exact.submit_order(_order(OrderSide.BUY, 10))
+    _advance(exact, exact_clock, DAY1, DAY2)
+
+    short, short_clock = _account([150.0, 151.0], budget=Decimal("1509.99"))
+    short_order = short.submit_order(_order(OrderSide.BUY, 10))
+    _advance(short, short_clock, DAY1, DAY2)
+
+    assert exact_order.status is OrderStatus.FILL
+    assert exact._cash == Decimal(0)
+    assert short_order.status is OrderStatus.ERROR
+    assert short._cash == Decimal("1509.99")
+
+
+def test_commission_counts_toward_the_cash_a_buy_needs() -> None:
+    # 10 shares at 100 = 1000 notional + 1% commission (10) = 1010 needed.
+    covered, covered_clock = _account([100.0, 100.0], budget=Decimal(1010), commission=Decimal("0.01"))
+    covered_order = covered.submit_order(_order(OrderSide.BUY, 10))
+    _advance(covered, covered_clock, DAY1, DAY2)
+
+    notional_only, notional_only_clock = _account([100.0, 100.0], budget=Decimal(1005), commission=Decimal("0.01"))
+    notional_only_order = notional_only.submit_order(_order(OrderSide.BUY, 10))
+    _advance(notional_only, notional_only_clock, DAY1, DAY2)
+
+    assert covered_order.status is OrderStatus.FILL
+    assert covered._cash == Decimal(0)
+    assert notional_only_order.status is OrderStatus.ERROR  # the notional alone (1000) fits, the commission does not
+    assert notional_only._cash == Decimal(1005)
+
+
+def test_a_buy_funded_by_a_sell_filling_on_the_same_bar_fills() -> None:
+    # The cross_momentum pattern: sells and buys are submitted together and the buys are sized
+    # against estimated sell proceeds. Orders fill in submission order, so the sell frees the cash.
+    broker, clock = _account([100.0, 100.0, 100.0], budget=Decimal(1000))
+    broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY1, DAY2)
+    assert broker._cash == Decimal(0)
+
+    sell = broker.submit_order(_order(OrderSide.SELL, 10))
+    buy = broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY2, DAY3)
+
+    assert sell.status is OrderStatus.FILL
+    assert buy.status is OrderStatus.FILL
+    assert broker._cash == Decimal(0)
+
+
+def test_a_sell_larger_than_the_holding_is_rejected_and_the_position_is_unchanged() -> None:
+    broker, clock = _account([150.0, 151.0, 152.0], budget=Decimal(100000))
+    broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY1, DAY2)
+    cash_after_buy = broker._cash
+
+    oversized = broker.submit_order(_order(OrderSide.SELL, 15))
+    _advance(broker, clock, DAY2, DAY3)
+
+    assert oversized.status is OrderStatus.ERROR
+    assert "insufficient position" in (oversized.error_message or "")
+    [position] = broker.pull_positions()
+    assert position.quantity == Decimal(10)
+    assert position.side is PositionSide.LONG
+    assert broker._cash == cash_after_buy
+
+
+def test_selling_something_that_is_not_held_is_rejected() -> None:
+    broker, clock = _account([150.0, 151.0], budget=Decimal(10000))
+    order = broker.submit_order(_order(OrderSide.SELL, 5))
+
+    _advance(broker, clock, DAY1, DAY2)
+
+    assert order.status is OrderStatus.ERROR
+    assert broker.pull_positions() == []
+    assert broker._cash == Decimal(10000)
+
+
+def test_the_second_of_two_full_size_sells_is_rejected() -> None:
+    broker, clock = _account([150.0, 151.0, 152.0], budget=Decimal(100000))
+    broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY1, DAY2)
+
+    first = broker.submit_order(_order(OrderSide.SELL, 10))
+    second = broker.submit_order(_order(OrderSide.SELL, 10))
+    _advance(broker, clock, DAY2, DAY3)
+
+    assert first.status is OrderStatus.FILL
+    assert second.status is OrderStatus.ERROR
+    assert broker.pull_positions() == []
