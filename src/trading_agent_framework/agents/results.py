@@ -27,15 +27,20 @@ class AgentRunResult:
 
 
 def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
-    """Turn a `create_agent(...).invoke(...)["messages"]` list into a lean `AgentRunResult`."""
+    """Turn a `create_agent(...).invoke(...)["messages"]` list into a lean `AgentRunResult`.
+
+    `output` is every non-empty `AIMessage` text, in order, separated by `---`.
+    """
+    # First pass: index each tool's result by the id of the call that produced it.
     tool_results: dict[str, str] = {}
     for message in messages:
         tool_call_id = getattr(message, "tool_call_id", None)
         if tool_call_id is not None:
             tool_results[tool_call_id] = _as_text(message.content)
 
+    # Second pass: pair each requested tool call with its result, and gather the AI texts.
     tool_calls: list[ToolCallRecord] = []
-    output = ""
+    ai_texts: list[str] = []
     for message in messages:
         for call in getattr(message, "tool_calls", None) or []:
             tool_calls.append(
@@ -45,13 +50,13 @@ def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
                     result=tool_results.get(call["id"], ""),
                 )
             )
+        if getattr(message, "type", None) == "ai":
+            text = getattr(message, "text", None)
+            text = (text if isinstance(text, str) else _as_text(message.content)).strip()
+            if text:
+                ai_texts.append(text)
 
-    last_message = messages[-1]
-    if getattr(last_message, "type", None) == "ai":
-        text = getattr(last_message, "text", None)
-        output = text if isinstance(text, str) else _as_text(last_message.content)
-
-    return AgentRunResult(output=output, tool_calls=tool_calls)
+    return AgentRunResult(output="\n\n---\n\n".join(ai_texts), tool_calls=tool_calls)
 
 
 def _as_text(content: object) -> str:

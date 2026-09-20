@@ -82,15 +82,35 @@ def test_a_tool_call_with_no_matching_tool_message_gets_empty_result() -> None:
     assert result.tool_calls == [ToolCallRecord(name="orphan", args={}, result="")]
 
 
-def test_only_the_last_ai_message_content_becomes_output() -> None:
+def test_every_ai_message_becomes_output_separated_by_a_rule() -> None:
     messages = [_human("go"), _ai("thinking..."), _ai("final answer")]
 
     result = parse_agent_messages(messages)
 
-    assert result.output == "final answer"
+    assert result.output == "thinking...\n\n---\n\nfinal answer"
 
 
-def test_output_is_the_last_ai_message_even_without_a_tool_calls_attribute() -> None:
+def test_empty_and_whitespace_only_ai_messages_are_skipped() -> None:
+    messages = [_human("go"), _ai("  "), _ai("only reply"), _ai("")]
+
+    result = parse_agent_messages(messages)
+
+    assert result.output == "only reply"
+
+
+def test_tool_messages_never_leak_into_output() -> None:
+    messages = [
+        _human("go"),
+        _ai("", tool_calls=[{"name": "remember", "args": {}, "id": "call_1"}]),
+        _tool_result("call_1", '{"id": "memory_abc"}'),
+    ]
+
+    result = parse_agent_messages(messages)
+
+    assert result.output == ""
+
+
+def test_an_ai_message_without_a_tool_calls_attribute_is_still_captured() -> None:
     messages = [
         _human("go"),
         _ai("first", tool_calls=[{"name": "remember", "args": {}, "id": "call_1"}]),
@@ -100,7 +120,7 @@ def test_output_is_the_last_ai_message_even_without_a_tool_calls_attribute() -> 
 
     result = parse_agent_messages(messages)
 
-    assert result.output == "last"
+    assert result.output == "first\n\n---\n\nlast"
     assert [call.name for call in result.tool_calls] == ["remember"]
 
 
