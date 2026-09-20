@@ -154,7 +154,9 @@ def _relative_stats(returns: pd.Series, benchmark_returns: pd.Series, periods: i
     beta = covariance / np.var(bench)
     daily_rf = risk_free_rate / periods
     alpha_daily = (np.mean(strat) - daily_rf) - beta * (np.mean(bench) - daily_rf)
-    correlation = float(np.corrcoef(strat, bench)[0, 1])
+    # A flat strategy (zero variance) has no defined correlation; NaN is what corrcoef
+    # returns (report.py turns it into null) -- skip the call to avoid its divide warning.
+    correlation = float(np.corrcoef(strat, bench)[0, 1]) if np.std(strat) > 0 else float("nan")
     r_squared = correlation**2
     excess = strat - bench
     tracking_error = np.std(excess, ddof=1)
