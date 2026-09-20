@@ -3,13 +3,15 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import pytest
 from tests.backtesting.fakes import FakeBacktestDataSource, make_close_indexed_frame
 
-from trading_agent_framework.backtesting.broker import BacktestBroker
+from trading_agent_framework.backtesting.broker import BacktestBroker, _PendingOrder
 from trading_agent_framework.backtesting.clock import BacktestClock
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.utils.errors import OrderValidationError
 
 AAPL = Asset("AAPL")
 DAY1 = datetime(2026, 1, 5, 16, tzinfo=UTC)
@@ -250,14 +252,18 @@ def _advance(broker: BacktestBroker, clock: BacktestClock, previous: datetime, n
 
 
 def test_a_buy_the_cash_cannot_cover_is_rejected_and_changes_nothing() -> None:
-    broker, clock = _account([150.0, 151.0], budget=Decimal(1000))
-    order = broker.submit_order(_order(OrderSide.BUY, 10))  # fills at 151 -> costs 1510
+    # The price GAPS between submission and fill: 10 shares estimate at 150 (1500, inside the
+    # 1600 budget, so `_projected_rejection_reason` lets it through) but fill at 200 (2000).
+    # This is what the fill-time check is for now that submission catches the rest -- it is the
+    # authority, and the submission-time projection only rejects what is already certain.
+    broker, clock = _account([150.0, 200.0], budget=Decimal(1600))
+    order = broker.submit_order(_order(OrderSide.BUY, 10))
 
     _advance(broker, clock, DAY1, DAY2)
 
     assert order.status is OrderStatus.ERROR
     assert "insufficient cash" in (order.error_message or "")
-    assert broker._cash == Decimal(1000)
+    assert broker._cash == Decimal(1600)
     assert broker.pull_positions() == []
     assert broker.ledger.fills == []
     assert order.identifier not in broker._pending
@@ -279,18 +285,19 @@ def test_a_buy_costing_exactly_the_available_cash_fills_and_one_cent_more_is_rej
 
 
 def test_commission_counts_toward_the_cash_a_buy_needs() -> None:
-    # 10 shares at 100 = 1000 notional + 1% commission (10) = 1010 needed.
+    # 10 shares at 100 = 1000 notional + 1% commission (10) = 1010 needed. At flat prices the
+    # submission-time estimate equals the fill price, so the budget that covers only the notional
+    # is now turned away at submission -- but the invariant under test is the same one.
     covered, covered_clock = _account([100.0, 100.0], budget=Decimal(1010), commission=Decimal("0.01"))
     covered_order = covered.submit_order(_order(OrderSide.BUY, 10))
     _advance(covered, covered_clock, DAY1, DAY2)
 
-    notional_only, notional_only_clock = _account([100.0, 100.0], budget=Decimal(1005), commission=Decimal("0.01"))
-    notional_only_order = notional_only.submit_order(_order(OrderSide.BUY, 10))
-    _advance(notional_only, notional_only_clock, DAY1, DAY2)
+    notional_only, _ = _account([100.0, 100.0], budget=Decimal(1005), commission=Decimal("0.01"))
 
     assert covered_order.status is OrderStatus.FILL
     assert covered._cash == Decimal(0)
-    assert notional_only_order.status is OrderStatus.ERROR  # the notional alone (1000) fits, the commission does not
+    with pytest.raises(OrderValidationError, match="needs about 1010"):  # 1000 fits, the commission does not
+        notional_only.submit_order(_order(OrderSide.BUY, 10))
     assert notional_only._cash == Decimal(1005)
 
 
@@ -311,13 +318,21 @@ def test_a_buy_funded_by_a_sell_filling_on_the_same_bar_fills() -> None:
     assert broker._cash == Decimal(0)
 
 
-def test_a_sell_larger_than_the_holding_is_rejected_and_the_position_is_unchanged() -> None:
+def test_the_fill_time_guard_still_refuses_an_oversized_sell_that_bypassed_submission() -> None:
+    # Oversized sells are turned away at submission now (see `test_broker_projection.py`), which
+    # leaves this guard unreachable through the public API -- so reach it directly. It stays as
+    # defense in depth: the projection works off ESTIMATED prices and deliberately lets through
+    # what it cannot price, and this is what catches those at the moment cash actually moves.
     broker, clock = _account([150.0, 151.0, 152.0], budget=Decimal(100000))
     broker.submit_order(_order(OrderSide.BUY, 10))
     _advance(broker, clock, DAY1, DAY2)
     cash_after_buy = broker._cash
 
-    oversized = broker.submit_order(_order(OrderSide.SELL, 15))
+    oversized = _order(OrderSide.SELL, 15)
+    broker.tracker.track_unprocessed(oversized)
+    broker._pending[oversized.identifier] = _PendingOrder(
+        order=oversized, asset=AAPL, last_evaluated=DAY2
+    )
     _advance(broker, clock, DAY2, DAY3)
 
     assert oversized.status is OrderStatus.ERROR
@@ -326,28 +341,3 @@ def test_a_sell_larger_than_the_holding_is_rejected_and_the_position_is_unchange
     assert position.quantity == Decimal(10)
     assert position.side is PositionSide.LONG
     assert broker._cash == cash_after_buy
-
-
-def test_selling_something_that_is_not_held_is_rejected() -> None:
-    broker, clock = _account([150.0, 151.0], budget=Decimal(10000))
-    order = broker.submit_order(_order(OrderSide.SELL, 5))
-
-    _advance(broker, clock, DAY1, DAY2)
-
-    assert order.status is OrderStatus.ERROR
-    assert broker.pull_positions() == []
-    assert broker._cash == Decimal(10000)
-
-
-def test_the_second_of_two_full_size_sells_is_rejected() -> None:
-    broker, clock = _account([150.0, 151.0, 152.0], budget=Decimal(100000))
-    broker.submit_order(_order(OrderSide.BUY, 10))
-    _advance(broker, clock, DAY1, DAY2)
-
-    first = broker.submit_order(_order(OrderSide.SELL, 10))
-    second = broker.submit_order(_order(OrderSide.SELL, 10))
-    _advance(broker, clock, DAY2, DAY3)
-
-    assert first.status is OrderStatus.FILL
-    assert second.status is OrderStatus.ERROR
-    assert broker.pull_positions() == []

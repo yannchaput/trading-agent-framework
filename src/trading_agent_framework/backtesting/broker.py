@@ -47,6 +47,14 @@ class _PendingOrder:
     needs_skip: bool = False
 
 
+@dataclass(frozen=True)
+class _Projection:
+    """What `BacktestBroker._pending` will have done to the account once it all fills."""
+
+    cash: Decimal
+    pending_sells: dict[Asset, Decimal]
+
+
 class BacktestBroker(Broker):
     """`Broker` implementation backed by simulated fills against a `BacktestDataSource`."""
 
@@ -86,6 +94,14 @@ class BacktestBroker(Broker):
             raise OrderValidationError(
                 "backtesting only supports quantity-based orders, not notional orders"
             )
+        # Reject against the projection (cash/holdings once every pending order fills) *before*
+        # tracking, so a rejected order never enters the tracker and the caller -- an LLM agent
+        # through `submit_order`, which turns the exception into `{"error": ...}` -- finds out
+        # in the same iteration. Without this the only signal is the fill-time rejection below,
+        # a session later, which the agent never sees and so repeats.
+        projected_rejection = self._projected_rejection_reason(order)
+        if projected_rejection is not None:
+            raise OrderValidationError(projected_rejection)
         if not order.client_order_id:
             order.client_order_id = f"{self.strategy_name}:{order.identifier}"
         self.tracker.track_unprocessed(order)
@@ -130,9 +146,18 @@ class BacktestBroker(Broker):
         return self._news_source
 
     def get_account(self) -> AccountBalances:
-        portfolio_value = self._portfolio_value(self.clock.now())
+        """Balances, with `buying_power` net of orders still pending.
+
+        `cash` and `portfolio_value` stay the settled, raw values: `Strategy.get_cash()`
+        reads `cash`, and `cross_momentum.rebalance` adds its *own* estimate of pending sell
+        proceeds to it, so netting `cash` here would make that strategy double-count. Only
+        `buying_power` moves -- which is what a real broker does with open orders anyway, and
+        what an agent should size a buy against.
+        """
+        now = self.clock.now()
+        portfolio_value = self._portfolio_value(now)
         return AccountBalances(
-            cash=self._cash, portfolio_value=portfolio_value, buying_power=self._cash
+            cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash
         )
 
     def modify_order(
@@ -287,6 +312,81 @@ class BacktestBroker(Broker):
             signed_qty = position.quantity if position.side is PositionSide.LONG else -position.quantity
             total += signed_qty * price
         return total
+
+    # --- pending-order projection -------------------------------------------------------
+
+    def _estimated_price(self, order: Order, cutoff: datetime) -> Decimal | None:
+        """Best guess at what `order` will fill at, or `None` when no price is available.
+
+        A limit price is the bound the fill engine itself honours; everything else is
+        estimated at the latest close, read through `_source_bars` so the no-look-ahead
+        gate governs this path exactly like every other price read.
+        """
+        if order.limit_price is not None:
+            return order.limit_price
+        bar = self._latest_bar(order.asset, cutoff)
+        return None if bar is None else bar.close
+
+    def _projection(self, cutoff: datetime) -> _Projection:
+        """Cash and per-asset sell quantity once every currently pending order has filled.
+
+        Pending sells are *credited* here, deliberately: orders fill in submission order, so a
+        rebalance that submits its sells before its buys really is funded by those sells (the
+        reason the hard check lives at fill time in the first place). An order whose price can't
+        be estimated contributes its quantity but no cash; `_rejection_reason` remains the net.
+        """
+        cash = self._cash
+        pending_sells: dict[Asset, Decimal] = {}
+        for pending in self._pending.values():
+            order = pending.order
+            if order.quantity is None:  # notional orders never reach `_pending`
+                continue
+            if order.side is OrderSide.SELL:
+                pending_sells[order.asset] = pending_sells.get(order.asset, Decimal(0)) + order.quantity
+            price = self._estimated_price(order, cutoff)
+            if price is None:
+                continue
+            _, commission_cost, notional = self._execution_terms(order, price)
+            if order.side is OrderSide.BUY:
+                cash -= notional + commission_cost
+            else:
+                cash += notional - commission_cost
+        return _Projection(cash=cash, pending_sells=pending_sells)
+
+    def _projected_rejection_reason(self, order: Order) -> str | None:
+        """Why submitting `order` is already impossible given what is pending, else `None`.
+
+        The submission-time mirror of `_rejection_reason`, which stays the authority at fill
+        time: this one works off estimated prices, so it only rejects what is *certainly*
+        impossible and lets anything it cannot price through.
+        """
+        if order.quantity is None:
+            return None
+        symbol = order.asset.symbol
+        now = self.clock.now()
+        projection = self._projection(now)
+        if order.side is OrderSide.SELL:
+            existing = self._positions.get(order.asset)
+            held = existing.quantity if existing is not None and existing.side is PositionSide.LONG else Decimal(0)
+            available = held - projection.pending_sells.get(order.asset, Decimal(0))
+            if order.quantity > available:
+                pending_note = "" if available == held else f" ({held} held, the rest already pending sale)"
+                return (
+                    f"insufficient position: selling {order.quantity} {symbol}, "
+                    f"available {available}{pending_note}"
+                )
+            return None
+        price = self._estimated_price(order, now)
+        if price is None:
+            return None  # unpriceable: let it through and let the fill-time check decide
+        _, commission_cost, notional = self._execution_terms(order, price)
+        needed = notional + commission_cost
+        if needed > projection.cash:
+            return (
+                f"insufficient buying power: buying {order.quantity} {symbol} needs about "
+                f"{needed} (commission included), buying power is {projection.cash}"
+            )
+        return None
 
     # --- fills: called by BacktestClock.on_advance --------------------------------------
 
