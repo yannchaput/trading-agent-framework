@@ -120,6 +120,7 @@ class NewsBinaryStrategy(Strategy):
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
+            benchmark=self.parameters["benchmark_symbol"],
             budget=Decimal(str(self.parameters["budget"])),
             commission=Decimal(str(self.parameters["commission"])),
             warmup_trading_days=self.parameters["warmup_trading_days"],
