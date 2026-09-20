@@ -10,7 +10,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 
 from trading_agent_framework.agents.tools import PrebuiltTools
 from trading_agent_framework.agents.tools.news import news_tools
@@ -114,11 +113,6 @@ class NewsBinaryStrategy(Strategy):
         return count == 1 or count % self.vars.strategy_parameters["backtest_every_n_iterations"] == 0
 
     def run_backtesting(self):
-        # Clean memory before backtest
-        memory_path = Path(Path.cwd() / "memory" / self.name / "backtesting" / "memory.sqlite")
-        if memory_path.exists():
-            self.log_warning("A memory remains from previous backtest. Deleting it.")
-            memory_path.unlink()
         # use class strategy parameters as the strategy constructor is not run yet
         symbols = [*self.strategy_parameters["symbols"], self.strategy_parameters["defensive_symbol"]]
         return super().run_backtesting(

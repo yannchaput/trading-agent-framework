@@ -207,7 +207,6 @@ def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path,
 
 
 def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)  # run_backtesting clears a cwd-relative memory file; never touch the real one
     captured: dict[str, object] = {}
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
     strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
@@ -218,29 +217,6 @@ def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monk
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
     assert captured["commission"] == Decimal("0.001")
     assert captured["warmup_trading_days"] == 300
-
-
-def test_run_backtesting_clears_a_memory_left_by_a_previous_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)
-    strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
-    memory_file = tmp_path / "memory" / strategy.name / "backtesting" / "memory.sqlite"
-    memory_file.parent.mkdir(parents=True)
-    memory_file.write_text("stale")
-
-    strategy.run_backtesting()
-
-    assert not memory_file.exists()
-
-
-def test_run_backtesting_needs_no_memory_from_a_previous_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # `memory_path.exists` (no call) is always truthy, so this used to raise FileNotFoundError on
-    # the first run, before the backtest had even started.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)
-    strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
-
-    strategy.run_backtesting()
 
 
 def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -61,6 +62,34 @@ def test_a_fresh_store_deletes_the_previous_database(tmp_path: Path) -> None:
     for suffix in ("-wal", "-shm"):
         side_file = tmp_path / f"{DB_FILE_NAME}{suffix}"
         assert not side_file.exists() or side_file.read_bytes() != b"stale"
+
+
+def test_a_fresh_store_logs_that_it_deletes_the_previous_database(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    make_memory_store(tmp_path).remember("stale")
+
+    with caplog.at_level(logging.INFO, logger="trading_agent_framework.memory.store"):
+        make_memory_store(tmp_path, fresh=True)
+
+    [record] = [r for r in caplog.records if r.name == "trading_agent_framework.memory.store"]
+    assert record.levelno == logging.INFO
+    assert str(tmp_path / DB_FILE_NAME) in record.getMessage()
+    assert "deleting" in record.getMessage().lower()
+
+
+def test_a_fresh_store_is_silent_when_there_is_nothing_to_delete(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.INFO, logger="trading_agent_framework.memory.store"):
+        make_memory_store(tmp_path, fresh=True)
+
+    assert caplog.records == []
+
+
+def test_a_persistent_store_never_logs_a_deletion(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    make_memory_store(tmp_path).remember("keep me")
+
+    with caplog.at_level(logging.INFO, logger="trading_agent_framework.memory.store"):
+        make_memory_store(tmp_path)
+
+    assert caplog.records == []
 
 
 def test_sqlite_errors_surface_as_memory_store_error(tmp_path: Path) -> None:

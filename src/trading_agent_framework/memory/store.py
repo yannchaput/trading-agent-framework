@@ -8,6 +8,7 @@ search. This is the only module that touches SQLite.
 from __future__ import annotations
 
 import hashlib
+import logging
 import sqlite3
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -19,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.memory import records
 from trading_agent_framework.utils.errors import MemoryStoreError, MemoryValidationError
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from trading_agent_framework.config.env import TradingMode
@@ -205,6 +208,8 @@ class MemoryStore:
         try:
             db_path.parent.mkdir(parents=True, exist_ok=True)
             if fresh:
+                if db_path.exists():
+                    logger.info("Memory store %s holds data from a previous run; deleting it to start fresh.", db_path)
                 for suffix in ("", "-wal", "-shm"):
                     db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
         except OSError as exc:
