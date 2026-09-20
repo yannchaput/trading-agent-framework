@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -220,7 +221,8 @@ def _run(
     # otherwise fire before any handler is attached to the package logger, fall
     # through to `logging.lastResort`'s raw, unformatted stderr dump, and never
     # reach the run's log file at all.
-    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root, level=logging.INFO)
+    log_level = logging.getLevelNamesMapping().get(os.environ["BACKTEST_LOGGING_LEVEL"], logging.INFO)
+    log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root, level=log_level)
     run_dir = log_file.parent
 
     benchmark_asset = Asset(benchmark)

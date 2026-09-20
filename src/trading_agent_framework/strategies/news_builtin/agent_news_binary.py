@@ -98,7 +98,9 @@ class NewsBinaryStrategy(Strategy):
                 raise FatalStrategyError(f"[{self.AGENT_NAME}] failed {self.vars.consecutive_agent_errors} runs in a row, aborting the backtest; last error: {exc}") from exc
             return
         self.vars.consecutive_agent_errors = 0
-        self.log_info(f"[{self.AGENT_NAME}] {result.output}")
+        self.log_info(f"[{self.AGENT_NAME}] Agent output: \n{result.output}")
+        for i, tool_call in enumerate(result.tool_calls):
+            self.log_info(f"tool_call_{i}: {tool_call}")
 
     def _backtest_iteration_is_due(self) -> bool:
         """
