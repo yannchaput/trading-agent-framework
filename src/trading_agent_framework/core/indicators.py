@@ -69,10 +69,7 @@ class Indicators:
             raise AttributeError(name)
         function = getattr(_pandas_ta(), name, None)
         if not callable(function):
-            raise AttributeError(
-                f"pandas_ta_classic has no indicator named {name!r}; "
-                "use indicators.custom(name, fn, asset, ...) for your own"
-            )
+            raise AttributeError(f"pandas_ta_classic has no indicator named {name!r}; use indicators.custom(name, fn, asset, ...) for your own")
 
         def compute(df: pd.DataFrame, **kwargs: Any) -> object:
             series = {column: df[column] for column in _OHLCV}
@@ -111,9 +108,7 @@ class Indicators:
         include_after_hours = options.pop("include_after_hours", True)
         if count is None:
             count = default_bars(options)
-        bars = self._strategy.get_historical_prices(
-            asset, count, timestep, include_after_hours=include_after_hours
-        )
+        bars = self._strategy.get_historical_prices(asset, count, timestep, include_after_hours=include_after_hours)
         if bars is None or bars.df.empty:
             return None
         return _latest(name, compute(bars.df, **options))
@@ -136,12 +131,10 @@ def _latest(name: str, result: object) -> IndicatorValue:
         return IndicatorRow({str(column): _number(v) for column, v in result.iloc[-1].items()})
     if isinstance(result, pd.Series):
         return None if result.empty else _number(result.iloc[-1])
-    raise TypeError(
-        f"indicator {name!r} returned {type(result).__name__}; expected a pandas Series or DataFrame"
-    )
+    raise TypeError(f"indicator {name!r} returned {type(result).__name__}; expected a pandas Series or DataFrame")
 
 
 def _number(value: object) -> float | None:
     import pandas as pd
 
-    return None if pd.isna(value) else float(value)  # ty: ignore[invalid-argument-type]
+    return None if pd.isna(value) else float(value)  # type: ignore # ty: ignore[invalid-argument-type]
