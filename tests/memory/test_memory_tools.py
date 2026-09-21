@@ -97,6 +97,15 @@ def test_write_tools_return_a_lean_summary(
     assert stored["text"] == kwargs["text"]
 
 
+def test_a_repeated_remember_decision_call_returns_the_same_lean_summary(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    remember_decision = _tools(store)["remember_decision"]
+    first = remember_decision(text="KEEP defensive")
+
+    assert remember_decision(text="KEEP defensive") == first
+    assert len(memory_rows(store, "SELECT * FROM memory_events")) == 1
+
+
 def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     tools = _tools(store)

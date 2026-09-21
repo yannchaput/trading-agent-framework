@@ -242,6 +242,17 @@ def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Pat
     assert mentioned <= tool_names
 
 
+def test_system_prompt_tells_the_agent_to_record_once_and_stop(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    # Without it the local model re-called remember_decision (and even submit_order) after success,
+    # because the tool result gives it no sign that the run is over.
+    assert "Call remember_decision exactly once per run" in prompt
+    assert "make no further tool call" in prompt
+
+
 def test_system_prompt_rotates_in_one_run_instead_of_waiting_for_the_sell_to_fill(tmp_path: Path) -> None:
     strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
     strategy.initialize()

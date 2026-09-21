@@ -229,6 +229,39 @@ def test_remember_decision_stores_evidence_as_json(tmp_path: Path) -> None:
     assert _events(store)[-1]["event_type"] == "decision.recorded"
 
 
+def test_remember_decision_repeated_within_one_tick_returns_the_existing_decision(tmp_path: Path) -> None:
+    # A local LLM re-calls remember_decision after it succeeded (112 times in one backtest tick): the
+    # clock has not moved, so an identical decision is the same decision, not a new memory.
+    store = make_memory_store(tmp_path)
+    first = store.remember_decision("KEEP defensive", symbol="SHV", action="keep")
+    again = store.remember_decision("KEEP defensive", symbol="shv", action="keep")
+
+    assert again["id"] == first["id"]
+    assert [e["event_type"] for e in _events(store)] == ["decision.recorded"]
+    assert memory_rows(store, "SELECT COUNT(*) AS n FROM memory_index")[0]["n"] == 1
+
+
+def test_remember_decision_with_the_same_text_on_a_later_tick_is_a_new_decision(tmp_path: Path) -> None:
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    first = store.remember_decision("KEEP defensive")
+    clock.advance(3 * 3600)
+    second = store.remember_decision("KEEP defensive")
+
+    assert second["id"] != first["id"]
+    assert len(_events(store)) == 2
+
+
+def test_remember_decision_differing_in_text_or_action_within_one_tick_is_kept(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    ids = {
+        store.remember_decision("Bought SPY", symbol="SPY", action="buy")["id"],
+        store.remember_decision("Bought SPY", symbol="SPY", action="sell")["id"],
+        store.remember_decision("Sold SHV", symbol="SPY", action="buy")["id"],
+    }
+    assert len(ids) == 3
+
+
 @pytest.mark.parametrize(
     ("outcome", "status"),
     [(None, "proposed"), ({"validated": True}, "validated"), ({"validated": "yes"}, "proposed")],

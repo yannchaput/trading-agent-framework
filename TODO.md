@@ -7,8 +7,9 @@
 * Compose strategies, e.g news sentiment analysis + momentum
 * Use "https://data.alpaca.markets/v1beta1/screener/stocks/movers" to screen values from NASDAQ and explore potentials.
 * ~~Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)~~ => Too complex
-* ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab~~ (no cache hits: LLM call caching was dropped as too complex)
+* ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * Create a batch to run all the smoke tests altogether
+* Add cash available during backtesting
 
 ## MIGRATION
 * ~~Alpaca broker~~
@@ -55,9 +56,8 @@
 
 ### News sentiment analysis
 * Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.
-* Why the strategy always opt for SPY over QQQ ?
-* Investigate "current_regime": None and defensive posture
+* ~~Investigate "current_regime": None and defensive posture~~
 * Add a log in executor to log the execution hour : usefull for intraday.
-* Log the system prompt in 'initialize' method
+* ~~Log the system prompt in 'initialize' method~~
 
 ### VWAP + idiosyncratic mean reversion

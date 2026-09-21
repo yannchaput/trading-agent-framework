@@ -325,6 +325,7 @@ class MemoryStore:
             agent_name=agent_name,
             model_call_id=model_call_id,
             retrieval_id=retrieval_id,
+            reuse_same_tick=True,
         )
 
     def remember_lesson(
@@ -666,11 +667,25 @@ class MemoryStore:
         agent_name: str | None,
         model_call_id: str | None,
         retrieval_id: str | None,
+        reuse_same_tick: bool = False,
     ) -> dict[str, Any]:
-        """Validate, then write a new memory (new id) in one transaction."""
+        """Validate, then write a new memory (new id) in one transaction.
+
+        With `reuse_same_tick`, an identical memory (kind, text, symbol, metadata) already written at the
+        current strategy time is returned instead of written again: a local LLM that re-calls a write tool
+        after it succeeded must not fill the store with copies. Time is the strategy clock, so this
+        is exact in backtests (the clock is frozen during a tick) and a no-op in live trading.
+        """
         clean_text = _require_text(text)
         clean_tags = _require_tags(tags)
         with self._transaction() as conn:
+            if reuse_same_tick:
+                existing = conn.execute(
+                    "SELECT * FROM memory_index WHERE kind = ? AND text = ? AND symbol IS ? AND metadata_json = ? AND created_at = ?",
+                    (kind, clean_text, records.normalize_symbol(symbol), records.json_dumps(metadata), self._timestamp()),
+                ).fetchone()
+                if existing is not None:
+                    return records.index_item(dict(existing))
             return self._write_memory(
                 conn,
                 memory_id=self._unused_memory_id(conn, kind),

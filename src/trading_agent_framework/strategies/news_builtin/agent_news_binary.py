@@ -69,7 +69,8 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "correct the quantity and try once more, or skip the trade this run. "
         "Keep position sizing reasonable and never place a duplicate order.\n"
         "7. Record the outcome: call remember_decision after every decision, and open_thesis or close_thesis when the "
-        "regime call changes."
+        "regime call changes. Call remember_decision exactly once per run: once it returns status 'recorded', the run "
+        "is over, so reply with a one-line summary and make no further tool call."
     )
 
 
@@ -96,23 +97,25 @@ class NewsBinaryStrategy(Strategy):
     def initialize(self) -> None:
         self.sleeptime = "3H" if self.is_backtesting else "1H"
         # Enable agent telemetry in live/trading
-        self.agent_telemetry = True
+        #self.agent_telemetry = True
         self.vars.iteration_count = 0
         self.vars.consecutive_agent_errors = 0
         self.vars.strategy_parameters = self.strategy_parameters
         self.vars.regime = None
         self.vars.sessions_in_regime = 0
         self.vars.regime_last_date = None
+        system_prompt = _build_system_prompt(
+            symbols=self.vars.strategy_parameters["symbols"],
+            defensive_symbol=self.vars.strategy_parameters["defensive_symbol"],
+            news_symbols=self.vars.strategy_parameters["news_symbols"],
+        )
         self.agents.create(
             name=self.AGENT_NAME,
-            system_prompt=_build_system_prompt(
-                symbols=self.vars.strategy_parameters["symbols"],
-                defensive_symbol=self.vars.strategy_parameters["defensive_symbol"],
-                news_symbols=self.vars.strategy_parameters["news_symbols"],
-            ),
+            system_prompt=system_prompt,
             tools=[*PrebuiltTools.all(self), *news_tools(self)],
         )
         self.log_info(f"NewsBuiltinStrategy initialized (sleeptime={self.sleeptime})")
+        self.log_info(f"Agent run with system prompt: \n{system_prompt}")
 
     def on_trading_iteration(self) -> None:
         self.vars.iteration_count += 1
