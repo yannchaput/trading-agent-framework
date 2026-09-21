@@ -17,6 +17,8 @@ from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import PositionSide
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -113,7 +115,7 @@ def test_paper_runs_the_agent_on_every_iteration(tmp_path: Path) -> None:
 
     assert len(handle.runs) == 3
     _, context = handle.runs[0]
-    assert context == {"current_datetime": _START.isoformat()}
+    assert context["current_datetime"] == _START.isoformat()  # ty: ignore[invalid-argument-type, not-subscriptable]
 
 
 def test_an_agent_error_is_logged_and_does_not_stop_the_run(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -229,13 +231,79 @@ def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Pat
     assert "95%" in prompt
     assert "get_account_balance" in prompt
     assert "Orders fill on a later bar" in prompt
-    assert "do not buy in the same run" in prompt
     # `buying_power` is a multiple of cash on a live margin account, so it may only ever be named as
-    # the smaller-of bound alongside `cash` -- never as the amount to size against on its own.
-    assert "SMALLER of the 'cash' and 'buying_power'" in prompt
+    # the smaller-of bound alongside cash -- never as the amount to size against on its own.
+    assert "SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you submitted in this run)" in prompt
     assert "buying on margin is forbidden" in prompt
     assert "'error'" in prompt
     assert "SHV" in prompt
     mentioned = {"search_memory", "search_news", "get_positions", "get_orders", "remember_decision", "open_thesis", "close_thesis", "get_account_balance"}
     assert all(name in prompt for name in mentioned)
     assert mentioned <= tool_names
+
+
+def test_system_prompt_rotates_in_one_run_instead_of_waiting_for_the_sell_to_fill(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    # The old rule stranded the portfolio in cash between the sell and the next run's buy, and sized the
+    # buy against the settled cash that a sell does not yet fund (7 shares of SHV instead of ~95).
+    assert "do not buy in the same run" not in prompt
+    assert "the next run completes the rotation" not in prompt
+    assert "submit the sell first, then the buy in the same run" in prompt
+
+
+def test_system_prompt_requires_checking_positions_and_topping_up_an_undersized_holding(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    assert "Every run, call get_positions and get_account_balance" in prompt
+    assert "never rely on memory for what you hold" in prompt
+    # A leftover from a partial rotation (7 SHV shares = 7% of equity) must not count as "already aligned".
+    assert "less than 90% of portfolio_value" in prompt
+    assert "buy the shortfall" in prompt
+    assert "pct_of_portfolio" in prompt  # the snapshot field that answers "is this holding under 90%?"
+
+
+def test_the_run_context_carries_a_portfolio_snapshot(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    broker = strategy.broker
+    broker.positions = [Position(strategy_name="news_builtin", asset=Asset("SHV"), quantity=Decimal("7"), side=PositionSide.LONG, avg_fill_price=Decimal("103.34"), market_value=Decimal("723.38"))]  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    _, context = handle.runs[0]
+    portfolio = context["portfolio"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert portfolio["cash"] == 10000.0
+    assert portfolio["portfolio_value"] == 25000.0
+    assert portfolio["buying_power"] == 20000.0
+    assert portfolio["positions"] == [{"symbol": "SHV", "quantity": 7.0, "side": "long", "avg_fill_price": 103.34, "market_value": 723.38, "pct_of_portfolio": 2.9}]
+
+
+def test_the_portfolio_snapshot_shows_an_empty_book_as_an_empty_list(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    _, context = handle.runs[0]
+    assert context["portfolio"]["positions"] == []  # ty: ignore[invalid-argument-type, not-subscriptable]
+
+
+def test_the_snapshot_prices_a_position_the_broker_reports_without_a_market_value(tmp_path: Path) -> None:
+    # BacktestBroker positions carry only quantity and avg_fill_price; the agent must not be left to do
+    # quantity x price / equity itself to tell that 7 SHV shares are 7% of the book, not a full rotation.
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
+    broker = strategy.broker
+    broker.positions = [Position(strategy_name="news_builtin", asset=Asset("SHV"), quantity=Decimal("50"), side=PositionSide.LONG, avg_fill_price=Decimal("100"))]  # ty: ignore[unresolved-attribute]
+    broker.last_prices["SHV"] = Decimal("100")  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    [position] = handle.runs[0][1]["portfolio"]["positions"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert position["market_value"] == 5000.0
+    assert position["pct_of_portfolio"] == 20.0  # 5000 of the fake account's 25000

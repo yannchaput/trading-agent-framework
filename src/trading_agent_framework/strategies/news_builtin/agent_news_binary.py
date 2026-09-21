@@ -12,6 +12,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from trading_agent_framework.agents.tools import PrebuiltTools
+from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.news import news_tools
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.core import Strategy
@@ -37,12 +38,18 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "article's created_at (ISO 8601 with timezone), include_content=True and limit=3, to read it in full.\n"
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
         f"5. Decide the regime: bullish evidence means hold {' or '.join(symbols)}; negative or unclear evidence means hold {defensive_symbol}.\n"
-        "6. Check get_positions and get_orders, then trade only the difference. Sell the current position before buying "
-        "the other. Never sell more than get_positions says you hold. Size a buy at no more than 95% of the SMALLER of "
-        "the 'cash' and 'buying_power' reported by get_account_balance (quantity = floor(0.95 * that amount / last price)), "
-        "leaving room for fees. Never size a buy against 'buying_power' alone: on a margin account it exceeds your cash, "
-        "and buying on margin is forbidden. Orders fill on a later bar, so cash does not yet include proceeds of a sell you "
-        "submitted in this run: if you sold this run, do not buy in the same run; the next run completes the rotation. "
+        "6. Every run, call get_positions and get_account_balance before deciding, and never rely on memory for what you "
+        "hold: memory records what you intended, not what filled. The context below also carries a portfolio snapshot; "
+        "use it to cross-check (each position shows its pct_of_portfolio). Then check get_orders and trade only the difference. Sell the current position before "
+        "buying the other: submit the sell first, then the buy in the same run. Orders fill on a later bar in the order "
+        "you submitted them, so the sell funds the buy even though cash does not yet include its proceeds. "
+        "Size a buy at no more than 95% of the SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you "
+        "submitted in this run), where proceeds = sold quantity x last price "
+        "(quantity = floor(0.95 * that amount / last price)), leaving room for fees. Never size a buy against "
+        "'buying_power' alone: on a margin account it exceeds your cash, and buying on margin is forbidden. "
+        "A holding that is already in the right instrument but worth less than 90% of portfolio_value (all cash, or a "
+        "leftover from a partial rotation) is not aligned with the regime: buy the shortfall, sized as above. "
+        "Never sell more than get_positions says you hold. "
         "If submit_order comes back with an 'error', the order was refused and nothing was placed -- read the reason, "
         "correct the quantity and try once more, or skip the trade this run. "
         "Keep position sizing reasonable and never place a duplicate order.\n"
@@ -92,7 +99,8 @@ class NewsBinaryStrategy(Strategy):
         if self.is_backtesting and not self._backtest_iteration_is_due():
             return
         try:
-            result = self.agents[self.AGENT_NAME].run(self.TASK_PROMPT, context={"current_datetime": self.get_datetime().isoformat()})
+            context = {"current_datetime": self.get_datetime().isoformat(), "portfolio": self._portfolio_snapshot()}
+            result = self.agents[self.AGENT_NAME].run(self.TASK_PROMPT, context=context)
         except AgentError as exc:
             # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest.
             self.vars.consecutive_agent_errors += 1
@@ -104,6 +112,27 @@ class NewsBinaryStrategy(Strategy):
         self.log_info(f"[{self.AGENT_NAME}] Agent output: \n{result.output}")
         for i, tool_call in enumerate(result.tool_calls):
             self.log_info(f"tool_call_{i}: {tool_call}")
+
+    def _portfolio_snapshot(self) -> dict[str, object]:
+        """What the account holds right now, handed to the agent up front.
+
+        The agent skipped `get_positions` in 60% of backtest runs and then "held" a position it did
+        not have, so the truth goes into the run context instead of depending on a tool call.
+        Built from the account tools so it has exactly the shape the agent already reads from them,
+        plus each position's share of the book: `BacktestBroker` positions carry no market value, and
+        the agent must not be left to work out that 7 SHV shares are 7% of equity, not a full rotation.
+        """
+        tools = {tool.__name__: tool for tool in account_tools(self)}
+        snapshot = {**tools["get_account_balance"](), **tools["get_positions"]()}
+        equity = snapshot.get("portfolio_value")
+        for position in snapshot.get("positions", []):
+            if "market_value" not in position:
+                price = self.get_last_price(position["symbol"])
+                if price is not None:
+                    position["market_value"] = round(position["quantity"] * float(price), 2)
+            if equity and "market_value" in position:
+                position["pct_of_portfolio"] = round(100 * position["market_value"] / equity, 1)
+        return snapshot
 
     def _backtest_iteration_is_due(self) -> bool:
         """
