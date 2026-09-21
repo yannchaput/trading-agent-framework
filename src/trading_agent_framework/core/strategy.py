@@ -75,8 +75,11 @@ class Strategy:
     """Base class for strategies, with lumibot's hook names and signatures."""
 
     sleeptime: int | str = "1M"
+    # Triggers before_market_opens() hook 60 minutes before the session opens (e.g., 9:00 AM ET for a 10 AM open)
     minutes_before_opening: int = 60
+    # Triggers before_market_closes() hook 1 minute before the session closes (e.g., 3:59 PM ET for a 4 PM close)
     minutes_before_closing: int = 1
+    # Triggers after_market_closes() hook immediately when the session closes (no delay)
     minutes_after_closing: int = 0
     parameters: Mapping[str, Any] = MappingProxyType({})
 

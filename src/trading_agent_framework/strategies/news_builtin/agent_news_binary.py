@@ -41,8 +41,10 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "5. Decide the regime. The portfolio snapshot in the context gives current_regime, computed from what is actually "
         f"held ('risk_on' = {risky}, 'defensive' = {defensive_symbol}, 'mixed' = both, 'none' = nothing), and "
         "sessions_in_regime, the trading days it has lasted. Unclear, mixed, stale or no relevant news means KEEP the "
-        "current holding: trade nothing. The one exception is an empty book (current_regime 'none'): "
-        f"hold {defensive_symbol}. A single article or data print must not flip the regime. "
+        "current holding: trade nothing. That includes an empty book (current_regime 'none'): there is no "
+        "default position, so stay in cash until the news gives a clear signal. With an empty book there is no regime to "
+        f"flip, so ONE clear signal is enough to enter: bullish -> buy {risky}, bearish -> buy {defensive_symbol}. "
+        "A single article or data print must not flip an existing regime. "
         f"Leaving {risky} for {defensive_symbol} needs two INDEPENDENT bearish signals in this run (a jobs, CPI, PPI, "
         "Redbook, ADP or claims release is ONE signal however many headlines cover it), or the same bearish call already "
         "recorded on the previous run (see search_memory). With only one signal, do not trade: call remember_decision "
@@ -58,9 +60,10 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "submitted in this run that were accepted (no 'error')), where proceeds = sold quantity x last price "
         "(quantity = floor(0.95 * that amount / last price)), leaving room for fees. Never size a buy against "
         "'buying_power' alone: on a margin account it exceeds your cash, and buying on margin is forbidden. "
-        "If the combined value of the instruments for the regime is worth less than 90% of portfolio_value (all cash, "
-        "or a leftover from a partial rotation), you are not aligned with the regime: buy the shortfall, spending up to "
-        "the sizing amount above. "
+        "If you decided on a regime in step 5 and the combined value of the instruments for the regime is worth less "
+        "than 90% of portfolio_value (a leftover from a partial rotation, or cash you decided to invest), you are not "
+        "aligned with the regime: buy the shortfall, spending up to the sizing amount above. An empty book with no "
+        "clear signal stays in cash. "
         "Never sell more than get_positions says you hold. "
         "If submit_order comes back with an 'error', the order was refused and nothing was placed -- read the reason, "
         "correct the quantity and try once more, or skip the trade this run. "
@@ -92,6 +95,8 @@ class NewsBinaryStrategy(Strategy):
 
     def initialize(self) -> None:
         self.sleeptime = "3H" if self.is_backtesting else "1H"
+        # Enable agent telemetry in live/trading
+        self.agent_telemetry = True
         self.vars.iteration_count = 0
         self.vars.consecutive_agent_errors = 0
         self.vars.strategy_parameters = self.strategy_parameters
@@ -210,4 +215,5 @@ class NewsBinaryStrategy(Strategy):
             budget=Decimal(str(self.parameters["budget"])),
             commission=Decimal(str(self.parameters["commission"])),
             warmup_trading_days=self.parameters["warmup_trading_days"],
+            agent_telemetry=True,
         )
