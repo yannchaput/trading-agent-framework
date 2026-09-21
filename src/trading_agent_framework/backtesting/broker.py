@@ -396,47 +396,83 @@ class BacktestBroker(Broker):
         self._process_pending(new_now)
         self._sample_equity(new_now)
 
+    def _bars_after(self, asset: Asset, after: datetime, cutoff: datetime) -> list[tuple[fills.Bar, datetime]]:
+        """Every bar of `asset` closing in `(after, cutoff]`, oldest first, read through `_source_bars`.
+
+        One clock advance can span many bars (minute bars under a sleeptime of hours), so the fill
+        engine walks them all instead of looking only at the latest. `_source_bars` returns the last
+        `length` bars, so `length` doubles until the window reaches back past `after`.
+        """
+        length = 16
+        while True:
+            bars = self._source_bars(asset, cutoff, length, self._timestep)
+            if bars is None or bars.df.empty:
+                return []
+            df = bars.df
+            if len(df) < length or df.index[0].to_pydatetime() <= after:
+                break
+            length *= 2
+        window = df[df.index > after]
+        return [
+            (
+                fills.Bar(
+                    open=Decimal(str(row.open)), high=Decimal(str(row.high)),
+                    low=Decimal(str(row.low)), close=Decimal(str(row.close)),
+                ),
+                bar_time.to_pydatetime(),
+            )
+            for bar_time, row in zip(window.index, window.itertuples(index=False), strict=True)
+        ]
+
     def _process_pending(self, cutoff: datetime) -> None:
+        """Evaluate each pending order, in submission order, on every bar closed since it was last evaluated.
+
+        Next-bar-open (design spec section 2): an order fills on the first bar after submission (a
+        market order at its open) or, for a limit/stop, on the first later bar that triggers it --
+        however many bars one clock advance spans. Submission order is what lets a sell fund a buy
+        submitted after it, so each order is settled before the next one is looked at.
+        """
         for identifier in list(self._pending):
             pending = self._pending[identifier]
-            found = self._latest_bar_with_time(pending.asset, cutoff)
-            if found is None:
-                continue
-            bar, bar_time = found
-            if bar_time <= pending.last_evaluated:
-                continue  # no new bar has closed for this asset since we last checked
-            pending.last_evaluated = bar_time
-            if pending.needs_skip:
-                # This is the bar that was still forming at submission time -- "nothing fills
-                # within the submitting bar" (design spec section 2/6.1). Skip it once; the
-                # order becomes eligible starting with the next bar found after this one.
-                pending.needs_skip = False
-                continue
-            order = pending.order
-            try:
-                result = fills.evaluate_fill(
-                    order_type=order.order_type, side=order.side, bar=bar,
-                    limit_price=order.limit_price, stop_price=order.stop_price,
-                    stop_limit_price=order.stop_limit_price,
-                )
-            except ValueError as exc:
-                order.set_error(exc)
-                self.tracker.process_trade_event(order, OrderEvent.ERROR)
-                del self._pending[identifier]
-                continue
-            if result is None:
-                continue  # still doesn't touch the trigger; retried on the next bar
-            rejection = self._rejection_reason(order, result.price)
-            if rejection is not None:
-                # Long-only cash account: the fill would overdraw cash or sell what isn't held. Like a
-                # real broker's rejection, the order fails whole and nothing (cash, positions, ledger) moves.
-                logger.warning("Rejected order %s at %s: %s", order.identifier, bar_time.isoformat(), rejection)
-                order.set_error(BrokerError(rejection))
-                self.tracker.process_trade_event(order, OrderEvent.ERROR)
-                del self._pending[identifier]
-                continue
-            self._fill(order, result.price, bar_time)
+            for bar, bar_time in self._bars_after(pending.asset, pending.last_evaluated, cutoff):
+                pending.last_evaluated = bar_time
+                if pending.needs_skip:
+                    # This is the bar that was still forming at submission time -- "nothing fills
+                    # within the submitting bar" (design spec section 2/6.1). Skip it once; the
+                    # order becomes eligible starting with the next bar.
+                    pending.needs_skip = False
+                    continue
+                if self._evaluate(identifier, pending, bar, bar_time):
+                    break
+
+    def _evaluate(self, identifier: str, pending: _PendingOrder, bar: fills.Bar, bar_time: datetime) -> bool:
+        """Try to fill `pending` on `bar`; True once it has left the queue (filled, rejected or errored)."""
+        order = pending.order
+        try:
+            result = fills.evaluate_fill(
+                order_type=order.order_type, side=order.side, bar=bar,
+                limit_price=order.limit_price, stop_price=order.stop_price,
+                stop_limit_price=order.stop_limit_price,
+            )
+        except ValueError as exc:
+            order.set_error(exc)
+            self.tracker.process_trade_event(order, OrderEvent.ERROR)
             del self._pending[identifier]
+            return True
+        if result is None:
+            return False  # still doesn't touch the trigger; retried on the next bar
+        rejection = self._rejection_reason(order, result.price)
+        if rejection is not None:
+            # Long-only cash account: the fill would overdraw cash or sell what isn't held. Like a
+            # real broker's rejection, the order fails whole and nothing (cash, positions, ledger) moves.
+            logger.warning("Rejected order %s at %s: %s", order.identifier, bar_time.isoformat(), rejection)
+            order.set_error(BrokerError(rejection))
+            self.tracker.process_trade_event(order, OrderEvent.ERROR)
+            del self._pending[identifier]
+            return True
+        self._fill(order, result.price, bar_time)
+        del self._pending[identifier]
+        return True
 
     def _execution_terms(self, order: Order, raw_price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
         """`(execution_price, commission_cost, notional)` for filling `order` at `raw_price`."""

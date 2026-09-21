@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -341,3 +342,81 @@ def test_the_fill_time_guard_still_refuses_an_oversized_sell_that_bypassed_submi
     assert position.quantity == Decimal(10)
     assert position.side is PositionSide.LONG
     assert broker._cash == cash_after_buy
+
+
+# --- one clock advance spanning many bars (minute bars, sleeptime of hours) ---------
+
+MINUTE0 = datetime(2026, 1, 5, 14, 30, tzinfo=UTC)
+SHV = Asset("SHV")
+
+
+def _minute_broker(frames: dict[Asset, list[float]], *, start: datetime = MINUTE0, budget: Decimal = Decimal(10000)) -> tuple[BacktestBroker, BacktestClock]:
+    source = FakeBacktestDataSource()
+    for asset, closes in frames.items():
+        source.set_bars(asset, make_close_indexed_frame(closes, start=MINUTE0, freq="1min"))
+    clock = BacktestClock(start=start, sessions=[])
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=budget, timestep="minute")
+    clock.on_advance = broker.on_advance
+    return broker, clock
+
+
+def test_a_market_order_fills_at_the_bar_after_submission_even_when_the_clock_jumps_many_bars() -> None:
+    # A 3-hour sleeptime advances the clock once over ~180 minute bars; next-bar-open (spec §2) means the
+    # bar right after submission, not the last bar before the next tick (which filled at hours-old prices).
+    broker, clock = _minute_broker({AAPL: [100.0, 101.0, 102.0, 103.0, 104.0]})
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(1)))
+
+    clock.wait((4 * 60), _never())
+
+    assert order.status is OrderStatus.FILL
+    assert order.avg_fill_price == Decimal("101.0")
+    assert broker.ledger.fills[-1].time == MINUTE0 + timedelta(minutes=1)
+
+
+def test_an_order_submitted_mid_bar_skips_only_the_forming_bar_within_one_jump() -> None:
+    # No bar closes exactly at the submission instant, so the next one to close is still forming: it is
+    # skipped, and the order fills on the bar after it -- within the same advance, not a whole advance later.
+    broker, clock = _minute_broker({AAPL: [100.0, 101.0, 102.0, 103.0]}, start=MINUTE0 + timedelta(seconds=30))
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(1)))
+
+    clock.wait(3 * 60, _never())
+
+    assert order.status is OrderStatus.FILL
+    assert order.avg_fill_price == Decimal("102.0")
+
+
+def test_a_sell_and_a_buy_submitted_together_both_fill_in_one_jump_when_only_the_sell_skips_a_bar() -> None:
+    # news_binary, 2025-01-06 15:30: SPY had a bar closing exactly at submission, SHV did not (sparse IEX).
+    # The SHV sell used up the whole advance on its skip while the SPY buy filled unfunded and was rejected.
+    broker, clock = _minute_broker({AAPL: [100.0] * 6}, budget=Decimal(0))
+    broker._apply_to_position(SHV, OrderSide.BUY, Decimal(10), Decimal(100))
+    shv = make_close_indexed_frame([100.0] * 7, start=MINUTE0 - timedelta(minutes=1), freq="1min")
+    broker._data_source.set_bars(SHV, shv[shv.index != MINUTE0])  # SHV prints nothing at the submission minute
+
+    sell = broker.submit_order(Order(strategy_name="momentum", asset=SHV, side=OrderSide.SELL, quantity=Decimal(10)))
+    buy = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
+    assert broker._pending[sell.identifier].needs_skip is True
+    assert broker._pending[buy.identifier].needs_skip is False
+
+    clock.wait(5 * 60, _never())
+
+    assert sell.status is OrderStatus.FILL
+    assert buy.status is OrderStatus.FILL
+
+
+def test_a_limit_order_fills_on_an_intermediate_bar_that_touches_it_within_one_jump() -> None:
+    # Only the latest bar used to be checked, so a limit touched mid-jump and recovered by the next tick never filled.
+    broker, clock = _minute_broker({AAPL: [100.0, 100.0, 90.0, 100.0, 100.0]})
+    order = broker.submit_order(Order(
+        strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, order_type=OrderType.LIMIT,
+        quantity=Decimal(1), limit_price=Decimal(92),
+    ))
+
+    clock.wait(4 * 60, _never())
+
+    assert order.status is OrderStatus.FILL
+    assert broker.ledger.fills[-1].time == MINUTE0 + timedelta(minutes=2)
+
+
+def _never() -> threading.Event:
+    return threading.Event()
