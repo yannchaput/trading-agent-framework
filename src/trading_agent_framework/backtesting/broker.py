@@ -151,8 +151,9 @@ class BacktestBroker(Broker):
         `cash` and `portfolio_value` stay the settled, raw values: `Strategy.get_cash()`
         reads `cash`, and `cross_momentum.rebalance` adds its *own* estimate of pending sell
         proceeds to it, so netting `cash` here would make that strategy double-count. Only
-        `buying_power` moves -- which is what a real broker does with open orders anyway, and
-        what an agent should size a buy against.
+        `buying_power` moves -- which is what a real broker does with open orders anyway. An
+        agent sizes a buy against the smaller of it and its own `cash` + same-run sell proceeds,
+        never against raw `cash` alone (that ignores the sell credit).
         """
         now = self.clock.now()
         portfolio_value = self._portfolio_value(now)

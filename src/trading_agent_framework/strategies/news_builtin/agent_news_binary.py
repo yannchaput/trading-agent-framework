@@ -18,7 +18,7 @@ from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, FatalStrategyError
+from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FatalStrategyError
 
 # A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest,
 # so a backtest aborts (FatalStrategyError, which the executor propagates) after this many failed runs in a row.
@@ -38,17 +38,18 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "article's created_at (ISO 8601 with timezone), include_content=True and limit=3, to read it in full.\n"
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
         f"5. Decide the regime: bullish evidence means hold {' or '.join(symbols)}; negative or unclear evidence means hold {defensive_symbol}.\n"
-        "6. Every run, call get_positions and get_account_balance before deciding, and never rely on memory for what you "
+        "6. Every run, call get_positions and get_account_balance before trading, and never rely on memory for what you "
         "hold: memory records what you intended, not what filled. The context below also carries a portfolio snapshot; "
-        "use it to cross-check (each position shows its pct_of_portfolio). Then check get_orders and trade only the difference. Sell the current position before "
-        "buying the other: submit the sell first, then the buy in the same run. Orders fill on a later bar in the order "
-        "you submitted them, so the sell funds the buy even though cash does not yet include its proceeds. "
+        "use it to cross-check (each position shows its pct_of_portfolio). Then check get_orders, count an open buy order "
+        "from get_orders as already held, and trade only the difference. Sell the current position before buying the "
+        "other: submit the sell first, then the buy in the same run. A sell you submitted is credited toward the buy. "
         "Size a buy at no more than 95% of the SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you "
-        "submitted in this run), where proceeds = sold quantity x last price "
+        "submitted in this run that were accepted (no 'error')), where proceeds = sold quantity x last price "
         "(quantity = floor(0.95 * that amount / last price)), leaving room for fees. Never size a buy against "
         "'buying_power' alone: on a margin account it exceeds your cash, and buying on margin is forbidden. "
-        "A holding that is already in the right instrument but worth less than 90% of portfolio_value (all cash, or a "
-        "leftover from a partial rotation) is not aligned with the regime: buy the shortfall, sized as above. "
+        "If the combined value of the instruments for the regime is worth less than 90% of portfolio_value (all cash, "
+        "or a leftover from a partial rotation), you are not aligned with the regime: buy the shortfall, spending up to "
+        "the sizing amount above. "
         "Never sell more than get_positions says you hold. "
         "If submit_order comes back with an 'error', the order was refused and nothing was placed -- read the reason, "
         "correct the quantity and try once more, or skip the trade this run. "
@@ -116,22 +117,36 @@ class NewsBinaryStrategy(Strategy):
     def _portfolio_snapshot(self) -> dict[str, object]:
         """What the account holds right now, handed to the agent up front.
 
-        The agent skipped `get_positions` in 60% of backtest runs and then "held" a position it did
+        The agent used to skip `get_positions` in most backtest runs and then "hold" a position it did
         not have, so the truth goes into the run context instead of depending on a tool call.
         Built from the account tools so it has exactly the shape the agent already reads from them,
         plus each position's share of the book: `BacktestBroker` positions carry no market value, and
         the agent must not be left to work out that 7 SHV shares are 7% of equity, not a full rotation.
+
+        A backtest data failure (`BacktestError`, which the account tools do not catch) must not skip the
+        tick unseen -- it would never reach the agent-error counter -- so it degrades to a namespaced
+        error the agent can read, exactly as the same failure inside a tool call would.
         """
         tools = {tool.__name__: tool for tool in account_tools(self)}
-        snapshot = {**tools["get_account_balance"](), **tools["get_positions"]()}
+        snapshot: dict[str, object] = {}
+        for tool_name, error_key in (("get_account_balance", "balance_error"), ("get_positions", "positions_error")):
+            try:
+                part = tools[tool_name]()
+            except (BrokerError, BacktestError) as exc:
+                part = {"error": str(exc)}
+            # Namespaced so a failed `get_positions` is not read as an empty book (no `positions` key at all).
+            snapshot.update({error_key: part["error"]} if "error" in part else part)
         equity = snapshot.get("portfolio_value")
-        for position in snapshot.get("positions", []):
+        for position in snapshot.get("positions", []):  # ty: ignore[not-iterable]
             if "market_value" not in position:
-                price = self.get_last_price(position["symbol"])
+                try:
+                    price = self.get_last_price(position["symbol"])
+                except (BrokerError, BacktestError):
+                    price = None
                 if price is not None:
                     position["market_value"] = round(position["quantity"] * float(price), 2)
             if equity and "market_value" in position:
-                position["pct_of_portfolio"] = round(100 * position["market_value"] / equity, 1)
+                position["pct_of_portfolio"] = round(100 * position["market_value"] / equity, 1)  # ty: ignore[unsupported-operator]
         return snapshot
 
     def _backtest_iteration_is_due(self) -> bool:

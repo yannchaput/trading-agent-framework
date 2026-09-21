@@ -22,7 +22,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, BacktestError, ConfigurationError, FatalStrategyError
+from trading_agent_framework.utils.errors import AgentError, BacktestDataError, BacktestError, BrokerError, ConfigurationError, FatalStrategyError
 
 _START = et(2026, 9, 14, 9, 0)
 
@@ -230,10 +230,9 @@ def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Pat
 
     assert "95%" in prompt
     assert "get_account_balance" in prompt
-    assert "Orders fill on a later bar" in prompt
     # `buying_power` is a multiple of cash on a live margin account, so it may only ever be named as
     # the smaller-of bound alongside cash -- never as the amount to size against on its own.
-    assert "SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you submitted in this run)" in prompt
+    assert "SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you submitted in this run" in prompt
     assert "buying on margin is forbidden" in prompt
     assert "'error'" in prompt
     assert "SHV" in prompt
@@ -307,3 +306,55 @@ def test_the_snapshot_prices_a_position_the_broker_reports_without_a_market_valu
     [position] = handle.runs[0][1]["portfolio"]["positions"]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert position["market_value"] == 5000.0
     assert position["pct_of_portfolio"] == 20.0  # 5000 of the fake account's 25000
+
+
+def test_system_prompt_does_not_promise_a_sell_funds_the_buy_in_every_mode(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    # Only the backtest broker fills in submission order and credits a pending sell; a live cash account
+    # can refuse the buy, and the 'error' rule is what covers that -- so the prompt must not claim otherwise.
+    assert "Orders fill on a later bar" not in prompt
+    assert "so the sell funds the buy" not in prompt
+    assert "is credited toward the buy" in prompt
+
+
+def test_system_prompt_counts_pending_buys_as_held_and_excludes_refused_sells(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    assert "count an open buy order from get_orders as already held" in prompt
+    assert "sells you submitted in this run that were accepted (no 'error')" in prompt
+    assert "combined value of the instruments for the regime" in prompt
+
+
+def test_a_price_lookup_failure_leaves_the_position_unpriced_but_still_runs_the_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # BacktestDataError is a BacktestError, not a BrokerError: uncaught, it would skip the tick without
+    # ever reaching the agent-error counter that aborts a dead backtest.
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
+    broker = strategy.broker
+    broker.positions = [Position(strategy_name="news_builtin", asset=Asset("SHV"), quantity=Decimal("50"), side=PositionSide.LONG, avg_fill_price=Decimal("100"))]  # ty: ignore[unresolved-attribute]
+    monkeypatch.setattr(broker, "get_last_price", lambda asset: (_ for _ in ()).throw(BacktestDataError("no bars")))
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    [position] = handle.runs[0][1]["portfolio"]["positions"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert position["symbol"] == "SHV"
+    assert "market_value" not in position
+    assert "pct_of_portfolio" not in position
+
+
+def test_snapshot_errors_are_namespaced_so_a_failed_positions_call_is_not_read_as_an_empty_book(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.BACKTESTING)
+    broker = strategy.broker
+    monkeypatch.setattr(broker, "get_account", lambda: (_ for _ in ()).throw(BacktestDataError("no bars")))
+    monkeypatch.setattr(broker, "pull_positions", lambda: (_ for _ in ()).throw(BrokerError("down")))
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    portfolio = handle.runs[0][1]["portfolio"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert portfolio == {"balance_error": "no bars", "positions_error": "down"}
