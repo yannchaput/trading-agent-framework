@@ -217,7 +217,7 @@ def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monk
 
     assert captured["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
-    assert captured["commission"] == Decimal("0.001")
+    assert captured["commission"] == Decimal(0)  # Alpaca charges no commission on US ETFs
     assert captured["warmup_trading_days"] == 300
 
 
@@ -358,3 +358,116 @@ def test_snapshot_errors_are_namespaced_so_a_failed_positions_call_is_not_read_a
 
     portfolio = handle.runs[0][1]["portfolio"]  # ty: ignore[invalid-argument-type, not-subscriptable]
     assert portfolio == {"balance_error": "no bars", "positions_error": "down"}
+
+
+def _hold(symbol: str, quantity: str = "10") -> Position:
+    return Position(strategy_name="news_builtin", asset=Asset(symbol), quantity=Decimal(quantity), side=PositionSide.LONG, avg_fill_price=Decimal("100"))
+
+
+def _prompt(tmp_path: Path, **strategy_parameters: object) -> str:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.strategy_parameters = {**NewsBinaryStrategy.strategy_parameters, **strategy_parameters}
+    strategy.initialize()
+    return str(agents.created[0]["system_prompt"])
+
+
+def test_system_prompt_keeps_the_current_holding_when_the_news_is_unclear(tmp_path: Path) -> None:
+    prompt = _prompt(tmp_path)
+
+    # "negative or unclear evidence means hold <defensive>" made every headline-poor day a rotation into SHV.
+    assert "negative or unclear evidence means hold" not in prompt
+    assert "Unclear, mixed, stale or no relevant news means KEEP the current holding" in prompt
+
+
+def test_system_prompt_makes_one_data_print_insufficient_to_leave_the_risk_instruments(tmp_path: Path) -> None:
+    prompt = _prompt(tmp_path)
+
+    assert "two INDEPENDENT bearish signals" in prompt
+    assert "ONE signal however many headlines cover it" in prompt
+    assert "the same bearish call already recorded on the previous run" in prompt
+    assert "PENDING bearish flip" in prompt  # what makes the previous-run confirmation findable via search_memory
+    assert "one clear bullish signal" in prompt  # the way back is deliberately easier
+
+
+def test_system_prompt_reads_the_regime_from_the_snapshot(tmp_path: Path) -> None:
+    prompt = _prompt(tmp_path)
+
+    assert "current_regime" in prompt
+    assert "sessions_in_regime" in prompt
+
+
+def test_system_prompt_names_only_the_configured_symbols(tmp_path: Path) -> None:
+    prompt = _prompt(tmp_path, symbols=("VOO", "IWY"), defensive_symbol="BIL", news_symbols="VOO,IWY")
+
+    assert "BIL" in prompt
+    assert "VOO or IWY" in prompt
+    assert "empty book" in prompt
+    for literal in ("SHV", "SPY", "QQQ"):
+        assert literal not in prompt
+
+
+@pytest.mark.parametrize(
+    ("held", "expected"),
+    [([], "none"), (["SPY"], "risk_on"), (["QQQ"], "risk_on"), (["SHV"], "defensive"), (["SPY", "SHV"], "mixed"), (["AAPL"], "none")],
+)
+def test_the_snapshot_derives_the_regime_from_what_is_held(tmp_path: Path, held: list[str], expected: str) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.broker.positions = [_hold(symbol) for symbol in held]  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    portfolio = handle.runs[0][1]["portfolio"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert portfolio["current_regime"] == expected
+    assert portfolio["sessions_in_regime"] == 1
+
+
+def test_the_regime_follows_the_configured_symbols_not_literals(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.strategy_parameters = {**NewsBinaryStrategy.strategy_parameters, "symbols": ("VOO",), "defensive_symbol": "BIL"}
+    strategy.broker.positions = [_hold("BIL")]  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    assert handle.runs[0][1]["portfolio"]["current_regime"] == "defensive"  # ty: ignore[invalid-argument-type, not-subscriptable]
+
+
+def test_sessions_in_regime_counts_distinct_trading_days_and_resets_on_a_flip(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    broker = strategy.broker
+    broker.positions = [_hold("SHV")]  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+
+    strategy.on_trading_iteration()  # day 1, first run
+    strategy.clock.advance(3600)  # day 1, an hourly re-run must not count as a second session
+    strategy.on_trading_iteration()
+    strategy.clock.advance(86400)  # day 2
+    strategy.on_trading_iteration()
+    broker.positions = [_hold("SPY")]  # ty: ignore[unresolved-attribute]
+    strategy.clock.advance(86400)  # day 3, the book flipped
+    strategy.on_trading_iteration()
+    strategy.clock.advance(86400)  # day 4
+    strategy.on_trading_iteration()
+
+    seen = [(run[1]["portfolio"]["current_regime"], run[1]["portfolio"]["sessions_in_regime"]) for run in handle.runs]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert seen == [("defensive", 1), ("defensive", 1), ("defensive", 2), ("risk_on", 1), ("risk_on", 2)]
+
+
+def test_a_failed_positions_read_neither_claims_a_regime_nor_moves_the_counter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    broker = strategy.broker
+    broker.positions = [_hold("SHV")]  # ty: ignore[unresolved-attribute]
+    strategy.initialize()
+    strategy.on_trading_iteration()
+    monkeypatch.setattr(broker, "pull_positions", lambda: (_ for _ in ()).throw(BrokerError("down")))
+    strategy.clock.advance(86400)
+    strategy.on_trading_iteration()
+    monkeypatch.undo()
+    strategy.clock.advance(86400)
+    strategy.on_trading_iteration()
+
+    failed = handle.runs[1][1]["portfolio"]  # ty: ignore[invalid-argument-type, not-subscriptable]
+    assert "current_regime" not in failed and "sessions_in_regime" not in failed
+    # the unread day is not a session in the regime: day 1 -> 1, day 3 -> 2
+    assert handle.runs[2][1]["portfolio"]["sessions_in_regime"] == 2  # ty: ignore[invalid-argument-type, not-subscriptable]
