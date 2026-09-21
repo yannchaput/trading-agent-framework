@@ -56,6 +56,8 @@ class Settings(BaseModel):
     backtesting_data_sources: str = ""
     backtest_time_seconds: float = 0.0
     parameters: dict[str, Any] = Field(default_factory=dict)
+    # Per-agent telemetry totals (written only when the run recorded agent calls); see agents/telemetry.py.
+    agents: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
     model_config = {"extra": "allow"}
 

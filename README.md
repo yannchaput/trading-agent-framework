@@ -274,6 +274,13 @@ keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
   tearsheet), and three parquet files (`equity.parquet`, `trades.parquet`,
   `indicators.parquet`). `run_backtesting` returns a `BacktestResult` with `run_dir`,
   `settings` and `metrics` attributes pointing at the same data.
+- **Agent telemetry**: on by default (`run_backtesting(agent_telemetry=False)` to skip it). Per-agent
+  totals -- model calls, tool calls, tokens, latency -- go to `settings.json["agents"]`, and each
+  model call to `memory/<strategy>/backtesting/llm_stats.sqlite`, which is wiped when the next
+  backtest of that strategy starts (like the agent memory), so the dashboard's per-call chart covers
+  the latest run only. Paper/live strategies opt in with `agent_telemetry = True` on the class; their
+  database accumulates across runs, so delete it by hand when it grows -- it is separate from
+  `memory.sqlite`, so agent memory is untouched.
 - **No look-ahead, structurally**: every price the strategy can see is gated by
   `clock.now()` -- a bar is visible only after it has *closed*. See
   `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full

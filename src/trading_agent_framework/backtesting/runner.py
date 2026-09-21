@@ -79,6 +79,7 @@ def run_backtest(
     warmup_trading_days: int = 0,
     preload_assets: Sequence[Asset] = (),
     news_source: NewsProvider | None = None,
+    agent_telemetry: bool = True,
 ) -> BacktestResult:
     """Run `strategy` through a full simulated `[start, end]` backtest.
 
@@ -127,6 +128,10 @@ def run_backtest(
 
     `news_source` is handed to the `BacktestBroker` (default: an Alpaca provider built lazily from the env credentials).
 
+    `agent_telemetry` (default `True`) records every LLM call the strategy's agents make: per-agent totals go
+    to `settings.json["agents"]` (only when an agent actually ran) and each call to `llm_stats.sqlite`
+    (see `Strategy.agents`), tagged with this run's directory name.
+
     Never raises a raw exception: anything other than an existing `BacktestError`
     is wrapped in one -- except `warmup_trading_days` itself, which is validated
     up front (see below) so a bad value always raises the same `ValueError`
@@ -158,6 +163,7 @@ def run_backtest(
             warmup_days=warmup_days,
             preload_assets=preload_assets,
             news_source=news_source,
+            agent_telemetry=agent_telemetry,
         )
     except BacktestError:
         raise
@@ -195,6 +201,7 @@ def _run(
     warmup_days: int = 0,
     preload_assets: Sequence[Asset] = (),
     news_source: NewsProvider | None = None,
+    agent_telemetry: bool = True,
 ) -> BacktestResult:
     """The unvalidated body of `run_backtest` -- see that function's docstring for the
     full contract, including `warmup_trading_days`'s scope: it widens only the eager
@@ -224,6 +231,8 @@ def _run(
     log_level: int = logging.getLevelNamesMapping().get(os.environ.get("BACKTEST_LOGGING_LEVEL", "INFO").upper(), logging.INFO)
     log_file = setup_strategy_logging(name, TradingMode.BACKTESTING, project_root=strategy.project_root, level=log_level)
     run_dir = log_file.parent
+    strategy.agent_telemetry = agent_telemetry
+    strategy.run_id = run_dir.name
 
     benchmark_asset = Asset(benchmark)
     # Widened ONLY for this one eager load() call -- see warmup.py and the
@@ -315,6 +324,8 @@ def _run(
         "framework_version": __version__,
         "parameters": dict(strategy.parameters),
     }
+    if agents := strategy.agent_telemetry_summary():
+        settings["agents"] = agents
     report.write_settings(run_dir, settings)
 
     return BacktestResult(run_dir=run_dir, settings=settings, metrics=computed_metrics)

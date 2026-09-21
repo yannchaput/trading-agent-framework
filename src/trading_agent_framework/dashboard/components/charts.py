@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 
 def equity_curve_chart(
@@ -691,3 +692,37 @@ def rolling_sortino_chart(
         y_label="Sortino Ratio",
         benchmark_label=benchmark_label,
     )
+
+
+def agent_calls_chart(calls: pd.DataFrame, title: str = "Agent calls") -> go.Figure:
+    """Latency (seconds) and total tokens of every model call, over the time each call was made.
+
+    `calls` is `reader.load_agent_calls`'s frame. A call whose server reported no token usage has a
+    NaN `total_tokens`, so it shows as a gap rather than as a zero-token call.
+    """
+    if calls.empty:
+        fig = go.Figure()
+        fig.add_annotation(text="No data available", showarrow=False)
+        fig.update_layout(title=title, template="plotly_white")
+        return fig
+
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Latency per call", "Total tokens per call"))
+    hover = calls["agent"].tolist()
+    fig.add_trace(
+        go.Bar(x=calls["ts"], y=calls["latency_ms"] / 1000, text=hover, name="Latency (s)", marker_color="#0891b2"),
+        row=1, col=1,
+    )
+    fig.add_trace(
+        go.Bar(x=calls["ts"], y=calls["total_tokens"], text=hover, name="Total tokens", marker_color="#6366f1"),
+        row=2, col=1,
+    )
+    fig.update_layout(
+        title=title,
+        template="plotly_white",
+        showlegend=False,
+        hovermode="x unified",
+        margin=dict(l=40, r=20, t=60, b=40),
+    )
+    fig.update_yaxes(title_text="seconds", row=1, col=1)
+    fig.update_yaxes(title_text="tokens", row=2, col=1)
+    return fig

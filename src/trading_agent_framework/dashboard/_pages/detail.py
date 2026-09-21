@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from trading_agent_framework.dashboard.components.charts import (
+    agent_calls_chart,
     cumulative_returns_chart,
     drawdown_chart,
     equity_curve_chart,
@@ -16,7 +17,7 @@ from trading_agent_framework.dashboard.components.charts import (
     trades_chart,
 )
 from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
-from trading_agent_framework.dashboard.reader import load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
+from trading_agent_framework.dashboard.reader import load_agent_calls, load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
 
 
 def page_detail():
@@ -62,8 +63,8 @@ def page_detail():
 
     period_start = s.backtesting_start.strftime("%Y-%m-%d") if s and s.backtesting_start else "?"
     period_end = s.backtesting_end.strftime("%Y-%m-%d") if s and s.backtesting_end else "?"
-    model = ""
-    if s and s.parameters:
+    model = next((agent["model"] for agent in (s.agents.values() if s else []) if agent.get("model")), "")
+    if not model and s and s.parameters:
         for key, val in s.parameters.items():
             if "model" in key.lower() and isinstance(val, str):
                 model = val
@@ -263,3 +264,12 @@ def page_detail():
                 )
         else:
             st.info("No parameters available.")
+
+        if s and s.agents:
+            st.subheader("Agent calls")
+            calls = load_agent_calls(ref)
+            if calls is None:
+                st.caption("No per-call data: llm_stats.sqlite was deleted, a newer backtest replaced it, or no call was saved.")
+            else:
+                st.plotly_chart(agent_calls_chart(calls), width="stretch")
+                st.dataframe(calls, width="stretch", hide_index=True)

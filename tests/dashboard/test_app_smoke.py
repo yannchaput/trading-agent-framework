@@ -89,3 +89,64 @@ def test_run_detail_renders_without_exception(run_dir: Path) -> None:
     assert run.metrics is not None
     assert run.metrics.total_return_strategy == 0.05
     assert len(run.equity_curve) == 2
+
+
+# --- Run Detail: agent telemetry ------------------------------------------------------
+
+_AGENTS = {
+    "trader": {
+        "model": "qwen3-8b", "calls": 2, "tool_calls": 1, "input_tokens": 230, "output_tokens": 30, "reasoning_tokens": None,
+        "total_tokens": 260, "latency_ms_total": 4000.0, "latency_ms_avg": 2000.0,
+    }
+}
+
+
+def _detail_page(run_dir: Path, *, agents: dict | None, with_calls_db: bool) -> AppTest:
+    import json
+
+    from trading_agent_framework.agents.stats_store import LLMStatsStore, llm_stats_db_path
+    from trading_agent_framework.agents.telemetry import CallRecord
+    from trading_agent_framework.config.env import TradingMode
+    from trading_agent_framework.dashboard.discovery import scan_runs
+
+    if agents is not None:
+        settings_path = run_dir / "settings.json"
+        settings_path.write_text(json.dumps({**json.loads(settings_path.read_text()), "agents": agents}))
+    if with_calls_db:
+        store = LLMStatsStore(llm_stats_db_path(run_dir.parents[3], "momentum", TradingMode.BACKTESTING), run_id=run_dir.name)
+        for ts, tokens in ((NOW, 120), (LATER, 140)):
+            store.record(CallRecord(ts=ts, agent="trader", model="qwen3-8b", input_tokens=tokens - 20, output_tokens=20, reasoning_tokens=None,
+                                    total_tokens=tokens, latency_ms=2000.0, tool_calls=0))
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+    at.session_state["current_page"] = "Run Detail"
+    at.session_state["detail_ref"] = scan_runs("logs").runs[0]
+    at.run()
+    return at
+
+
+def test_run_detail_shows_agent_calls_when_telemetry_was_recorded(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=_AGENTS, with_calls_db=True)
+
+    assert not at.exception
+    assert "Agent calls" in [subheader.value for subheader in at.subheader]
+
+
+def test_run_detail_explains_missing_per_call_data_when_the_database_is_gone(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=_AGENTS, with_calls_db=False)
+
+    assert not at.exception
+    assert any("No per-call data" in caption.value for caption in at.caption)
+
+
+def test_run_detail_has_no_agent_section_for_a_run_without_agents(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert not at.exception
+    assert "Agent calls" not in [subheader.value for subheader in at.subheader]
+    assert not any("No per-call data" in caption.value for caption in at.caption)
+
+
+def test_run_detail_header_shows_the_agents_model(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=_AGENTS, with_calls_db=False)
+
+    assert any("qwen3-8b" in markdown.value for markdown in at.markdown)

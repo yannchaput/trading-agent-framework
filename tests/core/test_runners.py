@@ -250,3 +250,29 @@ def test_run_backtesting_forwards_warmup_trading_days_with_explicit_data_source(
 def test_core_package_reexports() -> None:
     assert core.Strategy is strategy_module.Strategy
     assert core.StrategyExecutor is executor_module.StrategyExecutor
+
+
+class AgentHello(Strategy):
+    sleeptime = "1D"
+    agent_telemetry = True
+
+    def initialize(self) -> None:
+        from langchain_core.messages import AIMessage
+        from tests.fakes import FakeToolCallingChatModel
+
+        self.agents.create(name="trader", system_prompt="x", model=FakeToolCallingChatModel(messages=iter([AIMessage("hi")])))
+
+    def on_trading_iteration(self) -> None:
+        self.agents["trader"].run("go")
+
+
+def test_a_paper_run_tags_its_agent_calls_with_its_own_log_directory_name(tmp_path: Path) -> None:
+    import sqlite3
+
+    strategy = _strategy(tmp_path, cls=AgentHello)
+
+    strategy.run_paper_trading()
+
+    [run_dir] = (tmp_path / "logs" / "momentum" / "paper").glob("*_paper")
+    rows = sqlite3.connect(tmp_path / "memory" / "momentum" / "paper" / "llm_stats.sqlite").execute("SELECT run_id, agent FROM llm_calls").fetchall()
+    assert rows == [(run_dir.name, "trader")]

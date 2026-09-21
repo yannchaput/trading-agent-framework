@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
+from trading_agent_framework.agents.stats_store import llm_stats_db_path
+from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
 
 
@@ -109,6 +113,9 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
     if end:
         rows.append(("Run", "Backtesting end", end))
 
+    # ── Agent telemetry (settings.json's `agents` block, written when telemetry was on) ──
+    rows.extend(_agent_rows(data.get("agents") or {}))
+
     # ── Strategy parameters ──
     strat_params: dict[str, Any] = data.get("parameters") or {}
     for key in sorted(strat_params):
@@ -117,6 +124,70 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
         rows.append(("Parameters", key, value_str))
 
     return rows
+
+
+def _agent_rows(agents: dict[str, dict[str, Any]]) -> list[tuple[str, str, str]]:
+    """Model / Calls / Tokens / Latency rows per agent. Section names carry the agent's name when
+    there are several, so each agent's rows stay one contiguous group in the Parameters tab."""
+    rows: list[tuple[str, str, str]] = []
+    for name, agent in agents.items():
+        suffix = f" ({name})" if len(agents) > 1 else ""
+
+        def add(section: str, label: str, value: str, suffix: str = suffix) -> None:
+            rows.append((section + suffix, label, value))
+
+        if agent.get("model") is not None:
+            add("Model", "Model", str(agent["model"]))
+        add("Calls", "Model calls", _fmt_int(agent.get("calls")))
+        add("Calls", "Tool calls", _fmt_int(agent.get("tool_calls")))
+        add("Tokens", "Input tokens", _fmt_int(agent.get("input_tokens")))
+        add("Tokens", "Output tokens", _fmt_int(agent.get("output_tokens")))
+        add("Tokens", "Reasoning tokens", _fmt_int(agent.get("reasoning_tokens")))
+        add("Tokens", "Total tokens", _fmt_int(agent.get("total_tokens")))
+        add("Latency", "Total latency", _fmt_ms(agent.get("latency_ms_total")))
+        add("Latency", "Avg latency per call", _fmt_ms(agent.get("latency_ms_avg")))
+    return rows
+
+
+def _fmt_int(value: Any) -> str:
+    return "—" if value is None else f"{int(value):,}"
+
+
+def _fmt_ms(value: Any) -> str:
+    if value is None:
+        return "—"
+    ms = float(value)
+    return f"{ms / 1000:,.1f} s" if ms >= 1000 else f"{ms:,.0f} ms"
+
+
+_AGENT_CALL_COLUMNS = "ts, agent, model, input_tokens, output_tokens, reasoning_tokens, total_tokens, latency_ms, tool_calls"
+
+
+def load_agent_calls(ref: RunRef) -> pd.DataFrame | None:
+    """This run's model calls (one row each, oldest first) from `llm_stats.sqlite`, or None.
+
+    The database lives in the project's `memory/<strategy>/<mode>/` -- three levels above the run
+    directory's `logs/` -- and is opened read-only so the dashboard never creates it. None means "no
+    per-call data": telemetry was off, the file was deleted, a newer backtest wiped this run's rows, or
+    the file is unreadable. The per-agent totals in settings.json are unaffected.
+    """
+    root = Path(ref.path).resolve().parents[3]
+    db = llm_stats_db_path(root, ref.strategy_name, TradingMode(ref.mode))
+    if not db.is_file():
+        return None
+    run_id = os.path.basename(os.path.normpath(ref.path))
+    try:
+        conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
+        try:
+            df = pd.read_sql_query(f"SELECT {_AGENT_CALL_COLUMNS} FROM llm_calls WHERE run_id = ? ORDER BY id", conn, params=(run_id,))
+        finally:
+            conn.close()
+    except (sqlite3.Error, pd.errors.DatabaseError):
+        return None
+    if df.empty:
+        return None
+    df["ts"] = pd.to_datetime(df["ts"], utc=True)
+    return df
 
 
 def load_metrics(ref: RunRef) -> MetricSet | None:

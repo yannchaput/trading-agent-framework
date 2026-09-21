@@ -8,17 +8,22 @@ it) does not pull LangChain into a strategy that never calls `strategy.agents.cr
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable, Mapping, Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
-from trading_agent_framework.utils.errors import AgentError, ConfigurationError
+from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
+from trading_agent_framework.utils.errors import AgentError, ConfigurationError, LLMStatsError
 from trading_agent_framework.utils.log import ColorLogger
 
 if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.tools import BaseTool
+
+    from trading_agent_framework.agents.stats_store import LLMStatsStore
 
 logger = ColorLogger(logging.getLogger(__name__), "AgentRunResult")
 
@@ -46,6 +51,59 @@ class AgentManager:
     def __init__(self, credentials_source: Callable[[], LLMCredentials]) -> None:
         self._credentials_source = credentials_source
         self._agents: dict[str, AgentHandle] = {}
+        self._telemetry_now: Callable[[], datetime] | None = None
+        self._telemetry_store: LLMStatsStore | None = None
+        self._calls: list[CallRecord] = []
+
+    def enable_telemetry(self, *, now: Callable[[], datetime], store: LLMStatsStore | None = None) -> None:
+        """Record every model call of the agents created from now on (tokens, latency, requested tool calls).
+
+        `now` stamps each call (the strategy clock, so a backtest logs simulated time); `store` also
+        persists each call. Must run before `create()`: an agent built earlier has no recording hook.
+        """
+        if self._agents:
+            raise ValueError("enable_telemetry() must be called before any agent is created.")
+        self._telemetry_now = now
+        self._telemetry_store = store
+
+    def telemetry_summary(self) -> dict[str, dict[str, Any]]:
+        """Per-agent totals of the calls recorded so far (empty when telemetry is off or nothing ran)."""
+        return summarize(self._calls)
+
+    def _telemetry_middleware(self, agent_name: str) -> Any:
+        from langchain.agents.middleware import wrap_model_call
+
+        @wrap_model_call
+        def record_call(request: Any, handler: Callable[[Any], Any]) -> Any:
+            started = time.perf_counter()
+            response = handler(request)
+            self._record_call(agent_name, request.model, response, (time.perf_counter() - started) * 1000)
+            return response
+
+        return record_call
+
+    def _record_call(self, agent_name: str, chat_model: Any, response: Any, latency_ms: float) -> None:
+        assert self._telemetry_now is not None
+        messages = getattr(response, "result", None) or [response]
+        ai_message = next((m for m in reversed(messages) if getattr(m, "type", None) == "ai"), None)
+        usage = usage_from_message(ai_message)
+        call = CallRecord(
+            ts=self._telemetry_now(),
+            agent=agent_name,
+            model=getattr(chat_model, "model_name", None),
+            input_tokens=usage.input_tokens,
+            output_tokens=usage.output_tokens,
+            reasoning_tokens=usage.reasoning_tokens,
+            total_tokens=usage.total_tokens,
+            latency_ms=latency_ms,
+            tool_calls=len(getattr(ai_message, "tool_calls", None) or []),
+        )
+        self._calls.append(call)
+        if self._telemetry_store is not None:
+            try:
+                self._telemetry_store.record(call)
+            except LLMStatsError as exc:
+                logger.log_warning(f"agent telemetry not persisted: {exc}")  # observational: never break the agent run
 
     def create(
         self,
@@ -71,7 +129,8 @@ class AgentManager:
         try:
             from langchain.agents import create_agent
 
-            agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt)
+            middleware = [self._telemetry_middleware(name)] if self._telemetry_now is not None else []
+            agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
         except Exception as exc:
             raise AgentError(f"failed to create agent {name!r}: {exc}") from exc
 

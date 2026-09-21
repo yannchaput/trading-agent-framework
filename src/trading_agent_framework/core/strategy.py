@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.manager import AgentManager
+from trading_agent_framework.agents.stats_store import LLMStatsStore, llm_stats_db_path
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
@@ -35,7 +36,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -85,6 +86,10 @@ class Strategy:
     budget: Decimal = Decimal("10000")
     benchmark_symbol: str = "SPY"
 
+    # Agent call telemetry (tokens, latency, tool calls per model call) -> `memory/<strategy>/<mode>/llm_stats.sqlite`.
+    # Off here for paper/live (opt in with `agent_telemetry = True`); `run_backtesting(agent_telemetry=True)` turns it on per run.
+    agent_telemetry: bool = False
+
     def __init__(
         self,
         broker: Broker,
@@ -110,6 +115,8 @@ class Strategy:
         self._memory: MemoryStore | None = None
         self._memory_mode: TradingMode | None = None
         self._agents: AgentManager | None = None
+        # Name of the run directory (`<ts>_<mode>`), set by the runners; tags every llm_stats row.
+        self.run_id: str | None = None
         self.executor = StrategyExecutor(self)
 
     @property
@@ -149,7 +156,27 @@ class Strategy:
         """This strategy's LLM agents (lumibot's `strategy.agents`); built on first use."""
         if self._agents is None:
             self._agents = AgentManager(LLMCredentials.from_env)
+            if self.agent_telemetry:
+                self._agents.enable_telemetry(now=lambda: self.clock.now(), store=self._open_llm_stats_store())
         return self._agents
+
+    def agent_telemetry_summary(self) -> dict[str, dict[str, Any]]:
+        """Per-agent totals of the model calls recorded so far; empty when telemetry is off or no agent ran."""
+        return self._agents.telemetry_summary() if self._agents is not None else {}
+
+    def _open_llm_stats_store(self) -> LLMStatsStore | None:
+        """Opened like `memory`: `llm_stats.sqlite` per strategy and mode, wiped when a backtest starts.
+
+        Telemetry is observational, so an unusable database only costs the per-call rows (warned about),
+        and a strategy run outside a runner (no `run_id`) keeps its in-memory totals only.
+        """
+        if self.run_id is None:
+            return None
+        try:
+            return LLMStatsStore(llm_stats_db_path(self.project_root, self.name, self.trading_mode), run_id=self.run_id, fresh=self.is_backtesting)
+        except LLMStatsError as exc:
+            self.log_warning(f"LLM stats database unavailable, per-call agent telemetry will not be saved: {exc}")
+            return None
 
     # --- lifecycle hooks -------------------------------------------------------
 
@@ -452,6 +479,7 @@ class Strategy:
         risk_free_rate: float = 0.0,
         warmup_trading_days: int = 0,
         news_source: NewsProvider | None = None,
+        agent_telemetry: bool = True,
     ) -> BacktestResult:
         """Run this strategy against simulated time and simulated fills.
 
@@ -494,6 +522,9 @@ class Strategy:
             news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
                 Alpaca provider built lazily from `AlpacaCredentials.from_env()`; the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
+            agent_telemetry: record every LLM call (tokens, latency, tool calls) -- per-agent totals go to
+                `settings.json["agents"]` and each call to `memory/<strategy>/backtesting/llm_stats.sqlite`,
+                which is wiped when the run starts (default `True`).
         """
         from trading_agent_framework.backtesting.data.base import BacktestDataSource as _BacktestDataSource
         from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
@@ -526,6 +557,7 @@ class Strategy:
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,
             news_source=news_source,
+            agent_telemetry=agent_telemetry,
         )
 
     def _run_trading(self, mode: TradingMode) -> None:
@@ -534,6 +566,7 @@ class Strategy:
             raise ConfigurationError(f"Refusing to run strategy {self.name!r} in {mode} mode against a {account_kind} broker account")
         self.trading_mode = mode
         log_file = setup_strategy_logging(self.name, mode, project_root=self.project_root)
+        self.run_id = log_file.parent.name
         self._log_startup_banner(mode, log_file)
         self.executor.run()
 

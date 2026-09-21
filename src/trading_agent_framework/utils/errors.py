@@ -29,6 +29,10 @@ class MemoryValidationError(MemoryStoreError, ValueError):
     """Raised when a memory write is rejected (bad text/kind/tags, unknown or non-open thesis)."""
 
 
+class LLMStatsError(TradingFrameworkError):
+    """Raised when the LLM-stats (agent telemetry) database cannot be prepared or written."""
+
+
 class AgentError(TradingFrameworkError):
     """Raised when building or running a LangChain agent fails (never a raw SDK exception)."""
 
