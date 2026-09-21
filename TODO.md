@@ -39,7 +39,6 @@
 ### Cross sectional momentum
 * Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
 * ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~ => Poor results
-* Too much sector correlation, add a sector isolation strategy
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * Compute the residual volatility compared to the market (cf chatgpt thread)
 
@@ -53,5 +52,12 @@
 * Fix indicators not showing up
 * Add more indicators than portfolio value (e.g SMA 200)
 * Automatize deletion of memory sqllite db before running a backtest
+
+### News sentiment analysis
+* Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.
+* Why the strategy always opt for SPY over QQQ ?
+* Investigate "current_regime": None and defensive posture
+* Add a log in executor to log the execution hour : usefull for intraday.
+* Log the system prompt in 'initialize' method
 
 ### VWAP + idiosyncratic mean reversion

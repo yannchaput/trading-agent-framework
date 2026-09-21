@@ -78,7 +78,7 @@ class NewsBinaryStrategy(Strategy):
         "backtesting_start": datetime(2025, 1, 1, tzinfo=MARKET_TZ),
         "backtesting_end": datetime(2026, 8, 14, tzinfo=MARKET_TZ),
         "benchmark_symbol": "SPY",
-        "warmup_trading_days": 300,
+        "warmup_trading_days": 10,  # No warmup needed (just in case)
         "budget": 10000,
         "commission": 0.0,  # Commission is 0 on US ETF (Alpaca)
     }
@@ -91,7 +91,7 @@ class NewsBinaryStrategy(Strategy):
     }
 
     def initialize(self) -> None:
-        self.sleeptime = "1D" if self.is_backtesting else "1H"
+        self.sleeptime = "3H" if self.is_backtesting else "1H"
         self.vars.iteration_count = 0
         self.vars.consecutive_agent_errors = 0
         self.vars.strategy_parameters = self.strategy_parameters
@@ -177,7 +177,7 @@ class NewsBinaryStrategy(Strategy):
         if positions is None:
             return
         parameters = self.vars.strategy_parameters
-        held = {position["symbol"] for position in positions if position["quantity"] > 0}  # ty: ignore[not-iterable, invalid-argument-type]
+        held = {position["symbol"] for position in positions if position["quantity"] > 0}  # type: ignore # ty: ignore[not-iterable, invalid-argument-type]
         risky = bool(held & set(parameters["symbols"]))
         defensive = parameters["defensive_symbol"] in held
         regime = "mixed" if risky and defensive else "risk_on" if risky else "defensive" if defensive else "none"
@@ -202,6 +202,7 @@ class NewsBinaryStrategy(Strategy):
         symbols = [*self.strategy_parameters["symbols"], self.strategy_parameters["defensive_symbol"]]
         return super().run_backtesting(
             data_source=AlpacaBacktestData,  # Use alpaca broker for intraday quotes (> 6 year history)
+            timestep="minute",
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
