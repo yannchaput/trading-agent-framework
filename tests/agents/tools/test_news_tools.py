@@ -7,6 +7,7 @@ from tests.fakes import FakeBroker, FakeClock, FakeNewsClient, FakeTradingClient
 from trading_agent_framework.agents.tools.news import MAX_CONTENT_LIMIT, news_tools
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.utils.errors import BrokerError
 
 
@@ -140,3 +141,53 @@ def test_search_news_returns_an_error_on_naive_datetime_start() -> None:
     result = tool(start="2026-09-10T00:00:00")
 
     assert "error" in result
+
+
+# --- per-run cache: the model re-sent the identical scan (31 times in one backtest) ----------------
+
+
+def test_an_identical_search_within_one_run_reuses_the_first_result() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+    with agent_call_context(run_id="run-1"):
+        first = tool(symbols="SPY,QQQ", limit=30)
+        again = tool(symbols="SPY,QQQ", limit=30)
+
+    assert again == first
+    assert len(provider.calls) == 1
+
+
+def test_a_different_search_or_a_later_run_queries_the_provider_again() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+    with agent_call_context(run_id="run-1"):
+        tool(symbols="SPY,QQQ", limit=30)
+        tool(symbols="SPY,QQQ", limit=3, include_content=True)
+    with agent_call_context(run_id="run-2"):
+        tool(symbols="SPY,QQQ", limit=30)
+
+    assert len(provider.calls) == 3
+
+
+def test_a_failed_search_is_not_cached() -> None:
+    class _FlakyProvider(_StubProvider):
+        def get_news(self, symbols=(), **kwargs):
+            if not self.calls:
+                self.calls.append({})
+                raise BrokerError("news API down")
+            return super().get_news(symbols, **kwargs)
+
+    provider = _FlakyProvider()
+    tool = _tool(_provider_strategy(provider))
+    with agent_call_context(run_id="run-1"):
+        assert "error" in tool(symbols="SPY")
+        assert tool(symbols="SPY")["count"] == 1
+
+
+def test_outside_an_agent_run_every_search_queries_the_provider() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+    tool(symbols="SPY")
+    tool(symbols="SPY")
+
+    assert len(provider.calls) == 2

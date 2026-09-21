@@ -9,7 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.memory.tools import current_run_id
+from trading_agent_framework.memory.tools import RunMemo, current_run_id
 from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
@@ -65,6 +65,7 @@ class _OrdersThisRun:
 def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
     """Order tools bound to `strategy`."""
     placed = _OrdersThisRun()
+    submissions = RunMemo()  # an identical order within one agent run is refused, not placed twice
 
     def submit_order(
         symbol: str,
@@ -75,6 +76,19 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
         time_in_force: str = "day",
     ) -> dict[str, Any]:
         """Submit a market, limit, stop or stop-limit order; the type follows from the prices given."""
+        key = (symbol, side, float(quantity), limit_price, stop_price, time_in_force)
+        return submissions.once(
+            current_run_id(),
+            key,
+            lambda: _submit(symbol, quantity, side, limit_price, stop_price, time_in_force),
+            on_repeat=lambda first: {
+                "error": f"an identical order was already placed in this run ({first['identifier']}); not placed again"
+            },
+        )
+
+    def _submit(
+        symbol: str, quantity: float, side: str, limit_price: float | None, stop_price: float | None, time_in_force: str
+    ) -> dict[str, Any]:
         try:
             order = strategy.create_order(
                 symbol, quantity, side,

@@ -5,7 +5,7 @@ on every call. Validation errors come back as `{"error": ...}` so the model can 
 """
 
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Hashable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -73,43 +73,46 @@ def _write(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     return {"id": item["id"], "kind": item["kind"], "status": item["status"]}
 
 
-class _DecisionsThisRun:
-    """The decisions already written in the current agent run, keyed by what makes two of them identical.
+class RunMemo:
+    """Results of the tool calls already made in the current agent run, keyed by what makes two calls identical.
 
-    A local LLM re-calls `remember_decision` after it succeeded (112 identical copies in one backtest
-    run), so a repeat within a run returns the first result instead of writing a copy. Only the latest
-    run is kept, in memory: nothing is persisted, and a run id that has been superseded starts empty.
-    The lock spans the check and the write: identical calls sent in ONE model response run on
-    LangGraph worker threads, and they all passed an unlocked check before any of them had written.
+    A local LLM re-sends a call it already made (112 identical `remember_decision` copies in one backtest
+    run, the same `search_news` scan twice), so a repeat within a run gets the first result -- or, with
+    `on_repeat`, an answer built from it -- instead of running again. Only the latest run is kept, in
+    memory: nothing is persisted, and a run id that has been superseded starts empty. The lock spans the
+    check and the call: identical calls sent in ONE model response run on LangGraph worker threads, and
+    they all passed an unlocked check before any of them had run.
     """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._run_id: str | None = None
-        self._results: dict[tuple[str, str | None, str | None], dict[str, Any]] = {}
+        self._results: dict[Hashable, dict[str, Any]] = {}
 
     def once(
         self,
         run_id: str | None,
-        key: tuple[str, str | None, str | None],
-        write: Callable[[], dict[str, Any]],
+        key: Hashable,
+        call: Callable[[], dict[str, Any]],
+        on_repeat: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if run_id is None:
-            return write()
+            return call()
         with self._lock:
             if run_id != self._run_id:
                 self._run_id, self._results = run_id, {}
-            if key not in self._results:
-                result = write()
-                if "error" in result:
-                    return result  # a rejected call wrote nothing, so a corrected retry must go through
+            if key in self._results:
+                first = self._results[key]
+                return first if on_repeat is None else on_repeat(first)
+            result = call()
+            if "error" not in result:  # a refused call did nothing, so a corrected retry must go through
                 self._results[key] = result
-            return self._results[key]
+            return result
 
 
 def memory_tools(store: MemoryStore) -> list[Callable[..., dict[str, Any]]]:
     """Lumibot's memory tools bound to `store`, in lumibot's registration order."""
-    decisions = _DecisionsThisRun()
+    decisions = RunMemo()
 
     def remember(text: str, kind: str = "memory", tags: list[str] | None = None) -> dict[str, Any]:
         """Store a memory or note."""

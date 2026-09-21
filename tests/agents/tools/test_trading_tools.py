@@ -174,6 +174,41 @@ def test_cancel_open_orders_leaves_orders_submitted_in_the_same_run_alone() -> N
     assert [o.identifier for o in broker.canceled] == [older["identifier"]]
 
 
+def test_an_identical_order_in_the_same_run_is_refused() -> None:
+    # Live, a doubled market buy on a margin account would go through; nothing else stops it.
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        first = tools["submit_order"]("SPY", 16, "buy")
+        again = tools["submit_order"]("SPY", 16.0, "buy")
+
+    assert "error" in again
+    assert first["identifier"] in again["error"]
+    assert len(broker.submitted) == 1
+
+
+def test_a_different_order_in_the_same_run_is_placed() -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        tools["submit_order"]("SPY", 16, "buy")
+        assert "error" not in tools["submit_order"]("SPY", 1, "buy")
+        assert "error" not in tools["submit_order"]("SPY", 16, "buy", limit_price=500.0)
+
+    assert len(broker.submitted) == 3
+
+
+def test_an_identical_order_is_placed_again_in_a_later_run_or_after_a_refusal() -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        tools["submit_order"]("SPY", 16, "buy")
+    with agent_call_context(run_id="run-2"):
+        assert "error" not in tools["submit_order"]("SPY", 16, "buy")
+
+    assert len(broker.submitted) == 2
+
+
 def test_cancel_open_orders_delegates_to_the_strategy() -> None:
     strategy, broker = _strategy()
     tools = _tools(strategy)
