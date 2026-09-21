@@ -4,6 +4,7 @@ import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -62,7 +63,7 @@ def _strategy(tmp_path: Path, mode: TradingMode, parameters: dict[str, object] |
     strategy = NewsBinaryStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=mode, project_root=tmp_path, parameters=parameters)
     handle = _FakeHandle()
     agents = _FakeAgents(handle)
-    strategy._agents = agents  # ty: ignore[invalid-assignment]
+    strategy._agents = cast(AgentManager, agents)
     return strategy, agents, handle
 
 
@@ -74,7 +75,7 @@ def test_backtest_defaults_match_the_original_strategy() -> None:
     assert parameters["benchmark_symbol"] == "SPY"
 
 
-@pytest.mark.parametrize(("mode", "expected"), [(TradingMode.BACKTESTING, "1D"), (TradingMode.PAPER, "1H"), (TradingMode.LIVE, "1H")])
+@pytest.mark.parametrize(("mode", "expected"), [(TradingMode.BACKTESTING, "3H"), (TradingMode.PAPER, "1H"), (TradingMode.LIVE, "1H")])
 def test_initialize_sets_sleeptime_per_mode(tmp_path: Path, mode: TradingMode, expected: str) -> None:
     strategy, _, _ = _strategy(tmp_path, mode)
 
@@ -218,7 +219,7 @@ def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monk
     assert captured["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
     assert captured["commission"] == Decimal(0)  # Alpaca charges no commission on US ETFs
-    assert captured["warmup_trading_days"] == 300
+    assert captured["warmup_trading_days"] == 10
 
 
 def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:
