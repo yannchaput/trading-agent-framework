@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.memory.tools import current_run_id
 from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
@@ -36,8 +37,34 @@ def _lean_order(order: Order) -> dict[str, Any]:
     return lean
 
 
+class _OrdersThisRun:
+    """Identifiers of the orders the current agent run placed; only the latest run is kept.
+
+    An order placed in a run is final for that run: a local LLM that submits before it has finished deciding
+    used to cancel its own order (dropping the trade, or resubmitting it). Live, a market order may already
+    have filled by then, so the cancel fails and the resubmission doubles the position.
+    """
+
+    def __init__(self) -> None:
+        self._run_id: str | None = None
+        self._identifiers: set[str] = set()
+
+    def add(self, order: Order) -> None:
+        run_id = current_run_id()
+        if run_id is None:
+            return
+        if run_id != self._run_id:
+            self._run_id, self._identifiers = run_id, set()
+        self._identifiers.add(order.identifier)
+
+    def __contains__(self, identifier: str) -> bool:
+        run_id = current_run_id()
+        return run_id is not None and run_id == self._run_id and identifier in self._identifiers
+
+
 def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
     """Order tools bound to `strategy`."""
+    placed = _OrdersThisRun()
 
     def submit_order(
         symbol: str,
@@ -56,16 +83,19 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
             submitted = strategy.submit_order(order)
         except Exception as exc:  # AlpacaBroker._submit_order re-raises a raw SDK exception on rejection
             return {"error": str(exc)}
+        placed.add(submitted)
         return _lean_order(submitted)
 
     def cancel_order(order_id: str) -> dict[str, Any]:
-        """Cancel a tracked order by its identifier."""
+        """Cancel a tracked order from an earlier run, by its identifier."""
         try:
             order = strategy.get_order(order_id)
         except Exception as exc:  # strategy.get_order can fall through to a raw SDK lookup
             return {"error": f"failed to look up order_id {order_id!r}: {exc}"}
         if order is None:
             return {"error": f"unknown order_id {order_id!r}"}
+        if order.identifier in placed:
+            return {"error": f"order {order_id!r} was placed in this run and is final for this run; do not cancel it"}
         try:
             strategy.cancel_order(order)
         except BrokerError as exc:
@@ -73,9 +103,9 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
         return {"identifier": order.identifier, "status": "cancel_requested"}
 
     def cancel_open_orders() -> dict[str, Any]:
-        """Cancel every open order."""
+        """Cancel every open order from earlier runs."""
         try:
-            strategy.cancel_open_orders()
+            strategy.cancel_orders([o for o in strategy.broker.tracker.get_active_orders() if o.identifier not in placed])
         except BrokerError as exc:
             return {"error": str(exc)}
         return {"status": "ok"}
@@ -86,7 +116,10 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
             order = strategy.close_position(symbol, fraction)
         except BrokerError as exc:
             return {"error": str(exc)}
-        return _lean_order(order) if order is not None else {"status": "no position"}
+        if order is None:
+            return {"status": "no position"}
+        placed.add(order)
+        return _lean_order(order)
 
     def sell_all() -> dict[str, Any]:
         """Close every open position."""
@@ -94,6 +127,8 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
             orders = strategy.sell_all()
         except BrokerError as exc:
             return {"error": str(exc)}
+        for order in orders:
+            placed.add(order)
         return {"orders": [_lean_order(order) for order in orders]}
 
     def get_orders() -> dict[str, Any]:

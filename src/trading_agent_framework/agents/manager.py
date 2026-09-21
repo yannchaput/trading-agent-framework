@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -16,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
+from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError, LLMStatsError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -38,7 +40,8 @@ class AgentHandle:
     def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None) -> AgentRunResult:
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         try:
-            raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
+            with agent_call_context(run_id=uuid.uuid4().hex):  # one id per run: memory tools dedupe repeats inside it
+                raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
             logger.log_debug(f"Model returned this raw messages: {str(raw_result)}")
             return parse_agent_messages(raw_result["messages"])
         except Exception as exc:

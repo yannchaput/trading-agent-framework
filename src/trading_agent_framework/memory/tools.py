@@ -4,12 +4,14 @@ Each docstring is a single line on purpose: it becomes the tool description sent
 on every call. Validation errors come back as `{"error": ...}` so the model can correct itself.
 """
 
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, TypedDict
 
+from trading_agent_framework.memory.records import normalize_symbol
 from trading_agent_framework.memory.store import MemoryStore
 from trading_agent_framework.utils.errors import MemoryValidationError
 
@@ -20,6 +22,7 @@ MAX_SEARCH_LIMIT = 20
 class _AgentCall:
     agent_name: str | None = None
     model_call_id: str | None = None
+    run_id: str | None = None
 
 
 # `_AgentCall` is frozen, so the shared default holds no mutable state; ContextVar still wants
@@ -29,14 +32,23 @@ _CURRENT_CALL: ContextVar[_AgentCall | None] = ContextVar("memory_agent_call", d
 
 @contextmanager
 def agent_call_context(
-    agent_name: str | None = None, model_call_id: str | None = None
+    agent_name: str | None = None, model_call_id: str | None = None, run_id: str | None = None
 ) -> Iterator[None]:
-    """Attribute memory tool calls made inside this block to `agent_name` / `model_call_id`."""
-    token = _CURRENT_CALL.set(_AgentCall(agent_name, model_call_id))
+    """Attribute memory tool calls made inside this block to `agent_name` / `model_call_id`.
+
+    `run_id` scopes one agent run: `remember_decision` records an identical decision only once per run.
+    """
+    token = _CURRENT_CALL.set(_AgentCall(agent_name, model_call_id, run_id))
     try:
         yield
     finally:
         _CURRENT_CALL.reset(token)
+
+
+def current_run_id() -> str | None:
+    """The id of the agent run this code is executing in, or `None` outside `agent_call_context(run_id=...)`."""
+    call = _CURRENT_CALL.get()
+    return call.run_id if call is not None else None
 
 
 class _Provenance(TypedDict):
@@ -61,8 +73,43 @@ def _write(action: Callable[[], dict[str, Any]]) -> dict[str, Any]:
     return {"id": item["id"], "kind": item["kind"], "status": item["status"]}
 
 
+class _DecisionsThisRun:
+    """The decisions already written in the current agent run, keyed by what makes two of them identical.
+
+    A local LLM re-calls `remember_decision` after it succeeded (112 identical copies in one backtest
+    run), so a repeat within a run returns the first result instead of writing a copy. Only the latest
+    run is kept, in memory: nothing is persisted, and a run id that has been superseded starts empty.
+    The lock spans the check and the write: identical calls sent in ONE model response run on
+    LangGraph worker threads, and they all passed an unlocked check before any of them had written.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._run_id: str | None = None
+        self._results: dict[tuple[str, str | None, str | None], dict[str, Any]] = {}
+
+    def once(
+        self,
+        run_id: str | None,
+        key: tuple[str, str | None, str | None],
+        write: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        if run_id is None:
+            return write()
+        with self._lock:
+            if run_id != self._run_id:
+                self._run_id, self._results = run_id, {}
+            if key not in self._results:
+                result = write()
+                if "error" in result:
+                    return result  # a rejected call wrote nothing, so a corrected retry must go through
+                self._results[key] = result
+            return self._results[key]
+
+
 def memory_tools(store: MemoryStore) -> list[Callable[..., dict[str, Any]]]:
     """Lumibot's memory tools bound to `store`, in lumibot's registration order."""
+    decisions = _DecisionsThisRun()
 
     def remember(text: str, kind: str = "memory", tags: list[str] | None = None) -> dict[str, Any]:
         """Store a memory or note."""
@@ -110,8 +157,14 @@ def memory_tools(store: MemoryStore) -> list[Callable[..., dict[str, Any]]]:
         text: str, symbol: str | None = None, action: str | None = None
     ) -> dict[str, Any]:
         """Record an actual trading decision."""
-        return _write(
-            lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance())
+        call = _CURRENT_CALL.get() or _AgentCall()
+        key = (text.strip(), normalize_symbol(symbol), action)
+        return decisions.once(
+            call.run_id,
+            key,
+            lambda: _write(
+                lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance())
+            ),
         )
 
     def remember_lesson(text: str, symbol: str | None = None) -> dict[str, Any]:

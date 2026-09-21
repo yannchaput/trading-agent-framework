@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from tests.fakes import make_memory_store, memory_rows
+from tests.fakes import MEMORY_START, FakeClock, make_memory_store, memory_rows
 
 from trading_agent_framework.memory import agent_call_context, memory_tools
 from trading_agent_framework.memory.store import MemoryStore
@@ -97,13 +97,62 @@ def test_write_tools_return_a_lean_summary(
     assert stored["text"] == kwargs["text"]
 
 
-def test_a_repeated_remember_decision_call_returns_the_same_lean_summary(tmp_path: Path) -> None:
+def test_a_repeated_remember_decision_within_one_run_returns_the_same_summary(tmp_path: Path) -> None:
+    # A local LLM re-calls remember_decision after it succeeded (112 times in one backtest run). The
+    # strategy clock moves between the calls in live trading, so the scope is the run, not the timestamp.
+    clock = FakeClock(MEMORY_START)
+    store = make_memory_store(tmp_path, clock)
+    remember_decision = _tools(store)["remember_decision"]
+    with agent_call_context(run_id="run-1"):
+        first = remember_decision(text="KEEP defensive", symbol="SHV", action="keep")
+        clock.advance(10)
+        again = remember_decision(text="KEEP defensive", symbol="shv", action="keep")
+
+    assert again == first
+    assert len(memory_rows(store, "SELECT * FROM memory_events")) == 1
+
+
+def test_the_same_decision_in_a_later_run_is_a_new_decision(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     remember_decision = _tools(store)["remember_decision"]
-    first = remember_decision(text="KEEP defensive")
+    with agent_call_context(run_id="run-1"):
+        first = remember_decision(text="KEEP defensive")
+    with agent_call_context(run_id="run-2"):
+        second = remember_decision(text="KEEP defensive")
+    with agent_call_context(run_id="run-1"):  # an old run id is not resurrected once a newer run started
+        third = remember_decision(text="KEEP defensive")
 
-    assert remember_decision(text="KEEP defensive") == first
-    assert len(memory_rows(store, "SELECT * FROM memory_events")) == 1
+    assert len({first["id"], second["id"], third["id"]}) == 3
+
+
+def test_remember_decision_differing_in_text_symbol_or_action_within_a_run_is_kept(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    remember_decision = _tools(store)["remember_decision"]
+    with agent_call_context(run_id="run-1"):
+        ids = {
+            remember_decision(text="Bought SPY", symbol="SPY", action="buy")["id"],
+            remember_decision(text="Bought SPY", symbol="SPY", action="sell")["id"],
+            remember_decision(text="Bought SPY", symbol="QQQ", action="buy")["id"],
+            remember_decision(text="Sold SHV", symbol="SPY", action="buy")["id"],
+        }
+
+    assert len(ids) == 4
+
+
+def test_remember_decision_outside_a_run_is_never_deduplicated(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    remember_decision = _tools(store)["remember_decision"]
+
+    assert remember_decision(text="KEEP defensive")["id"] != remember_decision(text="KEEP defensive")["id"]
+
+
+def test_a_rejected_remember_decision_is_not_remembered_for_the_run(tmp_path: Path) -> None:
+    store = make_memory_store(tmp_path)
+    remember_decision = _tools(store)["remember_decision"]
+    with agent_call_context(run_id="run-1"):
+        assert "error" in remember_decision(text="   ")
+        assert "error" in remember_decision(text="   ")
+        assert remember_decision(text="KEEP")["kind"] == "decision"
 
 
 def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:

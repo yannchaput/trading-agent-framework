@@ -253,6 +253,17 @@ def test_system_prompt_tells_the_agent_to_record_once_and_stop(tmp_path: Path) -
     assert "make no further tool call" in prompt
 
 
+def test_system_prompt_makes_an_order_final_for_the_run(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    # The agent submitted a sell, reconsidered, cancelled it and recorded "no trade" (24 runs), or cancelled
+    # and resubmitted the same order; cancel_order now refuses same-run orders, and the prompt says why.
+    assert "settle the decision before the first order" in prompt
+    assert "never cancel an order you submitted in this run" in prompt
+
+
 def test_system_prompt_rotates_in_one_run_instead_of_waiting_for_the_sell_to_fill(tmp_path: Path) -> None:
     strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
     strategy.initialize()

@@ -12,6 +12,7 @@ from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.utils.errors import BrokerError
 
 
@@ -119,6 +120,58 @@ def test_cancel_order_known_id_cancels_it() -> None:
 
     assert result == {"identifier": submitted["identifier"], "status": "cancel_requested"}
     assert len(broker.canceled) == 1
+
+
+def test_cancel_order_refuses_an_order_submitted_in_the_same_run() -> None:
+    # The agent placed an order before it had finished deciding, then cancelled it (24 dropped trades in one
+    # backtest) -- or cancelled and resubmitted it. Live, the market order may have filled by then.
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        submitted = tools["submit_order"]("SPY", 1, "buy")
+        result = tools["cancel_order"](submitted["identifier"])
+
+    assert "error" in result
+    assert "this run" in result["error"]
+    assert broker.canceled == []
+
+
+def test_cancel_order_still_cancels_an_order_from_an_earlier_run() -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        submitted = tools["submit_order"]("SPY", 1, "buy")
+    with agent_call_context(run_id="run-2"):
+        result = tools["cancel_order"](submitted["identifier"])
+
+    assert result == {"identifier": submitted["identifier"], "status": "cancel_requested"}
+    assert len(broker.canceled) == 1
+
+
+def test_cancel_order_refuses_an_order_closed_out_by_close_position_in_the_same_run() -> None:
+    strategy, broker = _strategy()
+    order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, order_type=OrderType.MARKET, quantity=Decimal(1))
+    strategy.close_position = lambda symbol, fraction=1.0: order  # type: ignore[method-assign]
+    tools = _tools(strategy)
+    broker.submit_order(order)
+    with agent_call_context(run_id="run-1"):
+        tools["close_position"]("SPY")
+        result = tools["cancel_order"](order.identifier)
+
+    assert "this run" in result["error"]
+    assert broker.canceled == []
+
+
+def test_cancel_open_orders_leaves_orders_submitted_in_the_same_run_alone() -> None:
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    with agent_call_context(run_id="run-1"):
+        older = tools["submit_order"]("SPY", 1, "buy")
+    with agent_call_context(run_id="run-2"):
+        tools["submit_order"]("QQQ", 1, "buy")
+        assert tools["cancel_open_orders"]() == {"status": "ok"}
+
+    assert [o.identifier for o in broker.canceled] == [older["identifier"]]
 
 
 def test_cancel_open_orders_delegates_to_the_strategy() -> None:
