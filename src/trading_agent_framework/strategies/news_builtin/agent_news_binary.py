@@ -69,7 +69,7 @@ class NewsBinaryStrategy(Strategy):
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 300,
         "budget": 10000,
-        "commission": 0.001,
+        "commission": 0.0,  # Commission is 0 on US ETF (Alpaca)
     }
 
     strategy_parameters = {
@@ -137,11 +137,11 @@ class NewsBinaryStrategy(Strategy):
             # Namespaced so a failed `get_positions` is not read as an empty book (no `positions` key at all).
             snapshot.update({error_key: part["error"]} if "error" in part else part)
         equity = snapshot.get("portfolio_value")
-        for position in snapshot.get("positions", []):  # ty: ignore[not-iterable]
+        for position in snapshot.get("positions", []):  # type: ignore # ty: ignore[not-iterable]
             if "market_value" not in position:
                 try:
                     price = self.get_last_price(position["symbol"])
-                except (BrokerError, BacktestError):
+                except BrokerError, BacktestError:
                     price = None
                 if price is not None:
                     position["market_value"] = round(position["quantity"] * float(price), 2)
