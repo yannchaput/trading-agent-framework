@@ -7,10 +7,6 @@ Excluded from `tests/` on purpose (see scripts/tests/smoke_alpaca_data.py and it
 siblings for the same convention) -- this hits the real network (Yahoo Finance) and is
 meant to be run by hand, not in CI.
 
-Credentials come from env/.env.smoke_backtest.paper or env/.env (the fallback
-strategy-env resolver) so the placeholder broker can be constructed; the script will
-fail clearly if neither file exists.
-
 Run: uv run python scripts/tests/smoke_backtest.py
 """
 
@@ -21,13 +17,11 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from dotenv import load_dotenv
-
-from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
-from trading_agent_framework.config.env import AlpacaCredentials, TradingMode, find_project_root
+from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
+from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.utils.errors import ConfigurationError, TradingFrameworkError
+from trading_agent_framework.utils.errors import TradingFrameworkError
 
 PROJECT_ROOT = find_project_root()
 ET = ZoneInfo("America/New_York")
@@ -51,44 +45,13 @@ class SmokeTestFailure(Exception):
     """Raised for any check that didn't hold."""
 
 
-def _load_credentials() -> AlpacaCredentials:
-    """Load Alpaca credentials from env, attempting strategy-specific then fallback file."""
-    env_file = PROJECT_ROOT / "env" / ".env.smoke_backtest.paper"
-    if not env_file.is_file():
-        # Fall back to the global env file.
-        env_file = PROJECT_ROOT / "env" / ".env"
-    if not env_file.is_file():
-        raise SmokeTestFailure(
-            f"Credentials file not found: {env_file}\n"
-            "Create env/.env.smoke_backtest.paper or env/.env with ALPACA_API_KEY / "
-            "ALPACA_API_SECRET, ALPACA_DATA_API_KEY / ALPACA_DATA_API_SECRET, "
-            "ALPACA_NEWS_API_KEY / ALPACA_NEWS_API_SECRET and BROKER_API_IS_PAPER=true "
-            "before running this script."
-        )
-    load_dotenv(env_file, override=True)
-    try:
-        creds = AlpacaCredentials.for_trading()
-    except ConfigurationError as exc:
-        raise SmokeTestFailure(f"Invalid credentials in {env_file}: {exc}") from exc
-    if not creds.is_paper:
-        raise SmokeTestFailure("BROKER_API_IS_PAPER is not true in the credentials file; refusing to run.")
-    return creds
-
-
 def main() -> int:
     try:
-        creds = _load_credentials()
-        print("Credentials loaded. Building placeholder broker...")
+        print("Building placeholder broker...")
 
         # Strategy.run_backtesting() rebinds the broker before the first bar
         # is touched, so any Broker instance works as a placeholder.
-        placeholder_broker = AlpacaBroker.from_credentials(
-            "smoke_backtest",
-            trading=creds,
-            data=AlpacaCredentials.for_data(),
-            news=AlpacaCredentials.for_news,
-            with_stream=False,
-        )
+        placeholder_broker = PlaceholderBroker("smoke_backtest")
 
         strategy = BuyAndHold(placeholder_broker, mode=TradingMode.BACKTESTING, project_root=PROJECT_ROOT)
 
