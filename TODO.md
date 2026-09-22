@@ -10,6 +10,7 @@
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * Create a batch to run all the smoke tests altogether
 * Add cash available during backtesting
+* Integrate VIX indicator
 
 ## MIGRATION
 * ~~Alpaca broker~~
@@ -53,6 +54,7 @@
 * Fix indicators not showing up
 * Add more indicators than portfolio value (e.g SMA 200)
 * Automatize deletion of memory sqllite db before running a backtest
+* Use langraph to split the tasks into simple task for the LLM.
 
 ### News sentiment analysis
 * ~~Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.~~
