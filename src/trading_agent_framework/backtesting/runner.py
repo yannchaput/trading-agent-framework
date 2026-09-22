@@ -272,8 +272,16 @@ def _run(
     # date's session), but a bar is stamped at its CLOSE, i.e. after that midnight. Reading the benchmark
     # up to the exact instant `end` therefore dropped the last session's bar (NaN benchmark_close, and
     # that session silently missing from metrics.json); read it up to the last session's close instead.
+    # Always daily, never the strategy's raw `timestep`: `benchmark_series` below feeds
+    # both `write_equity`'s session-close join and `benchmark_returns`
+    # (`benchmark_series.pct_change()`), which must be one row per trading DAY to match
+    # `portfolio_returns`. Fetching at `timestep="minute"` still lines up in TIMESTAMP
+    # once aligned to the daily session index, but each pct_change value would be the
+    # benchmark's move over its last one-minute bar, not the day's actual move --
+    # wrecking every benchmark-relative stat (beta, alpha, correlation, information
+    # ratio, treynor, and every `*_benchmark` ratio) without looking obviously wrong.
     benchmark_cutoff = max(end, sessions[-1].close) if sessions else end
-    benchmark_bars = data_source.bars(benchmark_asset, benchmark_cutoff, FULL_HISTORY, timestep)
+    benchmark_bars = data_source.bars(benchmark_asset, benchmark_cutoff, FULL_HISTORY, "day")
     benchmark_series = pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index) if benchmark_bars is not None else None
     benchmark_by_time: dict[datetime, Decimal] | None = {cast(datetime, ts): Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
 
@@ -302,7 +310,15 @@ def _run(
         # overlapping rows" instead of "wrong rows paired together".
         portfolio_returns, benchmark_returns = portfolio_returns.align(benchmark_returns, join="inner")
 
-    computed_metrics = metrics_module.compute_metrics(portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate)
+    # `portfolio_returns`/`benchmark_returns` are always the session-reduced (one row
+    # per trading day) series built above, never raw `timestep`-cadence bars -- so
+    # `compute_metrics` must always annualize them at daily (252/year) periodicity,
+    # regardless of the strategy's own bar `timestep`. Passing `timestep` through
+    # unchanged here (e.g. "minute" -> 98,280 periods/year) annualizes a daily series
+    # as if it had one sample per minute, inflating CAGR/Calmar into ~1e20-magnitude
+    # garbage and every other periods-dependent ratio (Sharpe, Sortino, volatility,
+    # information ratio, alpha, Treynor) along with it.
+    computed_metrics = metrics_module.compute_metrics(portfolio_returns, benchmark_returns, timestep="day", risk_free_rate=risk_free_rate)
     report.write_metrics(run_dir, computed_metrics)
 
     settings = {

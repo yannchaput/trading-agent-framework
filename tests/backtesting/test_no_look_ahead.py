@@ -111,7 +111,11 @@ class LeakyDataSource(FakeBacktestDataSource):
     name = "leaky"
 
     def bars(self, asset, cutoff, length, timestep):
-        df = self._frames.get(asset)
+        # `_frames` is keyed by `(asset, timestep)` with `(asset, None)` as the
+        # timestep-agnostic fallback -- see `FakeBacktestDataSource.set_bars`.
+        df = self._frames.get((asset, timestep))
+        if df is None:
+            df = self._frames.get((asset, None))
         if df is None or df.empty:
             return None
         from trading_agent_framework.entities.bars import Bars

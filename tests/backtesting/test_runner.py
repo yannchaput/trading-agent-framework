@@ -314,6 +314,84 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     assert result.metrics["cagr_strategy"] != pytest.approx(old_cagr, rel=1e-3)
 
 
+def test_run_backtest_annualizes_metrics_at_session_cadence_even_with_a_minute_timestep(tmp_path: Path) -> None:
+    """Bug found reviewing a real `news_binary` minute-timestep run: `_run` forwards the
+    strategy's raw bar `timestep` straight into `compute_metrics` (`timestep=timestep`),
+    but `portfolio_returns` is always the session-reduced series from
+    `_session_equity_samples` -- one row per trading day, regardless of bar timestep. For
+    `timestep="minute"` that mismatch makes `compute_metrics` annualize a DAILY series
+    with `periods=98280` (minutes/year) instead of `252`, turning a sane ~13% CAGR into
+    something like `1e20` (and the benchmark's small negative drift compounds toward
+    -100%) -- exactly the "several metrics are negative"/nonsensical values reported
+    against that run's `metrics.json`. Annualization must stay pinned to session (daily)
+    cadence no matter what bar timestep the strategy trades on.
+    """
+    sessions = _sessions(date(2026, 3, 2), 4)  # Mon-Thu, 4 consecutive trading days
+    aapl_closes = [150.0, 151.0, 152.0, 154.0]
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, aapl_closes))
+    source.set_bars(SPY, _bars(sessions, [400.0, 401.0, 399.0, 403.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    total_return = result.metrics["total_return_strategy"]
+    n = len(sessions) - 1  # one return per day-over-day session gap
+    expected_cagr = (1 + total_return) ** (252 / n) - 1  # day-cadence annualization, NOT 98280/n
+
+    assert result.metrics["cagr_strategy"] == pytest.approx(expected_cagr, rel=1e-6)
+
+
+def test_run_backtest_fetches_the_benchmark_at_daily_cadence_even_with_a_minute_timestep(tmp_path: Path) -> None:
+    """Second bug found alongside the CAGR/periods one, reviewing the same `news_binary`
+    minute-timestep run: `_run` fetches the benchmark with the strategy's raw bar
+    `timestep` (`data_source.bars(benchmark_asset, cutoff, FULL_HISTORY, timestep)`),
+    then computes `benchmark_returns` as `benchmark_series.pct_change()` straight off
+    that fetch. For `timestep="minute"` that's a MINUTE-over-minute return series --
+    once aligned by timestamp to the daily `portfolio_returns`, each kept row is SPY's
+    move over its LAST ONE-MINUTE bar of the session, not the day's actual move. That
+    silently wrecked every benchmark-relative stat in the real run (`total_return_benchmark`,
+    `beta`, `alpha`, `correlation`, `r_squared`, `information_ratio`, `treynor_ratio`,
+    and every `*_benchmark` ratio) without looking obviously wrong on its own (e.g. an
+    implausibly low `correlation=0.07` against SPY for an SPY-adjacent strategy). The
+    benchmark must always be fetched at daily cadence, matching the session-reduced
+    `portfolio_returns` it's compared against.
+    """
+    sessions = _sessions(date(2026, 3, 2), 4)  # Mon-Thu, 4 consecutive trading days
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0, 152.0, 154.0]))
+    # The real daily benchmark series -- served for ANY timestep with no more specific
+    # override (see FakeBacktestDataSource.set_bars) -- vs. a deliberately different
+    # series that only a `timestep="minute"` request would see, standing in for "the
+    # last one-minute bar's close" rather than the day's real move.
+    source.set_bars(SPY, _bars(sessions, [400.0, 404.0, 396.0, 412.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 400.4, 400.2, 400.6]), timestep="minute")
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+
+    result = run_backtest(
+        strategy, start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
+        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    expected_benchmark_returns = pd.Series(
+        [400.0, 404.0, 396.0, 412.0], index=pd.DatetimeIndex([s.close for s in sessions])
+    ).pct_change().dropna()
+    expected_total_return_benchmark = float((1 + expected_benchmark_returns).prod() - 1)
+
+    assert result.metrics["total_return_benchmark"] == pytest.approx(expected_total_return_benchmark, rel=1e-9)
+
+
 def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_count: int = 6):
     """Run a real `run_backtest` over `session_count` sessions and return
     `(equity_dataframe, sessions)`."""
