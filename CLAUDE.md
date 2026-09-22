@@ -37,7 +37,7 @@ Layered, broker-agnostic by design:
 - `brokers/alpaca/news.py` -- `AlpacaNewsProvider`: the I/O wrapper over the pure `market_data` news functions (imports `client` only, never `alpaca.data.requests`).
 - `brokers/alpaca/stream.py` -- `AlpacaTradeStream`: trade-update handler and thread lifecycle for the live order stream.
 - `config/env.py` -- strategy/mode env file resolution, `BrokerSettings` (`BROKER`, `BROKER_API_IS_PAPER`), `IbkrSettings`, and `AlpacaCredentials.for_trading/for_news/for_data`.
-- `brokers/__init__.py` -- lazy-imports `AlpacaBroker`/`AlpacaTradeStream` via module `__getattr__` so `import trading_agent_framework.brokers` alone doesn't pull in `alpaca`/pandas.
+- `brokers/__init__.py` -- lazy-imports `AlpacaBroker`/`AlpacaTradeStream`/`AlpacaMarketClock`/`IbkrBroker` via module `__getattr__` so `import trading_agent_framework.brokers` alone doesn't pull in `alpaca`/pandas/`ib_async`.
 - `clock.py` -- `MarketClock` ABC + `MarketSession`: the executor's only source of time and waiting (the seam a future backtest clock plugs into).
 - `brokers/alpaca/account.py` -- **pure** account and calendar translation (same rules as `orders.py`).
 - `brokers/alpaca/market_data.py` -- **pure** market-data translation (same rules as `orders.py`): timesteps (`"minute"`/`"day"` only), the calendar-based bars window, IEX request builders, and bar/trade/quote parsing.

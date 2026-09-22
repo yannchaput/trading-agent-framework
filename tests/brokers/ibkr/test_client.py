@@ -96,6 +96,26 @@ def test_reconnect_gives_up_after_the_configured_attempts(connection: IbkrConnec
     assert len(ib.connect_calls) == 4
 
 
+def test_call_with_reconnect_false_behaves_normally_when_connected(connection: IbkrConnection) -> None:
+    connection.connect()
+
+    assert connection.call(lambda ib: ib.managedAccounts(), reconnect=False) == ["DU123"]
+
+
+def test_call_with_reconnect_false_fails_fast_when_the_connection_is_down(connection: IbkrConnection, ib: FakeIB) -> None:
+    connection.connect()
+    connect_calls_before = len(ib.connect_calls)
+    ib.disconnect()  # the Gateway restarted
+
+    with pytest.raises(BrokerError, match="reconnect was disabled"):
+        connection.call(lambda ib: ib.managedAccounts(), reconnect=False)
+
+    # No reconnect attempt was made: no new connect() call, and therefore no `2**attempt`
+    # sleep-based delay (the `sleep` test double would otherwise still be a no-op, so this
+    # asserts on call counts rather than wall-clock time).
+    assert len(ib.connect_calls) == connect_calls_before
+
+
 def test_disconnect_is_idempotent(ib: FakeIB) -> None:
     conn = IbkrConnection(SETTINGS, ib_factory=lambda: ib)
     conn.start()

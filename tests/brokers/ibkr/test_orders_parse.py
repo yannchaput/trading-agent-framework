@@ -110,4 +110,21 @@ def test_rejection_message() -> None:
 
     assert orders.rejection_message(rejected) == "Order rejected - reason: no trading permissions (IBKR error 201)"
     assert orders.rejection_message(make_ib_trade(status="Submitted")) is None
-    assert orders.rejection_message(make_ib_trade(status="Cancelled")) == "order Cancelled by IBKR"
+
+
+def test_a_normal_ioc_fok_cancel_is_not_a_rejection() -> None:
+    """A `Cancelled`/`ApiCancelled` status with no error-code log entry is IOC/FOK doing its
+    normal job (didn't fill, so it cancelled), never a submit-time rejection."""
+    assert orders.rejection_message(make_ib_trade(status="Cancelled")) is None
+    assert orders.rejection_message(make_ib_trade(status="ApiCancelled")) is None
+    assert orders.rejection_message(make_ib_trade(status="Cancelled", log_message="Order Canceled - reason:")) is None
+
+
+def test_a_cancel_with_a_real_error_code_is_still_a_rejection() -> None:
+    """`Cancelled`/`ApiCancelled` alongside a genuine IBKR error code IS a rejection."""
+    rejected = make_ib_trade(status="Cancelled", log_message="No trading permissions", log_error_code=201)
+
+    assert orders.rejection_message(rejected) == "No trading permissions (IBKR error 201)"
+
+    rejected_api = make_ib_trade(status="ApiCancelled", log_message="Order rejected", log_error_code=202)
+    assert orders.rejection_message(rejected_api) == "Order rejected (IBKR error 202)"

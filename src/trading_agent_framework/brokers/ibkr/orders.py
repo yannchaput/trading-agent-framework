@@ -111,7 +111,8 @@ def build_order(order: Order) -> IbOrder:
 
 
 PENDING_STATUSES: frozenset[str] = frozenset({"", "PendingSubmit", "ApiPending"})
-_REJECTED_STATUSES = frozenset({"Inactive", "Cancelled", "ApiCancelled"})
+_ALWAYS_REJECTED_STATUSES = frozenset({"Inactive"})
+_CANCELLED_STATUSES = frozenset({"Cancelled", "ApiCancelled"})
 
 _STATUS: dict[str, OrderStatus] = {
     "PendingSubmit": OrderStatus.NEW,
@@ -205,11 +206,24 @@ def parse_portfolio_item(item: PortfolioItem, strategy_name: str) -> Position | 
     )
 
 
-def rejection_message(trade: Trade) -> str | None:
-    """Why IBKR refused `trade`, or None while it is pending or working."""
+def _is_rejection(trade: Trade) -> bool:
+    """`Inactive` is IBKR's own-initiative rejection status, always a rejection. `Cancelled`/
+    `ApiCancelled` only count as a rejection when the log also carries a real IBKR error code --
+    an IOC/FOK order that simply didn't fill cancels the exact same way, with no error at all.
+    """
     status = trade.orderStatus.status
-    if status not in _REJECTED_STATUSES:
+    if status in _ALWAYS_REJECTED_STATUSES:
+        return True
+    if status in _CANCELLED_STATUSES:
+        return any(entry.errorCode for entry in trade.log)
+    return False
+
+
+def rejection_message(trade: Trade) -> str | None:
+    """Why IBKR refused `trade`, or None while it is pending, working, or normally cancelled."""
+    if not _is_rejection(trade):
         return None
+    status = trade.orderStatus.status
     for entry in reversed(trade.log):
         if entry.message:
             suffix = f" (IBKR error {entry.errorCode})" if entry.errorCode else ""

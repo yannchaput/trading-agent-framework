@@ -23,7 +23,7 @@ from trading_agent_framework.brokers.ibkr.client import IbkrConnection
 from trading_agent_framework.config.env import AlpacaCredentials, IbkrSettings
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide
+from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide, TimeInForce
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, OrderValidationError
 
@@ -105,6 +105,56 @@ def test_a_rejection_sets_the_error_before_raising_and_untracks(broker: IbkrBrok
     assert order.status is OrderStatus.ERROR
     assert order.error_message == "No trading permissions (IBKR error 201)"
     assert broker.tracker.get_tracked_order(order.identifier) is None
+
+
+def test_an_ioc_cancel_with_no_error_is_not_treated_as_a_rejection(broker: IbkrBroker, ib: FakeIB) -> None:
+    """A `Cancelled` status with no error-code log entry is IOC/FOK doing its normal job --
+    it did not fill, so it cancelled -- never a submit-time rejection."""
+    ib.place_status = "Cancelled"
+    order = _buy(time_in_force=TimeInForce.IOC)
+
+    result = broker.submit_order(order)
+
+    assert result.status is not OrderStatus.ERROR
+    assert result.error_message is None
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+
+
+def test_an_order_still_pending_past_ack_timeout_is_optimistically_marked_submitted(broker: IbkrBroker, ib: FakeIB) -> None:
+    """`_place_and_wait` gives up waiting after `ack_timeout` (0.2s in this fixture) and returns
+    whatever status IBKR still reports; the broker optimistically marks the order SUBMITTED,
+    relying on later stream/reconcile events to correct it."""
+    ib.place_status = "PendingSubmit"
+
+    order = broker.submit_order(_buy())
+
+    assert order.status is OrderStatus.SUBMITTED
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+
+
+def test_a_partial_fill_before_a_genuine_rejection_keeps_the_order_tracked(broker: IbkrBroker, ib: FakeIB) -> None:
+    """A partial fill is real money moved. If IBKR reports a genuine rejection (a real error
+    code) alongside a `Cancelled` status after that partial fill, the order must stay tracked --
+    untracking it would silently drop a position the framework already holds."""
+    ib.place_status = "Cancelled"
+    ib.place_log_message = "Order rejected after partial fill"
+    ib.place_log_error_code = 202
+    original_place_order = ib.placeOrder
+
+    def place_then_partially_fill(contract, ib_order):
+        trade = original_place_order(contract, ib_order)
+        ib.execDetailsEvent.emit(trade, make_ib_fill(order_ref=ib_order.orderRef, shares=4.0, cum_qty=4.0))
+        return trade
+
+    ib.placeOrder = place_then_partially_fill  # ty: ignore[invalid-assignment]
+    broker.start_stream()
+    order = _buy()
+
+    with pytest.raises(BrokerError, match="IBKR rejected order"):
+        broker.submit_order(order)
+
+    assert order.filled_quantity == Decimal(4)
+    assert broker.tracker.get_tracked_order(order.identifier) is order
 
 
 def test_notional_orders_are_rejected(broker: IbkrBroker) -> None:
@@ -259,6 +309,28 @@ def test_reconcile_applies_missed_fills_once(broker: IbkrBroker, ib: FakeIB) -> 
 
     assert order.status is OrderStatus.FILL
     assert order.filled_quantity == Decimal(10)
+
+
+def test_stop_stream_does_not_reconnect_when_the_gateway_is_down(broker: IbkrBroker, ib: FakeIB) -> None:
+    """A lost Gateway connection at teardown must fail fast, not reconnect-and-reconcile: that
+    would mutate order-tracker state and push listener events after the strategy may already
+    have been told the run is over."""
+    broker.start_stream()
+    reconcile_calls: list[str] = []
+    original_req_executions = ib.reqExecutionsAsync
+
+    async def counting_req_executions(*args: object, **kwargs: object):
+        reconcile_calls.append("reqExecutionsAsync")
+        return await original_req_executions(*args, **kwargs)
+
+    ib.reqExecutionsAsync = counting_req_executions  # ty: ignore[invalid-assignment]
+    connect_calls_before = len(ib.connect_calls)
+    ib.disconnect()  # the Gateway is gone before teardown runs
+
+    broker.stop_stream()
+
+    assert len(ib.connect_calls) == connect_calls_before  # no reconnect attempt
+    assert reconcile_calls == []  # reconcile()'s reqExecutionsAsync never ran
 
 
 def test_from_settings_connects_and_checks_the_account(ib: FakeIB) -> None:

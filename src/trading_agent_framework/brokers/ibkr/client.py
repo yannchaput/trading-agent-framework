@@ -78,9 +78,16 @@ class IbkrConnection:
         self._has_connected = True
         logger.info("Connected to IB Gateway at %s:%s (client id %s)", settings.host, settings.port, settings.client_id)
 
-    def call[T](self, fn: Callable[[Any], T | Awaitable[T]], *, timeout: float | None = None) -> T:
-        """Run `fn(ib)` on the loop thread, awaiting it if it returns an awaitable."""
-        self._ensure_connected()
+    def call[T](self, fn: Callable[[Any], T | Awaitable[T]], *, timeout: float | None = None, reconnect: bool = True) -> T:
+        """Run `fn(ib)` on the loop thread, awaiting it if it returns an awaitable.
+
+        `reconnect=False` skips the reconnect-and-notify dance in `_ensure_connected`: if the
+        connection is down, it raises `BrokerError` immediately instead of retrying (with sleeps
+        between attempts) and calling `on_reconnect`. Behaves exactly like the default when the
+        connection is still live. Meant for teardown paths, where a slow reconnect-and-reconcile
+        after the strategy may already be done is surprising rather than helpful.
+        """
+        self._ensure_connected(reconnect=reconnect)
         return self._run(fn, timeout if timeout is not None else self._call_timeout)
 
     def disconnect(self) -> None:
@@ -100,11 +107,13 @@ class IbkrConnection:
         self._thread = None
         self._has_connected = False
 
-    def _ensure_connected(self) -> None:
+    def _ensure_connected(self, *, reconnect: bool = True) -> None:
         if not self._has_connected:
             raise BrokerError("not connected to IB Gateway; call connect() first")
         if self._run(lambda ib: ib.isConnected(), self._call_timeout):
             return
+        if not reconnect:
+            raise BrokerError("IB Gateway connection is down and reconnect was disabled for this call")
         logger.warning("IB Gateway connection lost; reconnecting")
         last_error: BrokerError | None = None
         for attempt in range(self._reconnect_attempts):

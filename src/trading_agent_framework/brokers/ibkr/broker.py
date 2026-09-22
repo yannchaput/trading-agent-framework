@@ -172,7 +172,15 @@ class IbkrBroker(Broker):
         rejection = orders.rejection_message(trade)
         if rejection is not None:
             order.set_error(rejection)
-            self.tracker.untrack(order)
+            if order.filled_quantity > 0:
+                # A partial fill is real money moved: keep the order tracked so the framework
+                # doesn't lose it, even though IBKR is reporting the rest as rejected/cancelled.
+                logger.warning(
+                    "Order %s was rejected by IBKR after a partial fill (%s filled); keeping it tracked",
+                    order.identifier, order.filled_quantity,
+                )
+            else:
+                self.tracker.untrack(order)
             raise BrokerError(f"IBKR rejected order {order.identifier}: {rejection}")
         order.update_raw(trade)
         if order.status is OrderStatus.UNPROCESSED:
@@ -309,7 +317,9 @@ class IbkrBroker(Broker):
 
     def stop_stream(self, timeout: float = 5.0) -> None:
         try:
-            self._connection.call(lambda ib: self._events.unregister(ib), timeout=timeout)
+            # reconnect=False: a lost Gateway connection at teardown should fail fast, never
+            # trigger a slow reconnect-and-reconcile after the strategy may already be done.
+            self._connection.call(lambda ib: self._events.unregister(ib), timeout=timeout, reconnect=False)
         except BrokerError:
             logger.exception("error unregistering IBKR order events")
         self._connection.disconnect()
