@@ -453,6 +453,17 @@ def test_system_prompt_reads_the_regime_from_the_snapshot(tmp_path: Path) -> Non
     assert "sessions_in_regime" in prompt
 
 
+def test_system_prompt_prefers_fresh_on_topic_news_over_stale_or_already_cited_articles(tmp_path: Path) -> None:
+    # Regression: the live agent picked an 11-hour-old article over a fresh on-topic headline sitting at
+    # the top of the same run's broad scan, then re-cited that same stale article across four straight
+    # runs (search_memory already showed it as a prior decision's basis) to keep justifying no trade.
+    prompt = _prompt(tmp_path)
+
+    assert "prefer the most recent one that is actually about the regime call" in prompt
+    assert "already appears in a decision from search_memory" in prompt
+    assert "it is not new evidence" in prompt
+
+
 def test_system_prompt_names_only_the_configured_symbols(tmp_path: Path) -> None:
     prompt = _prompt(tmp_path, symbols=("VOO", "IWY"), defensive_symbol="BIL", news_symbols="VOO,IWY")
 
