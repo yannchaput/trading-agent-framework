@@ -66,10 +66,18 @@ class AgentHandle:
         self.name = name
         self._agent = agent
 
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None) -> AgentRunResult:
+        """`run_id` defaults to a fresh id (one per run: memory tools dedupe repeats inside it).
+
+        A caller that needs to re-prompt the *same* logical run -- e.g. a corrective follow-up turn
+        after the model skipped a mandatory tool call -- passes back the id from the first call, so a
+        per-run gate (like `news_builtin`'s search-before-decide grounding) doesn't ask it to re-ground
+        itself, and per-run dedupe still treats them as one run.
+        """
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
+        run_id = run_id or uuid.uuid4().hex
         try:
-            with agent_call_context(run_id=uuid.uuid4().hex):  # one id per run: memory tools dedupe repeats inside it
+            with agent_call_context(run_id=run_id):
                 raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
             logger.log_debug(f"Model returned this raw messages: {str(raw_result)}")
             return parse_agent_messages(raw_result["messages"])

@@ -8,7 +8,7 @@ from typing import cast
 
 import pandas as pd
 import pytest
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolCall
 from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et, weekday_sessions
 
@@ -35,25 +35,43 @@ class _StubNewsProvider:
         return []
 
 
+def _default_result() -> AgentRunResult:
+    # A real run always ends with a recorded decision; tests that don't care about that specifically
+    # (sleeptime, portfolio snapshot content, regime tracking, error counting, ...) should not
+    # accidentally exercise the no-decision retry path just by using the fake's placeholder result.
+    return AgentRunResult(
+        output="Hold SHV.",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "Hold SHV."}, result='{"id": "decision_default", "kind": "decision", "status": "recorded"}')],
+    )
+
+
 class _FakeHandle:
     def __init__(self) -> None:
         self.runs: list[tuple[str, object]] = []
+        self.run_ids: list[str | None] = []
         self.error: Exception | None = None
         self.script: list[Exception | None] = []  # per-run outcome (None = success); overrides `error` while non-empty
         self.result: AgentRunResult | None = None  # overrides the default successful result when set
+        self.results: list[AgentRunResult | Exception] = []  # per-call queue (result or raised exception), checked first
 
-    def run(self, task_prompt: str, *, context: object = None) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: object = None, run_id: str | None = None) -> AgentRunResult:
         self.runs.append((task_prompt, context))
+        self.run_ids.append(run_id)
+        if self.results:
+            outcome = self.results.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
         if self.script:
             outcome = self.script.pop(0)
             if outcome is not None:
                 raise outcome
-            return AgentRunResult(output="Hold SHV.", tool_calls=[])
+            return _default_result()
         if self.error is not None:
             raise self.error
         if self.result is not None:
             return self.result
-        return AgentRunResult(output="Hold SHV.", tool_calls=[])
+        return _default_result()
 
 
 class _FakeAgents:
@@ -271,8 +289,89 @@ def test_a_run_that_records_a_decision_does_not_warn(tmp_path: Path, caplog: pyt
     assert "remember_decision" not in caplog.text
 
 
+def test_a_run_that_records_a_decision_is_not_retried(tmp_path: Path) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="KEEP.",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "KEEP"}, result='{"id": "decision_1", "kind": "decision", "status": "recorded"}')],
+    )
+
+    strategy.on_trading_iteration()
+
+    assert len(handle.runs) == 1
+
+
+def test_a_run_that_never_records_a_decision_is_retried_once_and_the_retry_can_succeed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # Regression: the model sometimes places a real trade via submit_order, then just writes a prose
+    # summary and stops -- no remember_decision call at all, real or malformed, anywhere in the run.
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.results = [
+        AgentRunResult(
+            output="Bought SPY at 680.26 to enter bullish regime.",
+            tool_calls=[ToolCallRecord(name="submit_order", args={"symbol": "SPY", "quantity": 13, "side": "buy"}, result='{"identifier": "x"}')],
+        ),
+        AgentRunResult(
+            output="Recorded.",
+            tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "Bought SPY."}, result='{"id": "decision_2", "kind": "decision", "status": "recorded"}')],
+        ),
+    ]
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert len(handle.runs) == 2
+    retry_prompt = handle.runs[1][0]
+    assert "remember_decision" in retry_prompt
+    assert "Bought SPY at 680.26 to enter bullish regime." in retry_prompt  # carries the first run's own words forward
+    # Same logical run: the retry must not need to re-ground itself with another search_news call.
+    assert handle.run_ids[0] == handle.run_ids[1]
+    assert handle.run_ids[0] is not None
+    assert "retry" in caplog.text.lower()
+
+
+def test_a_retry_that_also_fails_logs_a_final_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(output="Bought SPY.", tool_calls=[])  # every call, including the retry, skips it
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert len(handle.runs) == 2  # the retry was attempted exactly once, not looped
+    assert "no decision was recorded" in caplog.text.lower()
+
+
+def test_a_retry_that_itself_raises_is_logged_like_any_agent_error(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.results = [
+        AgentRunResult(output="Bought SPY.", tool_calls=[]),  # 1st run: no decision recorded
+        AgentError("retry server down"),  # retry: raises
+    ]
+
+    with caplog.at_level(logging.ERROR):
+        strategy.on_trading_iteration()
+
+    assert "retry server down" in caplog.text
+    assert len(handle.runs) == 2
+
+
 def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
-    model = FakeToolCallingChatModel(messages=iter([AIMessage("Hold SHV.")]))
+    # Two scripted messages: the run records no decision, so the retry path consumes a second one.
+    model = FakeToolCallingChatModel(
+        messages=iter(
+            [
+                AIMessage("Hold SHV."),
+                AIMessage(
+                    content="",
+                    tool_calls=[ToolCall(name="remember_decision", args={"text": "Hold SHV."}, id="call_1")],
+                ),
+                AIMessage("Recorded."),
+            ]
+        )
+    )
     monkeypatch.setattr(AgentManager, "_resolve_model", lambda self, model_arg, timeout: model)
     strategy = NewsBinaryStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=TradingMode.PAPER, project_root=tmp_path)
 

@@ -7,11 +7,12 @@ so it works in backtests as well as paper/live.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
-from trading_agent_framework.agents.results import ToolCallRecord
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.agents.tools import PrebuiltTools
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.news import news_tools
@@ -30,9 +31,14 @@ MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
 def _decision_was_recorded(tool_calls: Sequence[ToolCallRecord]) -> bool:
     """Whether a `remember_decision` call in `tool_calls` actually succeeded (no `"error"` in its result).
 
-    Guards against a run ending with no decision recorded and no exception raised -- observed when a
-    stuck grounding-gate retry loop ran the local model's turn budget down to where it emitted a
-    malformed pseudo tool-call as plain text instead of a real one, which LangChain never executes.
+    Guards against a run ending with no decision recorded and no exception raised. Two distinct causes
+    observed: (1) the model writes what should have been the call as JSON text in its final message
+    instead of a real tool call -- `AgentManager`'s tool-call-repair middleware now recovers that case
+    generically, before this ever sees it; (2) the model places a real trade via `submit_order` and then
+    just writes a prose summary, skipping `remember_decision` entirely -- nothing to repair there (no
+    call was attempted, real or malformed), so `on_trading_iteration` retries with a corrective follow-up
+    turn instead. This check, and the warning it drives, stays as the backstop for whatever gets past
+    both: a retry that itself fails to record anything.
     """
     return any(call.name == "remember_decision" and '"error"' not in call.result for call in tool_calls)
 
@@ -150,22 +156,50 @@ class NewsBinaryStrategy(Strategy):
         self.vars.iteration_count += 1
         if self.is_backtesting and not self._backtest_iteration_is_due():
             return
+        context = {"current_datetime": self.get_datetime().isoformat(), "portfolio": self._portfolio_snapshot()}
+        run_id = uuid.uuid4().hex
+        result = self._run_agent(self.TASK_PROMPT, context=context, run_id=run_id)
+        if result is None:
+            return
+        self._log_agent_result(result)
+        if _decision_was_recorded(result.tool_calls):
+            return
+        # Observed: the model places a real trade via submit_order, then just writes a prose summary
+        # and stops -- no remember_decision call at all, real or malformed. Reusing `run_id` keeps the
+        # follow-up turn part of the same logical run, so the news-grounding gate (already satisfied by
+        # this run's own search_news call) doesn't ask it to re-ground itself for one more tool call.
+        self.log_warning(f"[{self.AGENT_NAME}] run ended without a successful remember_decision call -- retrying once so a decision is still recorded.")
+        retry_prompt = (
+            f"Your last reply this run was:\n{result.output}\n\n"
+            "You did not call remember_decision before answering, so nothing was recorded. Call "
+            "remember_decision now, with the `text` argument summarizing that decision (including any "
+            "trade you placed). Call no other tool first."
+        )
+        retry_result = self._run_agent(retry_prompt, context=context, run_id=run_id)
+        if retry_result is None:
+            return
+        self._log_agent_result(retry_result, prefix="retry_")
+        if not _decision_was_recorded(retry_result.tool_calls):
+            self.log_warning(f"[{self.AGENT_NAME}] retry also ended without a successful remember_decision call -- no decision was recorded this run.")
+
+    def _run_agent(self, task_prompt: str, *, context: dict[str, object], run_id: str) -> AgentRunResult | None:
+        """Run `self.AGENT_NAME` once; on `AgentError`, log/count it (matching the old inline handling) and return `None`."""
         try:
-            context = {"current_datetime": self.get_datetime().isoformat(), "portfolio": self._portfolio_snapshot()}
-            result = self.agents[self.AGENT_NAME].run(self.TASK_PROMPT, context=context)
+            result = self.agents[self.AGENT_NAME].run(task_prompt, context=context, run_id=run_id)
         except AgentError as exc:
             # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest.
             self.vars.consecutive_agent_errors += 1
             self.log_error(f"[{self.AGENT_NAME}] run failed: {exc}")
             if self.is_backtesting and self.vars.consecutive_agent_errors >= MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS:
                 raise FatalStrategyError(f"[{self.AGENT_NAME}] failed {self.vars.consecutive_agent_errors} runs in a row, aborting the backtest; last error: {exc}") from exc
-            return
+            return None
         self.vars.consecutive_agent_errors = 0
+        return result
+
+    def _log_agent_result(self, result: AgentRunResult, *, prefix: str = "") -> None:
         self.log_info(f"[{self.AGENT_NAME}] Agent output: \n{result.output}")
         for i, tool_call in enumerate(result.tool_calls):
-            self.log_info(f"tool_call_{i}: {tool_call}")
-        if not _decision_was_recorded(result.tool_calls):
-            self.log_warning(f"[{self.AGENT_NAME}] run ended without a successful remember_decision call -- no decision was recorded this run.")
+            self.log_info(f"{prefix}tool_call_{i}: {tool_call}")
 
     def _portfolio_snapshot(self) -> dict[str, object]:
         """What the account holds right now, handed to the agent up front.
