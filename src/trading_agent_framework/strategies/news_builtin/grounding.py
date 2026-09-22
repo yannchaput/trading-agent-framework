@@ -15,6 +15,13 @@ deciding or trading, and the local LLM was observed skipping straight from the b
 without ever reading an article -- effectively judging "bearish" from headlines alone. Only a
 `search_news` call that both succeeds and resolves `include_content=True` (whether passed positionally
 or by keyword; resolved against the real tool's signature via `inspect.signature`) grounds the run.
+
+Requesting content is not the same as receiving it, so grounding also requires the response to carry
+some: at least one returned article with a non-empty `content` field (the shape `parse_news` produces).
+Without this check, a zero-result search (`{"count": 0, "articles": []}`, e.g. from a degenerate
+start==end window) or a result of articles that happen to have no source content both pass with no
+`"error"` key, and the local LLM was observed constructing exactly such empty-window calls to ground a
+run for free without ever reading an article.
 """
 
 from __future__ import annotations
@@ -72,10 +79,16 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
         bound.apply_defaults()
         return bool(bound.arguments.get("include_content", False))
 
+    def _received_full_content(result: dict[str, Any]) -> bool:
+        articles = result.get("articles")
+        if not isinstance(articles, list):
+            return False
+        return any(isinstance(article, dict) and article.get("content") for article in articles)
+
     @functools.wraps(search_news)
     def wrapped_search_news(*args: Any, **kwargs: Any) -> dict[str, Any]:
         result = search_news(*args, **kwargs)
-        if "error" not in result and _requested_full_content(args, kwargs):
+        if "error" not in result and _requested_full_content(args, kwargs) and _received_full_content(result):
             grounded.mark()
         return result
 

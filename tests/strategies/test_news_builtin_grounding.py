@@ -18,8 +18,16 @@ def _fake_tool(name: str, calls: list[str], result: dict[str, Any] | None = None
     return tool
 
 
+_GROUNDING_RESULT = {"count": 1, "articles": [{"id": 1, "headline": "h", "content": "full article text"}]}
+
+
 def _fake_search_news(calls: list[str], result: dict[str, Any] | None = None) -> Any:
-    """Mirrors the real `search_news` signature so grounding can bind positional args too."""
+    """Mirrors the real `search_news` signature so grounding can bind positional args too.
+
+    Defaults to a result shaped like a real full-content read (an article with a populated
+    "content" field) -- the same shape `parse_news` produces -- so callers that don't care about
+    the exact payload still exercise the gate the way production data would.
+    """
 
     def search_news(
         symbols: str = "",
@@ -29,7 +37,7 @@ def _fake_search_news(calls: list[str], result: dict[str, Any] | None = None) ->
         include_content: bool = False,
     ) -> dict[str, Any]:
         calls.append("search_news")
-        return dict(result) if result is not None else {"ok": "search_news"}
+        return dict(result) if result is not None else dict(_GROUNDING_RESULT)
 
     search_news.__doc__ = "Fake search_news."
     return search_news
@@ -105,6 +113,34 @@ def test_submit_order_is_gated_the_same_way() -> None:
 
     assert "error" in before
     assert after == {"ok": "submit_order"}
+
+
+def test_a_zero_article_search_news_call_does_not_ground_the_run() -> None:
+    """A degenerate start==end window returns {"count": 0, "articles": []} -- no error key, so the old
+    gate (which only checked the request args and the absence of "error") treated it as grounding."""
+    calls: list[str] = []
+    tools = _tools(calls, news_result={"count": 0, "articles": []})
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY", start="t", end="t", include_content=True)
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "search_news" in result["error"]
+
+
+def test_an_article_without_a_content_field_does_not_ground_the_run() -> None:
+    """`parse_news` omits the "content" key entirely when the source article has none -- a real
+    include_content=True call can legitimately return articles that were never actually read."""
+    calls: list[str] = []
+    tools = _tools(calls, news_result={"count": 1, "articles": [{"id": 1, "headline": "h"}]})
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY", include_content=True)
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "search_news" in result["error"]
 
 
 def test_a_failed_search_news_call_does_not_count_as_grounding() -> None:

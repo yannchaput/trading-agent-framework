@@ -30,6 +30,8 @@ _START = et(2026, 9, 14, 9, 0)
 
 class _StubNewsProvider:
     def get_news(self, symbols=(), *, start=None, end=None, limit=10, include_content=False):
+        if include_content:
+            return [{"id": 1, "headline": "h", "content": "full article text"}]
         return []
 
 
