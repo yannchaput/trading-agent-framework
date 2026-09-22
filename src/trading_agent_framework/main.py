@@ -57,7 +57,7 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: st
     project_root = find_project_root()
     # Get environment file
     load_strategy_env(strategy_name, trading_mode.value, project_root)
-    creds = AlpacaCredentials.from_env()
+    creds = AlpacaCredentials.for_trading()
     if not creds.api_key or not creds.api_secret:
         console.print("No credentials are sent as environment variables for the broker.", style="bold red")
         raise SystemExit(1)

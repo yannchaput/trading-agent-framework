@@ -500,7 +500,7 @@ class Strategy:
                   widened window, e.g. `data_source=YahooBacktestData` or
                   `data_source=AlpacaBacktestData` (both default their remaining
                   constructor args -- Alpaca's client/trading_client are built from
-                  `AlpacaCredentials.from_env()` when omitted).
+                  `AlpacaCredentials.for_data()` (`ALPACA_DATA_*`) when omitted).
                 - an already-built `BacktestDataSource` instance -- used as given,
                   NOT widened for warmup (construct it with your own window first).
                 No on-disk cache by default -- wrap the result in
@@ -523,7 +523,7 @@ class Strategy:
                 preload call -- an explicit `data_source` instance is used as given
                 and is not widened by this method.
             news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
-                Alpaca provider built lazily from `AlpacaCredentials.from_env()`; the tool's own
+                Alpaca provider built lazily from `AlpacaCredentials.for_news()` (`ALPACA_NEWS_*`); the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
             agent_telemetry: record every LLM call (tokens, latency, tool calls) -- per-agent totals go to
                 `settings.json["agents"]` and each call to `memory/<strategy>/backtesting/llm_stats.sqlite`,

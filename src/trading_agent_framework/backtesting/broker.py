@@ -132,7 +132,7 @@ class BacktestBroker(Broker):
         return list(self._positions.values())
 
     def news_provider(self) -> NewsProvider | None:
-        """The injected news source, else an Alpaca provider built from the env credentials on first use."""
+        """The injected news source, else an Alpaca provider built from the `ALPACA_NEWS_*` credentials on first use."""
         if self._news_source is None:
             # Deferred: importing this module must not pull in `alpaca`, and a backtest that never
             # calls the news tool needs no Alpaca credentials for news.
@@ -140,7 +140,7 @@ class BacktestBroker(Broker):
             from trading_agent_framework.config.env import AlpacaCredentials
 
             try:
-                self._news_source = AlpacaNewsProvider.from_credentials(AlpacaCredentials.from_env())
+                self._news_source = AlpacaNewsProvider.from_credentials(AlpacaCredentials.for_news())
             except ConfigurationError as exc:
                 raise BrokerError(f"no news source available for backtesting: {exc}") from exc
         return self._news_source

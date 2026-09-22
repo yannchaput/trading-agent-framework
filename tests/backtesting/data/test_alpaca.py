@@ -386,11 +386,12 @@ def test_default_clients_are_built_from_env_credentials_when_not_injected(
 ) -> None:
     """Mirrors `YahooBacktestData`'s lazy `_real_download()`: an omitted `client`/
     `trading_client` is not required up front -- it's built from
-    `AlpacaCredentials.from_env()` only the first time it's actually needed, which
+    `AlpacaCredentials.for_data()` only the first time it's actually needed, which
     is what lets `AlpacaBacktestData` be passed as a bare `data_source` class, the
     same way `YahooBacktestData` already can be."""
-    monkeypatch.setenv("ALPACA_API_KEY", "key")
-    monkeypatch.setenv("ALPACA_API_SECRET", "secret")
+    monkeypatch.delenv("ALPACA_IS_PAPER", raising=False)
+    monkeypatch.setenv("ALPACA_DATA_API_KEY", "key")
+    monkeypatch.setenv("ALPACA_DATA_API_SECRET", "secret")
     built: list[str] = []
 
     def fake_build_stock_data_client(creds):
