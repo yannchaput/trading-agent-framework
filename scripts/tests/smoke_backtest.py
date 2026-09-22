@@ -60,16 +60,18 @@ def _load_credentials() -> AlpacaCredentials:
     if not env_file.is_file():
         raise SmokeTestFailure(
             f"Credentials file not found: {env_file}\n"
-            "Create env/.env.smoke_backtest.paper or env/.env with ALPACA_API_KEY, "
-            "ALPACA_API_SECRET, and ALPACA_IS_PAPER=true before running this script."
+            "Create env/.env.smoke_backtest.paper or env/.env with ALPACA_API_KEY / "
+            "ALPACA_API_SECRET, ALPACA_DATA_API_KEY / ALPACA_DATA_API_SECRET, "
+            "ALPACA_NEWS_API_KEY / ALPACA_NEWS_API_SECRET and BROKER_API_IS_PAPER=true "
+            "before running this script."
         )
     load_dotenv(env_file, override=True)
     try:
-        creds = AlpacaCredentials.from_env()
+        creds = AlpacaCredentials.for_trading()
     except ConfigurationError as exc:
         raise SmokeTestFailure(f"Invalid credentials in {env_file}: {exc}") from exc
     if not creds.is_paper:
-        raise SmokeTestFailure("ALPACA_IS_PAPER is not true in the credentials file; refusing to run.")
+        raise SmokeTestFailure("BROKER_API_IS_PAPER is not true in the credentials file; refusing to run.")
     return creds
 
 
@@ -81,7 +83,11 @@ def main() -> int:
         # Strategy.run_backtesting() rebinds the broker before the first bar
         # is touched, so any Broker instance works as a placeholder.
         placeholder_broker = AlpacaBroker.from_credentials(
-            "smoke_backtest", creds, with_stream=False
+            "smoke_backtest",
+            trading=creds,
+            data=AlpacaCredentials.for_data(),
+            news=AlpacaCredentials.for_news,
+            with_stream=False,
         )
 
         strategy = BuyAndHold(placeholder_broker, mode=TradingMode.BACKTESTING, project_root=PROJECT_ROOT)

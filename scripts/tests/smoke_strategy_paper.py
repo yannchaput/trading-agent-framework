@@ -129,12 +129,14 @@ def _failures(strategy: SmokeStrategy) -> list[str]:
 
 def main() -> int:
     load_dotenv(ENV_FILE, override=True)
-    creds = AlpacaCredentials.from_env()
+    creds = AlpacaCredentials.for_trading()
     if not creds.is_paper:
-        print("Refusing to run: ALPACA_IS_PAPER is false (live account).", file=sys.stderr)
+        print("Refusing to run: BROKER_API_IS_PAPER is false (live account).", file=sys.stderr)
         return 1
 
-    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, creds)
+    broker = AlpacaBroker.from_credentials(
+        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news
+    )
     strategy = SmokeStrategy(
         broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT
     )

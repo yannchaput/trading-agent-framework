@@ -64,18 +64,19 @@ def _load_credentials() -> AlpacaCredentials:
     if not ENV_FILE.is_file():
         raise SmokeTestFailure(
             f"Credentials file not found: {ENV_FILE}\n"
-            "Create it with ALPACA_API_KEY / ALPACA_API_SECRET / ALPACA_IS_PAPER=true "
-            "before running this script."
+            "Create it with ALPACA_API_KEY / ALPACA_API_SECRET, ALPACA_DATA_API_KEY / "
+            "ALPACA_DATA_API_SECRET, ALPACA_NEWS_API_KEY / ALPACA_NEWS_API_SECRET and "
+            "BROKER_API_IS_PAPER=true before running this script."
         )
     load_dotenv(ENV_FILE, override=True)
     try:
-        creds = AlpacaCredentials.from_env()
+        creds = AlpacaCredentials.for_trading()
     except ConfigurationError as exc:
         raise SmokeTestFailure(f"Invalid credentials in {ENV_FILE}: {exc}") from exc
 
     if not creds.is_paper:
         raise SmokeTestFailure(
-            "ALPACA_IS_PAPER is not true in the credentials file. Refusing to run "
+            "BROKER_API_IS_PAPER is not true in the credentials file. Refusing to run "
             "this script against a live account."
         )
     return creds
@@ -115,9 +116,11 @@ def main() -> int:
 
     print(f"Loading credentials from {ENV_FILE} ...")
     creds = _load_credentials()
-    print(f"Paper account confirmed (ALPACA_IS_PAPER=true). Building {STRATEGY_NAME} broker ...")
+    print(f"Paper account confirmed (BROKER_API_IS_PAPER=true). Building {STRATEGY_NAME} broker ...")
 
-    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=True)
+    broker = AlpacaBroker.from_credentials(
+        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=True
+    )
     broker.start_stream()
     print(f"Stream started; waiting {STREAM_STARTUP_GRACE_SECONDS}s for it to connect ...")
     time.sleep(STREAM_STARTUP_GRACE_SECONDS)

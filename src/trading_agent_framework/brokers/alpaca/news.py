@@ -6,13 +6,13 @@ building and response parsing stays in the pure `market_data` module.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, cast
 
 from trading_agent_framework.brokers.alpaca import market_data
 from trading_agent_framework.brokers.alpaca.client import build_news_client
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 if TYPE_CHECKING:
     from trading_agent_framework.config.env import AlpacaCredentials
@@ -41,3 +41,18 @@ class AlpacaNewsProvider:
         except Exception as exc:
             raise BrokerError(f"Failed to fetch news: {exc}") from exc
         return market_data.parse_news(response)
+
+
+def lazy_news_provider(credentials: Callable[[], AlpacaCredentials]) -> Callable[[], AlpacaNewsProvider]:
+    """A factory reading the news credentials only when first called, so a strategy that never
+    searches news needs no `ALPACA_NEWS_*`. Missing credentials become `BrokerError`, which the
+    news tool turns into `{"error": ...}`."""
+
+    def build() -> AlpacaNewsProvider:
+        try:
+            creds = credentials()
+        except ConfigurationError as exc:
+            raise BrokerError(f"no news source available: {exc}") from exc
+        return AlpacaNewsProvider.from_credentials(creds)
+
+    return build

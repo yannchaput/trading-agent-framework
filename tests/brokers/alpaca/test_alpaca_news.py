@@ -48,3 +48,31 @@ def test_from_credentials_builds_the_client_from_the_credentials(monkeypatch: py
 
     assert seen == [creds]
     assert len(client.news_requests) == 1
+
+
+def test_lazy_news_provider_resolves_credentials_only_when_called(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.alpaca import news as news_module
+    from trading_agent_framework.brokers.alpaca.news import lazy_news_provider
+
+    calls: list[str] = []
+    monkeypatch.setattr(news_module, "build_news_client", lambda creds: FakeNewsClient())
+
+    def creds() -> AlpacaCredentials:
+        calls.append("read")
+        return AlpacaCredentials(api_key="k", api_secret="s")
+
+    factory = lazy_news_provider(creds)
+    assert calls == []
+    assert isinstance(factory(), AlpacaNewsProvider)
+    assert calls == ["read"]
+
+
+def test_lazy_news_provider_turns_missing_credentials_into_a_broker_error() -> None:
+    from trading_agent_framework.brokers.alpaca.news import lazy_news_provider
+    from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
+
+    def missing() -> AlpacaCredentials:
+        raise ConfigurationError("Missing or blank ALPACA_NEWS_API_KEY / ALPACA_NEWS_API_SECRET environment variables")
+
+    with pytest.raises(BrokerError, match="no news source available: Missing or blank ALPACA_NEWS_API_KEY"):
+        lazy_news_provider(missing)()

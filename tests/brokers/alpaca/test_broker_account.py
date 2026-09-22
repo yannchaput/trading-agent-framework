@@ -53,23 +53,31 @@ def test_default_clock_is_an_alpaca_market_clock() -> None:
 
 
 def test_from_credentials_records_the_account_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.alpaca import data as data_module
+
     client = FakeTradingClient()
     client.account_configuration_response = make_alpaca_account_configuration()
     monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
+    monkeypatch.setattr(data_module, "build_trading_client", lambda creds: FakeTradingClient())
+    monkeypatch.setattr(data_module, "build_stock_data_client", lambda creds: object())
     creds = AlpacaCredentials(api_key="k", api_secret="s", is_paper=False)
-    broker = AlpacaBroker.from_credentials("momentum", creds, with_stream=False)
+    broker = AlpacaBroker.from_credentials("momentum", trading=creds, data=creds, with_stream=False)
     assert broker.is_paper is False
 
 
 def test_from_credentials_configures_account_restrictions(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.alpaca import data as data_module
+
     client = FakeTradingClient()
     client.account_configuration_response = make_alpaca_account_configuration(
         no_shorting=False, max_margin_multiplier="4", fractional_trading=False
     )
     monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
+    monkeypatch.setattr(data_module, "build_trading_client", lambda creds: FakeTradingClient())
+    monkeypatch.setattr(data_module, "build_stock_data_client", lambda creds: object())
     creds = AlpacaCredentials(api_key="k", api_secret="s", is_paper=False)
 
-    AlpacaBroker.from_credentials("momentum", creds, with_stream=False)
+    AlpacaBroker.from_credentials("momentum", trading=creds, data=creds, with_stream=False)
 
     [pushed] = client.set_account_configuration_calls
     assert pushed.no_shorting is True

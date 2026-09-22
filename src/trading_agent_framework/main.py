@@ -57,11 +57,12 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: st
     project_root = find_project_root()
     # Get environment file
     load_strategy_env(strategy_name, trading_mode.value, project_root)
-    creds = AlpacaCredentials.for_trading()
-    if not creds.api_key or not creds.api_secret:
-        console.print("No credentials are sent as environment variables for the broker.", style="bold red")
-        raise SystemExit(1)
-    broker = AlpacaBroker.from_credentials(strategy_name, creds)
+    broker = AlpacaBroker.from_credentials(
+        strategy_name,
+        trading=AlpacaCredentials.for_trading(),
+        data=AlpacaCredentials.for_data(),
+        news=AlpacaCredentials.for_news,
+    )
     strategy = builder(broker, trading_mode)
     if strategy is None:
         return

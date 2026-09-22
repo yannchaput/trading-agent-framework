@@ -210,17 +210,44 @@ def test_market_data_without_a_data_client_raises(call: Callable[[AlpacaBroker],
 
 
 def test_from_credentials_wires_the_stock_data_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.alpaca import data as data_module
+
     data = FakeStockHistoricalDataClient()
     data.trades = {"AAPL": make_alpaca_trade("AAPL", 101.0)}
     client = FakeTradingClient()
     client.account_configuration_response = make_alpaca_account_configuration()
     monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
-    monkeypatch.setattr(broker_module, "build_stock_data_client", lambda creds: data)
+    monkeypatch.setattr(data_module, "build_stock_data_client", lambda creds: data)
+    monkeypatch.setattr(data_module, "build_trading_client", lambda creds: FakeTradingClient())
     creds = AlpacaCredentials(api_key="key", api_secret="secret", is_paper=True)
 
-    broker = AlpacaBroker.from_credentials("momentum", creds, with_stream=False)
+    broker = AlpacaBroker.from_credentials("momentum", trading=creds, data=creds, with_stream=False)
 
     assert broker.get_last_price(AAPL) == Decimal("101.0")
+
+
+def test_from_credentials_builds_the_news_provider_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.alpaca import data as data_module
+    from trading_agent_framework.brokers.alpaca import news as news_module
+
+    client = FakeTradingClient()
+    client.account_configuration_response = make_alpaca_account_configuration()
+    monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
+    monkeypatch.setattr(data_module, "build_trading_client", lambda creds: FakeTradingClient())
+    monkeypatch.setattr(data_module, "build_stock_data_client", lambda creds: FakeStockHistoricalDataClient())
+    monkeypatch.setattr(news_module, "build_news_client", lambda creds: FakeNewsClient())
+    reads: list[str] = []
+
+    def news_creds() -> AlpacaCredentials:
+        reads.append("news")
+        return AlpacaCredentials(api_key="nk", api_secret="ns")
+
+    creds = AlpacaCredentials(api_key="k", api_secret="s")
+    broker = AlpacaBroker.from_credentials("momentum", trading=creds, data=creds, news=news_creds, with_stream=False)
+
+    assert reads == []
+    assert broker.news_provider() is broker.news_provider()
+    assert reads == ["news"]
 
 
 # --- news -------------------------------------------------------------------
