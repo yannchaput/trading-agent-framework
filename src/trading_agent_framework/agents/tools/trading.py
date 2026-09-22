@@ -95,7 +95,7 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
                 limit_price=limit_price, stop_price=stop_price, time_in_force=time_in_force,
             )
             submitted = strategy.submit_order(order)
-        except Exception as exc:  # AlpacaBroker._submit_order re-raises a raw SDK exception on rejection
+        except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             return {"error": str(exc)}
         placed.add(submitted)
         return _lean_order(submitted)

@@ -36,7 +36,7 @@ def _load_credentials() -> AlpacaCredentials:
         raise SmokeTestFailure(f"Credentials file not found: {ENV_FILE}")
     load_dotenv(ENV_FILE, override=True)
     try:
-        return AlpacaCredentials.from_env()
+        return AlpacaCredentials.for_trading()
     except ConfigurationError as exc:
         raise SmokeTestFailure(f"Invalid credentials in {ENV_FILE}: {exc}") from exc
 
@@ -48,7 +48,9 @@ def _check(condition: bool, message: str) -> None:
 
 def main() -> int:
     creds = _load_credentials()
-    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, creds, with_stream=False)
+    broker = AlpacaBroker.from_credentials(
+        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False
+    )
     strategy = Strategy(broker)
     [search_news] = news_tools(strategy)
 

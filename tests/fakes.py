@@ -24,6 +24,7 @@ import alpaca.data.models as alpaca_data_models
 import alpaca.data.models.news as _alpaca_news_models  # noqa: F401  -- registers alpaca_data_models.news
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
+import ib_async
 import pandas as pd
 from alpaca.common.exceptions import APIError
 from alpaca.data.requests import (
@@ -38,6 +39,11 @@ from alpaca.trading.requests import (
     OrderRequest,
     ReplaceOrderRequest,
 )
+from eventkit import Event as IbEvent
+from ib_async import AccountValue, Execution, Fill, PortfolioItem, Stock, Trade, TradeLogEntry
+from ib_async import CommissionReport as IbCommissionReport
+from ib_async import Order as IbOrder
+from ib_async import OrderStatus as IbOrderStatus
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from trading_agent_framework.brokers.base import Broker
@@ -704,3 +710,186 @@ class FakeToolCallingChatModel(GenericFakeChatModel):
 
     def bind_tools(self, tools: object, **kwargs: object) -> FakeToolCallingChatModel:
         return self
+
+
+# --- IBKR (ib_async) objects ------------------------------------------------------
+
+_IB_TIME = datetime(2026, 9, 22, 14, 0, tzinfo=UTC)
+
+
+def make_ib_trade(
+    *,
+    symbol: str = "AAPL",
+    action: str = "BUY",
+    quantity: float = 10.0,
+    order_type: str = "MKT",
+    tif: str = "DAY",
+    lmt_price: float = ib_async.util.UNSET_DOUBLE,
+    aux_price: float = ib_async.util.UNSET_DOUBLE,
+    order_ref: str = "s:abc",
+    status: str = "Submitted",
+    filled: float = 0.0,
+    avg_fill_price: float = 0.0,
+    order_id: int = 1,
+    perm_id: int = 1001,
+    client_id: int = 1,
+    log_message: str = "",
+    log_error_code: int = 0,
+) -> Trade:
+    order = IbOrder(
+        orderId=order_id, clientId=client_id, permId=perm_id, action=action, totalQuantity=quantity,
+        orderType=order_type, lmtPrice=lmt_price, auxPrice=aux_price, tif=tif, orderRef=order_ref,
+    )
+    order_status = IbOrderStatus(
+        orderId=order_id, status=status, filled=filled, remaining=quantity - filled,
+        avgFillPrice=avg_fill_price, permId=perm_id, clientId=client_id,
+    )
+    log = [TradeLogEntry(time=_IB_TIME, status=status, message=log_message, errorCode=log_error_code)]
+    return Trade(contract=Stock(symbol, "SMART", "USD"), order=order, orderStatus=order_status, fills=[], log=log)
+
+
+def make_ib_fill(
+    *,
+    order_ref: str = "s:abc",
+    exec_id: str = "e1",
+    shares: float = 10.0,
+    price: float = 100.0,
+    cum_qty: float = 10.0,
+    avg_price: float = 100.0,
+    symbol: str = "AAPL",
+) -> Fill:
+    execution = Execution(
+        execId=exec_id, time=_IB_TIME, shares=shares, price=price, cumQty=cum_qty,
+        avgPrice=avg_price, orderRef=order_ref, side="BOT",
+    )
+    return Fill(contract=Stock(symbol, "SMART", "USD"), execution=execution, commissionReport=IbCommissionReport(), time=_IB_TIME)
+
+
+def make_ib_portfolio_item(
+    *,
+    symbol: str = "AAPL",
+    position: float = 10.0,
+    market_price: float = 101.0,
+    market_value: float = 1010.0,
+    average_cost: float = 100.0,
+    unrealized_pnl: float = 10.0,
+    account: str = "DU123",
+) -> PortfolioItem:
+    return PortfolioItem(
+        contract=Stock(symbol, "SMART", "USD"), position=position, marketPrice=market_price, marketValue=market_value,
+        averageCost=average_cost, unrealizedPNL=unrealized_pnl, realizedPNL=0.0, account=account,
+    )
+
+
+def make_ib_summary(
+    *,
+    account: str = "DU123",
+    cash: str = "10000",
+    net_liquidation: str = "25000",
+    buying_power: str = "10000",
+    currency: str = "USD",
+) -> list[AccountValue]:
+    def value(tag: str, amount: str) -> AccountValue:
+        return AccountValue(account=account, tag=tag, value=amount, currency=currency, modelCode="")
+
+    return [
+        value("TotalCashValue", cash),
+        value("NetLiquidation", net_liquidation),
+        value("BuyingPower", buying_power),
+        AccountValue(account=account, tag="AccountType", value="INDIVIDUAL", currency="", modelCode=""),
+    ]
+
+
+class FakeIB:
+    """Stand-in for `ib_async.IB`: the methods `IbkrConnection`/`IbkrBroker` call, real `eventkit`
+    events, and real `ib_async` objects in and out. Tests configure and drive it directly."""
+
+    def __init__(self, *, accounts: Sequence[str] = ("DU123",)) -> None:
+        self.orderStatusEvent = IbEvent("orderStatusEvent")
+        self.execDetailsEvent = IbEvent("execDetailsEvent")
+        self.errorEvent = IbEvent("errorEvent")
+        self.disconnectedEvent = IbEvent("disconnectedEvent")
+        self.connected = False
+        self.connect_calls: list[tuple[str, int, int]] = []
+        self.connect_errors: list[Exception] = []  # one popped per connect attempt
+        self.client_id = 0
+        self.accounts = list(accounts)
+        self.summary: list[AccountValue] = make_ib_summary(account=self.accounts[0] if self.accounts else "DU123")
+        self.portfolio_items: list[PortfolioItem] = []
+        self.all_trades: list[Trade] = []
+        self.foreign_open_trades: list[Trade] = []
+        self.executions: list[Fill] = []
+        self.placed: list[tuple[Stock, IbOrder]] = []
+        self.canceled: list[IbOrder] = []
+        self.global_cancels = 0
+        self.unknown_symbols: set[str] = set()
+        self.place_status = "Submitted"
+        self.place_log_message = ""
+        self.place_log_error_code = 0
+        self._next_order_id = 1
+
+    async def connectAsync(self, host: str, port: int, clientId: int, timeout: float | None = None, **_: object) -> None:
+        self.connect_calls.append((host, port, clientId))
+        if self.connect_errors:
+            raise self.connect_errors.pop(0)
+        self.connected = True
+        self.client_id = clientId
+
+    def isConnected(self) -> bool:
+        return self.connected
+
+    def disconnect(self) -> None:
+        self.connected = False
+        self.disconnectedEvent.emit()
+
+    def managedAccounts(self) -> list[str]:
+        return list(self.accounts)
+
+    async def accountSummaryAsync(self, account: str = "") -> list[AccountValue]:
+        return list(self.summary)
+
+    async def qualifyContractsAsync(self, *contracts: Stock) -> list[Stock | None]:
+        return [
+            None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol))
+            for c in contracts
+        ]
+
+    def placeOrder(self, contract: Stock, order: IbOrder) -> Trade:
+        self.placed.append((contract, order))
+        existing = next((t for t in self.all_trades if order.orderId and t.order.orderId == order.orderId), None)
+        if existing is not None:  # a modification: IBKR edits the order in place
+            existing.order = order
+            return existing
+        order.orderId = self._next_order_id
+        order.permId = 1000 + self._next_order_id
+        order.clientId = self.client_id
+        self._next_order_id += 1
+        trade = make_ib_trade(
+            symbol=contract.symbol, action=order.action, quantity=order.totalQuantity, order_type=order.orderType,
+            order_ref=order.orderRef, status=self.place_status, order_id=order.orderId, perm_id=order.permId,
+            client_id=self.client_id, log_message=self.place_log_message, log_error_code=self.place_log_error_code,
+        )
+        trade.order = order
+        self.all_trades.append(trade)
+        return trade
+
+    def cancelOrder(self, order: IbOrder) -> None:
+        self.canceled.append(order)
+
+    def reqGlobalCancel(self) -> None:
+        self.global_cancels += 1
+
+    def openTrades(self) -> list[Trade]:
+        return [t for t in self.all_trades if not t.isDone()]
+
+    def trades(self) -> list[Trade]:
+        return list(self.all_trades)
+
+    async def reqAllOpenOrdersAsync(self) -> list[Trade]:
+        return self.openTrades() + list(self.foreign_open_trades)
+
+    async def reqExecutionsAsync(self, execFilter: object = None) -> list[Fill]:
+        return list(self.executions)
+
+    def portfolio(self, account: str = "") -> list[PortfolioItem]:
+        return list(self.portfolio_items)

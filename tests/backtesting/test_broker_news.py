@@ -29,8 +29,9 @@ def test_an_injected_news_source_is_returned_as_is() -> None:
 
 
 def test_the_default_news_source_is_built_lazily_from_env_credentials_and_memoized(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ALPACA_API_KEY", "k")
-    monkeypatch.setenv("ALPACA_API_SECRET", "s")
+    monkeypatch.setenv("ALPACA_NEWS_API_KEY", "k")
+    monkeypatch.setenv("ALPACA_NEWS_API_SECRET", "s")
+    monkeypatch.delenv("ALPACA_IS_PAPER", raising=False)
     sentinel = _Source()
     built: list[object] = []
 
@@ -48,8 +49,9 @@ def test_the_default_news_source_is_built_lazily_from_env_credentials_and_memoiz
 
 
 def test_missing_alpaca_credentials_surface_as_a_broker_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ALPACA_API_KEY", raising=False)
-    monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+    monkeypatch.delenv("ALPACA_NEWS_API_KEY", raising=False)
+    monkeypatch.delenv("ALPACA_NEWS_API_SECRET", raising=False)
+    monkeypatch.delenv("ALPACA_IS_PAPER", raising=False)
 
     with pytest.raises(BrokerError, match="no news source available for backtesting"):
         _broker().news_provider()

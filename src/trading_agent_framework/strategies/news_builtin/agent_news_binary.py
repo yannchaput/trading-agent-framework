@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
+from trading_agent_framework.agents.results import ToolCallRecord
 from trading_agent_framework.agents.tools import PrebuiltTools
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.news import news_tools
@@ -26,6 +27,16 @@ from trading_agent_framework.utils.errors import AgentError, BacktestError, Brok
 MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
 
 
+def _decision_was_recorded(tool_calls: Sequence[ToolCallRecord]) -> bool:
+    """Whether a `remember_decision` call in `tool_calls` actually succeeded (no `"error"` in its result).
+
+    Guards against a run ending with no decision recorded and no exception raised -- observed when a
+    stuck grounding-gate retry loop ran the local model's turn budget down to where it emitted a
+    malformed pseudo tool-call as plain text instead of a real one, which LangChain never executes.
+    """
+    return any(call.name == "remember_decision" and '"error"' not in call.result for call in tool_calls)
+
+
 def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_symbols: str) -> str:
     allowed = ", ".join([*symbols, defensive_symbol])
     risky = " or ".join(symbols)
@@ -39,8 +50,17 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "This is required, not optional: remember_decision and submit_order are refused with an error until "
         "search_news has returned a result (even an empty one) in this run -- if either refuses that way, call "
         "search_news now, then retry.\n"
-        "3. Pick the single most relevant article. Call search_news again with a narrow start/end window around that "
-        "article's created_at (ISO 8601 with timezone), include_content=True and limit=3, to read it in full.\n"
+        "3. Pick the single most relevant article: among the broad scan's headlines, prefer the most recent one "
+        "that is actually about the regime call (broad market, not a single-company story) -- even if an older "
+        "headline reads as more dramatic. Only reach further back if nothing recent is on-topic. If the article "
+        "you're about to pick already appears in a decision from search_memory, it is not new evidence: look for "
+        "a fresher on-topic article instead, or treat this run as having no new signal. Call search_news again "
+        "with a narrow start/end window around the chosen article's created_at (ISO 8601 with timezone), "
+        "include_content=True and limit=3, to read it in full. The window must bracket that timestamp with room "
+        "either side (for example +/- 10 minutes) -- start equal to end, or a window of only a few seconds, returns "
+        "zero articles and reads nothing. A search_news call that comes back with no articles, or with articles "
+        "that have no content field, has NOT satisfied this step: widen the window or pick a different on-topic "
+        "article and read it in full before deciding.\n"
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
         "5. Decide the regime. The portfolio snapshot in the context gives current_regime, computed from what is actually "
         f"held ('risk_on' = {risky}, 'defensive' = {defensive_symbol}, 'mixed' = both, 'none' = nothing), and "
@@ -141,6 +161,8 @@ class NewsBinaryStrategy(Strategy):
         self.log_info(f"[{self.AGENT_NAME}] Agent output: \n{result.output}")
         for i, tool_call in enumerate(result.tool_calls):
             self.log_info(f"tool_call_{i}: {tool_call}")
+        if not _decision_was_recorded(result.tool_calls):
+            self.log_warning(f"[{self.AGENT_NAME}] run ended without a successful remember_decision call -- no decision was recorded this run.")
 
     def _portfolio_snapshot(self) -> dict[str, object]:
         """What the account holds right now, handed to the agent up front.

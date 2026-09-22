@@ -22,14 +22,21 @@ class FakeBacktestDataSource(BacktestDataSource):
     name = "fake"
 
     def __init__(self) -> None:
-        self._frames: dict[Asset, pd.DataFrame] = {}
+        self._frames: dict[tuple[Asset, str | None], pd.DataFrame] = {}
         self._sessions: list[MarketSession] = []
         self.load_calls: list[tuple[Asset, ...]] = []
         self.load_windows: list[tuple[datetime, datetime]] = []
         self.bars_calls: list[tuple[Asset, datetime, int, str]] = []
 
-    def set_bars(self, asset: Asset, df: pd.DataFrame) -> None:
-        self._frames[asset] = df.sort_index()
+    def set_bars(self, asset: Asset, df: pd.DataFrame, *, timestep: str | None = None) -> None:
+        """`timestep=None` (the default) is the fallback frame `bars()` returns for a
+        request at ANY timestep that has no more specific override -- every existing
+        caller that doesn't care about timestep-specific data keeps working unchanged.
+        Pass `timestep=` to make a request for that exact timestep see different bars,
+        e.g. to catch a caller that fetches the wrong cadence (a real bug found in
+        `runner.py`: the benchmark used to be fetched at the strategy's raw bar
+        timestep instead of always at daily cadence)."""
+        self._frames[(asset, timestep)] = df.sort_index()
 
     def set_sessions(self, sessions: list[MarketSession]) -> None:
         self._sessions = sessions
@@ -40,7 +47,9 @@ class FakeBacktestDataSource(BacktestDataSource):
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         self.bars_calls.append((asset, cutoff, length, timestep))
-        df = self._frames.get(asset)
+        df = self._frames.get((asset, timestep))
+        if df is None:
+            df = self._frames.get((asset, None))
         if df is None:
             return None
         visible = df[df.index <= cutoff]

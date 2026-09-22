@@ -223,6 +223,9 @@ __marimo__/
 # git worktrees (superpowers:using-git-worktrees)
 .worktrees/
 
+# subagent-driven-development scratch workspace (ledgers, briefs, review packages)
+.superpowers/
+
 # Agent memory databases (memory/<strategy>/<mode>/memory.sqlite)
 /memory/
 

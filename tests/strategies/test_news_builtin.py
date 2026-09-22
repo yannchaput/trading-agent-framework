@@ -13,7 +13,7 @@ from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et, weekday_sessions
 
 from trading_agent_framework.agents.manager import AgentManager
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
@@ -30,6 +30,8 @@ _START = et(2026, 9, 14, 9, 0)
 
 class _StubNewsProvider:
     def get_news(self, symbols=(), *, start=None, end=None, limit=10, include_content=False):
+        if include_content:
+            return [{"id": 1, "headline": "h", "content": "full article text"}]
         return []
 
 
@@ -38,6 +40,7 @@ class _FakeHandle:
         self.runs: list[tuple[str, object]] = []
         self.error: Exception | None = None
         self.script: list[Exception | None] = []  # per-run outcome (None = success); overrides `error` while non-empty
+        self.result: AgentRunResult | None = None  # overrides the default successful result when set
 
     def run(self, task_prompt: str, *, context: object = None) -> AgentRunResult:
         self.runs.append((task_prompt, context))
@@ -48,6 +51,8 @@ class _FakeHandle:
             return AgentRunResult(output="Hold SHV.", tool_calls=[])
         if self.error is not None:
             raise self.error
+        if self.result is not None:
+            return self.result
         return AgentRunResult(output="Hold SHV.", tool_calls=[])
 
 
@@ -109,11 +114,15 @@ def test_initialize_wires_remember_decision_and_submit_order_through_the_news_gr
 
     with agent_call_context(run_id="run-1"):
         premature = tools["remember_decision"](text="KEEP")
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY")  # headline-only scan: still not grounded
+        headline_only = tools["remember_decision"](text="KEEP")
+        tools["search_news"](symbols="SPY", include_content=True)
         after = tools["remember_decision"](text="KEEP")
 
     assert "error" in premature
     assert "search_news" in premature["error"]
+    assert "error" in headline_only
+    assert "include_content" in headline_only["error"]
     assert "error" not in after
 
 
@@ -215,6 +224,51 @@ def test_a_configuration_error_propagates(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError):
         strategy.on_trading_iteration()
+
+
+def test_a_run_that_never_records_a_decision_logs_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # Regression: a stuck grounding-gate retry loop was observed ending with the model emitting a
+    # malformed pseudo tool-call as plain text -- no real remember_decision call ever executes, and
+    # the run ends with no error and no warning, invisible outside the raw agent-message DEBUG dump.
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="search_news", args={}, result='{"count": 30, "articles": []}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" in caplog.text
+
+
+def test_a_run_where_remember_decision_was_refused_still_logs_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "KEEP"}, result='{"error": "call search_news..."}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" in caplog.text
+
+
+def test_a_run_that_records_a_decision_does_not_warn(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "KEEP"}, result='{"id": "decision_1", "kind": "decision", "status": "recorded"}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" not in caplog.text
 
 
 def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
@@ -447,6 +501,17 @@ def test_system_prompt_reads_the_regime_from_the_snapshot(tmp_path: Path) -> Non
 
     assert "current_regime" in prompt
     assert "sessions_in_regime" in prompt
+
+
+def test_system_prompt_prefers_fresh_on_topic_news_over_stale_or_already_cited_articles(tmp_path: Path) -> None:
+    # Regression: the live agent picked an 11-hour-old article over a fresh on-topic headline sitting at
+    # the top of the same run's broad scan, then re-cited that same stale article across four straight
+    # runs (search_memory already showed it as a prior decision's basis) to keep justifying no trade.
+    prompt = _prompt(tmp_path)
+
+    assert "prefer the most recent one that is actually about the regime call" in prompt
+    assert "already appears in a decision from search_memory" in prompt
+    assert "it is not new evidence" in prompt
 
 
 def test_system_prompt_names_only_the_configured_symbols(tmp_path: Path) -> None:

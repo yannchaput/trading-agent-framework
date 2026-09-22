@@ -10,22 +10,21 @@ the I/O calls against a `TradingClient` plus the bookkeeping (`tracker`,
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, ClassVar, cast
 
 from alpaca.common.exceptions import APIError
 
-from trading_agent_framework.brokers.alpaca import account, market_data, orders
+from trading_agent_framework.brokers.alpaca import account, orders
 from trading_agent_framework.brokers.alpaca.client import (
-    build_news_client,
-    build_stock_data_client,
     build_trading_client,
     build_trading_stream,
 )
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
-from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider
+from trading_agent_framework.brokers.alpaca.data import AlpacaMarketData
+from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider, lazy_news_provider
 from trading_agent_framework.brokers.alpaca.stream import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     AlpacaTradeStream,
@@ -39,12 +38,13 @@ from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
-from trading_agent_framework.utils.clock import MarketClock, MarketSession
+from trading_agent_framework.utils.clock import MarketClock
 from trading_agent_framework.utils.errors import BrokerError
 
 if TYPE_CHECKING:
     from alpaca.trading.stream import TradingStream
 
+    from trading_agent_framework.brokers.alpaca import market_data
     from trading_agent_framework.config.env import AlpacaCredentials
 
 logger = logging.getLogger(__name__)
@@ -68,6 +68,8 @@ class AlpacaBroker(Broker):
         is_paper: bool = True,
         data_client: market_data.AlpacaStockDataClient | None = None,
         news_client: market_data.AlpacaNewsClient | None = None,
+        market_data: AlpacaMarketData | None = None,
+        news_provider_factory: Callable[[], NewsProvider] | None = None,
     ) -> None:
         super().__init__(
             strategy_name,
@@ -76,8 +78,9 @@ class AlpacaBroker(Broker):
             is_paper=is_paper,
         )
         self._client = client
-        self._data_client = data_client
-        self._news_provider = AlpacaNewsProvider(news_client) if news_client is not None else None
+        self._market_data = market_data if market_data is not None else AlpacaMarketData(data_client, client)
+        self._news_provider: NewsProvider | None = AlpacaNewsProvider(news_client) if news_client is not None else None
+        self._news_provider_factory = news_provider_factory
         self._stream = stream
         self._alpaca_stream: AlpacaTradeStream | None = None
 
@@ -85,21 +88,28 @@ class AlpacaBroker(Broker):
     def from_credentials(
         cls,
         strategy_name: str,
-        creds: AlpacaCredentials,
+        *,
+        trading: AlpacaCredentials,
+        data: AlpacaCredentials,
+        news: Callable[[], AlpacaCredentials] | None = None,
         with_stream: bool = True,
     ) -> AlpacaBroker:
         # TradingClient's own signatures declare `T | RawData` (a dict) because
         # the SDK supports a raw_data mode; this project never enables it, so
         # every call actually returns the parsed model. Narrow once, here, at
         # the single point a real client is constructed.
-        client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
-        data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
-        news_client = cast("market_data.AlpacaNewsClient", build_news_client(creds))
-        stream = build_trading_stream(creds) if with_stream else None
-        return cls(
-            strategy_name, client, stream=stream, is_paper=creds.is_paper,
-            data_client=data_client, news_client=news_client,
+        client = cast("orders.AlpacaTradingClient", build_trading_client(trading))
+        stream = build_trading_stream(trading) if with_stream else None
+        broker = cls(
+            strategy_name,
+            client,
+            stream=stream,
+            is_paper=trading.is_paper,
+            market_data=AlpacaMarketData.from_credentials(data),
+            news_provider_factory=lazy_news_provider(news) if news is not None else None,
         )
+        broker.configure_account()
+        return broker
 
     def _conform_order(self, order: Order) -> Order:
         return orders.conform_order(order)
@@ -248,15 +258,9 @@ class AlpacaBroker(Broker):
 
     # --- market data -------------------------------------------------------------------
 
-    def _require_data_client(self) -> market_data.AlpacaStockDataClient:
-        if self._data_client is None:
-            raise BrokerError(
-                "no market data client configured; construct the broker with data_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
-        return self._data_client
-
     def news_provider(self) -> NewsProvider | None:
+        if self._news_provider is None and self._news_provider_factory is not None:
+            self._news_provider = self._news_provider_factory()
         return self._news_provider
 
     def get_news(
@@ -268,38 +272,22 @@ class AlpacaBroker(Broker):
         limit: int = 10,
         include_content: bool = False,
     ) -> list[dict[str, object]]:
-        if self._news_provider is None:
+        provider = self.news_provider()
+        if provider is None:
             raise BrokerError(
                 "no news client configured; construct the broker with news_client=... "
                 "or use AlpacaBroker.from_credentials(...)"
             )
-        return self._news_provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
+        return provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
-        return self.get_last_prices([asset])[asset]
+        return self._market_data.get_last_price(asset)
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
-        client = self._require_data_client()
-        prices: dict[Asset, Decimal | None] = {}
-        for chunk in market_data.chunk_assets(assets):
-            request = market_data.build_latest_trade_request(chunk)
-            try:
-                response = client.get_stock_latest_trade(request)
-            except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}"
-                ) from exc
-            prices.update(market_data.parse_latest_trades(response, chunk))
-        return prices
+        return self._market_data.get_last_prices(assets)
 
     def get_quote(self, asset: Asset) -> Quote | None:
-        client = self._require_data_client()
-        request = market_data.build_latest_quote_request([asset])
-        try:
-            response = client.get_stock_latest_quote(request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch the latest quote for {asset.symbol}: {exc}") from exc
-        return market_data.parse_quote(response, asset)
+        return self._market_data.get_quote(asset)
 
     def get_bars(
         self,
@@ -309,34 +297,9 @@ class AlpacaBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
-        if not assets:
-            return {}
-        client = self._require_data_client()
-        end = self.clock.now()
-        sessions = self._sessions_before(end, length, timestep)
-        start = market_data.bars_start(end, length, timestep, sessions)
-        in_session = None if include_after_hours else sessions
-        bars: dict[Asset, Bars] = {}
-        for chunk in market_data.chunk_assets(assets):
-            request = market_data.build_bars_request(chunk, timestep, start, end)
-            try:
-                barset = client.get_stock_bars(request)
-            except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}"
-                ) from exc
-            bars.update(market_data.parse_bars(barset, chunk, timestep, length, sessions=in_session))
-        return bars
-
-    def _sessions_before(self, end: datetime, length: int, timestep: str) -> list[MarketSession]:
-        first_day = market_data.calendar_lookback_start(end, length, timestep)
-        last_day = end.astimezone(market_data.MARKET_TZ).date()
-        request = account.build_calendar_request(first_day, last_day)
-        try:
-            days = self._client.get_calendar(request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch the Alpaca calendar: {exc}") from exc
-        return account.parse_calendar(days, market_data.MARKET_TZ)
+        return self._market_data.get_bars(
+            assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours
+        )
 
     def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
         if self._alpaca_stream is None:

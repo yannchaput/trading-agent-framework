@@ -210,14 +210,14 @@ class AlpacaBacktestData(BacktestDataSource):
         if self._client is None:
             from trading_agent_framework.brokers.alpaca.client import build_stock_data_client
 
-            self._client = build_stock_data_client(AlpacaCredentials.from_env())
+            self._client = build_stock_data_client(AlpacaCredentials.for_data())
         return self._client
 
     def _real_trading_client(self) -> AlpacaTradingCalendarClient:
         if self._trading_client is None:
             from trading_agent_framework.brokers.alpaca.client import build_trading_client
 
-            self._trading_client = build_trading_client(AlpacaCredentials.from_env())
+            self._trading_client = build_trading_client(AlpacaCredentials.for_data())
         return self._trading_client
 
 

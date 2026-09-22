@@ -115,6 +115,7 @@ class CrossMomentumStrategy(Strategy):
 
         # Rate limiter for Alpaca market-data calls (universe filtering bursts
         # past Alpaca's ~200 req/min limit; see support/alpaca_support.py).
+        # Market data is Alpaca's under every broker (BROKER=ibkr included), so this limiter always applies.
         self.vars.alpaca_rate_limiter = AlpacaApiRateLimiter(trading_mode=self.trading_mode)
 
         self.log_info(

@@ -8,18 +8,21 @@ from rich.panel import Panel
 from rich.text import Text
 
 import trading_agent_framework as tr
-from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
+from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
+from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
-from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
+from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
-StrategyBuilder = Callable[[AlpacaBroker, TradingMode], Strategy | None]
+StrategyBuilder = Callable[[Broker, TradingMode], Strategy | None]
 
 
-def _build_cross_momentum(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
+def _build_cross_momentum(broker: Broker, mode: TradingMode) -> Strategy | None:
     universe = load_cross_momentum_universe()
     if not universe:
         Console().print("Universe file not found — run batch_stock_universe.py before executing this strategy.", style="bold red")
@@ -27,7 +30,7 @@ def _build_cross_momentum(broker: AlpacaBroker, mode: TradingMode) -> Strategy |
     return CrossMomentumStrategy(broker=broker, mode=mode, universe=universe)
 
 
-def _build_news_binary(broker: AlpacaBroker, mode: TradingMode) -> Strategy | None:
+def _build_news_binary(broker: Broker, mode: TradingMode) -> Strategy | None:
     return NewsBinaryStrategy(broker=broker, mode=mode)
 
 
@@ -57,11 +60,14 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy_name: st
     project_root = find_project_root()
     # Get environment file
     load_strategy_env(strategy_name, trading_mode.value, project_root)
-    creds = AlpacaCredentials.from_env()
-    if not creds.api_key or not creds.api_secret:
-        console.print("No credentials are sent as environment variables for the broker.", style="bold red")
-        raise SystemExit(1)
-    broker = AlpacaBroker.from_credentials(strategy_name, creds)
+    if trading_mode is TradingMode.BACKTESTING:
+        broker: Broker = PlaceholderBroker(strategy_name)
+    else:
+        try:
+            broker = build_broker(strategy_name)
+        except (ConfigurationError, BrokerError) as exc:
+            console.print(str(exc), style="bold red")
+            raise SystemExit(1) from exc
     strategy = builder(broker, trading_mode)
     if strategy is None:
         return

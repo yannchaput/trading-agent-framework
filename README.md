@@ -66,9 +66,44 @@ pattern, so a plain `git add` will not pick it up.
 
 ## Environment variables
 
+| Variables | Used by | Required when |
+|---|---|---|
+| `BROKER`, `BROKER_API_IS_PAPER` | broker factory | optional (`alpaca`, `true`) |
+| `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Alpaca trading | `BROKER=alpaca`, paper/live |
+| `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID` | IBKR trading | `BROKER=ibkr` (all have defaults) |
+| `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (both brokers); `AlpacaBacktestData` backtests |
+| `ALPACA_NEWS_API_KEY`, `ALPACA_NEWS_API_SECRET` | news tool | a strategy uses the news tool |
+
+Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.
+
 `FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
 
 `SEC_EDGAR_USER_AGENT` is needed only if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
+
+## Interactive Brokers (IBKR)
+
+Set `BROKER=ibkr` in the strategy's paper/live env file. IBKR handles orders, account and
+positions; prices, bars, the market calendar and news still come from Alpaca (`ALPACA_DATA_*`,
+`ALPACA_NEWS_*`). Backtests are unaffected (Yahoo or Alpaca data).
+
+1. Install and start **IB Gateway**, and log in with your paper (or live) IBKR username.
+2. In IB Gateway, *Configure > Settings > API > Settings*: enable "ActiveX and Socket Clients",
+   untick "Read-Only API", keep socket port 4002 (paper) / 4001 (live), trust 127.0.0.1.
+3. Use a **cash** account: the broker refuses to trade live on a margin account (IBKR cannot
+   turn off margin or shorting through the API).
+4. Give each strategy running at the same time its own `IBKR_CLIENT_ID`, and keep it stable
+   across restarts: only the client id that placed an order can modify or cancel it.
+5. IB Gateway logs out and restarts daily. For unattended runs use [IBC](https://github.com/IbcAlpha/IBC)
+   to restart and log in automatically; the broker reconnects on its next call.
+6. IBKR trades whole shares through the API: fractional quantities are rounded down, and
+   notional (dollar-amount) orders are rejected.
+
+Manual checks against a paper Gateway (env file `env/.env.ibkr.integration-tests`):
+
+```bash
+uv run python scripts/tests/smoke_ibkr_account.py   # read-only
+uv run python scripts/tests/smoke_ibkr_orders.py    # places paper orders
+```
 
 ## Components
 

@@ -5,6 +5,8 @@ here for convenience. `AlpacaBroker` and `AlpacaTradeStream` live in
 `brokers.alpaca`, which does import `alpaca` (and therefore pandas) -- those
 two names are wired through a module-level `__getattr__` lazy-import map so
 that `import trading_agent_framework.brokers` alone stays import-light.
+`IbkrBroker` lives in `brokers.ibkr` and imports `ib_async`; it is lazy for
+the same reason.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ if TYPE_CHECKING:
     from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
     from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
     from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
+    from trading_agent_framework.brokers.ibkr.broker import IbkrBroker
 
 from trading_agent_framework.utils import get_version
 
@@ -29,6 +32,7 @@ __all__ = [
     "AlpacaMarketClock",
     "AlpacaTradeStream",
     "Broker",
+    "IbkrBroker",
     "OrderTracker",
 ]
 
@@ -36,6 +40,7 @@ _LAZY = {
     "AlpacaBroker": (".alpaca.broker", "AlpacaBroker"),
     "AlpacaTradeStream": (".alpaca.stream", "AlpacaTradeStream"),
     "AlpacaMarketClock": (".alpaca.clock", "AlpacaMarketClock"),
+    "IbkrBroker": (".ibkr.broker", "IbkrBroker"),
 }
 
 
