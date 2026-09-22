@@ -39,6 +39,7 @@ from alpaca.trading.requests import (
     OrderRequest,
     ReplaceOrderRequest,
 )
+from eventkit import Event as IbEvent
 from ib_async import AccountValue, Execution, Fill, PortfolioItem, Stock, Trade, TradeLogEntry
 from ib_async import CommissionReport as IbCommissionReport
 from ib_async import Order as IbOrder
@@ -797,3 +798,98 @@ def make_ib_summary(
         value("BuyingPower", buying_power),
         AccountValue(account=account, tag="AccountType", value="INDIVIDUAL", currency="", modelCode=""),
     ]
+
+
+class FakeIB:
+    """Stand-in for `ib_async.IB`: the methods `IbkrConnection`/`IbkrBroker` call, real `eventkit`
+    events, and real `ib_async` objects in and out. Tests configure and drive it directly."""
+
+    def __init__(self, *, accounts: Sequence[str] = ("DU123",)) -> None:
+        self.orderStatusEvent = IbEvent("orderStatusEvent")
+        self.execDetailsEvent = IbEvent("execDetailsEvent")
+        self.errorEvent = IbEvent("errorEvent")
+        self.disconnectedEvent = IbEvent("disconnectedEvent")
+        self.connected = False
+        self.connect_calls: list[tuple[str, int, int]] = []
+        self.connect_errors: list[Exception] = []  # one popped per connect attempt
+        self.client_id = 0
+        self.accounts = list(accounts)
+        self.summary: list[AccountValue] = make_ib_summary(account=self.accounts[0] if self.accounts else "DU123")
+        self.portfolio_items: list[PortfolioItem] = []
+        self.all_trades: list[Trade] = []
+        self.foreign_open_trades: list[Trade] = []
+        self.executions: list[Fill] = []
+        self.placed: list[tuple[Stock, IbOrder]] = []
+        self.canceled: list[IbOrder] = []
+        self.global_cancels = 0
+        self.unknown_symbols: set[str] = set()
+        self.place_status = "Submitted"
+        self.place_log_message = ""
+        self.place_log_error_code = 0
+        self._next_order_id = 1
+
+    async def connectAsync(self, host: str, port: int, clientId: int, timeout: float | None = None, **_: object) -> None:
+        self.connect_calls.append((host, port, clientId))
+        if self.connect_errors:
+            raise self.connect_errors.pop(0)
+        self.connected = True
+        self.client_id = clientId
+
+    def isConnected(self) -> bool:
+        return self.connected
+
+    def disconnect(self) -> None:
+        self.connected = False
+        self.disconnectedEvent.emit()
+
+    def managedAccounts(self) -> list[str]:
+        return list(self.accounts)
+
+    async def accountSummaryAsync(self, account: str = "") -> list[AccountValue]:
+        return list(self.summary)
+
+    async def qualifyContractsAsync(self, *contracts: Stock) -> list[Stock | None]:
+        return [
+            None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol))
+            for c in contracts
+        ]
+
+    def placeOrder(self, contract: Stock, order: IbOrder) -> Trade:
+        self.placed.append((contract, order))
+        existing = next((t for t in self.all_trades if order.orderId and t.order.orderId == order.orderId), None)
+        if existing is not None:  # a modification: IBKR edits the order in place
+            existing.order = order
+            return existing
+        order.orderId = self._next_order_id
+        order.permId = 1000 + self._next_order_id
+        order.clientId = self.client_id
+        self._next_order_id += 1
+        trade = make_ib_trade(
+            symbol=contract.symbol, action=order.action, quantity=order.totalQuantity, order_type=order.orderType,
+            order_ref=order.orderRef, status=self.place_status, order_id=order.orderId, perm_id=order.permId,
+            client_id=self.client_id, log_message=self.place_log_message, log_error_code=self.place_log_error_code,
+        )
+        trade.order = order
+        self.all_trades.append(trade)
+        return trade
+
+    def cancelOrder(self, order: IbOrder) -> None:
+        self.canceled.append(order)
+
+    def reqGlobalCancel(self) -> None:
+        self.global_cancels += 1
+
+    def openTrades(self) -> list[Trade]:
+        return [t for t in self.all_trades if not t.isDone()]
+
+    def trades(self) -> list[Trade]:
+        return list(self.all_trades)
+
+    async def reqAllOpenOrdersAsync(self) -> list[Trade]:
+        return self.openTrades() + list(self.foreign_open_trades)
+
+    async def reqExecutionsAsync(self, execFilter: object = None) -> list[Fill]:
+        return list(self.executions)
+
+    def portfolio(self, account: str = "") -> list[PortfolioItem]:
+        return list(self.portfolio_items)
