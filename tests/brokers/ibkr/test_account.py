@@ -60,3 +60,27 @@ def test_a_margin_account_only_warns_on_paper() -> None:
 def test_a_non_usd_base_currency_is_refused() -> None:
     with pytest.raises(ConfigurationError, match="USD"):
         account.check_account(make_ib_summary(currency="EUR"), "DU123", is_paper=True)
+
+
+def test_margin_heuristic_exactly_at_threshold_is_not_flagged() -> None:
+    # Threshold with cash=10000 is: 10000 * 1.05 + 1 = 10501
+    # At the exact threshold (not above), should pass as cash account
+    assert account.check_account(make_ib_summary(cash="10000", buying_power="10501"), "DU123", is_paper=True) == []
+
+
+def test_margin_heuristic_just_below_threshold_is_not_flagged() -> None:
+    # Just below threshold (10500 < 10501)
+    assert account.check_account(make_ib_summary(cash="10000", buying_power="10500"), "DU123", is_paper=True) == []
+
+
+def test_margin_heuristic_just_above_threshold_is_flagged_on_paper() -> None:
+    # Just above threshold (10502 > 10501)
+    [warning] = account.check_account(make_ib_summary(cash="10000", buying_power="10502"), "DU123", is_paper=True)
+
+    assert "margin" in warning
+
+
+def test_margin_heuristic_just_above_threshold_is_refused_live() -> None:
+    # Just above threshold (10502 > 10501) on live account
+    with pytest.raises(ConfigurationError, match="margin"):
+        account.check_account(make_ib_summary(account="U123", cash="10000", buying_power="10502"), "U123", is_paper=False)
