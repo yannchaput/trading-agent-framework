@@ -9,10 +9,10 @@ from rich.text import Text
 
 import trading_agent_framework as tr
 from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
-from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
-from trading_agent_framework.config.env import AlpacaCredentials, TradingMode
+from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
@@ -20,15 +20,6 @@ from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 StrategyBuilder = Callable[[Broker, TradingMode], Strategy | None]
-
-
-def build_broker(strategy_name: str) -> Broker:
-    return AlpacaBroker.from_credentials(
-        strategy_name,
-        trading=AlpacaCredentials.for_trading(),
-        data=AlpacaCredentials.for_data(),
-        news=AlpacaCredentials.for_news,
-    )
 
 
 def _build_cross_momentum(broker: Broker, mode: TradingMode) -> Strategy | None:

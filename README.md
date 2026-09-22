@@ -66,6 +66,16 @@ pattern, so a plain `git add` will not pick it up.
 
 ## Environment variables
 
+| Variables | Used by | Required when |
+|---|---|---|
+| `BROKER`, `BROKER_API_IS_PAPER` | broker factory | optional (`alpaca`, `true`) |
+| `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Alpaca trading | `BROKER=alpaca`, paper/live |
+| `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID` | IBKR trading | `BROKER=ibkr` (all have defaults) |
+| `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (both brokers); `AlpacaBacktestData` backtests |
+| `ALPACA_NEWS_API_KEY`, `ALPACA_NEWS_API_SECRET` | news tool | a strategy uses the news tool |
+
+Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.
+
 `FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
 
 `SEC_EDGAR_USER_AGENT` is needed only if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
