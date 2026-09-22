@@ -16,6 +16,8 @@ uv run ruff check                         # lint
 uv run python scripts/tests/smoke_alpaca_orders.py     # manual paper-trading smoke test: broker orders
 uv run python scripts/tests/smoke_strategy_paper.py    # manual paper-trading smoke test: strategy lifecycle
 uv run python scripts/tests/smoke_alpaca_data.py       # manual paper-account smoke test: market data + indicators (read-only)
+uv run python scripts/tests/smoke_ibkr_account.py      # manual paper IB Gateway smoke test: account (read-only)
+uv run python scripts/tests/smoke_ibkr_orders.py       # manual paper IB Gateway smoke test: orders
 ```
 
 Requires Python 3.14 (`.python-version`). Package manager is `uv`, not pip/poetry.
@@ -27,18 +29,21 @@ Layered, broker-agnostic by design:
 - `entities/` -- pure data: `Order`, `Position`, `Asset`, `Quote`, `Bars`, enums. No I/O, no broker knowledge (`Bars` imports pandas only for type checking).
 - `brokers/base.py` -- abstract `Broker` template method (`_conform_order` then `_submit_order`), plus `OrderTracker` wiring. Never imports `alpaca`.
 - `brokers/tracker.py` -- `OrderTracker`/`SafeList`: thread-safe order state machine (`unprocessed -> new -> (partially_filled ->)* filled`, or `-> canceled/error`). Used by stream and polling threads concurrently.
+- `brokers/factory.py` -- `build_broker()`: the paper/live broker named by `BROKER` (`alpaca` default, `ibkr`); broker classes are imported inside the builders.
 - `brokers/alpaca/orders.py` -- **pure** translation functions only (status/event maps, price conforming, request building, response parsing). No I/O, no state, no client instances. Together with `account.py`, the only modules allowed to import `alpaca.trading.requests` (`market_data.py` is the only one allowed to import `alpaca.data.requests`).
 - `brokers/alpaca/broker.py` -- `AlpacaBroker`: wires the real `TradingClient` and `StockHistoricalDataClient` I/O to the pure modules plus tracker bookkeeping. Contains no translation logic itself.
 - `brokers/alpaca/client.py` -- trivial factory functions for building Alpaca SDK clients from credentials, so tests can inject fakes instead.
 - `brokers/news.py` -- `NewsProvider` protocol (no alpaca import, no I/O), reached through `Broker.news_provider()`.
 - `brokers/alpaca/news.py` -- `AlpacaNewsProvider`: the I/O wrapper over the pure `market_data` news functions (imports `client` only, never `alpaca.data.requests`).
 - `brokers/alpaca/stream.py` -- `AlpacaTradeStream`: trade-update handler and thread lifecycle for the live order stream.
-- `config/env.py` -- strategy/mode env file resolution and `AlpacaCredentials`.
+- `config/env.py` -- strategy/mode env file resolution, `BrokerSettings` (`BROKER`, `BROKER_API_IS_PAPER`), `IbkrSettings`, and `AlpacaCredentials.for_trading/for_news/for_data`.
 - `brokers/__init__.py` -- lazy-imports `AlpacaBroker`/`AlpacaTradeStream` via module `__getattr__` so `import trading_agent_framework.brokers` alone doesn't pull in `alpaca`/pandas.
 - `clock.py` -- `MarketClock` ABC + `MarketSession`: the executor's only source of time and waiting (the seam a future backtest clock plugs into).
 - `brokers/alpaca/account.py` -- **pure** account and calendar translation (same rules as `orders.py`).
 - `brokers/alpaca/market_data.py` -- **pure** market-data translation (same rules as `orders.py`): timesteps (`"minute"`/`"day"` only), the calendar-based bars window, IEX request builders, and bar/trade/quote parsing.
 - `brokers/alpaca/clock.py` -- `AlpacaMarketClock`: sessions (early closes included) from Alpaca's calendar, cached ~10 trading days.
+- `brokers/alpaca/data.py` -- `AlpacaMarketData`: Alpaca IEX prices/quotes/bars and the calendar client, shared by `AlpacaBroker` and `IbkrBroker`.
+- `brokers/ibkr/` -- `IbkrBroker` over the TWS API (`ib_async`, IB Gateway): **pure** `orders.py`/`account.py`; `client.py` (`IbkrConnection`, the only thread/asyncio code: every `IB` access goes through `call()` on its loop thread, with timeouts and reconnect); `events.py` (`IbkrOrderEvents`, feeds `OrderTracker` only); `broker.py` (wiring; market data, clock and news come from Alpaca).
 - `core/` -- `Strategy` (lumibot hook names/signatures, broker facade, paper/live runners), `StrategyExecutor` (single-threaded session loop), `timing.py` (pure `sleeptime` parsing and tick maths), `events.py` (stream-thread → executor-thread order-event queue), `indicators.py` (`strategy.indicators.<pandas-ta name>(asset, ...)`, no cache).
 - `memory/` -- agent memory (lumibot's `strategy.memory`): `records.py` (**pure**: ids, JSON, lean items, search scoring), `store.py` (`MemoryStore`, the only SQLite code: append-only `memory_events`, the `memory_index` projection, `memory_retrievals`; one DB per strategy and mode at `memory/<strategy>/<mode>/memory.sqlite`), `tools.py` (lumibot's 9 memory tools as plain typed functions, plus `agent_call_context` for provenance). No LangChain here: the agent layer wraps the tools.
 - `agents/` -- LangChain agent creation/execution (lumibot's `strategy.agents`): `config.py` (**pure**:
@@ -52,11 +57,12 @@ Layered, broker-agnostic by design:
 - `strategies/` -- concrete strategies. `cross_momentum/` (no LLM) and `news_builtin/` (`NewsBuiltinStrategy`: an LLM agent built from `PrebuiltTools.all(self)` + `news_tools(self)`; prompts in `prompts.py`). `main.py`'s `AGENT_STRATEGIES` maps a strategy name to a builder `(broker, mode) -> Strategy | None`.
 - `fundamentals/` -- SEC EDGAR client, trimmed and ported from lumibot's `SECFundamentals`: `sec.py` (**pure**: tag maps, as-of candidate filtering, statement-period matching, filings parsing, URL building, HTML stripping) and `edgar_client.py` (`SecEdgarClient`, the only module allowed to import `httpx` for SEC access -- cached to `<project_root>/cache/sec/`, rate-limited, requires `SEC_EDGAR_USER_AGENT`).
 - `backtesting/` -- the third trading mode. `clock.py` (`BacktestClock`, simulated time), `broker.py` (`BacktestBroker`, simulated fills via `fills.py`'s pure OHLC rules), `ledger.py` (fills/equity/indicator lines, `Decimal`), `data/` (`BacktestDataSource` ABC, `CachedDataSource`, `YahooBacktestData` default, `AlpacaBacktestData`), `warmup.py` (**pure** `warmup_calendar_days()`, approximating a trading-day lookback as a calendar-day buffer), `metrics.py` (vectorbt reporting) and `report.py` (writes the run to `logs/<strategy>/backtesting/<ts>_backtesting/`) are the pure-to-I/O layers; `runner.py` orchestrates a run and `Strategy.run_backtesting()` is the public entry point. Both `Strategy.run_backtesting()` and `runner.run_backtest()` accept a `warmup_trading_days` parameter that widens only the eager benchmark data load's start bound (via `warmup_calendar_days()`), never the simulated `[start, end]` session window itself. The executor itself needed no changes -- `MarketClock.max_wait_slice` (`60.0` live, `math.inf` simulated) is the only seam it exposed.
+- `backtesting/placeholder.py` -- `PlaceholderBroker`: what `main.py` builds a strategy with in backtesting mode; no network.
 - `log.py` -- `ColorLogger` (`log_info`/`log_warning`/... with ANSI colours) and `setup_strategy_logging` (lumibot-style `logs/<strategy>/<mode>/<ts>_<mode>/<mode>.log`).
 
 ## Key patterns / gotchas
 
-- **Money is `Decimal`** everywhere except three deliberate float boundaries: `orders.py` (Alpaca's SDK wants floats for some request fields), `Bars.df` (float64 OHLCV for indicator maths, built only in `market_data._bars_frame`), and the backtesting ledger-to-reporting seam (`backtesting/metrics.py` and `backtesting/report.py` -- vectorbt and JSON/parquet output both need float64; everything upstream of that seam, including `backtesting/broker.py`, `backtesting/fills.py` and `backtesting/ledger.py`, stays exact `Decimal`). Don't add a fourth.
+- **Money is `Decimal`** everywhere except three deliberate float boundaries: `orders.py` (Alpaca's SDK wants floats for some request fields; `brokers/ibkr/orders.py` is the same boundary for `ib_async`), `Bars.df` (float64 OHLCV for indicator maths, built only in `market_data._bars_frame`), and the backtesting ledger-to-reporting seam (`backtesting/metrics.py` and `backtesting/report.py` -- vectorbt and JSON/parquet output both need float64; everything upstream of that seam, including `backtesting/broker.py`, `backtesting/fills.py` and `backtesting/ledger.py`, stays exact `Decimal`). Don't add a fourth.
 - **Never let a raw SDK/pydantic exception escape.** Wrap broker failures in `BrokerError`/`OrderValidationError`/`OrderEventError` (see `errors.py`). `orders.py`'s `validate_order` wraps pydantic `ValidationError`; `AlpacaBroker._submit_order` wraps client exceptions via `order.set_error(exc)` *before* re-raising (lumibot compatibility contract -- don't reorder this).
 - **`orders.py`, `account.py` and `market_data.py` stay pure.** No I/O, no client instances, no state. If you need to call the Alpaca API, that logic belongs in `broker.py`, not here.
 - **Strategy code runs on one thread.** Order hooks (`on_filled_order`, ...) are dispatched by the executor while it waits (between ticks, in `strategy.sleep`, in `wait_for_order_execution`) -- never on the Alpaca stream thread. Broker/stream code must only feed `OrderTracker`; it never calls strategy hooks.
@@ -95,6 +101,11 @@ Layered, broker-agnostic by design:
   "Strategy code runs on one thread" above, a hung or OOM'd local LLM server blocks `on_trading_iteration()`
   -- and therefore order-event hook dispatch -- indefinitely. Pass an explicit `timeout_seconds` if your
   deployment needs one.
+- **Credential groups never fall back.** `ALPACA_API_*` (Alpaca trading), `ALPACA_DATA_*` (market data and calendar for both brokers, and `AlpacaBacktestData`), `ALPACA_NEWS_*` (the news tool). `ALPACA_IS_PAPER` is rejected (renamed `BROKER_API_IS_PAPER`).
+- **`ib_async` stays inside `brokers/ibkr/`** and `import trading_agent_framework.brokers` never imports it. Never call `IbkrConnection.call()` from a function passed to `call()`: it already runs on the loop thread and would deadlock.
+- **IBKR order identity is ours.** `identifier` is our id and `orderRef` carries `{strategy}:{identifier}`; `modify_order` edits in place and returns the same `Order`. Orders placed by another `IBKR_CLIENT_ID` are tracked but cannot be cancelled or modified.
+- **IBKR order-status hand-off.** While `_submit_order` waits (order `UNPROCESSED`) it owns rejections; once it returns, the order is `SUBMITTED` and `IbkrOrderEvents` owns every later transition.
+- **IBKR margin check is a heuristic.** IBKR's API does not say cash vs margin; `ibkr/account.check_account` treats buying power above ~1.05x cash as margin (refused live, warned on paper).
 
 ## Development workflow
 
