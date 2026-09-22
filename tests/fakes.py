@@ -24,6 +24,7 @@ import alpaca.data.models as alpaca_data_models
 import alpaca.data.models.news as _alpaca_news_models  # noqa: F401  -- registers alpaca_data_models.news
 import alpaca.trading.enums as alpaca_enums
 import alpaca.trading.models as alpaca_models
+import ib_async
 import pandas as pd
 from alpaca.common.exceptions import APIError
 from alpaca.data.requests import (
@@ -38,6 +39,10 @@ from alpaca.trading.requests import (
     OrderRequest,
     ReplaceOrderRequest,
 )
+from ib_async import AccountValue, Execution, Fill, PortfolioItem, Stock, Trade, TradeLogEntry
+from ib_async import CommissionReport as IbCommissionReport
+from ib_async import Order as IbOrder
+from ib_async import OrderStatus as IbOrderStatus
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from trading_agent_framework.brokers.base import Broker
@@ -704,3 +709,91 @@ class FakeToolCallingChatModel(GenericFakeChatModel):
 
     def bind_tools(self, tools: object, **kwargs: object) -> FakeToolCallingChatModel:
         return self
+
+
+# --- IBKR (ib_async) objects ------------------------------------------------------
+
+_IB_TIME = datetime(2026, 9, 22, 14, 0, tzinfo=UTC)
+
+
+def make_ib_trade(
+    *,
+    symbol: str = "AAPL",
+    action: str = "BUY",
+    quantity: float = 10.0,
+    order_type: str = "MKT",
+    tif: str = "DAY",
+    lmt_price: float = ib_async.util.UNSET_DOUBLE,
+    aux_price: float = ib_async.util.UNSET_DOUBLE,
+    order_ref: str = "s:abc",
+    status: str = "Submitted",
+    filled: float = 0.0,
+    avg_fill_price: float = 0.0,
+    order_id: int = 1,
+    perm_id: int = 1001,
+    client_id: int = 1,
+    log_message: str = "",
+    log_error_code: int = 0,
+) -> Trade:
+    order = IbOrder(
+        orderId=order_id, clientId=client_id, permId=perm_id, action=action, totalQuantity=quantity,
+        orderType=order_type, lmtPrice=lmt_price, auxPrice=aux_price, tif=tif, orderRef=order_ref,
+    )
+    order_status = IbOrderStatus(
+        orderId=order_id, status=status, filled=filled, remaining=quantity - filled,
+        avgFillPrice=avg_fill_price, permId=perm_id, clientId=client_id,
+    )
+    log = [TradeLogEntry(time=_IB_TIME, status=status, message=log_message, errorCode=log_error_code)]
+    return Trade(contract=Stock(symbol, "SMART", "USD"), order=order, orderStatus=order_status, fills=[], log=log)
+
+
+def make_ib_fill(
+    *,
+    order_ref: str = "s:abc",
+    exec_id: str = "e1",
+    shares: float = 10.0,
+    price: float = 100.0,
+    cum_qty: float = 10.0,
+    avg_price: float = 100.0,
+    symbol: str = "AAPL",
+) -> Fill:
+    execution = Execution(
+        execId=exec_id, time=_IB_TIME, shares=shares, price=price, cumQty=cum_qty,
+        avgPrice=avg_price, orderRef=order_ref, side="BOT",
+    )
+    return Fill(contract=Stock(symbol, "SMART", "USD"), execution=execution, commissionReport=IbCommissionReport(), time=_IB_TIME)
+
+
+def make_ib_portfolio_item(
+    *,
+    symbol: str = "AAPL",
+    position: float = 10.0,
+    market_price: float = 101.0,
+    market_value: float = 1010.0,
+    average_cost: float = 100.0,
+    unrealized_pnl: float = 10.0,
+    account: str = "DU123",
+) -> PortfolioItem:
+    return PortfolioItem(
+        contract=Stock(symbol, "SMART", "USD"), position=position, marketPrice=market_price, marketValue=market_value,
+        averageCost=average_cost, unrealizedPNL=unrealized_pnl, realizedPNL=0.0, account=account,
+    )
+
+
+def make_ib_summary(
+    *,
+    account: str = "DU123",
+    cash: str = "10000",
+    net_liquidation: str = "25000",
+    buying_power: str = "10000",
+    currency: str = "USD",
+) -> list[AccountValue]:
+    def value(tag: str, amount: str) -> AccountValue:
+        return AccountValue(account=account, tag=tag, value=amount, currency=currency, modelCode="")
+
+    return [
+        value("TotalCashValue", cash),
+        value("NetLiquidation", net_liquidation),
+        value("BuyingPower", buying_power),
+        AccountValue(account=account, tag="AccountType", value="INDIVIDUAL", currency="", modelCode=""),
+    ]
