@@ -13,6 +13,7 @@ from tests.fakes import (
     FakeTradingClient,
     bar_payload,
     et,
+    make_alpaca_account_configuration,
     make_alpaca_calendar,
     make_alpaca_news_article,
     make_alpaca_quote,
@@ -211,7 +212,9 @@ def test_market_data_without_a_data_client_raises(call: Callable[[AlpacaBroker],
 def test_from_credentials_wires_the_stock_data_client(monkeypatch: pytest.MonkeyPatch) -> None:
     data = FakeStockHistoricalDataClient()
     data.trades = {"AAPL": make_alpaca_trade("AAPL", 101.0)}
-    monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: FakeTradingClient())
+    client = FakeTradingClient()
+    client.account_configuration_response = make_alpaca_account_configuration()
+    monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
     monkeypatch.setattr(broker_module, "build_stock_data_client", lambda creds: data)
     creds = AlpacaCredentials(api_key="key", api_secret="secret", is_paper=True)
 

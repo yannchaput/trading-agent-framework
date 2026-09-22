@@ -96,10 +96,12 @@ class AlpacaBroker(Broker):
         data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
         news_client = cast("market_data.AlpacaNewsClient", build_news_client(creds))
         stream = build_trading_stream(creds) if with_stream else None
-        return cls(
+        broker = cls(
             strategy_name, client, stream=stream, is_paper=creds.is_paper,
             data_client=data_client, news_client=news_client,
         )
+        broker.configure_account()
+        return broker
 
     def _conform_order(self, order: Order) -> Order:
         return orders.conform_order(order)
