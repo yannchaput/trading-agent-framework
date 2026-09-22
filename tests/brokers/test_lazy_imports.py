@@ -134,3 +134,22 @@ def test_importing_the_factory_does_not_import_alpaca() -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
+
+
+def test_importing_brokers_and_the_factory_does_not_import_ib_async() -> None:
+    result = subprocess.run(
+        [sys.executable, "-c", "import trading_agent_framework.brokers\nimport trading_agent_framework.brokers.factory\nimport sys\nassert 'ib_async' not in sys.modules\nprint('OK')\n"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout
+
+
+def test_ibkr_broker_is_a_lazy_export() -> None:
+    import trading_agent_framework.brokers as brokers
+    from trading_agent_framework.brokers.ibkr.broker import IbkrBroker
+
+    assert brokers.IbkrBroker is IbkrBroker
+    assert "IbkrBroker" in dir(brokers)

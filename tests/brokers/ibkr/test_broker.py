@@ -20,7 +20,7 @@ from tests.fakes import (
 from trading_agent_framework.brokers.alpaca.data import AlpacaMarketData
 from trading_agent_framework.brokers.ibkr.broker import IbkrBroker
 from trading_agent_framework.brokers.ibkr.client import IbkrConnection
-from trading_agent_framework.config.env import IbkrSettings
+from trading_agent_framework.config.env import AlpacaCredentials, IbkrSettings
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide
@@ -259,3 +259,31 @@ def test_reconcile_applies_missed_fills_once(broker: IbkrBroker, ib: FakeIB) -> 
 
     assert order.status is OrderStatus.FILL
     assert order.filled_quantity == Decimal(10)
+
+
+def test_from_settings_connects_and_checks_the_account(ib: FakeIB) -> None:
+    connection = IbkrConnection(SETTINGS, ib_factory=lambda: ib)
+
+    built = IbkrBroker.from_settings(
+        "s", SETTINGS, data=AlpacaCredentials("k", "s"), connection=connection,
+        market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
+    )
+    try:
+        assert ib.connect_calls == [("127.0.0.1", 4002, 1)]
+        assert built.is_paper is True
+        assert built.account_id == "DU123"
+    finally:
+        connection.disconnect()
+
+
+def test_from_settings_disconnects_when_the_account_check_fails(ib: FakeIB) -> None:
+    live = IbkrSettings(host="127.0.0.1", port=4001, client_id=1, is_paper=False)  # but the account is DU123
+    connection = IbkrConnection(live, ib_factory=lambda: ib)
+
+    with pytest.raises(ConfigurationError, match="BROKER_API_IS_PAPER"):
+        IbkrBroker.from_settings(
+            "s", live, data=AlpacaCredentials("k", "s"), connection=connection,
+            market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
+        )
+
+    assert ib.connected is False

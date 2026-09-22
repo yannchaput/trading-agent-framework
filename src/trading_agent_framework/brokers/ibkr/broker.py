@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
 from trading_agent_framework.brokers.alpaca.data import AlpacaMarketData
+from trading_agent_framework.brokers.alpaca.news import lazy_news_provider
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.ibkr import account, orders
 from trading_agent_framework.brokers.ibkr.client import IbkrConnection
@@ -33,6 +34,8 @@ from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 if TYPE_CHECKING:
     from ib_async import Contract, Trade
+
+    from trading_agent_framework.config.env import AlpacaCredentials, IbkrSettings
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,37 @@ class IbkrBroker(Broker):
         self._contracts: dict[str, Contract] = {}
         self._account_id: str | None = None
         connection.on_reconnect = self.reconcile
+
+    @classmethod
+    def from_settings(
+        cls,
+        strategy_name: str,
+        settings: IbkrSettings,
+        *,
+        data: AlpacaCredentials,
+        news: Callable[[], AlpacaCredentials] | None = None,
+        connection: IbkrConnection | None = None,
+        market_data: AlpacaMarketData | None = None,
+    ) -> IbkrBroker:
+        """Connect to IB Gateway and check the account; any failure disconnects before raising."""
+        market_data = market_data if market_data is not None else AlpacaMarketData.from_credentials(data)
+        connection = connection if connection is not None else IbkrConnection(settings)
+        connection.start()
+        try:
+            connection.connect()
+            broker = cls(
+                strategy_name,
+                connection,
+                market_data=market_data,
+                client_id=settings.client_id,
+                is_paper=settings.is_paper,
+                news_provider_factory=lazy_news_provider(news) if news is not None else None,
+            )
+            broker.configure_account()
+        except BaseException:
+            connection.disconnect()
+            raise
+        return broker
 
     # --- account ---------------------------------------------------------------------
 
