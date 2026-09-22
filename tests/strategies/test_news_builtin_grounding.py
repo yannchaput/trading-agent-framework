@@ -155,6 +155,53 @@ def test_a_failed_search_news_call_does_not_count_as_grounding() -> None:
     assert "search_news" in result["error"]
 
 
+def test_refusal_names_the_article_ids_that_already_came_back_with_no_content() -> None:
+    # Regression: the local LLM was observed retrying the exact same content-less pick (a terse
+    # data-print/quote wire item that structurally never carries a body) many turns in a row.
+    # Naming the ids it already tried lets the prompt tell it to pick a different article instead.
+    calls: list[str] = []
+    tools = _tools(
+        calls,
+        news_result={
+            "count": 2,
+            "articles": [{"id": 42, "headline": "h1"}, {"id": 43, "headline": "h2", "content": ""}],
+        },
+    )
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY", include_content=True)
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "42" in result["error"]
+    assert "43" in result["error"]
+
+
+def test_refusal_names_no_ids_when_the_search_returned_zero_articles() -> None:
+    calls: list[str] = []
+    tools = _tools(calls, news_result={"count": 0, "articles": []})
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY", start="t", end="t", include_content=True)
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "search_news" in result["error"]
+
+
+def test_empty_content_ids_do_not_carry_over_to_a_new_run() -> None:
+    calls: list[str] = []
+    tools = _tools(calls, news_result={"count": 1, "articles": [{"id": 99, "headline": "h"}]})
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY", include_content=True)
+    with agent_call_context(run_id="run-2"):
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "99" not in result["error"]
+
+
 def test_grounding_does_not_carry_over_to_a_new_run() -> None:
     calls: list[str] = []
     tools = _tools(calls)

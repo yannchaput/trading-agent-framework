@@ -13,7 +13,7 @@ from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock, FakeToolCallingChatModel, et, weekday_sessions
 
 from trading_agent_framework.agents.manager import AgentManager
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
@@ -40,6 +40,7 @@ class _FakeHandle:
         self.runs: list[tuple[str, object]] = []
         self.error: Exception | None = None
         self.script: list[Exception | None] = []  # per-run outcome (None = success); overrides `error` while non-empty
+        self.result: AgentRunResult | None = None  # overrides the default successful result when set
 
     def run(self, task_prompt: str, *, context: object = None) -> AgentRunResult:
         self.runs.append((task_prompt, context))
@@ -50,6 +51,8 @@ class _FakeHandle:
             return AgentRunResult(output="Hold SHV.", tool_calls=[])
         if self.error is not None:
             raise self.error
+        if self.result is not None:
+            return self.result
         return AgentRunResult(output="Hold SHV.", tool_calls=[])
 
 
@@ -221,6 +224,51 @@ def test_a_configuration_error_propagates(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigurationError):
         strategy.on_trading_iteration()
+
+
+def test_a_run_that_never_records_a_decision_logs_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # Regression: a stuck grounding-gate retry loop was observed ending with the model emitting a
+    # malformed pseudo tool-call as plain text -- no real remember_decision call ever executes, and
+    # the run ends with no error and no warning, invisible outside the raw agent-message DEBUG dump.
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="search_news", args={}, result='{"count": 30, "articles": []}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" in caplog.text
+
+
+def test_a_run_where_remember_decision_was_refused_still_logs_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "KEEP"}, result='{"error": "call search_news..."}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" in caplog.text
+
+
+def test_a_run_that_records_a_decision_does_not_warn(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, handle = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    handle.result = AgentRunResult(
+        output="...",
+        tool_calls=[ToolCallRecord(name="remember_decision", args={"text": "KEEP"}, result='{"id": "decision_1", "kind": "decision", "status": "recorded"}')],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        strategy.on_trading_iteration()
+
+    assert "remember_decision" not in caplog.text
 
 
 def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:

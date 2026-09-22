@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 
+from trading_agent_framework.agents.results import ToolCallRecord
 from trading_agent_framework.agents.tools import PrebuiltTools
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.news import news_tools
@@ -24,6 +25,16 @@ from trading_agent_framework.utils.errors import AgentError, BacktestError, Brok
 # A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest,
 # so a backtest aborts (FatalStrategyError, which the executor propagates) after this many failed runs in a row.
 MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
+
+
+def _decision_was_recorded(tool_calls: Sequence[ToolCallRecord]) -> bool:
+    """Whether a `remember_decision` call in `tool_calls` actually succeeded (no `"error"` in its result).
+
+    Guards against a run ending with no decision recorded and no exception raised -- observed when a
+    stuck grounding-gate retry loop ran the local model's turn budget down to where it emitted a
+    malformed pseudo tool-call as plain text instead of a real one, which LangChain never executes.
+    """
+    return any(call.name == "remember_decision" and '"error"' not in call.result for call in tool_calls)
 
 
 def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_symbols: str) -> str:
@@ -150,6 +161,8 @@ class NewsBinaryStrategy(Strategy):
         self.log_info(f"[{self.AGENT_NAME}] Agent output: \n{result.output}")
         for i, tool_call in enumerate(result.tool_calls):
             self.log_info(f"tool_call_{i}: {tool_call}")
+        if not _decision_was_recorded(result.tool_calls):
+            self.log_warning(f"[{self.AGENT_NAME}] run ended without a successful remember_decision call -- no decision was recorded this run.")
 
     def _portfolio_snapshot(self) -> dict[str, object]:
         """What the account holds right now, handed to the agent up front.

@@ -22,13 +22,23 @@ Without this check, a zero-result search (`{"count": 0, "articles": []}`, e.g. f
 start==end window) or a result of articles that happen to have no source content both pass with no
 `"error"` key, and the local LLM was observed constructing exactly such empty-window calls to ground a
 run for free without ever reading an article.
+
+A content-less result is also a legitimate outcome, not just a gaming attempt: some articles (terse
+Benzinga data-print/quote wires such as "USA ISM Manufacturing PMI For December 47.9 Vs 48.3 Est.")
+never carry a body on the provider's side, no matter how the window is narrowed. The local LLM was
+observed retrying the exact same doomed pick many turns in a row instead of following the prompt's own
+instruction to choose a different on-topic article -- in two backtest iterations this ran the run's
+turn budget down to where the model gave up mid-loop and emitted a malformed pseudo tool-call as plain
+text instead of a real one, silently ending the run with no decision recorded. The refusal now names
+the article ids that already came back with no content this run, so the prompt's "pick a different
+one" instruction has something concrete to act on instead of a bare retry-me error.
 """
 
 from __future__ import annotations
 
 import functools
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from trading_agent_framework.memory.tools import current_run_id
@@ -37,23 +47,45 @@ _GATED = ("remember_decision", "submit_order")
 
 
 class _NewsGroundedRuns:
-    """Whether a full-content `search_news` read has succeeded in the current agent run; only the latest run is kept."""
+    """Whether a full-content `search_news` read has succeeded in the current agent run; only the latest run is kept.
+
+    Also tracks the ids of articles that were requested with `include_content=True` but came back
+    with no content this run, so a refusal can name them instead of inviting a repeat of the same
+    doomed pick.
+    """
 
     def __init__(self) -> None:
         self._run_id: str | None = None
         self._grounded = False
+        self._empty_content_ids: set[Any] = set()
+
+    def _start_if_new_run(self, run_id: str) -> None:
+        if run_id != self._run_id:
+            self._run_id, self._grounded, self._empty_content_ids = run_id, False, set()
 
     def mark(self) -> None:
         run_id = current_run_id()
         if run_id is None:
             return
-        if run_id != self._run_id:
-            self._run_id, self._grounded = run_id, False
+        self._start_if_new_run(run_id)
         self._grounded = True
+
+    def note_empty_content(self, article_ids: Iterable[Any]) -> None:
+        run_id = current_run_id()
+        if run_id is None:
+            return
+        self._start_if_new_run(run_id)
+        self._empty_content_ids.update(article_ids)
 
     def satisfied(self) -> bool:
         run_id = current_run_id()
         return run_id is None or (run_id == self._run_id and self._grounded)
+
+    def empty_content_ids(self) -> set[Any]:
+        run_id = current_run_id()
+        if run_id != self._run_id:
+            return set()
+        return set(self._empty_content_ids)
 
 
 def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> list[Callable[..., dict[str, Any]]]:
@@ -85,23 +117,38 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
             return False
         return any(isinstance(article, dict) and article.get("content") for article in articles)
 
+    def _content_less_article_ids(result: dict[str, Any]) -> Iterable[Any]:
+        articles = result.get("articles")
+        if not isinstance(articles, list):
+            return ()
+        return (
+            article["id"]
+            for article in articles
+            if isinstance(article, dict) and not article.get("content") and "id" in article
+        )
+
     @functools.wraps(search_news)
     def wrapped_search_news(*args: Any, **kwargs: Any) -> dict[str, Any]:
         result = search_news(*args, **kwargs)
-        if "error" not in result and _requested_full_content(args, kwargs) and _received_full_content(result):
-            grounded.mark()
+        if "error" not in result and _requested_full_content(args, kwargs):
+            if _received_full_content(result):
+                grounded.mark()
+            else:
+                grounded.note_empty_content(_content_less_article_ids(result))
         return result
 
     def _guard(name: str, inner: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
         @functools.wraps(inner)
         def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
             if not grounded.satisfied():
-                return {
-                    "error": (
-                        f"call search_news with include_content=True at least once in this run before "
-                        f"calling {name}, so it is grounded in a specific article, not just the headline scan"
-                    )
-                }
+                message = (
+                    f"call search_news with include_content=True at least once in this run before "
+                    f"calling {name}, so it is grounded in a specific article, not just the headline scan"
+                )
+                empty_ids = sorted(grounded.empty_content_ids(), key=str)
+                if empty_ids:
+                    message += f"; these article ids already came back with no content this run, pick a different one: {empty_ids}"
+                return {"error": message}
             return inner(*args, **kwargs)
 
         return wrapped
