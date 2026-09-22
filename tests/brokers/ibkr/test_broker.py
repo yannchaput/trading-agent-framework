@@ -287,3 +287,21 @@ def test_from_settings_disconnects_when_the_account_check_fails(ib: FakeIB) -> N
         )
 
     assert ib.connected is False
+
+
+def test_from_settings_disconnects_when_connection_start_itself_fails() -> None:
+    def failing_factory() -> FakeIB:
+        raise RuntimeError("boom")
+
+    connection = IbkrConnection(SETTINGS, ib_factory=failing_factory)
+
+    with pytest.raises(BrokerError, match="boom"):
+        IbkrBroker.from_settings(
+            "s", SETTINGS, data=AlpacaCredentials("k", "s"), connection=connection,
+            market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
+        )
+
+    # disconnect() ran to completion (loop stopped, thread joined, state reset) even though
+    # start() itself never produced an `_ib`.
+    assert connection._loop is None
+    assert connection._thread is None

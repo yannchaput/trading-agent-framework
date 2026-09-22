@@ -97,8 +97,8 @@ class IbkrBroker(Broker):
         """Connect to IB Gateway and check the account; any failure disconnects before raising."""
         market_data = market_data if market_data is not None else AlpacaMarketData.from_credentials(data)
         connection = connection if connection is not None else IbkrConnection(settings)
-        connection.start()
         try:
+            connection.start()
             connection.connect()
             broker = cls(
                 strategy_name,
