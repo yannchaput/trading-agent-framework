@@ -96,7 +96,10 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "(cancel_order refuses it). Cancel only orders from earlier runs, as listed by get_orders.\n"
         "7. Record the outcome: call remember_decision after every decision, and open_thesis or close_thesis when the "
         "regime call changes. Call remember_decision exactly once per run: once it returns status 'recorded', the run "
-        "is over, so reply with a one-line summary and make no further tool call."
+        "is over, so reply with a one-line summary and make no further tool call.\n"
+        "**Do not forget the gating process:** search_memory -> search_news(include_content=False and limit=30) "
+        "-> search_news(include_content=True and limit=3) -> (get_positions & get_account_balance) -> trade if this is the decision "
+        "-> remember_decision."
     )
 
 

@@ -7,6 +7,7 @@ it) does not pull LangChain into a strategy that never calls `strategy.agents.cr
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
@@ -28,6 +29,34 @@ if TYPE_CHECKING:
     from trading_agent_framework.agents.stats_store import LLMStatsStore
 
 logger = ColorLogger(logging.getLogger(__name__), "AgentRunResult")
+
+
+def _parse_pseudo_tool_call(content: Any, valid_names: set[str]) -> tuple[str, dict[str, Any]] | None:
+    """Recover a `{"name": ..., "arguments": {...}}` call a model wrote as plain text instead of a real one.
+
+    Observed with local models under long contexts (many tool round trips, large tool results): instead
+    of using the API's structured tool-calling channel for its next step, the model writes out what
+    should have been the call as JSON in the message content, sometimes with trailing junk -- a stray
+    `</tool_call>` tag, an extra `}`. `raw_decode` reads just the first complete JSON object at `start`
+    and ignores anything after it, so that junk doesn't stop the parse. Only a `name` naming a tool this
+    agent actually has is accepted, so ordinary prose that happens to contain a `{` (or JSON naming
+    something else entirely) is left alone.
+    """
+    if not isinstance(content, str):
+        return None
+    start = content.find("{")
+    if start == -1:
+        return None
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(content, start)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    name, arguments = parsed.get("name"), parsed.get("arguments")
+    if not isinstance(name, str) or name not in valid_names or not isinstance(arguments, dict):
+        return None
+    return name, arguments
 
 
 class AgentHandle:
@@ -72,6 +101,36 @@ class AgentManager:
     def telemetry_summary(self) -> dict[str, dict[str, Any]]:
         """Per-agent totals of the calls recorded so far (empty when telemetry is off or nothing ran)."""
         return summarize(self._calls)
+
+    def _tool_call_repair_middleware(self) -> Any:
+        """Middleware for every agent: repairs a pseudo tool call caught by `_parse_pseudo_tool_call`.
+
+        Registered first (outermost) in `create()`'s middleware list, so it sees the model's raw response
+        last, after any inner middleware (telemetry) has already recorded it -- telemetry keeps reporting
+        what the model actually produced, while this repairs the message the graph acts on. Runs on every
+        agent unconditionally: this is a local-model reliability issue (see `_parse_pseudo_tool_call`),
+        not something specific to one strategy's tools.
+        """
+        from langchain.agents.middleware import ModelResponse, wrap_model_call
+        from langchain_core.messages import AIMessage
+        from langchain_core.messages.tool import tool_call as make_tool_call
+
+        @wrap_model_call
+        def repair_pseudo_tool_call(request: Any, handler: Callable[[Any], Any]) -> Any:
+            response = handler(request)
+            ai_message = next((m for m in reversed(response.result) if isinstance(m, AIMessage)), None)
+            if ai_message is None or ai_message.tool_calls:
+                return response
+            valid_names = {tool.name for tool in request.tools if hasattr(tool, "name")}
+            parsed = _parse_pseudo_tool_call(ai_message.content, valid_names)
+            if parsed is None:
+                return response
+            name, arguments = parsed
+            logger.log_warning(f"model wrote a {name!r} call as plain text instead of a real tool call; repairing it so it actually runs: {arguments}")
+            repaired = AIMessage(content="", tool_calls=[make_tool_call(name=name, args=arguments, id=uuid.uuid4().hex)])
+            return ModelResponse(result=[repaired], structured_response=response.structured_response)
+
+        return repair_pseudo_tool_call
 
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
@@ -132,7 +191,9 @@ class AgentManager:
         try:
             from langchain.agents import create_agent
 
-            middleware = [self._telemetry_middleware(name)] if self._telemetry_now is not None else []
+            middleware = [self._tool_call_repair_middleware()]
+            if self._telemetry_now is not None:
+                middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
         except Exception as exc:
             raise AgentError(f"failed to create agent {name!r}: {exc}") from exc
