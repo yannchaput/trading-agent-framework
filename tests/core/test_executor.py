@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import logging
 import signal
+from dataclasses import replace
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import cast
 
 import pytest
@@ -386,3 +388,34 @@ def test_wait_until_uses_the_clocks_max_wait_slice() -> None:
 
     # 10s, 10s, 5s -- never a bare 60s slice from the old module constant.
     assert clock.waits == [10.0, 10.0, 5.0]
+
+
+# --- per-iteration log --------------------------------------------------------------
+
+
+def test_each_iteration_is_logged_at_info_with_its_time_and_portfolio_value(caplog: pytest.LogCaptureFixture) -> None:
+    strategy = _strategy()
+    # A backtest balance is exact Decimal arithmetic (e.g. 504.70760): the log shows cents.
+    strategy.broker.account = replace(strategy.broker.account, portfolio_value=Decimal("10128.6512300"))  # ty: ignore[invalid-assignment]
+
+    with caplog.at_level(logging.INFO, logger="trading_agent_framework"):
+        strategy.executor.run()
+
+    lines = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO and "Trading iteration" in r.getMessage()]
+    assert len(lines) == 4
+    assert lines[0] == "Trading iteration of momentum at 2026-09-14T09:30:00-04:00 | portfolio value: 10128.65"
+
+
+def test_an_unreadable_portfolio_value_is_logged_as_such_and_the_iteration_still_runs(caplog: pytest.LogCaptureFixture) -> None:
+    class NoAccount(FakeBroker):
+        def get_account(self):
+            raise BrokerError("account API down")
+
+    clock = FakeClock(et(2026, 9, 14, 7), weekday_sessions(MONDAY, 1))
+    strategy = Recorder(NoAccount(clock))
+
+    with caplog.at_level(logging.INFO, logger="trading_agent_framework"):
+        strategy.executor.run()
+
+    assert len(strategy.times("on_trading_iteration")) == 4
+    assert "portfolio value: unavailable (account API down)" in caplog.text

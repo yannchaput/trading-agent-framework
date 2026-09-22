@@ -203,7 +203,7 @@ class StrategyExecutor:
     def _iterate(self) -> None:
         strategy = self.strategy
         self._last_iteration_session = self._session_index
-        logger.debug("Trading iteration of %s at %s", strategy.name, self._now().isoformat())
+        logger.info("Trading iteration of %s at %s | portfolio value: %s", strategy.name, self._now().isoformat(), self._portfolio_value())
         try:
             strategy.on_trading_iteration()
         except FatalStrategyError as exc:
@@ -219,6 +219,13 @@ class StrategyExecutor:
             strategy.first_iteration = False
 
     # --- helpers -------------------------------------------------------------------
+
+    def _portfolio_value(self) -> str:
+        """The portfolio value for the iteration log; a failed read is reported, never allowed to skip the tick."""
+        try:
+            return f"{self.strategy.get_portfolio_value():.2f}"
+        except Exception as exc:  # BrokerError live, BacktestError in a backtest: either way the tick must still run
+            return f"unavailable ({exc})"
 
     def _call_hook(self, hook: Callable[[], None]) -> None:
         try:
