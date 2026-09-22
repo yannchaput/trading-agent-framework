@@ -17,6 +17,7 @@ from trading_agent_framework.agents.tools.news import news_tools
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.news_builtin.grounding import require_search_news_before
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FatalStrategyError
 
@@ -34,7 +35,10 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "never trade USD or FOREX.\n\n"
         "On every run, follow this workflow:\n"
         "1. Call search_memory to recall recent decisions and the current regime thesis.\n"
-        f"2. Scan broad-market news: call search_news with symbols='{news_symbols}', include_content=False and limit=30.\n"
+        f"2. Scan broad-market news: call search_news with symbols='{news_symbols}', include_content=False and limit=30. "
+        "This is required, not optional: remember_decision and submit_order are refused with an error until "
+        "search_news has returned a result (even an empty one) in this run -- if either refuses that way, call "
+        "search_news now, then retry.\n"
         "3. Pick the single most relevant article. Call search_news again with a narrow start/end window around that "
         "article's created_at (ISO 8601 with timezone), include_content=True and limit=3, to read it in full.\n"
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
@@ -114,7 +118,7 @@ class NewsBinaryStrategy(Strategy):
         self.agents.create(
             name=self.AGENT_NAME,
             system_prompt=system_prompt,
-            tools=[*PrebuiltTools.all(self), *news_tools(self)],
+            tools=require_search_news_before([*PrebuiltTools.all(self), *news_tools(self)]),
         )
         self.log_info(f"NewsBuiltinStrategy initialized (sleeptime={self.sleeptime})")
         self.log_info(f"Agent run with system prompt: \n{system_prompt}")
@@ -165,7 +169,7 @@ class NewsBinaryStrategy(Strategy):
             if "market_value" not in position:
                 try:
                     price = self.get_last_price(position["symbol"])
-                except BrokerError, BacktestError:
+                except (BrokerError, BacktestError):
                     price = None
                 if price is not None:
                     position["market_value"] = round(position["quantity"] * float(price), 2)

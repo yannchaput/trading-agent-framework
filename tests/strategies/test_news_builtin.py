@@ -20,11 +20,17 @@ from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
 from trading_agent_framework.utils.errors import AgentError, BacktestDataError, BacktestError, BrokerError, ConfigurationError, FatalStrategyError
 
 _START = et(2026, 9, 14, 9, 0)
+
+
+class _StubNewsProvider:
+    def get_news(self, symbols=(), *, start=None, end=None, limit=10, include_content=False):
+        return []
 
 
 class _FakeHandle:
@@ -90,6 +96,25 @@ def test_initialize_creates_the_agent_with_prebuilt_memory_and_news_tools(tmp_pa
     assert created["name"] == NewsBinaryStrategy.AGENT_NAME
     assert {"search_news", "remember_decision", "search_memory", "submit_order", "get_positions", "get_bars", "get_last_price"} <= names
     assert "SHV" in created["system_prompt"]  # ty: ignore[unsupported-operator]
+
+
+def test_initialize_wires_remember_decision_and_submit_order_through_the_news_grounding_gate(tmp_path: Path) -> None:
+    # Regression: the agent recorded decisions (citing invented report details) or submitted orders
+    # without ever calling search_news that run. See NewsBinaryStrategy's grounding.py.
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.broker.news_provider = lambda: _StubNewsProvider()  # type: ignore[method-assign]
+    strategy.initialize()
+    [created] = agents.created
+    tools = {tool.__name__: tool for tool in created["tools"]}  # ty: ignore[unresolved-attribute]
+
+    with agent_call_context(run_id="run-1"):
+        premature = tools["remember_decision"](text="KEEP")
+        tools["search_news"](symbols="SPY")
+        after = tools["remember_decision"](text="KEEP")
+
+    assert "error" in premature
+    assert "search_news" in premature["error"]
+    assert "error" not in after
 
 
 def test_backtest_runs_the_agent_on_the_first_and_every_fifth_iteration(tmp_path: Path) -> None:
@@ -247,6 +272,15 @@ def test_system_prompt_tells_the_agent_to_record_once_and_stop(tmp_path: Path) -
     # because the tool result gives it no sign that the run is over.
     assert "Call remember_decision exactly once per run" in prompt
     assert "make no further tool call" in prompt
+
+
+def test_system_prompt_explains_the_search_news_grounding_requirement(tmp_path: Path) -> None:
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+    strategy.initialize()
+    prompt = str(agents.created[0]["system_prompt"])
+
+    assert "remember_decision and submit_order are refused" in prompt
+    assert "search_news" in prompt.split("remember_decision and submit_order are refused")[1][:200]
 
 
 def test_system_prompt_makes_an_order_final_for_the_run(tmp_path: Path) -> None:
