@@ -81,8 +81,8 @@ class NewsBinaryStrategy(Strategy):
     TASK_PROMPT = "Research current broad-market news and rebalance if needed. The current datetime is in the context below."
 
     parameters = {
-        "backtesting_start": datetime(2025, 1, 1, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 8, 14, tzinfo=MARKET_TZ),
+        "backtesting_start": datetime(2026, 1, 1, tzinfo=MARKET_TZ),
+        "backtesting_end": datetime(2026, 9, 18, tzinfo=MARKET_TZ),
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,  # No warmup needed (just in case)
         "budget": 10000,
@@ -99,7 +99,7 @@ class NewsBinaryStrategy(Strategy):
     def initialize(self) -> None:
         self.sleeptime = "3H" if self.is_backtesting else "1H"
         # Enable agent telemetry in live/trading
-        #self.agent_telemetry = True
+        # self.agent_telemetry = True
         self.vars.iteration_count = 0
         self.vars.consecutive_agent_errors = 0
         self.vars.strategy_parameters = self.strategy_parameters

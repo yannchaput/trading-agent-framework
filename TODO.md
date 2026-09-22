@@ -55,9 +55,9 @@
 * Automatize deletion of memory sqllite db before running a backtest
 
 ### News sentiment analysis
-* Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.
+* ~~Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.~~
 * ~~Investigate "current_regime": None and defensive posture~~
-* Add a log in executor to log the execution hour : usefull for intraday.
+* ~~Add a log in executor to log the execution hour : usefull for intraday.~~
 * ~~Log the system prompt in 'initialize' method~~
 
 ### VWAP + idiosyncratic mean reversion
