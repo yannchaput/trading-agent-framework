@@ -109,11 +109,15 @@ def test_initialize_wires_remember_decision_and_submit_order_through_the_news_gr
 
     with agent_call_context(run_id="run-1"):
         premature = tools["remember_decision"](text="KEEP")
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY")  # headline-only scan: still not grounded
+        headline_only = tools["remember_decision"](text="KEEP")
+        tools["search_news"](symbols="SPY", include_content=True)
         after = tools["remember_decision"](text="KEEP")
 
     assert "error" in premature
     assert "search_news" in premature["error"]
+    assert "error" in headline_only
+    assert "include_content" in headline_only["error"]
     assert "error" not in after
 
 

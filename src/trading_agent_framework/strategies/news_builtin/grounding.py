@@ -1,4 +1,4 @@
-"""Requires `search_news` to have succeeded before `remember_decision` or `submit_order` may run.
+"""Requires a full-content `search_news` read before `remember_decision` or `submit_order` may run.
 
 The local LLM sometimes recorded a decision -- occasionally citing report details it could not have
 read -- or opened a decide-then-research-then-decide-again loop, all without ever calling `search_news`
@@ -8,11 +8,19 @@ enforce that ordering in code: a call to either gated tool is refused, without r
 `search_news` has returned a non-error result earlier in the same agent run (by `current_run_id()`,
 mirroring `agents/tools/trading.py`'s `_OrdersThisRun`). Outside an agent run nothing is gated, same
 convention as every other per-run tool tracker in this codebase.
+
+A broad `include_content=False` scan (prompt step 2) alone does not ground the run: the prompt also
+requires reading the single most relevant article in full (`include_content=True`, step 3) before
+deciding or trading, and the local LLM was observed skipping straight from the broad scan to a decision
+without ever reading an article -- effectively judging "bearish" from headlines alone. Only a
+`search_news` call that both succeeds and resolves `include_content=True` (whether passed positionally
+or by keyword; resolved against the real tool's signature via `inspect.signature`) grounds the run.
 """
 
 from __future__ import annotations
 
 import functools
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -22,7 +30,7 @@ _GATED = ("remember_decision", "submit_order")
 
 
 class _NewsGroundedRuns:
-    """Whether `search_news` has succeeded in the current agent run; only the latest run is kept."""
+    """Whether a full-content `search_news` read has succeeded in the current agent run; only the latest run is kept."""
 
     def __init__(self) -> None:
         self._run_id: str | None = None
@@ -54,11 +62,20 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
 
     grounded = _NewsGroundedRuns()
     search_news = by_name["search_news"]
+    search_news_signature = inspect.signature(search_news)
+
+    def _requested_full_content(args: tuple[Any, ...], kwargs: dict[str, Any]) -> bool:
+        try:
+            bound = search_news_signature.bind_partial(*args, **kwargs)
+        except TypeError:
+            return False
+        bound.apply_defaults()
+        return bool(bound.arguments.get("include_content", False))
 
     @functools.wraps(search_news)
     def wrapped_search_news(*args: Any, **kwargs: Any) -> dict[str, Any]:
         result = search_news(*args, **kwargs)
-        if "error" not in result:
+        if "error" not in result and _requested_full_content(args, kwargs):
             grounded.mark()
         return result
 
@@ -66,7 +83,12 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
         @functools.wraps(inner)
         def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
             if not grounded.satisfied():
-                return {"error": f"call search_news at least once in this run before calling {name}, so it is grounded in this run's news"}
+                return {
+                    "error": (
+                        f"call search_news with include_content=True at least once in this run before "
+                        f"calling {name}, so it is grounded in a specific article, not just the headline scan"
+                    )
+                }
             return inner(*args, **kwargs)
 
         return wrapped

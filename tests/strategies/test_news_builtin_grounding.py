@@ -18,9 +18,26 @@ def _fake_tool(name: str, calls: list[str], result: dict[str, Any] | None = None
     return tool
 
 
+def _fake_search_news(calls: list[str], result: dict[str, Any] | None = None) -> Any:
+    """Mirrors the real `search_news` signature so grounding can bind positional args too."""
+
+    def search_news(
+        symbols: str = "",
+        start: str | None = None,
+        end: str | None = None,
+        limit: int = 10,
+        include_content: bool = False,
+    ) -> dict[str, Any]:
+        calls.append("search_news")
+        return dict(result) if result is not None else {"ok": "search_news"}
+
+    search_news.__doc__ = "Fake search_news."
+    return search_news
+
+
 def _tools(calls: list[str], *, news_result: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = [
-        _fake_tool("search_news", calls, news_result),
+        _fake_search_news(calls, news_result),
         _fake_tool("remember_decision", calls),
         _fake_tool("submit_order", calls),
         _fake_tool("get_positions", calls),  # untouched control tool
@@ -41,16 +58,40 @@ def test_remember_decision_is_refused_before_search_news_succeeds_this_run() -> 
     assert calls == []  # the real remember_decision was never invoked
 
 
-def test_remember_decision_succeeds_after_a_successful_search_news_call_in_the_same_run() -> None:
+def test_remember_decision_succeeds_after_a_full_content_search_news_call_in_the_same_run() -> None:
     calls: list[str] = []
     tools = _tools(calls)
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY", include_content=True)
         result = tools["remember_decision"](text="KEEP")
 
     assert result == {"ok": "remember_decision"}
     assert calls == ["search_news", "remember_decision"]
+
+
+def test_a_headline_only_search_news_call_does_not_ground_the_run() -> None:
+    calls: list[str] = []
+    tools = _tools(calls)
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"](symbols="SPY")  # include_content defaults to False
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "error" in result
+    assert "include_content" in result["error"]
+    assert calls == ["search_news"]  # remember_decision was never invoked
+
+
+def test_include_content_passed_positionally_still_grounds_the_run() -> None:
+    calls: list[str] = []
+    tools = _tools(calls)
+
+    with agent_call_context(run_id="run-1"):
+        tools["search_news"]("SPY", None, None, 10, True)  # include_content is the 5th positional arg
+        result = tools["remember_decision"](text="KEEP")
+
+    assert result == {"ok": "remember_decision"}
 
 
 def test_submit_order_is_gated_the_same_way() -> None:
@@ -59,7 +100,7 @@ def test_submit_order_is_gated_the_same_way() -> None:
 
     with agent_call_context(run_id="run-1"):
         before = tools["submit_order"](symbol="SPY", quantity=1, side="buy")
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY", include_content=True)
         after = tools["submit_order"](symbol="SPY", quantity=1, side="buy")
 
     assert "error" in before
@@ -71,7 +112,7 @@ def test_a_failed_search_news_call_does_not_count_as_grounding() -> None:
     tools = _tools(calls, news_result={"error": "provider down"})
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY", include_content=True)
         result = tools["remember_decision"](text="KEEP")
 
     assert "error" in result
@@ -83,7 +124,7 @@ def test_grounding_does_not_carry_over_to_a_new_run() -> None:
     tools = _tools(calls)
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY")
+        tools["search_news"](symbols="SPY", include_content=True)
     with agent_call_context(run_id="run-2"):
         result = tools["remember_decision"](text="KEEP")
 
