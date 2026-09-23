@@ -18,34 +18,9 @@ def _fake_tool(name: str, calls: list[str], result: dict[str, Any] | None = None
     return tool
 
 
-_GROUNDING_RESULT = {"count": 1, "articles": [{"id": 1, "headline": "h", "content": "full article text"}]}
-
-
-def _fake_search_news(calls: list[str], result: dict[str, Any] | None = None) -> Any:
-    """Mirrors the real `search_news` signature so grounding can bind positional args too.
-
-    Defaults to a result shaped like a real full-content read (an article with a populated
-    "content" field) -- the same shape `parse_news` produces -- so callers that don't care about
-    the exact payload still exercise the gate the way production data would.
-    """
-
-    def search_news(
-        symbols: str = "",
-        start: str | None = None,
-        end: str | None = None,
-        limit: int = 10,
-        include_content: bool = False,
-    ) -> dict[str, Any]:
-        calls.append("search_news")
-        return dict(result) if result is not None else dict(_GROUNDING_RESULT)
-
-    search_news.__doc__ = "Fake search_news."
-    return search_news
-
-
 def _tools(calls: list[str], *, news_result: dict[str, Any] | None = None) -> dict[str, Any]:
     raw = [
-        _fake_search_news(calls, news_result),
+        _fake_tool("search_news", calls, news_result),
         _fake_tool("remember_decision", calls),
         _fake_tool("submit_order", calls),
         _fake_tool("get_positions", calls),  # untouched control tool
@@ -66,40 +41,16 @@ def test_remember_decision_is_refused_before_search_news_succeeds_this_run() -> 
     assert calls == []  # the real remember_decision was never invoked
 
 
-def test_remember_decision_succeeds_after_a_full_content_search_news_call_in_the_same_run() -> None:
+def test_remember_decision_succeeds_after_a_successful_search_news_call_in_the_same_run() -> None:
     calls: list[str] = []
     tools = _tools(calls)
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
+        tools["search_news"](symbols="SPY")
         result = tools["remember_decision"](text="KEEP")
 
     assert result == {"ok": "remember_decision"}
     assert calls == ["search_news", "remember_decision"]
-
-
-def test_a_headline_only_search_news_call_does_not_ground_the_run() -> None:
-    calls: list[str] = []
-    tools = _tools(calls)
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY")  # include_content defaults to False
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "include_content" in result["error"]
-    assert calls == ["search_news"]  # remember_decision was never invoked
-
-
-def test_include_content_passed_positionally_still_grounds_the_run() -> None:
-    calls: list[str] = []
-    tools = _tools(calls)
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"]("SPY", None, None, 10, True)  # include_content is the 5th positional arg
-        result = tools["remember_decision"](text="KEEP")
-
-    assert result == {"ok": "remember_decision"}
 
 
 def test_submit_order_is_gated_the_same_way() -> None:
@@ -108,39 +59,11 @@ def test_submit_order_is_gated_the_same_way() -> None:
 
     with agent_call_context(run_id="run-1"):
         before = tools["submit_order"](symbol="SPY", quantity=1, side="buy")
-        tools["search_news"](symbols="SPY", include_content=True)
+        tools["search_news"](symbols="SPY")
         after = tools["submit_order"](symbol="SPY", quantity=1, side="buy")
 
     assert "error" in before
     assert after == {"ok": "submit_order"}
-
-
-def test_a_zero_article_search_news_call_does_not_ground_the_run() -> None:
-    """A degenerate start==end window returns {"count": 0, "articles": []} -- no error key, so the old
-    gate (which only checked the request args and the absence of "error") treated it as grounding."""
-    calls: list[str] = []
-    tools = _tools(calls, news_result={"count": 0, "articles": []})
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", start="t", end="t", include_content=True)
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "search_news" in result["error"]
-
-
-def test_an_article_without_a_content_field_does_not_ground_the_run() -> None:
-    """`parse_news` omits the "content" key entirely when the source article has none -- a real
-    include_content=True call can legitimately return articles that were never actually read."""
-    calls: list[str] = []
-    tools = _tools(calls, news_result={"count": 1, "articles": [{"id": 1, "headline": "h"}]})
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "search_news" in result["error"]
 
 
 def test_a_failed_search_news_call_does_not_count_as_grounding() -> None:
@@ -148,58 +71,11 @@ def test_a_failed_search_news_call_does_not_count_as_grounding() -> None:
     tools = _tools(calls, news_result={"error": "provider down"})
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
+        tools["search_news"](symbols="SPY")
         result = tools["remember_decision"](text="KEEP")
 
     assert "error" in result
     assert "search_news" in result["error"]
-
-
-def test_refusal_names_the_article_ids_that_already_came_back_with_no_content() -> None:
-    # Regression: the local LLM was observed retrying the exact same content-less pick (a terse
-    # data-print/quote wire item that structurally never carries a body) many turns in a row.
-    # Naming the ids it already tried lets the prompt tell it to pick a different article instead.
-    calls: list[str] = []
-    tools = _tools(
-        calls,
-        news_result={
-            "count": 2,
-            "articles": [{"id": 42, "headline": "h1"}, {"id": 43, "headline": "h2", "content": ""}],
-        },
-    )
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "42" in result["error"]
-    assert "43" in result["error"]
-
-
-def test_refusal_names_no_ids_when_the_search_returned_zero_articles() -> None:
-    calls: list[str] = []
-    tools = _tools(calls, news_result={"count": 0, "articles": []})
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", start="t", end="t", include_content=True)
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "search_news" in result["error"]
-
-
-def test_empty_content_ids_do_not_carry_over_to_a_new_run() -> None:
-    calls: list[str] = []
-    tools = _tools(calls, news_result={"count": 1, "articles": [{"id": 99, "headline": "h"}]})
-
-    with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
-    with agent_call_context(run_id="run-2"):
-        result = tools["remember_decision"](text="KEEP")
-
-    assert "error" in result
-    assert "99" not in result["error"]
 
 
 def test_grounding_does_not_carry_over_to_a_new_run() -> None:
@@ -207,7 +83,7 @@ def test_grounding_does_not_carry_over_to_a_new_run() -> None:
     tools = _tools(calls)
 
     with agent_call_context(run_id="run-1"):
-        tools["search_news"](symbols="SPY", include_content=True)
+        tools["search_news"](symbols="SPY")
     with agent_call_context(run_id="run-2"):
         result = tools["remember_decision"](text="KEEP")
 
