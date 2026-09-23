@@ -1,14 +1,8 @@
 # trading-agent-framework
 A trading agent harness managing runtime, the broker layer, agent layer, memory etc.
 
-## ✏️ Environment variable management 
+## 👷 Commands
 
-This directory holds the environment files that `trading_agent_framework.config.env`
-loads credentials and configuration from. **Only two files in this directory are
-committed to git: `.env.example` and this `README.md`.** Everything else matching
-`env/.env.*` is gitignored (see `/env/*` with `!/env/README.md` and
-`!/env/.env.example` in the repository `.gitignore`) because those files carry real
-secrets or point at real accounts.
 
 | Goal | Commands |
 | --- | --- |
@@ -64,7 +58,7 @@ cp env/.env.example env/.env.momentum.paper
 Never commit the copy -- it is already covered by the `env/.env.*` gitignore
 pattern, so a plain `git add` will not pick it up.
 
-## Environment variables
+## ✏️ Environment variables
 
 | Variables | Used by | Required when |
 |---|---|---|
@@ -80,7 +74,7 @@ Groups never fall back to each other; with one Alpaca key pair, repeat it in eac
 
 `SEC_EDGAR_USER_AGENT` is needed only if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
 
-## Interactive Brokers (IBKR)
+## 📈 Interactive Brokers (IBKR)
 
 Set `BROKER=ibkr` in the strategy's paper/live env file. IBKR handles orders, account and
 positions; prices, bars, the market calendar and news still come from Alpaca (`ALPACA_DATA_*`,
@@ -106,6 +100,63 @@ uv run python scripts/tests/smoke_ibkr_orders.py    # places paper orders
 ```
 
 ## Components
+
+### 🚧 Backtesting
+
+`Strategy.run_backtesting(start=..., end=...)` runs a strategy against simulated time
+and simulated fills -- no network calls to a broker, and (with the default data
+source) no Alpaca account needed at all.
+
+```python
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+ET = ZoneInfo("America/New_York")
+end = datetime.now(ET)
+
+result = my_strategy.run_backtesting(
+    start=end - timedelta(days=365),
+    end=end,
+)
+print(result.metrics["sharpe_strategy"], result.run_dir)
+```
+
+`start` and `end` must be **timezone-aware** (trading sessions carry a market
+timezone, so a naive bound cannot be compared against them) -- `datetime.now(ET)`,
+not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
+
+`start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
+`backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
+keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
+`benchmark_symbol` to `"SPY"` if neither is set). `run_backtesting` also accepts
+`data_source`, `timestep` (`"day"` by default), `commission`, `slippage` and
+`risk_free_rate` keyword arguments.
+
+- **Data source**: defaults to `YahooBacktestData(start, end)` -- free daily OHLCV, no
+  API key, requires the `backtesting-yahoo` extra (`uv sync --extra backtesting-yahoo`).
+  Pass `data_source=AlpacaBacktestData(...)` for feed parity with paper/live trading,
+  or wrap either in `backtesting.CachedDataSource(source, cache_dir)` to cache fetched
+  bars under `<cache_dir>/<source.name>/` for network-free reruns against the same
+  window (useful when iterating on an agent prompt against a fixed period).
+- **Fill model**: orders fill against the *next* bar's open (never the bar they were
+  submitted on), so a strategy can't trade a price it has already observed. Limit and
+  stop orders fill only when the bar's range actually touches the trigger price.
+- **Output**: `logs/<strategy>/backtesting/<timestamp>_backtesting/` -- `settings.json`,
+  `metrics.json` (Sharpe, Sortino, Calmar, max drawdown, and the rest of the standard
+  tearsheet), and three parquet files (`equity.parquet`, `trades.parquet`,
+  `indicators.parquet`). `run_backtesting` returns a `BacktestResult` with `run_dir`,
+  `settings` and `metrics` attributes pointing at the same data.
+- **Agent telemetry**: on by default (`run_backtesting(agent_telemetry=False)` to skip it). Per-agent
+  totals -- model calls, tool calls, tokens, latency -- go to `settings.json["agents"]`, and each
+  model call to `memory/<strategy>/backtesting/llm_stats.sqlite`, which is wiped when the next
+  backtest of that strategy starts (like the agent memory), so the dashboard's per-call chart covers
+  the latest run only. Paper/live strategies opt in with `agent_telemetry = True` on the class; their
+  database accumulates across runs, so delete it by hand when it grows -- it is separate from
+  `memory.sqlite`, so agent memory is untouched.
+- **No look-ahead, structurally**: every price the strategy can see is gated by
+  `clock.now()` -- a bar is visible only after it has *closed*. See
+  `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full
+  design and its guarantees.
 
 ### 📊 Strategy Dashboard   
 
@@ -254,69 +305,9 @@ Run: `uv run agent opening_range_breakout backtesting`
 | cross sectional momentum (V5) | live  | Best candidate so far: robut over a 10 year window and good metrics. |
 | opening range breakout | live | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
 
-
 ## Supporting documentation:
 * [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
 * [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
 * [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
 * [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
 * [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
-
-
-
-## Backtesting
-
-`Strategy.run_backtesting(start=..., end=...)` runs a strategy against simulated time
-and simulated fills -- no network calls to a broker, and (with the default data
-source) no Alpaca account needed at all.
-
-```python
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
-
-ET = ZoneInfo("America/New_York")
-end = datetime.now(ET)
-
-result = my_strategy.run_backtesting(
-    start=end - timedelta(days=365),
-    end=end,
-)
-print(result.metrics["sharpe_strategy"], result.run_dir)
-```
-
-`start` and `end` must be **timezone-aware** (trading sessions carry a market
-timezone, so a naive bound cannot be compared against them) -- `datetime.now(ET)`,
-not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
-
-`start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
-`backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
-keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
-`benchmark_symbol` to `"SPY"` if neither is set). `run_backtesting` also accepts
-`data_source`, `timestep` (`"day"` by default), `commission`, `slippage` and
-`risk_free_rate` keyword arguments.
-
-- **Data source**: defaults to `YahooBacktestData(start, end)` -- free daily OHLCV, no
-  API key, requires the `backtesting-yahoo` extra (`uv sync --extra backtesting-yahoo`).
-  Pass `data_source=AlpacaBacktestData(...)` for feed parity with paper/live trading,
-  or wrap either in `backtesting.CachedDataSource(source, cache_dir)` to cache fetched
-  bars under `<cache_dir>/<source.name>/` for network-free reruns against the same
-  window (useful when iterating on an agent prompt against a fixed period).
-- **Fill model**: orders fill against the *next* bar's open (never the bar they were
-  submitted on), so a strategy can't trade a price it has already observed. Limit and
-  stop orders fill only when the bar's range actually touches the trigger price.
-- **Output**: `logs/<strategy>/backtesting/<timestamp>_backtesting/` -- `settings.json`,
-  `metrics.json` (Sharpe, Sortino, Calmar, max drawdown, and the rest of the standard
-  tearsheet), and three parquet files (`equity.parquet`, `trades.parquet`,
-  `indicators.parquet`). `run_backtesting` returns a `BacktestResult` with `run_dir`,
-  `settings` and `metrics` attributes pointing at the same data.
-- **Agent telemetry**: on by default (`run_backtesting(agent_telemetry=False)` to skip it). Per-agent
-  totals -- model calls, tool calls, tokens, latency -- go to `settings.json["agents"]`, and each
-  model call to `memory/<strategy>/backtesting/llm_stats.sqlite`, which is wiped when the next
-  backtest of that strategy starts (like the agent memory), so the dashboard's per-call chart covers
-  the latest run only. Paper/live strategies opt in with `agent_telemetry = True` on the class; their
-  database accumulates across runs, so delete it by hand when it grows -- it is separate from
-  `memory.sqlite`, so agent memory is untouched.
-- **No look-ahead, structurally**: every price the strategy can see is gated by
-  `clock.now()` -- a bar is visible only after it has *closed*. See
-  `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full
-  design and its guarantees.
