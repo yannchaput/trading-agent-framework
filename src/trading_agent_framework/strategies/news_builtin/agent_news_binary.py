@@ -60,8 +60,15 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "that is actually about the regime call (broad market, not a single-company story) -- even if an older "
         "headline reads as more dramatic. Only reach further back if nothing recent is on-topic. If the article "
         "you're about to pick already appears in a decision from search_memory, it is not new evidence: look for "
-        "a fresher on-topic article instead, or treat this run as having no new signal. Deciding from the "
-        "headline alone is fine: reading an article's full content is optional context, never required.\n"
+        "a fresher on-topic article instead, or treat this run as having no new signal. Call search_news again "
+        "with a narrow start/end window around the chosen article's created_at (ISO 8601 with timezone), "
+        "include_content=True and limit=3, to try to read it in full. This call is required, not optional: "
+        "remember_decision and submit_order are refused with an error until search_news has been called with "
+        "include_content=True in this run -- if either refuses that way, make that call now, then retry. But what "
+        "matters is making the call, not what it returns: some articles (terse data-print/quote wires) never "
+        "carry a body no matter which one you pick or how the window is narrowed, and that is a fine outcome -- "
+        "if this call comes back with no content, do not keep searching for a different article chasing it; "
+        "proceed to decide using the headline alone.\n"
         "4. Compare article timestamps with the current datetime given in the task and ignore stale news.\n"
         "5. Decide the regime. The portfolio snapshot in the context gives current_regime, computed from what is actually "
         f"held ('risk_on' = {risky}, 'defensive' = {defensive_symbol}, 'mixed' = both, 'none' = nothing), and "
@@ -99,7 +106,8 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "regime call changes. Call remember_decision exactly once per run: once it returns status 'recorded', the run "
         "is over, so reply with a one-line summary and make no further tool call.\n"
         "**Do not forget the gating process:** search_memory -> search_news(include_content=False and limit=30) "
-        "-> (get_positions & get_account_balance) -> trade if this is the decision -> remember_decision."
+        "-> search_news(include_content=True and limit=3) -> (get_positions & get_account_balance) -> trade if this is the decision "
+        "-> remember_decision."
     )
 
 
