@@ -65,7 +65,16 @@ class AlpacaBacktestData(BacktestDataSource):
         self._end = end
         self._client = client  # injected in tests; built from env credentials otherwise
         self._trading_client = trading_client  # ditto
-        self._frames: dict[Asset, pd.DataFrame] = {}
+        # Keyed by (asset, timestep), NOT asset alone: `runner._run` always loads the
+        # benchmark asset at the strategy's own timestep first (e.g. "minute"), then
+        # separately asks `bars()` for it at "day" (hardcoded there so annualization
+        # stays correct). An asset-only key let that second call find the "minute"
+        # frame already cached and silently hand it back relabeled as "day" data,
+        # instead of fetching real daily bars -- corrupting every benchmark-relative
+        # metric without any single value looking obviously wrong (Bug report:
+        # 2026-09-23 news_binary backtest, metrics.json's benchmark stats disagreeing
+        # with equity.parquet's own benchmark_close/benchmark_return columns).
+        self._frames: dict[tuple[Asset, str], pd.DataFrame] = {}
         self._sessions_cache: list[MarketSession] | None = None
         # The [start, end] the cached calendar actually covers -- starts as the
         # constructor's own window and grows (never shrinks) to the union of every
@@ -89,13 +98,13 @@ class AlpacaBacktestData(BacktestDataSource):
         per-asset fetch for each one. Already-cached assets are skipped, same as
         `YahooBacktestData.load()`.
         """
-        missing = [asset for asset in assets if asset not in self._frames]
+        missing = [asset for asset in assets if (asset, timestep) not in self._frames]
         if not missing:
             return
         self._fetch_many(missing, timestep, start, end)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
-        df = self._frames.get(asset)
+        df = self._frames.get((asset, timestep))
         if df is None:
             df = self._fetch(asset, timestep, self._start, self._end)
         if df is None or df.empty:
@@ -169,7 +178,7 @@ class AlpacaBacktestData(BacktestDataSource):
 
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
         self._fetch_many([asset], timestep, start, end)
-        return self._frames.get(asset)
+        return self._frames.get((asset, timestep))
 
     def _fetch_many(self, assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> None:
         """Batch-fetch `assets`, chunked to `market_data.MAX_SYMBOLS_PER_REQUEST` per
@@ -200,7 +209,7 @@ class AlpacaBacktestData(BacktestDataSource):
         sessions = self.sessions(start, end)
         for asset in assets:
             source_bars = parsed.get(asset)
-            self._frames[asset] = (
+            self._frames[(asset, timestep)] = (
                 pd.DataFrame()
                 if source_bars is None
                 else reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)

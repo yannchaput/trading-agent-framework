@@ -7,6 +7,7 @@ import pytest
 from tests.fakes import FakeStockHistoricalDataClient, FakeTradingClient, bar_payload, make_alpaca_calendar
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData, reindex_to_bar_close
+from trading_agent_framework.brokers.alpaca import market_data
 from trading_agent_framework.brokers.alpaca.market_data import MARKET_TZ
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MarketSession
@@ -301,6 +302,40 @@ def test_load_widened_for_warmup_reaches_bars_before_the_narrow_start() -> None:
     assert list(result.df["close"]) == [400.0, 402.0]  # Jan-2 and Jan-5, not the un-closed Jan-6 bar
     # And the fetch actually reached back to the widened start, not the narrow one.
     assert data_client.bars_requests[0].start.replace(tzinfo=UTC) == warmup_start.astimezone(UTC)
+
+
+def test_bars_refetches_when_asked_for_a_different_timestep_than_was_loaded() -> None:
+    """Bug report (2026-09-23 news_binary backtest, `metrics.json`'s benchmark stats
+    wildly disagreeing with `equity.parquet`'s own benchmark_close/benchmark_return
+    columns): `_frames` used to be keyed by `Asset` alone. `runner._run` always
+    eagerly `load()`s the benchmark asset at the STRATEGY's own timestep first (e.g.
+    "minute" for a minute-cadence strategy), then separately asks `bars()` for the
+    benchmark at "day" (deliberately hardcoded so annualization stays correct -- see
+    that module's comment). With the old asset-only cache key, that second `bars()`
+    call found `_frames[SPY]` already populated (from the "minute" `load()`) and
+    silently handed back the cached MINUTE frame relabeled as "day" data instead of
+    fetching real daily bars -- corrupting every benchmark-relative metric without
+    a single obviously-wrong value anywhere in the pipeline.
+    """
+    trading_client = FakeTradingClient()
+    trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
+    data_client = FakeStockHistoricalDataClient()
+    data_client.bars["SPY"] = [bar_payload("2026-01-05T05:00:00Z", 400.0)]
+    spy = Asset("SPY")
+    source = AlpacaBacktestData(START, END, client=data_client, trading_client=trading_client)
+
+    source.load([spy], START, END, "minute")
+    assert len(data_client.bars_requests) == 1
+    assert str(data_client.bars_requests[0].timeframe) == str(market_data.parse_timestep("minute"))
+
+    result = source.bars(spy, END, 1, "day")
+
+    # A second, distinct fetch must have gone out for the "day" timestep -- reusing
+    # the minute-cached frame (the bug) means this stays at 1.
+    assert len(data_client.bars_requests) == 2
+    assert str(data_client.bars_requests[1].timeframe) == str(market_data.parse_timestep("day"))
+    assert result is not None
+    assert result.timestep == "day"
 
 
 def test_load_batches_multiple_assets_into_one_alpaca_call() -> None:
