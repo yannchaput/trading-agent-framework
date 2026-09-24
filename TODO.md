@@ -2,10 +2,9 @@
 
 ## General
 * Migrate projects to the 2nd hard dreive (with the models)
-* Enable IBKR broker
+* ~~Enable IBKR broker~~
+* Install Java IB gateway
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
-* Compose strategies, e.g news sentiment analysis + momentum
-* Use "https://data.alpaca.markets/v1beta1/screener/stocks/movers" to screen values from NASDAQ and explore potentials.
 * ~~Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)~~ => Too complex
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * ~~Create a batch to run all the smoke tests altogether~~
@@ -21,7 +20,7 @@
 * ~~Memory~~
 * ~~Account configuration (no short sell, no margin trading)~~
 * ~~Backtesting (vectorbt)~~
-* Cache management
+* ~~Cache management~~ => not needed
 * ~~dashboard~~
 * ~~Fix `Bar.empty`, `bars.pandas_df`.~~
 * ~~Add warmup_trading_days to AlpacaBacktestDataSource~~
