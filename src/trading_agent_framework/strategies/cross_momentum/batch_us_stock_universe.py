@@ -3,9 +3,13 @@ Batch Stock Universe Builder
 =============================
 Runs once per month to compute the investable US stock universe.
 
-Source: NASDAQ public screener API — all stocks listed on NASDAQ, NYSE,
-        and AMEX (equivalent coverage to VTI / CRSP US Total Market Index).
-        Free, no API keys required.
+Sources:
+  - NASDAQ public screener API — all stocks listed on NASDAQ, NYSE, and AMEX.
+  - iShares Russell 1000 (IWB) and Russell 2000 (IWM) holdings CSVs.
+  - Vanguard Total Stock Market (VTI) holdings API.
+  All four are unioned to fill gaps any single source misses; NASDAQ
+  supplies the market-cap pre-filter data, ETF-only symbols are kept with
+  a $0 placeholder and verified by yfinance. Free, no API keys required.
 
 Screening: yfinance metadata (quote type, price, dollar volume).
 
@@ -24,6 +28,8 @@ Usage:
 """
 
 import argparse
+import csv
+import io
 import json
 import logging
 import sys
@@ -48,11 +54,26 @@ console = Console()
 
 # ── NASDAQ screener API ─────────────────────────────────────────────────────
 
-_NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true&exchange=nasdaq&exchange=nyse&exchange=amex"
+# NASDAQ's API only honours the LAST repeated `exchange=` param, so listing
+# nasdaq/nyse/amex as three separate params (the old URL) silently returned
+# NASDAQ-only results. Omitting the param entirely returns all US exchanges.
+_NASDAQ_SCREENER_URL = "https://api.nasdaq.com/api/screener/stocks?tableonly=true&limit=10000&download=true"
 _NASDAQ_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Accept": "application/json",
 }
+
+# ── ETF holdings sources (IWB/IWM/VTI) ──────────────────────────────────────
+# Fill the NASDAQ screener's coverage gaps with the constituent lists of three
+# widely tracked ETFs, fetched straight from the fund manager's own holdings
+# export. Each is looked up independently and a failure only drops that one
+# source (see get_extra_universe_symbols).
+
+_ISHARES_HOLDINGS_URLS = {
+    "IWB (Russell 1000)": "https://www.ishares.com/us/products/239707/ishares-russell-1000-etf/latest-holdings.csv",
+    "IWM (Russell 2000)": "https://www.ishares.com/us/products/239710/ishares-russell-2000-etf/latest-holdings.csv",
+}
+_VANGUARD_VTI_HOLDINGS_URL = "https://investor.vanguard.com/vmf/api/VTI/portfolio-holding/stock?start=1&count=5000"
 
 # ── Rate-limiting for yfinance ───────────────────────────────────────────────
 
@@ -81,6 +102,109 @@ THRESHOLDS = {
 # ── Ticker source ───────────────────────────────────────────────────────────
 
 
+def normalize_symbol(raw: str) -> str | None:
+    """Normalize a ticker to yfinance's dash-separated share-class form.
+
+    Uppercases and strips whitespace, then maps the space/dot/slash
+    share-class separators used by iShares, Vanguard and NASDAQ
+    (``"BRK B"`` / ``"BRK.B"`` / ``"BRK/B"``) onto yfinance's ``"BRK-B"``.
+    Returns None for anything that isn't left with only letters and dashes
+    (cash/futures placeholders like ``"-"`` or ``"USD"`` fall out at the
+    caller via asset-class filtering, but this still guards against junk).
+    """
+    if not raw:
+        return None
+    symbol = raw.strip().upper().replace(" ", "-").replace(".", "-").replace("/", "-")
+    if not symbol or not symbol.replace("-", "").isalpha():
+        return None
+    return symbol
+
+
+def parse_ishares_csv(text: str) -> set[str]:
+    """Extract equity ticker symbols from an iShares ``latest-holdings.csv`` export.
+
+    The file leads with several ``key,"value"`` metadata rows before the
+    real header row (``Ticker,Name,Sector,Asset Class,...``) and mixes in
+    non-equity rows (cash, money-market, futures) that must be excluded.
+    """
+    header_index = text.find("Ticker,Name,")
+    if header_index == -1:
+        return set()
+    reader = csv.DictReader(io.StringIO(text[header_index:]))
+    symbols: set[str] = set()
+    for row in reader:
+        if row.get("Asset Class") != "Equity":
+            continue
+        symbol = normalize_symbol(row.get("Ticker", ""))
+        if symbol is not None:
+            symbols.add(symbol)
+    return symbols
+
+
+def parse_vanguard_holdings(payload: dict) -> set[str]:
+    """Extract equity ticker symbols from a Vanguard portfolio-holding API response.
+
+    A handful of holdings (e.g. escrow claims on delisted stocks) carry no
+    ``ticker`` at all and are skipped rather than normalized.
+    """
+    symbols: set[str] = set()
+    for entity in payload.get("fund", {}).get("entity", []):
+        raw = entity.get("ticker", "")
+        if not raw:
+            continue
+        symbol = normalize_symbol(raw)
+        if symbol is not None:
+            symbols.add(symbol)
+    return symbols
+
+
+def _fetch_ishares_csv(url: str) -> str:
+    r = requests.get(url, headers=_NASDAQ_HEADERS, timeout=60)
+    r.raise_for_status()
+    return r.text
+
+
+def _fetch_vanguard_holdings() -> dict:
+    r = requests.get(_VANGUARD_VTI_HOLDINGS_URL, headers=_NASDAQ_HEADERS, timeout=60)
+    r.raise_for_status()
+    return r.json()
+
+
+def get_extra_universe_symbols(
+    fetch_ishares_csv=_fetch_ishares_csv,
+    fetch_vanguard_holdings=_fetch_vanguard_holdings,
+) -> set[str]:
+    """Union Russell 1000 (IWB), Russell 2000 (IWM), and total-market (VTI) holdings.
+
+    Each source is fetched independently; a failing source is logged and
+    skipped rather than aborting the others. `fetch_ishares_csv` and
+    `fetch_vanguard_holdings` are injectable so tests can supply fixtures
+    without touching the network.
+    """
+    symbols: set[str] = set()
+
+    for name, url in _ISHARES_HOLDINGS_URLS.items():
+        try:
+            text = fetch_ishares_csv(url)
+            source_symbols = parse_ishares_csv(text)
+        except Exception as e:
+            console.print(f"[yellow]Failed to fetch {name} holdings: {e}[/yellow]")
+            continue
+        console.print(f"  {name}: [green]{len(source_symbols)}[/green] equity holdings")
+        symbols |= source_symbols
+
+    try:
+        payload = fetch_vanguard_holdings()
+        vti_symbols = parse_vanguard_holdings(payload)
+    except Exception as e:
+        console.print(f"[yellow]Failed to fetch VTI holdings: {e}[/yellow]")
+    else:
+        console.print(f"  VTI (total market): [green]{len(vti_symbols)}[/green] equity holdings")
+        symbols |= vti_symbols
+
+    return symbols
+
+
 def _parse_nasdaq_market_cap(value: str) -> float:
     """Parse a NASDAQ market-cap string like '$3.45B' or '$150M' into a float.
 
@@ -102,18 +226,68 @@ def _parse_nasdaq_market_cap(value: str) -> float:
         return 0.0
 
 
-def get_ticker_universe() -> list[str]:
+def parse_nasdaq_rows(rows: list[dict]) -> list[tuple[str, float]]:
+    """Pre-filter NASDAQ screener rows into (symbol, market_cap) candidates.
+
+    Uses NASDAQ data as a fast-path skip only when we can positively
+    determine a stock fails: market cap or price that's stale, empty, or
+    $0.00 keeps the symbol and lets yfinance re-check with live data.
+
+    Returns candidates sorted by market cap descending.
+    """
+    candidates: list[tuple[str, float]] = []
+
+    for row in rows:
+        symbol = normalize_symbol(row.get("symbol", ""))
+        if symbol is None:
+            continue
+
+        market_cap = _parse_nasdaq_market_cap(row.get("marketCap", ""))
+        if market_cap > 0 and market_cap < THRESHOLDS["market_cap"]:
+            continue
+
+        price_str = row.get("lastsale", "").replace("$", "")
+        try:
+            price = float(price_str)
+        except (ValueError, TypeError):
+            price = 0.0
+        if price > 0 and price < THRESHOLDS["price"]:
+            continue
+
+        candidates.append((symbol, market_cap))
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return candidates
+
+
+def merge_ticker_candidates(
+    nasdaq_candidates: list[tuple[str, float]], extra_symbols: set[str]
+) -> list[tuple[str, float]]:
+    """Union NASDAQ (symbol, market_cap) candidates with ETF-holdings-only symbols.
+
+    Symbols only an ETF source knows about (not in the NASDAQ screener
+    results) are added with market_cap=0.0 — the same "keep, let yfinance
+    verify" placeholder NASDAQ's own $0.00/unparseable rows already use.
+    """
+    known = {symbol for symbol, _ in nasdaq_candidates}
+    merged = list(nasdaq_candidates)
+    for symbol in extra_symbols - known:
+        merged.append((symbol, 0.0))
+    return merged
+
+
+def get_ticker_universe() -> list[tuple[str, float]]:
     """Fetch all US exchange-listed stock symbols from the NASDAQ screener API.
 
     A single API call returns every stock on NASDAQ, NYSE, and AMEX
-    (~4,100 symbols) — equivalent in coverage to VTI's CRSP US Total
+    (~7,000 symbols) — equivalent in coverage to VTI's CRSP US Total
     Market Index.
 
     Pre-filters by market cap (>$2B) and price (>$10) using the NASDAQ
-    data to reduce the yfinance workload (cuts ~4,100 → ~1,200-1,500).
+    data to reduce the yfinance workload.
 
     Returns:
-        List of ticker symbols sorted by market cap descending.
+        List of (symbol, market_cap) candidates sorted by market cap descending.
     """
     console.print("[bold]Fetching all US exchange-listed stocks from NASDAQ screener...[/bold]")
 
@@ -130,45 +304,11 @@ def get_ticker_universe() -> list[str]:
         console.print("[red]NASDAQ screener returned no rows.[/red]")
         return []
 
-    # Pre-filter: use NASDAQ data as a fast-path skip only when we can
-    # positively determine a stock fails.  NASDAQ's marketCap is often
-    # stale or $0.00 for mid/small-caps — in those cases we keep the
-    # symbol and let yfinance re-check with live data.
-    candidates: list[tuple[str, float]] = []  # (symbol, market_cap)
-    skipped_mc = 0
-    skipped_price = 0
-
-    for row in rows:
-        symbol = row.get("symbol", "").strip().upper()
-        if not symbol or not symbol.replace("-", "").isalpha():
-            continue
-
-        # Market cap: only skip if we can parse it AND it's clearly < $2B.
-        # $0.00 / empty / unparseable → keep (let yfinance verify).
-        mc_str = row.get("marketCap", "")
-        market_cap = _parse_nasdaq_market_cap(mc_str)
-        if market_cap > 0 and market_cap < THRESHOLDS["market_cap"]:
-            skipped_mc += 1
-            continue
-
-        # Price: only skip if it's parseable AND < $10.
-        price_str = row.get("lastsale", "").replace("$", "")
-        try:
-            price = float(price_str)
-        except ValueError, TypeError:
-            price = 0.0
-        if price > 0 and price < THRESHOLDS["price"]:
-            skipped_price += 1
-            continue
-
-        candidates.append((symbol, market_cap))
-
-    # Sort by market cap descending
-    candidates.sort(key=lambda x: x[1], reverse=True)
-
-    symbols = [s for s, _ in candidates]
-    console.print(f"  Got {len(rows)} total listed stocks → [green]{len(symbols)} candidates[/green] after pre-filter ({skipped_mc} skipped on market cap, {skipped_price} on price)")
-    return symbols
+    candidates = parse_nasdaq_rows(rows)
+    console.print(
+        f"  Got {len(rows)} total listed stocks → [green]{len(candidates)} candidates[/green] after pre-filter"
+    )
+    return candidates
 
 
 # ── yfinance screening ──────────────────────────────────────────────────────
@@ -349,13 +489,22 @@ def main():
 
     # Step 1: Get ticker list from NASDAQ screener (all US exchanges)
     console.print("\n[bold]Step 1: Fetching all US-listed stocks from NASDAQ screener...[/bold]")
-    tickers = get_ticker_universe()
-    if not tickers:
-        console.print("[red]ERROR: No tickers retrieved. Aborting.[/red]")
+    nasdaq_candidates = get_ticker_universe()
+    if not nasdaq_candidates:
+        console.print("[red]ERROR: No tickers retrieved from NASDAQ screener. Aborting.[/red]")
         sys.exit(1)
 
-    # Step 2: Screen with yfinance
-    console.print(f"\n[bold]Step 2: Screening {len(tickers)} tickers with yfinance...[/bold]")
+    # Step 2: Fill coverage gaps from Russell 1000/2000 and total-market ETF holdings
+    console.print("\n[bold]Step 2: Fetching IWB/IWM/VTI holdings to fill NASDAQ screener coverage gaps...[/bold]")
+    extra_symbols = get_extra_universe_symbols()
+    candidates = merge_ticker_candidates(nasdaq_candidates, extra_symbols)
+    added = len(candidates) - len(nasdaq_candidates)
+    console.print(f"  Merged universe: [green]{len(candidates)} candidates[/green] ({added} added by ETF holdings)")
+
+    tickers = [symbol for symbol, _ in candidates]
+
+    # Step 3: Screen with yfinance
+    console.print(f"\n[bold]Step 3: Screening {len(tickers)} tickers with yfinance...[/bold]")
     console.print("  (This may take several minutes — monthly batch, acceptable runtime)")
     start = time.monotonic()
     # The max concurrent threads is set to _MAX_CONCURRENT_YF (3) to avoid yfinance rate-limiting issues.
@@ -367,9 +516,9 @@ def main():
         console.print("[red]ERROR: No tickers passed screening. Aborting without overwriting existing files.[/red]")
         sys.exit(1)
 
-    # Step 3: Build and save
-    console.print("\n[bold]Step 3: Building universe JSON...[/bold]")
-    data = build_universe_json(results, source="nasdaq_screener_all_us")
+    # Step 4: Build and save
+    console.print("\n[bold]Step 4: Building universe JSON...[/bold]")
+    data = build_universe_json(results, source="nasdaq_screener+ishares_iwb+ishares_iwm+vanguard_vti")
     save_universe(data, output_dir)
 
     console.print(f"\n[bold green]Done! Universe: {data['total_passed']} symbols saved.[/bold green]")
