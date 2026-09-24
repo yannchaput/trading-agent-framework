@@ -90,6 +90,19 @@ def test_search_news_clamps_end_that_is_after_the_clock() -> None:
     assert request.end == _now().astimezone(UTC).replace(tzinfo=None)
 
 
+def test_search_news_clamps_start_past_the_clamped_end_instead_of_erroring_downstream() -> None:
+    news = FakeNewsClient()
+    tool = _tool(_alpaca_strategy(news))
+
+    # Both start and end are after the clock's "now" (10:00); end clamps to now (10:00),
+    # but start (11:00) would then be later than that clamped end, which is an invalid
+    # range -- the provider must never be sent start > end.
+    tool(start=et(2026, 9, 14, 11).isoformat(), end=et(2026, 9, 14, 12).isoformat())
+
+    [request] = news.news_requests
+    assert request.start == request.end == _now().astimezone(UTC).replace(tzinfo=None)
+
+
 def test_search_news_clamps_limit_to_the_content_cap_when_content_is_requested() -> None:
     provider = _StubProvider()
     tool = _tool(_provider_strategy(provider))

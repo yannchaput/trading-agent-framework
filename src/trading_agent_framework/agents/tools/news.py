@@ -51,7 +51,7 @@ def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # 
                 start_parsed = datetime.fromisoformat(start)
                 if start_parsed.tzinfo is None:
                     return {"error": "start date must include timezone information"}
-                start_dt = start_parsed
+                start_dt = min(start_parsed, end_dt)
             else:
                 start_dt = end_dt - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
         except ValueError as exc:
