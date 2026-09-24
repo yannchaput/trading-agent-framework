@@ -174,6 +174,13 @@ def test_rank_drops_misses_and_orders_by_score_then_recency() -> None:
     assert [item["id"] for item in ranked] == ["b", "a", "c"]
 
 
+def test_rank_falls_back_to_recency_when_no_item_matches_any_term() -> None:
+    older = {"id": "a", "updated_at": "2026-09-14T09:00", "text": "opened bullish exposure SPY"}
+    newer = {"id": "b", "updated_at": "2026-09-14T11:00", "text": "bullish regime SPY, empty book"}
+    ranked = records.rank([older, newer], records.query_terms("recent decisions risk_on SHV"))
+    assert [item["id"] for item in ranked] == ["b", "a"]
+
+
 def test_render_retrieval_text_matches_lumibot() -> None:
     items = [
         {"kind": "thesis", "symbol": "SPY", "status": "open", "text": "Long"},

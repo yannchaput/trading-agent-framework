@@ -123,6 +123,19 @@ def test_initialize_creates_the_agent_with_prebuilt_memory_and_news_tools(tmp_pa
     assert "SHV" in created["system_prompt"]  # ty: ignore[unsupported-operator]
 
 
+def test_system_prompt_requires_english_output(tmp_path: Path) -> None:
+    # Regression: glm-4.7-flash (a Chinese-origin local model) spontaneously code-switched into
+    # Chinese, including inside a remember_decision `text` argument -- which then gets persisted
+    # to memory and re-surfaces verbatim in every later run's search_memory results. Nothing in
+    # the prompt constrained output language, so nothing caught it.
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+
+    strategy.initialize()
+
+    [created] = agents.created
+    assert "English" in created["system_prompt"]  # ty: ignore[unsupported-operator]
+
+
 def test_initialize_wires_remember_decision_and_submit_order_through_the_news_grounding_gate(tmp_path: Path) -> None:
     # Regression: the agent recorded decisions (citing invented report details) or submitted orders
     # without ever calling search_news that run. See NewsBinaryStrategy's grounding.py.

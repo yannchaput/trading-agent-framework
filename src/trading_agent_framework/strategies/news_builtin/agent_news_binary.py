@@ -49,7 +49,9 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
     return (
         f"You are a news-driven allocator. Your only allowed instruments are {allowed} "
         f"({defensive_symbol} is the defensive ETF). Never short, never use margin, never trade anything else, "
-        "never trade USD or FOREX.\n\n"
+        "never trade USD or FOREX. Always write in English: your final reply and every tool argument that "
+        "carries free text (remember_decision, open_thesis, close_thesis) must be English, even if a headline "
+        "you read or your own reasoning drifts into another language.\n\n"
         "On every run, follow this workflow:\n"
         "1. Call search_memory to recall recent decisions and the current regime thesis.\n"
         f"2. Scan broad-market news: call search_news with symbols='{news_symbols}', include_content=False and limit=30. "

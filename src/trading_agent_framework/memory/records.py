@@ -163,9 +163,17 @@ def score(item: Mapping[str, Any], terms: Sequence[str]) -> int:
 
 
 def rank(items: Iterable[Mapping[str, Any]], terms: Sequence[str]) -> list[Mapping[str, Any]]:
-    """Items with a score above 0: best score first, then most recently updated first."""
+    """Items with a score above 0: best score first, then most recently updated first.
+
+    Falls back to every item ordered by recency alone when `terms` is non-empty but nothing
+    scores above 0 -- a query worded in terms that never appear verbatim in stored text
+    (e.g. "risk_on"/"SHV" when past decisions only ever wrote "bullish"/"SPY") should still
+    recall recent memory rather than silently return nothing.
+    """
     scored = [(score(item, terms), str(item["updated_at"]), item) for item in items]
     matching = [entry for entry in scored if entry[0] > 0]
+    if not matching and terms:
+        matching = scored
     matching.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
     return [item for _, _, item in matching]
 
