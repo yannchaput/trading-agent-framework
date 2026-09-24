@@ -69,45 +69,61 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
     from the caller's point of view. Raises `ValueError` if `tools` has no `search_news` -- gating
     against a tool that can never ground the run would silently lock the other two forever.
     """
+    # Build a lookup dict of tools by their function name
     by_name = {tool.__name__: tool for tool in tools}
+    # Fail fast if search_news isn't in the tool list (we can't gate against a tool that doesn't exist)
     if "search_news" not in by_name:
         raise ValueError("require_search_news_before needs a 'search_news' tool in the list")
 
+    # Shared state: tracks whether search_news with include_content=True was called in this run
     grounded = _NewsGroundedRuns()
     search_news = by_name["search_news"]
+    # Parse the function signature so we can check if include_content=True was passed
     search_news_signature = inspect.signature(search_news)
 
     def _requested_full_content(args: tuple[Any, ...], kwargs: dict[str, Any]) -> bool:
+        """Check if this call to search_news passed include_content=True (positional or keyword)."""
         try:
+            # Bind the actual arguments to the function's parameter names
             bound = search_news_signature.bind_partial(*args, **kwargs)
         except TypeError:
             return False
+        # Fill in default values for any parameters that weren't passed
         bound.apply_defaults()
+        # Return True only if include_content was explicitly True
         return bool(bound.arguments.get("include_content", False))
 
     @functools.wraps(search_news)
     def wrapped_search_news(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        """
+        Intercept search_news to watch for the grounding call (include_content=True).
+        Set 'grounded' if the call happened.
+        """
         result = search_news(*args, **kwargs)
+        # If the call succeeded AND included full content, mark this run as grounded
         if "error" not in result and _requested_full_content(args, kwargs):
             grounded.mark()
         return result
 
     def _guard(name: str, inner: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+        """Wrap a tool (remember_decision or submit_order) with a gating check."""
+
         @functools.wraps(inner)
         def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            # If search_news with include_content=True hasn't been called yet, refuse to run
             if not grounded.satisfied():
-                return {
-                    "error": (
-                        f"call search_news with include_content=True at least once in this run before "
-                        f"calling {name}, so it is grounded in a specific article, not just the headline scan"
-                    )
-                }
+                return {"error": (f"call search_news with include_content=True at least once in this run before calling {name}, so it is grounded in a specific article, not just the headline scan")}
+            # Otherwise, run the tool normally
             return inner(*args, **kwargs)
 
         return wrapped
 
+    # Build the replacement dict: swap out the original tools with wrapped versions
     replacements: dict[str, Callable[..., dict[str, Any]]] = {"search_news": wrapped_search_news}
+    # Wrap remember_decision and submit_order (whichever are present in the tool list)
+    # Those 2 are added in the dict besides news_search already there
     for name in _GATED:
         if name in by_name:
             replacements[name] = _guard(name, by_name[name])
+    # Return the original tool list, but with wrapped versions where needed
     return [replacements.get(tool.__name__, tool) for tool in tools]
