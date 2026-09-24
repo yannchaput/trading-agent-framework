@@ -22,6 +22,7 @@ from trading_agent_framework.config.env import BrokerKind, BrokerSettings, find_
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.utils.errors import BrokerError
 
 STRATEGY_NAME = "smoke_ibkr"
 ENV_FILE = find_project_root() / "env" / ".env.ibkr.integration-tests"
@@ -37,14 +38,18 @@ def _wait_for(order: Order, statuses: set[OrderStatus], seconds: float = 20.0) -
 
 def main() -> int:
     if not ENV_FILE.is_file():
-        print(f"Credentials file not found: {ENV_FILE}", file=sys.stderr)
-        return 1
+        print(f"SKIP: credentials file not found: {ENV_FILE}")
+        return 0
     load_dotenv(ENV_FILE, override=True)
     settings = BrokerSettings.from_env()
     if settings.kind is not BrokerKind.IBKR or not settings.is_paper:
         print("Refusing to run: needs BROKER=ibkr and BROKER_API_IS_PAPER=true.", file=sys.stderr)
         return 1
-    broker = build_broker(STRATEGY_NAME)
+    try:
+        broker = build_broker(STRATEGY_NAME)
+    except BrokerError as exc:
+        print(f"SKIP: could not connect to IB Gateway: {exc}")
+        return 0
     assert isinstance(broker, IbkrBroker)
     try:
         if not is_paper_account(broker.account_id):

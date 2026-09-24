@@ -137,6 +137,16 @@ def main() -> int:
     broker = AlpacaBroker.from_credentials(
         STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news
     )
+
+    session = broker.clock.next_session()
+    now = broker.clock.now()
+    if now < session.open:
+        print(
+            f"SKIP: outside regular trading hours; next session opens {session.open.isoformat()} "
+            "(the order-modify step needs a real, currently-open session; rerun then).",
+        )
+        return 0
+
     strategy = SmokeStrategy(
         broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT
     )

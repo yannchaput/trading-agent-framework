@@ -70,19 +70,6 @@ minute bars stay inside 09:30-16:00, and the indicators return values. It also p
 no fake can show: what Alpaca does with an unknown symbol, and how many minute bars the
 include_after_hours=False filter keeps.
 
-## Smoke Strategy News
-Manual end-to-end check of the `news_builtin` LLM strategy against a real vLLM server and Alpaca news.
-
-NOT part of the automated test suite. Run by hand:
-
-    uv run python scripts/tests/smoke_strategy_news.py iteration   # one agent iteration, paper account only
-    uv run python scripts/tests/smoke_strategy_news.py backtest    # a 2-week real backtest (2025-03-03..2025-03-14)
-
-`LLM_BASE_URL` / `LLM_MODEL` come from env/.env.news_builtin.backtesting (the LLM server must be up). `iteration`
-loads paper credentials from env/.env.alpaca.integration-tests and refuses to run against a live account, since the
-agent may place paper orders. `backtest` only reads news/market data and writes a report under
-logs/news_builtin/backtesting/. Expect several LLM calls (iterations 1, 5 and 10 of the backtest).
-
 ## Tools
 
 ### Smoke Fundamentals
