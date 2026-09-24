@@ -177,17 +177,17 @@ class NewsBinaryStrategy(Strategy):
             "remember_decision now, with the `text` argument summarizing that decision (including any "
             "trade you placed). Call no other tool first."
         )
-        retry_result = self._run_agent(retry_prompt, context=context, run_id=run_id)
+        retry_result = self._run_agent(retry_prompt, context=context, run_id=run_id, force_tool="remember_decision")
         if retry_result is None:
             return
         self._log_agent_result(retry_result, prefix="retry_")
         if not _decision_was_recorded(retry_result.tool_calls):
             self.log_warning(f"[{self.AGENT_NAME}] retry also ended without a successful remember_decision call -- no decision was recorded this run.")
 
-    def _run_agent(self, task_prompt: str, *, context: dict[str, object], run_id: str) -> AgentRunResult | None:
+    def _run_agent(self, task_prompt: str, *, context: dict[str, object], run_id: str, force_tool: str | None = None) -> AgentRunResult | None:
         """Run `self.AGENT_NAME` once; on `AgentError`, log/count it (matching the old inline handling) and return `None`."""
         try:
-            result = self.agents[self.AGENT_NAME].run(task_prompt, context=context, run_id=run_id)
+            result = self.agents[self.AGENT_NAME].run(task_prompt, context=context, run_id=run_id, force_tool=force_tool)
         except AgentError as exc:
             # A failed LLM call must not kill a live loop, and one flaky call must not kill a backtest.
             self.vars.consecutive_agent_errors += 1

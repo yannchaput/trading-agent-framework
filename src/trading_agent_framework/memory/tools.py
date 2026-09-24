@@ -23,6 +23,7 @@ class _AgentCall:
     agent_name: str | None = None
     model_call_id: str | None = None
     run_id: str | None = None
+    force_tool: str | None = None
 
 
 # `_AgentCall` is frozen, so the shared default holds no mutable state; ContextVar still wants
@@ -32,13 +33,16 @@ _CURRENT_CALL: ContextVar[_AgentCall | None] = ContextVar("memory_agent_call", d
 
 @contextmanager
 def agent_call_context(
-    agent_name: str | None = None, model_call_id: str | None = None, run_id: str | None = None
+    agent_name: str | None = None, model_call_id: str | None = None, run_id: str | None = None, force_tool: str | None = None
 ) -> Iterator[None]:
     """Attribute memory tool calls made inside this block to `agent_name` / `model_call_id`.
 
     `run_id` scopes one agent run: `remember_decision` records an identical decision only once per run.
+    `force_tool` names a tool `AgentManager`'s forced-tool-choice middleware must force on this run's
+    first model turn (see `current_forced_tool`); unrelated to memory, but carried by the same per-run
+    context as `run_id` since both are already read from wherever a tool call executes.
     """
-    token = _CURRENT_CALL.set(_AgentCall(agent_name, model_call_id, run_id))
+    token = _CURRENT_CALL.set(_AgentCall(agent_name, model_call_id, run_id, force_tool))
     try:
         yield
     finally:
@@ -49,6 +53,12 @@ def current_run_id() -> str | None:
     """The id of the agent run this code is executing in, or `None` outside `agent_call_context(run_id=...)`."""
     call = _CURRENT_CALL.get()
     return call.run_id if call is not None else None
+
+
+def current_forced_tool() -> str | None:
+    """The tool name this run's first model turn must be forced to call, or `None` if unset."""
+    call = _CURRENT_CALL.get()
+    return call.force_tool if call is not None else None
 
 
 class _Provenance(TypedDict):

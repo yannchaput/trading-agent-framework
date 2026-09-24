@@ -47,14 +47,18 @@ class _FakeHandle:
     def __init__(self) -> None:
         self.runs: list[tuple[str, object]] = []
         self.run_ids: list[str | None] = []
+        self.force_tools: list[str | None] = []
         self.error: Exception | None = None
         self.script: list[Exception | None] = []  # per-run outcome (None = success); overrides `error` while non-empty
         self.result: AgentRunResult | None = None  # overrides the default successful result when set
         self.results: list[AgentRunResult | Exception] = []  # per-call queue (result or raised exception), checked first
 
-    def run(self, task_prompt: str, *, context: object = None, run_id: str | None = None) -> AgentRunResult:
+    def run(
+        self, task_prompt: str, *, context: object = None, run_id: str | None = None, force_tool: str | None = None
+    ) -> AgentRunResult:
         self.runs.append((task_prompt, context))
         self.run_ids.append(run_id)
+        self.force_tools.append(force_tool)
         if self.results:
             outcome = self.results.pop(0)
             if isinstance(outcome, Exception):
@@ -327,6 +331,10 @@ def test_a_run_that_never_records_a_decision_is_retried_once_and_the_retry_can_s
     assert handle.run_ids[0] == handle.run_ids[1]
     assert handle.run_ids[0] is not None
     assert "retry" in caplog.text.lower()
+    # The first attempt is free to call whatever it needs; the retry forces the one call that matters,
+    # since asking nicely in the prompt alone was observed not to be reliable enough.
+    assert handle.force_tools[0] is None
+    assert handle.force_tools[1] == "remember_decision"
 
 
 def test_a_retry_that_also_fails_logs_a_final_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

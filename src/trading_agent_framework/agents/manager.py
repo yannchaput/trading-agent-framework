@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
-from trading_agent_framework.memory.tools import agent_call_context
+from trading_agent_framework.memory.tools import agent_call_context, current_forced_tool
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError, LLMStatsError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -66,18 +66,26 @@ class AgentHandle:
         self.name = name
         self._agent = agent
 
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None) -> AgentRunResult:
+    def run(
+        self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None
+    ) -> AgentRunResult:
         """`run_id` defaults to a fresh id (one per run: memory tools dedupe repeats inside it).
 
         A caller that needs to re-prompt the *same* logical run -- e.g. a corrective follow-up turn
         after the model skipped a mandatory tool call -- passes back the id from the first call, so a
         per-run gate (like `news_builtin`'s search-before-decide grounding) doesn't ask it to re-ground
         itself, and per-run dedupe still treats them as one run.
+
+        `force_tool`, when given, forces this run's first model turn to call that tool via the LLM
+        API's `tool_choice` (see `AgentManager._forced_tool_choice_middleware`), instead of relying on
+        the model to follow a text instruction -- for a corrective retry after the model narrated a
+        decision without ever calling the tool that should have recorded it. Later turns in the same
+        run are left unforced.
         """
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         run_id = run_id or uuid.uuid4().hex
         try:
-            with agent_call_context(run_id=run_id):
+            with agent_call_context(run_id=run_id, force_tool=force_tool):
                 raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
             logger.log_debug(f"Model returned this raw messages: {str(raw_result)}")
             return parse_agent_messages(raw_result["messages"])
@@ -140,6 +148,28 @@ class AgentManager:
 
         return repair_pseudo_tool_call
 
+    def _forced_tool_choice_middleware(self) -> Any:
+        """Middleware for every agent: forces `current_forced_tool()`'s tool as this run's first model turn.
+
+        Registered unconditionally, like `_tool_call_repair_middleware`; a no-op whenever
+        `AgentHandle.run` was called without `force_tool` (the common case). `request.messages`
+        accumulates every message of the current `.invoke()`, so "no `AIMessage` yet" identifies the
+        run's first model turn -- the only one forced. Once the model has answered once (whether with
+        a tool call or plain text), later turns in the same run get the model's normal free choice, so
+        a forced `remember_decision` call can still be followed by an ordinary closing summary.
+        """
+        from langchain.agents.middleware import wrap_model_call
+        from langchain_core.messages import AIMessage
+
+        @wrap_model_call
+        def force_tool_choice(request: Any, handler: Callable[[Any], Any]) -> Any:
+            tool_name = current_forced_tool()
+            if tool_name is not None and not any(isinstance(m, AIMessage) for m in request.messages):
+                request = request.override(tool_choice=tool_name)
+            return handler(request)
+
+        return force_tool_choice
+
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
 
@@ -199,7 +229,7 @@ class AgentManager:
         try:
             from langchain.agents import create_agent
 
-            middleware = [self._tool_call_repair_middleware()]
+            middleware = [self._tool_call_repair_middleware(), self._forced_tool_choice_middleware()]
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
