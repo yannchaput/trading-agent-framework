@@ -43,6 +43,7 @@ import requests
 import yfinance as yf
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
+from yfinance.exceptions import YFRateLimitError
 
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 
@@ -76,11 +77,83 @@ _ISHARES_HOLDINGS_URLS = {
 _VANGUARD_VTI_HOLDINGS_URL = "https://investor.vanguard.com/vmf/api/VTI/portfolio-holding/stock?start=1&count=5000"
 
 # ── Rate-limiting for yfinance ───────────────────────────────────────────────
+# `Ticker.info` costs 2+ real HTTP requests (quoteSummary plus a second
+# internal call), and yfinance itself silently retries once more on any 4xx
+# before giving up — so one "attempt" below can cost up to ~4 requests to
+# Yahoo. With ~4,500+ tickers now (NASDAQ + IWB/IWM/VTI, vs ~1,200 before),
+# sustained pressure trips Yahoo's rate limiter. RateLimitGate below makes
+# recovery global instead of per-ticket, so a 429 actually pauses every
+# worker instead of only the thread that hit it.
 
-_MAX_CONCURRENT_YF = 3  # max parallel yfinance calls
-_INTER_REQUEST_DELAY = 0.3  # seconds between requests (per thread)
+_MAX_CONCURRENT_YF = 2  # max parallel yfinance calls
+_INTER_REQUEST_DELAY = 0.5  # seconds between requests (per thread)
+_RATE_LIMIT_INITIAL_BACKOFF = 30.0  # seconds ALL workers pause after a 429
+_RATE_LIMIT_MAX_BACKOFF = 300.0  # cap on doubling backoff for consecutive 429s
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    """True if `exc` represents Yahoo's HTTP 429, however it surfaced.
+
+    Usually yfinance's own `YFRateLimitError`, but matched on message too
+    in case a 429 ever reaches us wrapped in a different exception type.
+    """
+    if isinstance(exc, YFRateLimitError):
+        return True
+    message = str(exc)
+    return "429" in message or "Too Many Requests" in message
+
+
+class RateLimitGate:
+    """Shared cooldown so one rate-limited yfinance call pauses every worker.
+
+    Per-ticker retry backoff alone only pauses the thread that hit the
+    429 — the other concurrent threads keep hammering Yahoo, so the
+    aggregate request rate never actually drops during a rate-limit
+    event. This gate makes the cooldown global: any worker can extend it,
+    and every worker waits on it before its next request.
+
+    `now`/`sleep` are injectable so tests can drive a fake clock instead
+    of blocking on real time.
+    """
+
+    def __init__(
+        self,
+        initial_backoff: float,
+        max_backoff: float,
+        now=time.monotonic,
+        sleep=time.sleep,
+    ) -> None:
+        self._initial_backoff = initial_backoff
+        self._max_backoff = max_backoff
+        self._backoff = initial_backoff
+        self._cooldown_until = 0.0
+        self._now = now
+        self._sleep = sleep
+        self._lock = threading.Lock()
+
+    def wait(self) -> None:
+        """Block until any active cooldown has elapsed."""
+        while True:
+            with self._lock:
+                remaining = self._cooldown_until - self._now()
+            if remaining <= 0:
+                return
+            self._sleep(remaining)
+
+    def on_rate_limited(self) -> None:
+        """Extend the shared cooldown; doubles on each consecutive hit."""
+        with self._lock:
+            self._cooldown_until = self._now() + self._backoff
+            self._backoff = min(self._backoff * 2, self._max_backoff)
+
+    def on_success(self) -> None:
+        """Reset backoff to its initial value after a clean call."""
+        with self._lock:
+            self._backoff = self._initial_backoff
+
 
 _semaphore: threading.Semaphore | None = None
+_rate_limit_gate: RateLimitGate | None = None
 
 
 def _get_semaphore() -> threading.Semaphore:
@@ -88,6 +161,13 @@ def _get_semaphore() -> threading.Semaphore:
     if _semaphore is None:
         _semaphore = threading.Semaphore(_MAX_CONCURRENT_YF)
     return _semaphore
+
+
+def _get_rate_limit_gate() -> RateLimitGate:
+    global _rate_limit_gate
+    if _rate_limit_gate is None:
+        _rate_limit_gate = RateLimitGate(_RATE_LIMIT_INITIAL_BACKOFF, _RATE_LIMIT_MAX_BACKOFF)
+    return _rate_limit_gate
 
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
@@ -317,16 +397,20 @@ def get_ticker_universe() -> list[tuple[str, float]]:
 def _screen_single_ticker(ticker: str) -> dict | None:
     """Fetch yfinance info for a single ticker and return screening data.
 
-    Rate-limited via a semaphore (max 3 concurrent calls) and a small
-    inter-request delay.  Retries up to 3 times with exponential backoff
-    on rate-limit / transient errors.
+    Rate-limited via a semaphore (max `_MAX_CONCURRENT_YF` concurrent calls),
+    a small inter-request delay, and a shared `RateLimitGate`: a 429 on any
+    thread pauses every worker, not just the one that hit it. Retries up to
+    3 times, with a short per-attempt backoff on top for non-rate-limit
+    transient errors.
 
     Returns a dict with keys: symbol, market_cap, price, avg_volume,
     dollar_volume, quote_type, or None if the ticker fails all retries.
     """
     sem = _get_semaphore()
+    gate = _get_rate_limit_gate()
 
     for attempt in range(3):
+        gate.wait()
         acquired = sem.acquire(timeout=15.0)
         if not acquired:
             logger.warning("Semaphore timeout for %s — skipping", ticker)
@@ -337,6 +421,10 @@ def _screen_single_ticker(ticker: str) -> dict | None:
         except Exception as exc:
             logger.warning("yfinance error for %s (attempt %d): %s", ticker, attempt + 1, exc)
             info = None
+            if is_rate_limit_error(exc):
+                gate.on_rate_limited()
+        else:
+            gate.on_success()
         finally:
             sem.release()
 

@@ -1,13 +1,32 @@
 from __future__ import annotations
 
+from yfinance.exceptions import YFRateLimitError
+
 from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import (
+    RateLimitGate,
     get_extra_universe_symbols,
+    is_rate_limit_error,
     merge_ticker_candidates,
     normalize_symbol,
     parse_ishares_csv,
     parse_nasdaq_rows,
     parse_vanguard_holdings,
 )
+
+
+class FakeClock:
+    """Deterministic now()/sleep() pair: sleep() advances the fake clock instead of blocking."""
+
+    def __init__(self, start: float = 0.0) -> None:
+        self.t = start
+        self.sleep_calls: list[float] = []
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.sleep_calls.append(seconds)
+        self.t += seconds
 
 _ISHARES_CSV = (
     "iShares Russell 1000 ETF\n"
@@ -100,6 +119,74 @@ def test_merge_ticker_candidates_with_no_extra_symbols_returns_nasdaq_candidates
     nasdaq_candidates = [("AAPL", 3.5e12)]
 
     assert merge_ticker_candidates(nasdaq_candidates, set()) == [("AAPL", 3.5e12)]
+
+
+def test_rate_limit_gate_wait_returns_immediately_with_no_active_cooldown() -> None:
+    clock = FakeClock()
+    gate = RateLimitGate(initial_backoff=30.0, max_backoff=300.0, now=clock.now, sleep=clock.sleep)
+
+    gate.wait()
+
+    assert clock.sleep_calls == []
+
+
+def test_rate_limit_gate_wait_sleeps_out_the_full_cooldown_after_a_hit() -> None:
+    clock = FakeClock()
+    gate = RateLimitGate(initial_backoff=30.0, max_backoff=300.0, now=clock.now, sleep=clock.sleep)
+
+    gate.on_rate_limited()
+    gate.wait()
+
+    assert clock.sleep_calls == [30.0]
+    assert clock.t == 30.0
+
+
+def test_rate_limit_gate_backoff_doubles_on_consecutive_hits_without_success() -> None:
+    clock = FakeClock()
+    gate = RateLimitGate(initial_backoff=30.0, max_backoff=300.0, now=clock.now, sleep=clock.sleep)
+
+    gate.on_rate_limited()
+    gate.wait()
+    gate.on_rate_limited()
+    gate.wait()
+
+    assert clock.sleep_calls == [30.0, 60.0]
+
+
+def test_rate_limit_gate_backoff_caps_at_max() -> None:
+    clock = FakeClock()
+    gate = RateLimitGate(initial_backoff=30.0, max_backoff=90.0, now=clock.now, sleep=clock.sleep)
+
+    for _ in range(5):
+        gate.on_rate_limited()
+        gate.wait()
+
+    assert clock.sleep_calls == [30.0, 60.0, 90.0, 90.0, 90.0]
+
+
+def test_rate_limit_gate_on_success_resets_backoff_to_initial() -> None:
+    clock = FakeClock()
+    gate = RateLimitGate(initial_backoff=30.0, max_backoff=300.0, now=clock.now, sleep=clock.sleep)
+
+    gate.on_rate_limited()
+    gate.wait()
+    gate.on_success()
+    gate.on_rate_limited()
+    gate.wait()
+
+    assert clock.sleep_calls == [30.0, 30.0]
+
+
+def test_is_rate_limit_error_detects_yfinance_rate_limit_error() -> None:
+    assert is_rate_limit_error(YFRateLimitError()) is True
+
+
+def test_is_rate_limit_error_detects_generic_429_message() -> None:
+    assert is_rate_limit_error(Exception("HTTPError: 429 Client Error: Too Many Requests")) is True
+
+
+def test_is_rate_limit_error_returns_false_for_unrelated_errors() -> None:
+    assert is_rate_limit_error(ValueError("bad ticker")) is False
 
 
 def test_get_extra_universe_symbols_unions_sources_and_tolerates_one_failure() -> None:
