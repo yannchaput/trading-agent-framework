@@ -173,8 +173,24 @@ Compare backtesting runs across all strategies in a Streamlit web app.
 
 **Why:** Rapidly compare strategy performance, debug LLM agent behavior (token usage, latency, call counts), and validate that config changes (model, tools, prompts) produce measurable improvements.
 
+### Feedbacks 💰 
 
-### 📈 Strategies
+| Strategy        | status            | Observations                                   |
+|-----------------|-------------------|-------------------------------------------------|
+| macro_risk      | live              | Good balance between aggressive position (TQQQ) and defensive one (SHV). Very slow growth.<br>This strategy has too much latency: if TQQQ drops due to some signal, it's already too late to switch in defensive mode. The same the overway around. Too much inertia. |
+| m2_liquidity    | paper             | m2_liquidity decide to buy TQQQ (risk on) or SHV (risk off) based on macro economic data: M2 money supply, employment, prices, etc. Opposite to macro_risk, its decisions are based on long term indicators not so frequently updated. Hence it is less sensible to day 2 day volatility. However could be risky if the stock drops durably. Long term strategy. Quite analogous to macro_risk on a longer timeframe. |
+| news_binary    | live          |  Strategy based on news sentiment analysis. The strategy buy QQQ or SPY if market regime is bullish. Defensive ETF otherwise. This strategy is more stable than benchmark SPY but also generate a lesser yield and underperform SPY. |
+| cross sectional momentum (V5) | live  | Best candidate so far: robut over a 10 year window and good metrics. Very sensitive to momentum. So either very high whne momentum is there or very low. |
+| opening range breakout | live | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
+
+## Supporting documentation:
+* [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
+* [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
+* [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
+* [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
+* [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
+
+## 📈 Strategies
 
 #### 📈 `triple_screen` — NASDAQ Triple Screen
 | Field | Value |
@@ -293,21 +309,3 @@ The strategy will rely on those symbols as input.
 An agent implementing an opening range breakout strategy. During the first 15min of the regular cash session, the agent set the Opening Range (OR) window. Then the nest 2 hours, it picks up the "breakouts": stock prices and volume raising up a parameterized threshold. Rest of day is to set a traling stop and sell if the price goes down the stop.
 
 Run: `uv run agent opening_range_breakout backtesting`
-
-
-### Feedbacks 💰 
-
-| Strategy        | status            | Observations                                   |
-|-----------------|-------------------|-------------------------------------------------|
-| macro_risk      | live              | Good balance between aggressive position (TQQQ) and defensive one (SHV). Very slow growth.<br>This strategy has too much latency: if TQQQ drops due to some signal, it's already too late to switch in defensive mode. The same the overway around. Too much inertia. |
-| m2_liquidity    | paper             | m2_liquidity decide to buy TQQQ (risk on) or SHV (risk off) based on macro economic data: M2 money supply, employment, prices, etc. Opposite to macro_risk, its decisions are based on long term indicators not so frequently updated. Hence it is less sensible to day 2 day volatility. However could be risky if the stock drops durably. Long term strategy. Quite analogous to macro_risk on a longer timeframe. |
-| news_builtin    | live          |  Strategy based on news sentiment analysis. The strategy buy QQQ or SPY if market regime is bullish. Defensive ETF otherwise. This strategy is more stable than benchmark SPY. This is a good tradeoff. |
-| cross sectional momentum (V5) | live  | Best candidate so far: robut over a 10 year window and good metrics. |
-| opening range breakout | live | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
-
-## Supporting documentation:
-* [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
-* [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
-* [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
-* [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
-* [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
