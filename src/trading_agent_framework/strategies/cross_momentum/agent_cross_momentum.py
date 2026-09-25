@@ -79,7 +79,7 @@ class CrossMomentumStrategy(Strategy):
         # "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
         # "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
         "backtesting_start": datetime(2016, 1, 1, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 8, 15, tzinfo=MARKET_TZ),
+        "backtesting_end": datetime(2026, 9, 23, tzinfo=MARKET_TZ),
         "benchmark_symbol": "SPY",
         # Warm-up extends the data window before backtesting_start so the 12-1m
         # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
