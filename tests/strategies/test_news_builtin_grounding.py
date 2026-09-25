@@ -58,6 +58,20 @@ def test_remember_decision_is_refused_before_search_news_succeeds_this_run() -> 
     assert calls == []  # the real remember_decision was never invoked
 
 
+def test_the_refusal_says_an_empty_result_still_counts() -> None:
+    # Regression: glm-4.7-flash repeatedly misread "grounded in a specific article" as requiring the
+    # article to actually have a body, and invented a "gating rule requires a full-text article" that
+    # does not exist -- recorded verbatim into memory, where later runs' search_memory recalled it back.
+    # Every place that tells the model about this gate must say outright that an empty response counts.
+    calls: list[str] = []
+    tools = _tools(calls)
+
+    with agent_call_context(run_id="run-1"):
+        result = tools["remember_decision"](text="KEEP")
+
+    assert "an empty result also counts" in result["error"]
+
+
 def test_remember_decision_succeeds_after_an_include_content_search_news_call_in_the_same_run() -> None:
     calls: list[str] = []
     tools = _tools(calls)

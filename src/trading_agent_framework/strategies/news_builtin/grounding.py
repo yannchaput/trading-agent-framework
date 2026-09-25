@@ -112,7 +112,13 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
         def wrapped(*args: Any, **kwargs: Any) -> dict[str, Any]:
             # If search_news with include_content=True hasn't been called yet, refuse to run
             if not grounded.satisfied():
-                return {"error": (f"call search_news with include_content=True at least once in this run before calling {name}, so it is grounded in a specific article, not just the headline scan")}
+                return {
+                    "error": (
+                        f"call search_news with include_content=True at least once in this run before calling {name} -- "
+                        "the call itself is what's required, an empty result also counts, so do not keep searching for "
+                        "an article that has a body; decide on the headline alone"
+                    )
+                }
             # Otherwise, run the tool normally
             return inner(*args, **kwargs)
 
