@@ -22,7 +22,7 @@ from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
-from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS
+from trading_agent_framework.strategies.news_builtin.agent_news_binary import MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS, _build_retry_prompt
 from trading_agent_framework.utils.errors import AgentError, BacktestDataError, BacktestError, BrokerError, ConfigurationError, FatalStrategyError
 
 _START = et(2026, 9, 14, 9, 0)
@@ -134,6 +134,64 @@ def test_system_prompt_requires_english_output(tmp_path: Path) -> None:
 
     [created] = agents.created
     assert "English" in created["system_prompt"]  # ty: ignore[unsupported-operator]
+
+
+def test_system_prompt_defines_bullish_and_bearish_for_the_risk_symbols(tmp_path: Path) -> None:
+    # Regression: glm-4.7-flash called "the Fed may need to raise rates again" a bullish signal.
+    strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
+
+    strategy.initialize()
+
+    [created] = agents.created
+    prompt = created["system_prompt"]
+    assert "'bullish' and 'bearish' always mean for SPY and QQQ prices" in prompt  # ty: ignore[unsupported-operator]
+    assert "Hawkish Fed talk (a possible rate hike, higher for longer) and rising yields are bearish" in prompt  # ty: ignore[unsupported-operator]
+
+
+_RECORDED = '{"id": "decision_1", "kind": "decision", "status": "recorded"}'
+
+
+def test_retry_prompt_lists_only_the_orders_that_were_accepted() -> None:
+    tool_calls = [
+        ToolCallRecord(name="submit_order", args={"symbol": "SHV", "quantity": 44.0, "side": "sell"}, result='{"identifier": "a"}'),
+        ToolCallRecord(name="submit_order", args={"symbol": "SPY", "quantity": 6, "side": "buy"}, result='{"identifier": "b"}'),
+        ToolCallRecord(name="submit_order", args={"symbol": "QQQ", "quantity": 9, "side": "buy"}, result='{"error": "insufficient buying power"}'),
+    ]
+
+    prompt = _build_retry_prompt("Rotated to SPY.", tool_calls)
+
+    assert "Orders actually placed this run: SELL 44 SHV, BUY 6 SPY." in prompt
+    assert "QQQ" not in prompt
+
+
+def test_retry_prompt_says_no_order_was_placed_and_that_the_reply_is_not_proof() -> None:
+    # Regression: the model narrated "Sell SHV then buy SPY... Finalizing transactions" without ever
+    # calling submit_order; the old retry prompt asked it to summarize "any trade you placed".
+    prompt = _build_retry_prompt("Sell SHV then buy SPY. Finalizing transactions.", [])
+
+    assert "Orders actually placed this run: none." in prompt
+    assert "NOT proof that any order was placed" in prompt
+    assert "Sell SHV then buy SPY. Finalizing transactions." in prompt
+
+
+def test_retry_prompt_keeps_only_the_end_of_a_long_reply() -> None:
+    prompt = _build_retry_prompt("x" * 5000 + " Decision: keep SHV.", [])
+
+    assert "[...] " in prompt
+    assert "Decision: keep SHV." in prompt
+    assert "x" * 1600 not in prompt
+
+
+def test_retry_prompt_marks_an_empty_reply() -> None:
+    assert "(empty)" in _build_retry_prompt("  \n", [])
+
+
+def test_retry_prompt_asks_for_a_fixed_template_and_keeps_the_pending_flip_marker() -> None:
+    prompt = _build_retry_prompt("Hold.", [ToolCallRecord(name="remember_decision", args={"text": "x"}, result=_RECORDED)])
+
+    assert "Regime: " in prompt and "Trades: " in prompt and "Reason: " in prompt
+    assert "'PENDING bearish flip: '" in prompt
+    assert "call no other tool" in prompt
 
 
 def test_initialize_wires_remember_decision_and_submit_order_through_the_news_grounding_gate(tmp_path: Path) -> None:

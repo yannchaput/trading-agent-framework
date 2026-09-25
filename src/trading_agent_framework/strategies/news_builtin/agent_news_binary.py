@@ -26,6 +26,9 @@ from trading_agent_framework.utils.errors import AgentError, BacktestError, Brok
 # A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest,
 # so a backtest aborts (FatalStrategyError, which the executor propagates) after this many failed runs in a row.
 MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
+# The retry re-reads only the end of the first turn's reply, where the decision usually is: echoing a long
+# reply in full was followed by repeated-boilerplate loops and language drift on the retry turn.
+RETRY_REPLY_MAX_CHARS = 1500
 
 
 def _decision_was_recorded(tool_calls: Sequence[ToolCallRecord]) -> bool:
@@ -43,6 +46,51 @@ def _decision_was_recorded(tool_calls: Sequence[ToolCallRecord]) -> bool:
     return any(call.name == "remember_decision" and '"error"' not in call.result for call in tool_calls)
 
 
+def _accepted_orders(tool_calls: Sequence[ToolCallRecord]) -> list[str]:
+    orders = []
+    for call in tool_calls:
+        if call.name != "submit_order" or '"error"' in call.result:
+            continue
+        args = call.args
+        order = f"{str(args.get('side', '?')).upper()} {float(args.get('quantity', 0)):g} {args.get('symbol', '?')}"
+        if args.get("limit_price") is not None:
+            order += f" at limit {args['limit_price']}"
+        orders.append(order)
+    return orders
+
+
+def _build_retry_prompt(output: str, tool_calls: Sequence[ToolCallRecord]) -> str:
+    """The corrective turn after a run recorded no decision.
+
+    The retry is a fresh agent invocation: the model sees neither its first turn's tool results nor
+    anything but this prompt and the context, and `force_tool` makes `remember_decision` its very first
+    output, with no room to reason. So the prompt carries the facts only the framework knows (which
+    orders were really accepted -- the model has narrated trades it never submitted) and a fixed template
+    the forced call can fill from the prompt alone.
+    """
+    orders = ", ".join(_accepted_orders(tool_calls)) or "none"
+    reply = output.strip()
+    if len(reply) > RETRY_REPLY_MAX_CHARS:
+        reply = "[...] " + reply[-RETRY_REPLY_MAX_CHARS:]
+    return (
+        "Your previous turn in this run ended without recording a decision. This turn has one job: call "
+        "remember_decision once, then stop.\n\n"
+        "Facts from this run, recorded by the system (not by you):\n"
+        f"- Orders actually placed this run: {orders}.\n"
+        "- Current holdings: see 'portfolio' in the context below.\n\n"
+        "Your last reply is quoted between the markers. It may be cut, and it is NOT proof that any order was "
+        "placed -- only the list above is.\n"
+        f"<<<\n{reply or '(empty)'}\n>>>\n\n"
+        "Call remember_decision with `text` in exactly this form, in English:\n"
+        '"Regime: <risk_on, defensive, mixed or none -- after the orders listed above; with no orders, the '
+        "current_regime in the context>. Trades: <the orders listed above, or none>. Reason: <one sentence "
+        'from your last reply, or: no clear signal this run>."\n'
+        "Only if your last reply says a bearish flip is pending (one bearish signal, not two), start the text "
+        "with 'PENDING bearish flip: '.\n"
+        "After it returns, reply with one line and call no other tool."
+    )
+
+
 def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_symbols: str) -> str:
     allowed = ", ".join([*symbols, defensive_symbol])
     risky = " or ".join(symbols)
@@ -52,6 +100,9 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
         "never trade USD or FOREX. Always write in English: your final reply and every tool argument that "
         "carries free text (remember_decision, open_thesis, close_thesis) must be English, even if a headline "
         "you read or your own reasoning drifts into another language.\n\n"
+        f"Reading news: 'bullish' and 'bearish' always mean for {' and '.join(symbols)} prices. Hawkish Fed talk "
+        "(a possible rate hike, higher for longer) and rising yields are bearish; dovish talk and falling yields "
+        "are bullish.\n\n"
         "On every run, follow this workflow:\n"
         "1. Call search_memory to recall recent decisions and the current regime thesis.\n"
         f"2. Scan broad-market news: call search_news with symbols='{news_symbols}', include_content=False and limit=30. "
@@ -173,12 +224,7 @@ class NewsBinaryStrategy(Strategy):
         # follow-up turn part of the same logical run, so the news-grounding gate (already satisfied by
         # this run's own search_news call) doesn't ask it to re-ground itself for one more tool call.
         self.log_warning(f"[{self.AGENT_NAME}] run ended without a successful remember_decision call -- retrying once so a decision is still recorded.")
-        retry_prompt = (
-            f"Your last reply this run was:\n{result.output}\n\n"
-            "You did not call remember_decision before answering, so nothing was recorded. Call "
-            "remember_decision now, with the `text` argument summarizing that decision (including any "
-            "trade you placed). Call no other tool first."
-        )
+        retry_prompt = _build_retry_prompt(result.output, result.tool_calls)
         retry_result = self._run_agent(retry_prompt, context=context, run_id=run_id, force_tool="remember_decision")
         if retry_result is None:
             return
