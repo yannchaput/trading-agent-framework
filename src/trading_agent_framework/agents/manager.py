@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -57,6 +58,42 @@ def _parse_pseudo_tool_call(content: Any, valid_names: set[str]) -> tuple[str, d
     if not isinstance(name, str) or name not in valid_names or not isinstance(arguments, dict):
         return None
     return name, arguments
+
+
+_GLM_ARG_KEY = "<arg_key>"
+_GLM_TOOL_NAME = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*$")
+_GLM_ARGUMENT = re.compile(r"\s*<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg_value>", re.DOTALL)
+
+
+def _is_glm_model(model_name: str | None) -> bool:
+    return bool(model_name) and "glm" in model_name.lower()  # ty: ignore[unresolved-attribute]
+
+
+def _parse_glm_tool_call(content: Any, valid_names: set[str]) -> tuple[str, dict[str, Any]] | None:
+    """Recover a call a GLM model wrote in its own template instead of a real one.
+
+    glm-4.7-flash was observed writing `name<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>`
+    into the content, often glued straight onto prose (the opening `<tool_call>` usually missing). The
+    tool name must sit right before the first `<arg_key>` and name a tool this agent has, and at least
+    one complete key/value pair must follow; anything else (e.g. a call cut off before its name) is left
+    alone. Values stay strings: the tool's own argument schema coerces them (`"44"` to a float quantity).
+    """
+    if not isinstance(content, str):
+        return None
+    first = content.find(_GLM_ARG_KEY)
+    if first == -1:
+        return None
+    name_match = _GLM_TOOL_NAME.search(content[:first])
+    if name_match is None or name_match.group(1) not in valid_names:
+        return None
+    arguments: dict[str, Any] = {}
+    position = first
+    while (pair := _GLM_ARGUMENT.match(content, position)) is not None:
+        arguments[pair.group(1).strip()] = pair.group(2).strip()
+        position = pair.end()
+    if not arguments:
+        return None
+    return name_match.group(1), arguments
 
 
 class AgentHandle:
@@ -118,8 +155,11 @@ class AgentManager:
         """Per-agent totals of the calls recorded so far (empty when telemetry is off or nothing ran)."""
         return summarize(self._calls)
 
-    def _tool_call_repair_middleware(self) -> Any:
+    def _tool_call_repair_middleware(self, *, glm_format: bool = False) -> Any:
         """Middleware for every agent: repairs a pseudo tool call caught by `_parse_pseudo_tool_call`.
+
+        `glm_format` also tries `_parse_glm_tool_call`, only for a GLM model (other models, e.g. Qwen,
+        never emit that template, so they don't pay for a parser that could only misfire on them).
 
         Registered first (outermost) in `create()`'s middleware list, so it sees the model's raw response
         last, after any inner middleware (telemetry) has already recorded it -- telemetry keeps reporting
@@ -139,6 +179,8 @@ class AgentManager:
                 return response
             valid_names = {tool.name for tool in request.tools if hasattr(tool, "name")}
             parsed = _parse_pseudo_tool_call(ai_message.content, valid_names)
+            if parsed is None and glm_format:
+                parsed = _parse_glm_tool_call(ai_message.content, valid_names)
             if parsed is None:
                 return response
             name, arguments = parsed
@@ -229,7 +271,8 @@ class AgentManager:
         try:
             from langchain.agents import create_agent
 
-            middleware = [self._tool_call_repair_middleware(), self._forced_tool_choice_middleware()]
+            glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
+            middleware = [self._tool_call_repair_middleware(glm_format=glm_format), self._forced_tool_choice_middleware()]
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
