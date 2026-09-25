@@ -34,6 +34,7 @@ from alpaca.trading.requests import (
 )
 from pydantic import ValidationError
 
+from trading_agent_framework.brokers.alpaca.symbols import from_alpaca_symbol, to_alpaca_symbol
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import (
     AssetType,
@@ -303,7 +304,7 @@ def build_order_request(order: Order) -> OrderRequest:
     request_cls = _REQUEST_BY_TYPE[order.order_type]
 
     kwargs: dict[str, object] = {
-        "symbol": order.asset.symbol,
+        "symbol": to_alpaca_symbol(order.asset.symbol),
         "side": AlpacaOrderSide(order.side.value),
         "time_in_force": AlpacaTimeInForce(order.time_in_force.value),
         "extended_hours": order.extended_hours,
@@ -439,7 +440,9 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 
     return Order(
         strategy_name=strategy_name,
-        asset=Asset(symbol=cast(str, _field(response, "symbol")), asset_type=AssetType.STOCK),
+        asset=Asset(
+            symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK
+        ),
         side=OrderSide(_normalize_key(_field(response, "side"))),
         order_type=order_type,
         quantity=_to_decimal(qty),
@@ -480,7 +483,9 @@ def parse_broker_position(response: object, strategy_name: str) -> Position:
     assert quantity is not None, "Alpaca position response is missing qty"
     return Position(
         strategy_name=strategy_name,
-        asset=Asset(symbol=cast(str, _field(response, "symbol")), asset_type=AssetType.STOCK),
+        asset=Asset(
+            symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK
+        ),
         quantity=quantity,
         side=PositionSide(_normalize_key(_field(response, "side"))),
         avg_fill_price=_to_decimal(_field(response, "avg_entry_price")),

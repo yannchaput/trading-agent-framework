@@ -24,6 +24,7 @@ from alpaca.data.requests import (
 from alpaca.data.timeframe import TimeFrame
 
 from trading_agent_framework.brokers.alpaca.orders import _field, _to_decimal
+from trading_agent_framework.brokers.alpaca.symbols import to_alpaca_symbol
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.quote import Quote
@@ -108,7 +109,7 @@ def chunk_assets(assets: Iterable[Asset]) -> Iterator[list[Asset]]:
 
 
 def _symbols(assets: Sequence[Asset]) -> list[str]:
-    return [asset.symbol for asset in assets]
+    return [to_alpaca_symbol(asset.symbol) for asset in assets]
 
 
 def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> StockBarsRequest:
@@ -139,7 +140,7 @@ def build_news_request(
     include_content: bool,
 ) -> NewsRequest:
     return NewsRequest(
-        symbols=",".join(symbols) if symbols else None,
+        symbols=",".join(to_alpaca_symbol(symbol) for symbol in symbols) if symbols else None,
         start=start.astimezone(UTC).replace(tzinfo=None) if start else None,
         end=end.astimezone(UTC).replace(tzinfo=None),
         limit=min(max(int(limit), 1), MAX_NEWS_LIMIT),
@@ -168,7 +169,7 @@ def parse_bars(
     data = cast(Mapping[str, Sequence[object]], _field(barset, "data") or {})
     result: dict[Asset, Bars] = {}
     for asset in assets:
-        df = _bars_frame(data.get(asset.symbol) or [])
+        df = _bars_frame(data.get(to_alpaca_symbol(asset.symbol)) or [])
         if sessions is not None and timestep != "day":
             df = _within_sessions(df, sessions)
         df = df.iloc[-length:]
@@ -195,11 +196,11 @@ def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.
 
 def parse_latest_trades(response: Mapping[str, object], assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
     """Last traded price per asset; None when Alpaca returned no trade for the symbol."""
-    return {asset: _to_decimal(_field(response.get(asset.symbol), "price")) for asset in assets}
+    return {asset: _to_decimal(_field(response.get(to_alpaca_symbol(asset.symbol)), "price")) for asset in assets}
 
 
 def parse_quote(response: Mapping[str, object], asset: Asset) -> Quote | None:
-    raw = response.get(asset.symbol)
+    raw = response.get(to_alpaca_symbol(asset.symbol))
     if raw is None:
         return None
     return Quote(

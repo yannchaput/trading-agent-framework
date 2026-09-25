@@ -29,6 +29,7 @@ from trading_agent_framework.brokers.alpaca.stream import (
     DEFAULT_CONNECT_TIMEOUT_SECONDS,
     AlpacaTradeStream,
 )
+from trading_agent_framework.brokers.alpaca.symbols import to_alpaca_symbol
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.brokers.tracker import OrderTracker
@@ -217,7 +218,7 @@ class AlpacaBroker(Broker):
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         request = orders.build_close_position_request(fraction)
         try:
-            response = self._client.close_position(asset.symbol, close_options=request)
+            response = self._client.close_position(to_alpaca_symbol(asset.symbol), close_options=request)
         except APIError as exc:
             if exc.status_code == 404:
                 return None

@@ -115,6 +115,15 @@ def test_assets_without_bars_are_left_out() -> None:
     assert set(parse_bars(barset, [AAPL, MSFT, Asset("TSLA")], "minute", 5)) == {AAPL}
 
 
+def test_bars_for_a_dash_share_class_asset_are_found_under_alpacas_dot_key() -> None:
+    brk_b = Asset("BRK-B")
+    barset = make_alpaca_barset({"BRK.B": [bar_payload("2026-09-10T04:00:00Z", 10.0)]})
+
+    bars = parse_bars(barset, [brk_b], "day", 5)[brk_b]
+
+    assert list(bars.df["close"]) == [10.0]
+
+
 def test_assets_filtered_down_to_nothing_are_left_out() -> None:
     barset = make_alpaca_barset({"AAPL": [_MINUTES[0]]})  # pre-market only
 
@@ -125,6 +134,13 @@ def test_latest_trades_become_decimal_prices_and_missing_symbols_none() -> None:
     response = {"AAPL": make_alpaca_trade("AAPL", 100.15)}
 
     assert parse_latest_trades(response, [AAPL, MSFT]) == {AAPL: Decimal("100.15"), MSFT: None}
+
+
+def test_latest_trade_for_a_dash_share_class_asset_is_found_under_alpacas_dot_key() -> None:
+    brk_b = Asset("BRK-B")
+    response = {"BRK.B": make_alpaca_trade("BRK.B", 450.0)}
+
+    assert parse_latest_trades(response, [brk_b]) == {brk_b: Decimal("450.0")}
 
 
 def test_quote_maps_bid_ask_sizes_and_timestamp() -> None:
@@ -149,6 +165,14 @@ def test_an_empty_book_side_is_none_not_zero() -> None:
 
 def test_no_quote_for_the_symbol_is_none() -> None:
     assert parse_quote({}, AAPL) is None
+
+
+def test_quote_for_a_dash_share_class_asset_is_found_under_alpacas_dot_key() -> None:
+    brk_b = Asset("BRK-B")
+    quote = parse_quote({"BRK.B": make_alpaca_quote(bid=449.0, ask=450.0)}, brk_b)
+
+    assert quote is not None
+    assert quote.asset == brk_b
 
 
 def test_parse_news_extracts_lean_articles() -> None:

@@ -35,6 +35,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import BrokerError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -179,7 +180,11 @@ class CrossMomentumStrategy(Strategy):
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
         self.vars.alpaca_rate_limiter.wait()
-        bars = self.get_historical_prices(ticker, length=300, timestep="day")
+        try:
+            bars = self.get_historical_prices(ticker, length=300, timestep="day")
+        except BrokerError as exc:
+            self.log_warning(f"Skipping {ticker}: failed to fetch bars ({exc})")
+            return None
         if bars is None or bars.empty:
             return None
 

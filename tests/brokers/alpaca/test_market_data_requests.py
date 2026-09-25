@@ -109,12 +109,27 @@ def test_bars_request_asks_for_adjusted_iex_bars_of_every_symbol() -> None:
     assert request.end == _END.astimezone(UTC).replace(tzinfo=None)
 
 
+def test_bars_request_translates_our_dash_share_class_symbols_to_alpacas_dot_form() -> None:
+    start = datetime(2026, 9, 9, tzinfo=ET)
+
+    request = build_bars_request([Asset("BRK-B")], "day", start, _END)
+
+    assert request.symbol_or_symbols == ["BRK.B"]
+
+
 @pytest.mark.parametrize("build", [build_latest_trade_request, build_latest_quote_request])
 def test_latest_requests_use_the_iex_feed(build) -> None:
     request = build([Asset("AAPL"), Asset("MSFT")])
 
     assert request.symbol_or_symbols == ["AAPL", "MSFT"]
     assert request.feed == DataFeed.IEX
+
+
+@pytest.mark.parametrize("build", [build_latest_trade_request, build_latest_quote_request])
+def test_latest_requests_translate_our_dash_share_class_symbols_to_alpacas_dot_form(build) -> None:
+    request = build([Asset("BRK-B")])
+
+    assert request.symbol_or_symbols == ["BRK.B"]
 
 
 def test_build_news_request_joins_symbols_and_clamps_limit() -> None:
@@ -128,6 +143,12 @@ def test_build_news_request_joins_symbols_and_clamps_limit() -> None:
     assert request.include_content is True
     assert request.start == start.astimezone(UTC).replace(tzinfo=None)
     assert request.end == end.astimezone(UTC).replace(tzinfo=None)
+
+
+def test_build_news_request_translates_our_dash_share_class_symbols_to_alpacas_dot_form() -> None:
+    request = build_news_request(["BRK-B"], start=None, end=_END, limit=5, include_content=False)
+
+    assert request.symbols == "BRK.B"
 
 
 def test_build_news_request_with_no_symbols_omits_them() -> None:

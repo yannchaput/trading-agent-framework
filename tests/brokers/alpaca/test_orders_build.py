@@ -186,3 +186,9 @@ def test_build_order_request_limit_to_request_fields_key_set() -> None:
         "client_order_id",
         "limit_price",
     }
+
+
+def test_build_order_request_translates_our_dash_share_class_symbol_to_alpacas_dot_form() -> None:
+    order = make_order(asset=Asset(symbol="BRK-B"), order_type=OrderType.MARKET, quantity=Decimal("1"))
+    request = build_order_request(order)
+    assert request.symbol == "BRK.B"

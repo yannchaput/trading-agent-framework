@@ -143,3 +143,16 @@ def test_parse_broker_position_maps_fields_including_short_side() -> None:
     assert position.market_value == Decimal("1010.00")
     assert position.unrealized_pnl == Decimal("10.00")
     assert position.raw is response
+
+
+def test_parse_broker_order_translates_alpacas_dot_share_class_symbol_to_our_dash_form() -> None:
+    order = parse_broker_order(make_alpaca_order(symbol="BRK.B"), strategy_name="momentum")
+
+    assert order is not None
+    assert order.asset.symbol == "BRK-B"
+
+
+def test_parse_broker_position_translates_alpacas_dot_share_class_symbol_to_our_dash_form() -> None:
+    position = parse_broker_position(make_alpaca_position(symbol="BRK.B"), strategy_name="momentum")
+
+    assert position.asset.symbol == "BRK-B"

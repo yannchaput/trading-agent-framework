@@ -183,6 +183,17 @@ def test_close_position_sends_a_percentage_and_tracks_the_order() -> None:
     assert broker.tracker.get_tracked_order(_NEW_ID) is order
 
 
+def test_close_position_translates_our_dash_share_class_symbol_to_alpacas_dot_form() -> None:
+    client = FakeTradingClient()
+    client.close_position_response = make_alpaca_order(id=_NEW_ID, symbol="BRK.B", side="sell")
+    broker = _broker(client)
+
+    broker.close_position(Asset("BRK-B"), Decimal("0.5"))
+
+    [(symbol, _request)] = client.close_position_calls
+    assert symbol == "BRK.B"
+
+
 def test_close_position_returns_none_without_a_position() -> None:
     client = FakeTradingClient()
     client.raises["close_position"] = make_api_error(404)
