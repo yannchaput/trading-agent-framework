@@ -672,6 +672,16 @@ def test_system_prompt_makes_one_data_print_insufficient_to_leave_the_risk_instr
     assert "one clear bullish signal" in prompt  # the way back is deliberately easier
 
 
+def test_system_prompt_says_staying_put_needs_no_signal_at_all(tmp_path: Path) -> None:
+    # Regression: glm-4.7-flash, already 100% SHV with no clear signal, held (the correct action) but
+    # justified it as "no two independent bearish signals validated ... requirement to rotate" -- the
+    # two-signal threshold governs leaving risk-on for SHV, not staying in SHV, which needs no signal.
+    prompt = _prompt(tmp_path)
+
+    assert "Staying in the current holding needs no signal at all" in prompt
+    assert "the signal counts above apply only to the specific transition you are making" in prompt
+
+
 def test_system_prompt_reads_the_regime_from_the_snapshot(tmp_path: Path) -> None:
     prompt = _prompt(tmp_path)
 
