@@ -226,58 +226,54 @@ Docs: [news-sentiment-strategy](https://lumibot.lumiwealth.com/agents_canonical_
 
 Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 
-#### 📈 `news_builtin` — Alpaca News Built-in
+#### 📈 `news_binary` — Alpaca News Built-in
 | Field | Value |
 |---|---|
-| **File** | `strategies/news_builtin/agent_news_builtin.py` |
+| **File** | `strategies/news_binary/agent_news_binary.py` |
 | **Model** | from `LLM_MODEL` in the env file |
-| **Agent** | `news_trader` |
+| **Agent** | `news_binary` |
 | **Tools** | `PrebuiltTools.all(strategy)` + `news_tools(strategy)` (`search_news`) |
 | **Asset universe** | SPY, QQQ, DIA, IWM + defensive ETF |
-| **Agent frequency** | every 5 trading days (backtest) |
+| **Agent frequency** | every 1h |
 | **Trading modes** | backtest, paper |
 | **Benchmark** | SPY |
 
 News-driven trading through the framework's `search_news` tool (broker-agnostic `NewsProvider`; works in backtests, gated on the simulated clock). The agent scans broad-market headlines with `search_news`, reads the most relevant article in full (article content is capped), then holds SPY/QQQ when the regime is bullish or the defensive ETF (SHV) when it is negative or unclear. It uses the framework's memory tools to record decisions and its regime thesis, and compares article timestamps against the simulated datetime.
 
-Needs `LLM_BASE_URL` and `LLM_MODEL` (OpenAI-compatible server, e.g. vLLM) plus Alpaca credentials in `env/.env.news_builtin.<mode>`; defensive ETF is `SHV`.
+#### Model pick
 
-Run: `uv run python -m trading_agent_framework.main news_builtin backtesting`
+Ranking for news_binary, worst → best fit
 
-#### 📈 `macro_risk` — Macro Risk
-| Field | Value |
-|---|---|
-| **File** | `agent_macro_risk.py` |
-| **Model** | `openai/deepseek-v4-flash` |
-| **Agent** | `macro_allocator` |
-| **Tools** | `get_stock_bars`, `get_market_movers` (custom @agent_tool wrapping Alpaca market data API) |
-| **Asset universe** | TQQQ (risk-on), SHV (risk-off) |
-| **Agent frequency** | every 5 trading days (backtest) |
-| **Trading modes** | backtest, paper, live |
-| **Benchmark** | SPY |
+┌───────────┬─────────────────────┬──────────┬────────┬───────────┬───────┬─────────┬──────────────────┐
+│   Rank    │        Model        │ workflow │ memory │ reasoning │ tools │ overall │ median s / tok·s │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 1 (worst) │ Qwen3-30B-Thinking  │ 0.50     │ 0.73   │ 0.73      │ 0.88  │ 0.71    │ 15.0s / 197      │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 2         │ GLM-4.7-Flash       │ 0.30     │ 0.73   │ 0.80      │ 0.92  │ 0.69    │ 5.4s / 131       │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 3         │ Gpt-OSS-20b         │ 0.80     │ 0.67   │ 0.73      │ 0.72  │ 0.73    │ 3.8s / 192       │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 4 (best)  │ Qwen3.6-35B-A3B-AWQ │ 0.90     │ 0.87   │ 0.67      │ 0.92  │ 0.84    │ 30.8s / 29       │
+└───────────┴─────────────────────┴──────────┴────────┴───────────┴───────┴─────────┴──────────────────┘
 
-AI-driven macro risk allocation: the agent checks TQQQ and SPY price trends via historical bars, plus market movers for additional context. If TQQQ is trending up it goes risk-on; if trending down it rotates to SHV. Always fully invested — never cash.
+Reasoning, since raw category scores alone are misleading:
 
-Run: `uv run python -m lumibot_trading_agent.main macro_risk backtesting`
+1. Qwen3-30B-Thinking — least fit. Fails the core workflow.news_trade cycle most often (1/5), and in one repeat it actually bought into the headline trap it was supposed to catch (bullish headline, bearish body — it submitted the buy anyway). It also wrote 7 tool calls as raw text instead of structured calls across the run, which in a live deployment means broken function-calling, not just a wrong decision. Best-in-class on thesis_lifecycle (5/5) doesn't offset a real bad trade + unreliable tool emission.
 
-#### 📈 `warren_buffett` — Warren Buffett AI team
-| Field | Value |
-|---|---|
-| **File** | `agent_warrenbuffett_tradingteam.py` |
-| **Model** | `deepseek/deepseek-v4-flash` |
-| **Agents** | `annual_report_reader`, `valuation_skeptic`, `portfolio_manager` |
-| **Tools** | `BuiltinTools.*` |
-| **Asset universe** | Custom basket |
-| **Agent frequency** | every 15 trading days ( 1 month for backtest) |
-| **Trading modes** | backtest |
-| **Benchmark** | SPY |
+2. GLM-4.7-Flash. Excellent tool mechanics (0.92, zero text-tool-calls, zero errors) and good trap-avoidance (4/5), but it never fully passes news_trade (0/5) — the exact "confirmed bullish news → buy" leg the bot exists for. Failure modes alternate between missing a genuine buy signal entirely and, in two repeats, sizing an order that violates the cash constraint (quantity * price > cash). For a bot whose entire job is executing on binary news signals, failing the buy leg every time is close to disqualifying regardless of how clean its tool syntax is.
 
-An AI team of agent applying Warren Buffett trading method: an annual report screener, a skeptical assessor and the portfolio manager decides to trade (or not).
-This is a long term strategy with long trading windows.
+3. Gpt-OSS-20b. Best headline-trap avoidance (5/5, and its insufficient_cash "failures" were only a missing word in the final answer — it never actually oversized an order, unlike the other three). Fastest and most token-efficient. But weakest memory hygiene: it fails to close an invalidated thesis 4/5 times (memory.thesis_lifecycle) — i.e., after news arrives that should kill a thesis, it leaves it open, which is a real problem for a bot that runs repeatedly and is meant to carry state across sessions. It also skips get_positions/get_position before acting in close_half_loser in 2 of 5 runs, and had 2 outright HTTP 500 crashes from the vLLM server choking on gpt-oss's harmony "commentary channel" tokens — a serving-compatibility issue on vllm==0.30.0, worth flagging separately from model quality.
 
-Run: `uv run python -m lumibot_trading_agent.main warren_buffett backtesting`
+4. Qwen3.6-35B-A3B-AWQ — best fit. Dominant on the three axes that matter most for this exact strategy: workflow (0.90 — actually completes the news→memory→trade→remember_decision cycle), memory (0.87 — best cross-session rule/lesson/thesis handling), and tied-best tools (0.92). Trap avoidance is strong (4/5). Its one real weakness: it violates the cash constraint in insufficient_cash 4/5 times — worse than any other model on that specific check — and it's 4-8x slower (30.8s median, 29 tok/s) than the others, which matters for a news-reactive bot.
 
-#### 📈 `cross_momentum_v5` — Cross Sectional Momentum (Final Version)
+Caveat that applies regardless of pick
+
+Every model violates the cash/position-sizing constraint at least once (GLM 1/5, Qwen-thinking 1/5, Qwen3.6 4/5, Gpt-OSS 0/5-actual). Sizing/cash checks are the one axis no model here can be trusted on unsupervised — this should be enforced as a hard deterministic clamp in trading-agent-framework's order-submission path (reject or resize any order where qty*price > cash), not left to the LLM's arithmetic. That removes qwen3.6's biggest liability and makes its overall lead (workflow + memory + tools) the deciding factor.
+
+Recommendation: Qwen3.6-35B-A3B-AWQ for news_binary, provided you add a code-level pre-trade cash/sizing guard — its latency (~30s/decision) is likely acceptable since news-driven decisions aren't sub-second, but confirm that against your actual polling/latency budget.
+
+
+#### 📈 `cross_momentum` — Cross Sectional Momentum (Final Version)
 
 Final Version of the **cross_momentum** strategy is `V5` drawn from `V2.3c` and ` V2` flavors. This strategy keeps a good tradeoff between risk appetence and performance (Sortino, CAGR) and loss (DrawDown).
 
