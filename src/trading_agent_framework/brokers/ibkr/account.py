@@ -2,6 +2,14 @@
 
 IBKR cannot switch margin or shorting off through the API, so `IbkrBroker.configure_account`
 only CHECKS the account with `check_account` and refuses to trade live on a margin account.
+
+The margin check itself is a heuristic (`BuyingPower` vs `TotalCashValue`): the TWS API has no
+field that says whether an account is cash or margin. It only runs live, where it matters and
+where it holds -- a live cash account extends no leverage, so `BuyingPower` tracks cash. IBKR's
+paper-trading simulator was observed reporting `BuyingPower` as ~6.67x cash on an account
+verified (via the web portal, and via zero `InitMarginReq`/`MaintMarginReq`/`Cushion`=1 in this
+same summary) to be a genuine cash account -- paper's simulated buying power doesn't reflect the
+linked account's real cash/margin restriction, so the heuristic is guaranteed noise there.
 """
 
 from __future__ import annotations
@@ -46,8 +54,13 @@ def parse_account(values: Iterable[AccountValue], account_id: str) -> AccountBal
     )
 
 
-def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: bool) -> list[str]:
-    """Raise `ConfigurationError` when the account must not trade; return warnings to log."""
+def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: bool) -> None:
+    """Raise `ConfigurationError` when the account must not trade.
+
+    The margin heuristic below only runs live: `BuyingPower` is not a meaningful signal on
+    IBKR's paper-trading simulator (see the module docstring), so checking it there only ever
+    produces false positives.
+    """
     if is_paper_account(account_id) != is_paper:
         kind = "a paper" if is_paper_account(account_id) else "a live"
         raise ConfigurationError(
@@ -57,14 +70,12 @@ def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: 
     currency = tags["NetLiquidation"].currency if "NetLiquidation" in tags else ""
     if currency != BASE_CURRENCY:
         raise ConfigurationError(f"IBKR account {account_id} has base currency {currency!r}; only USD is supported")
+    if is_paper:
+        return
     cash = _amount(tags, "TotalCashValue")
     buying_power = _amount(tags, "BuyingPower")
     if buying_power > cash * _MARGIN_TOLERANCE + 1:
-        message = (
+        raise ConfigurationError(
             f"IBKR account {account_id} looks like a margin account (buying power {buying_power} > cash {cash}); "
             "this framework expects a cash account (no margin, no shorting)"
         )
-        if not is_paper:
-            raise ConfigurationError(message)
-        return [message]
-    return []

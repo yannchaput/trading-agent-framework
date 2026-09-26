@@ -107,6 +107,27 @@ def test_a_rejection_sets_the_error_before_raising_and_untracks(broker: IbkrBrok
     assert broker.tracker.get_tracked_order(order.identifier) is None
 
 
+def test_a_rejection_with_no_log_message_falls_back_to_the_error_event(broker: IbkrBroker, ib: FakeIB) -> None:
+    """Reproduces a real IBKR rejection (a PRIIPs/KID regulatory block on SPY): `trade.log` never
+    got a message, but IBKR's `errorEvent` carried the real reason -- that must not be lost as
+    the generic, useless "order Inactive by IBKR"."""
+    ib.place_status = "Inactive"  # place_log_message left empty, exactly like the real rejection
+    original_place_order = ib.placeOrder
+
+    def place_then_error(contract, ib_order):
+        trade = original_place_order(contract, ib_order)
+        ib.errorEvent.emit(trade.order.orderId, 201, "No Trading Permission, Customer Ineligible", contract)
+        return trade
+
+    ib.placeOrder = place_then_error  # ty: ignore[invalid-assignment]
+    order = _buy()
+
+    with pytest.raises(BrokerError, match="No Trading Permission"):
+        broker.submit_order(order)
+
+    assert order.error_message == "No Trading Permission, Customer Ineligible (IBKR error 201)"
+
+
 def test_an_ioc_cancel_with_no_error_is_not_treated_as_a_rejection(broker: IbkrBroker, ib: FakeIB) -> None:
     """A `Cancelled` status with no error-code log entry is IOC/FOK doing its normal job --
     it did not fill, so it cancelled -- never a submit-time rejection."""

@@ -40,14 +40,31 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _place_and_wait(ib: Any, contract: Contract, ib_order: Any, timeout: float) -> Trade:
-    """Place the order, then wait (up to `timeout`) until IBKR acknowledges or rejects it."""
-    trade = ib.placeOrder(contract, ib_order)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + timeout
-    while trade.orderStatus.status in orders.PENDING_STATUSES and loop.time() < deadline:
-        await asyncio.sleep(0.05)
-    return trade
+async def _place_and_wait(ib: Any, contract: Contract, ib_order: Any, timeout: float) -> tuple[Trade, list[str]]:
+    """Place the order, then wait (up to `timeout`) until IBKR acknowledges or rejects it.
+
+    Also collects any `errorEvent` messages for this order id: IBKR's real rejection reason
+    sometimes arrives only that way, never appended to `trade.log` (see `orders.rejection_message`).
+    """
+    messages: list[str] = []
+
+    def capture(req_id: int, error_code: int, error_string: str, _contract: Any) -> None:
+        # ib_order.orderId is mutated in place by placeOrder before it registers the trade or
+        # fires anything, so it is already correct however early IBKR answers -- subscribing
+        # before placeOrder() (rather than after) is what makes that safe.
+        if req_id == ib_order.orderId:
+            messages.append(f"{error_string} (IBKR error {error_code})")
+
+    ib.errorEvent += capture
+    try:
+        trade = ib.placeOrder(contract, ib_order)
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while trade.orderStatus.status in orders.PENDING_STATUSES and loop.time() < deadline:
+            await asyncio.sleep(0.05)
+    finally:
+        ib.errorEvent -= capture
+    return trade, messages
 
 
 class IbkrBroker(Broker):
@@ -136,8 +153,7 @@ class IbkrBroker(Broker):
 
     def configure_account(self) -> None:
         """IBKR cannot switch margin/shorting off via the API: check the account instead."""
-        for warning in account.check_account(self._summary(), self.account_id, is_paper=self.is_paper):
-            logger.warning(warning)
+        account.check_account(self._summary(), self.account_id, is_paper=self.is_paper)
         logger.info("IBKR account %s checked (paper=%s)", self.account_id, self.is_paper)
 
     # --- orders ----------------------------------------------------------------------
@@ -163,13 +179,13 @@ class IbkrBroker(Broker):
         # Tracked before placing: the event handlers can see this order before the call returns.
         self.tracker.track_unprocessed(order)
         try:
-            trade = self._connection.call(lambda ib: _place_and_wait(ib, contract, ib_order, self._ack_timeout))
+            trade, ib_errors = self._connection.call(lambda ib: _place_and_wait(ib, contract, ib_order, self._ack_timeout))
         except Exception as exc:
             order.set_error(exc)
             logger.exception("Failed to submit order %s", order.identifier)
             self.tracker.untrack(order)
             raise  # set_error BEFORE re-raising -- lumibot's contract
-        rejection = orders.rejection_message(trade)
+        rejection = orders.rejection_message(trade, ib_errors)
         if rejection is not None:
             order.set_error(rejection)
             if order.filled_quantity > 0:

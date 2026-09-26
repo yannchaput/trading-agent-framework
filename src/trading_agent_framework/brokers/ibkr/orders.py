@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Sequence
 from decimal import ROUND_FLOOR, Decimal
 
 from ib_async import Order as IbOrder
@@ -219,8 +220,14 @@ def _is_rejection(trade: Trade) -> bool:
     return False
 
 
-def rejection_message(trade: Trade) -> str | None:
-    """Why IBKR refused `trade`, or None while it is pending, working, or normally cancelled."""
+def rejection_message(trade: Trade, extra_messages: Sequence[str] = ()) -> str | None:
+    """Why IBKR refused `trade`, or None while it is pending, working, or normally cancelled.
+
+    `trade.log` doesn't always carry the real reason: a regulatory block (e.g. no PRIIPs KID for
+    a US ETF) was observed reaching `Inactive` with an empty log message, with the real text only
+    ever delivered via the `errorEvent` callback. `extra_messages` is that fallback, already
+    formatted by the caller, most-recent-last.
+    """
     if not _is_rejection(trade):
         return None
     status = trade.orderStatus.status
@@ -228,4 +235,6 @@ def rejection_message(trade: Trade) -> str | None:
         if entry.message:
             suffix = f" (IBKR error {entry.errorCode})" if entry.errorCode else ""
             return f"{entry.message}{suffix}"
+    if extra_messages:
+        return extra_messages[-1]
     return f"order {status} by IBKR"

@@ -4,6 +4,10 @@ Refuses to run unless the logged-in account is a paper (DU...) account. Places a
 limit buy, modifies it and cancels it; then buys and sells 1 share at market (fills only during
 market hours). Same env file as smoke_ibkr_account.py.
 
+Trades a plain stock (AAPL), not an ETF: EU/EEA accounts are blocked by PRIIPs from buying most
+US-domiciled ETFs (e.g. SPY, QQQ) without a KID document, which doesn't exist in an approved
+language for them -- that restriction only applies to packaged products, not company shares.
+
     uv run python scripts/tests/smoke_ibkr_orders.py
 """
 
@@ -26,7 +30,7 @@ from trading_agent_framework.utils.errors import BrokerError
 
 STRATEGY_NAME = "smoke_ibkr"
 ENV_FILE = find_project_root() / "env" / ".env.ibkr.integration-tests"
-SPY = Asset("SPY")
+AAPL = Asset("AAPL")
 
 
 def _wait_for(order: Order, statuses: set[OrderStatus], seconds: float = 20.0) -> None:
@@ -58,13 +62,13 @@ def main() -> int:
         broker.tracker.listeners.append(lambda order, event: print(f"  event {event} for {order.identifier}"))
         broker.sync_open_orders()
         broker.start_stream()
-        last = broker.get_last_price(SPY)
+        last = broker.get_last_price(AAPL)
         if last is None:
-            print("No SPY price from Alpaca.", file=sys.stderr)
+            print("No AAPL price from Alpaca.", file=sys.stderr)
             return 1
         far = (last * Decimal("0.5")).quantize(Decimal("0.01"))
-        print(f"1) limit buy 1 SPY @ {far} (last {last})")
-        limit = broker.submit_order(Order(STRATEGY_NAME, SPY, OrderSide.BUY, OrderType.LIMIT, quantity=Decimal(1), limit_price=far))
+        print(f"1) limit buy 1 AAPL @ {far} (last {last})")
+        limit = broker.submit_order(Order(STRATEGY_NAME, AAPL, OrderSide.BUY, OrderType.LIMIT, quantity=Decimal(1), limit_price=far))
         _wait_for(limit, {OrderStatus.NEW})
         print(f"2) modify to {far - 1}")
         broker.modify_order(limit, limit_price=far - 1)
@@ -72,12 +76,15 @@ def main() -> int:
         broker.cancel_order(limit)
         _wait_for(limit, {OrderStatus.CANCELED})
         print("4) market buy 1, then sell it (market hours only)")
-        buy = broker.submit_order(Order(STRATEGY_NAME, SPY, OrderSide.BUY, quantity=Decimal(1)))
+        buy = broker.submit_order(Order(STRATEGY_NAME, AAPL, OrderSide.BUY, quantity=Decimal(1)))
         _wait_for(buy, {OrderStatus.FILL}, 60)
         if buy.status is OrderStatus.FILL:
-            sell = broker.close_position(SPY)
+            print("Buy order filled, selling it now.")
+            sell = broker.close_position(AAPL)
             if sell is not None:
                 _wait_for(sell, {OrderStatus.FILL}, 60)
+        else:
+            print("Order is not filled, can't sell it.")
     finally:
         broker.stop_stream()
     print("OK")
