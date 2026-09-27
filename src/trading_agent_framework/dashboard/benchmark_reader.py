@@ -105,7 +105,7 @@ def load_scenario_runs(ref: BenchmarkRunRef, model_key: str, scenario_id: str) -
                     if record["scenario_id"] != scenario_id:
                         continue
                     runs.append(_build_scenario_run(record))
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
                     skipped += 1
     except OSError as exc:
         raise BenchmarkReadError(f"Cannot read {path.name}: {exc}") from exc

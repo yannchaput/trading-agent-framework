@@ -136,6 +136,17 @@ def test_the_flag_wins_and_is_expanded_and_resolved(tmp_path: Path, monkeypatch:
     assert resolve_results_dir(["--benchmark-dir", "~/bench/results"]) == (tmp_path / "bench" / "results").resolve()
 
 
+def test_a_relative_flag_path_is_resolved_against_the_cwd(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+
+    result = resolve_results_dir(["--benchmark-dir", "../bench/results"])
+
+    assert result == (tmp_path / "bench" / "results").resolve()
+    assert result.is_absolute()
+
+
 def test_the_default_sits_next_to_the_project_root_not_the_cwd(tmp_path: Path) -> None:
     project = tmp_path / "trading-agent-framework"
     (project / "src").mkdir(parents=True)
@@ -172,6 +183,34 @@ def test_malformed_lines_are_skipped_and_counted(results: Path) -> None:
     result = load_scenario_runs(_ref(results, LATEST), "qwen3627b", "tools.limit_order")
 
     assert len(result.runs) == 1
+    assert result.skipped_lines == 1
+
+
+def test_a_non_dict_metrics_value_is_skipped_not_raised(tmp_path: Path) -> None:
+    # A line whose "metrics" is present but not a dict (e.g. a string) must not raise
+    # AttributeError out of _build_scenario_run's metrics.get(...) calls -- it should be
+    # skipped and counted like any other malformed line.
+    run_dir = tmp_path / "20260101-000000"
+    run_dir.mkdir(parents=True)
+    (run_dir / "model.jsonl").write_text(
+        json.dumps(
+            {
+                "scenario_id": "reasoning.rsi_signal",
+                "repeat": 1,
+                "status": "ok",
+                "passed": True,
+                "partial": 1.0,
+                "checks": [],
+                "metrics": "oops",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = load_scenario_runs(BenchmarkRunRef.from_path(run_dir), "model", "reasoning.rsi_signal")
+
+    assert result.runs == ()
     assert result.skipped_lines == 1
 
 
