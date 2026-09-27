@@ -171,6 +171,10 @@ Compare backtesting runs across all strategies, and the local vLLM models benchm
   - **Side-by-Side page** — compare two runs across all metrics.
 - **Models tab** — pick a benchmark run (latest by default): best/fastest model cards, a summary table (overall and per-category scores, runs passed, text tool calls, latency, tokens/s), category bars, a quality-vs-speed scatter, a per-scenario heatmap, and a drill-down listing each repeat's checks with their pass/fail reasons.
 
+**Data sources:** Reads from `logs/` directory — auto-discovers backtesting runs by scanning for `*_tearsheet_metrics.json` files. No manual indexing needed.
+
+**Why:** Rapidly compare strategy performance, debug LLM agent behavior (token usage, latency, call counts), and validate that config changes (model, tools, prompts) produce measurable improvements.
+
 ### Feedbacks 💰 
 
 | Strategy        | status            | Observations                                   |
