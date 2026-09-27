@@ -43,6 +43,7 @@ div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-scorecard_table"]
     display: flex;
     flex-direction: column;
     height: 100%;
+    padding-top: 48px !important;
     padding-bottom: 1.5rem !important;
 }
 div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-scorecard_table"])
