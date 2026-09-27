@@ -1,5 +1,6 @@
 """Plotly chart builders for the dashboard."""
 
+from collections.abc import Sequence
 from typing import Any
 
 import numpy as np
@@ -7,6 +8,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 from plotly.subplots import make_subplots
+
+from trading_agent_framework.dashboard.models import BenchmarkModel
 
 # Dark template shared by every figure: plotly_dark with transparent backgrounds, so charts sit on
 # the page's own background (cli.THEME_ARGS). go.layout.Template copies, plotly_dark is untouched.
@@ -742,4 +745,105 @@ def agent_calls_chart(calls: pd.DataFrame, title: str = "Agent calls") -> go.Fig
     )
     fig.update_yaxes(title_text="seconds", row=1, col=1)
     fig.update_yaxes(title_text="tokens", row=2, col=1)
+    return fig
+
+
+# --- vLLM benchmark (Models tab) ---------------------------------------------------------------
+
+# Mean partial score, 0-100: red (bad) -> amber -> green (good).
+SCORE_SCALE = [[0.0, "#ef4444"], [0.5, "#f59e0b"], [1.0, "#22c55e"]]
+
+
+def _pct(value: float | None) -> float | None:
+    return None if value is None else round(value * 100, 4)
+
+
+def benchmark_category_chart(
+    models: Sequence[BenchmarkModel], categories: Sequence[str], title: str = "Scores by category"
+) -> go.Figure:
+    """Grouped horizontal bars: one group per category, one bar (trace) per model."""
+    labels = [category.capitalize() for category in categories]
+    fig = go.Figure()
+    for i, model in enumerate(models):
+        fig.add_trace(
+            go.Bar(
+                y=labels,
+                x=[_pct(model.categories.get(category)) for category in categories],
+                name=model.display_name,
+                orientation="h",
+                marker_color=MODEL_COLORS[i % len(MODEL_COLORS)],
+                hovertemplate="%{y}: %{x:.0f}%<extra>" + model.display_name + "</extra>",
+            )
+        )
+    fig.update_layout(
+        title=title,
+        template=CHART_TEMPLATE,
+        barmode="group",
+        xaxis=dict(title="Score (%)", range=[0, 100]),
+        yaxis=dict(autorange="reversed"),
+        legend=dict(orientation="h", y=-0.2),
+        height=380,
+    )
+    return fig
+
+
+def benchmark_speed_quality_chart(models: Sequence[BenchmarkModel], title: str = "Quality vs speed") -> go.Figure:
+    """One labelled point per model: median run time (log x) against overall score."""
+    points = [(i, m) for i, m in enumerate(models) if m.median_run_s is not None and m.overall is not None]
+    fig = go.Figure(
+        go.Scatter(
+            x=[m.median_run_s for _, m in points],
+            y=[_pct(m.overall) for _, m in points],
+            mode="markers+text",
+            text=[m.display_name for _, m in points],
+            textposition="top center",
+            marker=dict(size=14, color=[MODEL_COLORS[i % len(MODEL_COLORS)] for i, _ in points]),
+            hovertemplate="%{text}<br>median run %{x:.1f} s<br>overall %{y:.0f}%<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        template=CHART_TEMPLATE,
+        xaxis=dict(title="Median run time (s, log scale)", type="log"),
+        yaxis=dict(title="Overall score (%)", range=[0, 105]),
+        showlegend=False,
+        height=380,
+    )
+    return fig
+
+
+def benchmark_scenario_heatmap(
+    models: Sequence[BenchmarkModel],
+    scenarios: Sequence[str],
+    title: str = "Per-scenario results (passed/runs; colour = mean partial score)",
+) -> go.Figure:
+    """Rows = scenarios (meta order, so grouped by category), columns = models."""
+    z: list[list[float | None]] = []
+    text: list[list[str]] = []
+    for scenario_id in scenarios:
+        scores = [model.scenarios.get(scenario_id) for model in models]
+        z.append([None if s is None else _pct(s.mean_partial) for s in scores])
+        text.append(["—" if s is None else f"{s.passed}/{s.runs}" for s in scores])
+    fig = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=[model.display_name for model in models],
+            y=list(scenarios),
+            text=text,
+            texttemplate="%{text}",
+            colorscale=SCORE_SCALE,
+            zmin=0,
+            zmax=100,
+            xgap=2,
+            ygap=2,
+            colorbar=dict(title="Mean partial %"),
+            hovertemplate="%{y}<br>%{x}<br>%{text} passed, mean partial %{z:.0f}%<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        template=CHART_TEMPLATE,
+        yaxis=dict(autorange="reversed"),
+        height=max(300, 28 * len(scenarios) + 120),
+    )
     return fig

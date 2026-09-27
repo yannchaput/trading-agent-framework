@@ -1,7 +1,11 @@
 """Styled table components."""
 
+from collections.abc import Sequence
+
 import pandas as pd
 import streamlit as st
+
+from trading_agent_framework.dashboard.models import BenchmarkModel, ScenarioRun
 
 
 def render_metric_table(metrics: dict[str, tuple[float, float]], title: str = "") -> None:
@@ -96,3 +100,72 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
 
     selected_indices = edited_df.index[edited_df["Select"]].tolist()
     return selected_indices, edited_df
+
+
+# --- vLLM benchmark (Models tab) ---------------------------------------------------------------
+
+
+def _pct(value: float | None) -> float | None:
+    return None if value is None else value * 100
+
+
+def _ratio(a: int | None, b: int | None) -> str:
+    return "—" if a is None or b is None else f"{a}/{b}"
+
+
+def benchmark_summary_frame(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> pd.DataFrame:
+    """One row per model, best overall first (marked 🏆); models that did not run go last."""
+    ranked = sorted(models, key=lambda m: (not m.ran, -(m.overall or 0.0)))
+    rows = []
+    for i, model in enumerate(ranked):
+        if not model.ran:
+            name = f"{model.display_name} (did not run)"
+        else:
+            name = f"🏆 {model.display_name}" if i == 0 else model.display_name
+        row: dict[str, object] = {"Model": name, "Overall": _pct(model.overall)}
+        for category in categories:
+            row[category.capitalize()] = _pct(model.categories.get(category))
+        row |= {
+            "Runs passed": _ratio(model.runs_passed, model.runs_total),
+            "Text tool calls": model.text_tool_calls,
+            "Avg tool calls": model.avg_tool_calls,
+            "Median run (s)": model.median_run_s,
+            "Tokens/s": model.median_tokens_per_s,
+            "Timeouts / errors": _ratio(model.timeouts, model.errors),
+        }
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def render_benchmark_summary_table(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> None:
+    frame = benchmark_summary_frame(models, categories)
+    score_columns = ["Overall", *(category.capitalize() for category in categories)]
+    column_config = {
+        column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%")
+        for column in score_columns
+    }
+    column_config |= {
+        "Avg tool calls": st.column_config.NumberColumn(format="%.2f"),
+        "Median run (s)": st.column_config.NumberColumn(format="%.1f"),
+        "Tokens/s": st.column_config.NumberColumn(format="%.1f"),
+    }
+    st.dataframe(frame, width="stretch", hide_index=True, column_config=column_config)
+
+
+def scenario_runs_frame(runs: Sequence[ScenarioRun]) -> pd.DataFrame:
+    """One row per repeat of a scenario for one model."""
+    return pd.DataFrame(
+        [
+            {
+                "Repeat": run.repeat,
+                "Status": run.status,
+                "Passed": "✅" if run.passed else "❌",
+                "Partial %": run.partial * 100,
+                "Total (s)": run.total_s,
+                "Tool calls": run.tool_calls,
+                "Model calls": run.model_calls,
+                "Tokens/s": run.tokens_per_s,
+            }
+            for run in runs
+        ]
+    )
