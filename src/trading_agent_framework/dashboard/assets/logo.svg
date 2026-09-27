@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="48" viewBox="0 0 300 48" role="img" aria-label="Yann's Trading Bots">
+  <g stroke-width="2" stroke-linecap="round">
+    <line x1="8" y1="12" x2="8" y2="40" stroke="#22c55e"/>
+    <rect x="4" y="18" width="8" height="16" rx="1" fill="#22c55e"/>
+    <line x1="22" y1="8" x2="22" y2="36" stroke="#ef4444"/>
+    <rect x="18" y="14" width="8" height="14" rx="1" fill="#ef4444"/>
+    <line x1="36" y1="4" x2="36" y2="32" stroke="#22d3ee"/>
+    <rect x="32" y="8" width="8" height="18" rx="1" fill="#22d3ee"/>
+  </g>
+  <text x="52" y="31" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#d1d4dc">Yann's Trading Bots</text>
+</svg>

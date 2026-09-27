@@ -18,6 +18,8 @@ MODULES = [
     "trading_agent_framework.dashboard._pages.scorecard",
     "trading_agent_framework.dashboard._pages.detail",
     "trading_agent_framework.dashboard._pages.side_by_side",
+    "trading_agent_framework.dashboard._pages.backtesting",
+    "trading_agent_framework.dashboard.app",
 ]
 
 

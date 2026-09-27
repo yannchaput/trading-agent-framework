@@ -150,3 +150,32 @@ def test_run_detail_header_shows_the_agents_model(run_dir: Path) -> None:
     at = _detail_page(run_dir, agents=_AGENTS, with_calls_db=False)
 
     assert any("qwen3-8b" in markdown.value for markdown in at.markdown)
+
+
+# --- Top navigation --------------------------------------------------------------------------------
+
+
+def test_the_tabs_are_backtesting_then_models() -> None:
+    from trading_agent_framework.dashboard import app
+
+    assert [(title, url_path) for title, url_path, _ in app.NAV_PAGES] == [
+        ("Backtesting", "backtesting"),
+        ("Models", "models"),
+    ]
+
+
+def test_the_logo_files_exist_and_carry_the_name() -> None:
+    from trading_agent_framework.dashboard import app
+
+    assert "Yann's Trading Bots" in (app.ASSETS / "logo.svg").read_text(encoding="utf-8")
+    assert (app.ASSETS / "logo-icon.svg").is_file()
+
+
+def test_backtesting_is_the_default_tab_with_its_sidebar(run_dir: Path) -> None:
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+    at.run()
+
+    assert not at.exception
+    labels = [button.label for button in at.sidebar.button]
+    assert "📋 Scorecard" in labels
+    assert "🔄 Refresh Data" in labels
