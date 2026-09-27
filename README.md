@@ -177,18 +177,12 @@ Compare backtesting runs across all strategies in a Streamlit web app.
 
 | Strategy        | status            | Observations                                   |
 |-----------------|-------------------|-------------------------------------------------|
-| macro_risk      | live              | Good balance between aggressive position (TQQQ) and defensive one (SHV). Very slow growth.<br>This strategy has too much latency: if TQQQ drops due to some signal, it's already too late to switch in defensive mode. The same the overway around. Too much inertia. |
-| m2_liquidity    | paper             | m2_liquidity decide to buy TQQQ (risk on) or SHV (risk off) based on macro economic data: M2 money supply, employment, prices, etc. Opposite to macro_risk, its decisions are based on long term indicators not so frequently updated. Hence it is less sensible to day 2 day volatility. However could be risky if the stock drops durably. Long term strategy. Quite analogous to macro_risk on a longer timeframe. |
-| news_binary    | live          |  Strategy based on news sentiment analysis. The strategy buy QQQ or SPY if market regime is bullish. Defensive ETF otherwise. This strategy is more stable than benchmark SPY but also generate a lesser yield and underperform SPY. |
-| cross sectional momentum (V5) | live  | Best candidate so far: robut over a 10 year window and good metrics. Very sensitive to momentum. So either very high whne momentum is there or very low. |
-| opening range breakout | live | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
+| macro_risk      | discarded              | Good balance between aggressive position (TQQQ) and defensive one (SHV). Very slow growth.<br>This strategy has too much latency: if TQQQ drops due to some signal, it's already too late to switch in defensive mode. The same the overway around. Too much inertia. |
+| m2_liquidity    | discarded             | m2_liquidity decide to buy TQQQ (risk on) or SHV (risk off) based on macro economic data: M2 money supply, employment, prices, etc. Opposite to macro_risk, its decisions are based on long term indicators not so frequently updated. Hence it is less sensible to day 2 day volatility. However could be risky if the stock drops durably. Long term strategy. Quite analogous to macro_risk on a longer timeframe. |
+| news_binary    | discarded          |  Strategy based on news sentiment analysis. The strategy buy QQQ or SPY if market regime is bullish. Defensive ETF otherwise. This strategy is more stable than benchmark SPY but also generate a lesser yield and globally underperform SPY and QQQ. |
+| cross sectional momentum (V5) | retained  | Best candidate so far: robut over a 10 year window and good metrics. Very sensitive to momentum. So either very high whne momentum is there or very low. |
+| opening range breakout | under study | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
 
-## Supporting documentation:
-* [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
-* [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
-* [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
-* [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
-* [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
 
 ## 📈 Strategies
 
@@ -240,38 +234,6 @@ Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 
 News-driven trading through the framework's `search_news` tool (broker-agnostic `NewsProvider`; works in backtests, gated on the simulated clock). The agent scans broad-market headlines with `search_news`, reads the most relevant article in full (article content is capped), then holds SPY/QQQ when the regime is bullish or the defensive ETF (SHV) when it is negative or unclear. It uses the framework's memory tools to record decisions and its regime thesis, and compares article timestamps against the simulated datetime.
 
-#### Model pick
-
-Ranking for news_binary, worst → best fit
-
-┌───────────┬─────────────────────┬──────────┬────────┬───────────┬───────┬─────────┬──────────────────┐
-│   Rank    │        Model        │ workflow │ memory │ reasoning │ tools │ overall │ median s / tok·s │
-├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
-│ 1 (worst) │ Qwen3-30B-Thinking  │ 0.50     │ 0.73   │ 0.73      │ 0.88  │ 0.71    │ 15.0s / 197      │
-├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
-│ 2         │ GLM-4.7-Flash       │ 0.30     │ 0.73   │ 0.80      │ 0.92  │ 0.69    │ 5.4s / 131       │
-├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
-│ 3         │ Gpt-OSS-20b         │ 0.80     │ 0.67   │ 0.73      │ 0.72  │ 0.73    │ 3.8s / 192       │
-├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
-│ 4 (best)  │ Qwen3.6-35B-A3B-AWQ │ 0.90     │ 0.87   │ 0.67      │ 0.92  │ 0.84    │ 30.8s / 29       │
-└───────────┴─────────────────────┴──────────┴────────┴───────────┴───────┴─────────┴──────────────────┘
-
-Reasoning, since raw category scores alone are misleading:
-
-1. Qwen3-30B-Thinking — least fit. Fails the core workflow.news_trade cycle most often (1/5), and in one repeat it actually bought into the headline trap it was supposed to catch (bullish headline, bearish body — it submitted the buy anyway). It also wrote 7 tool calls as raw text instead of structured calls across the run, which in a live deployment means broken function-calling, not just a wrong decision. Best-in-class on thesis_lifecycle (5/5) doesn't offset a real bad trade + unreliable tool emission.
-
-2. GLM-4.7-Flash. Excellent tool mechanics (0.92, zero text-tool-calls, zero errors) and good trap-avoidance (4/5), but it never fully passes news_trade (0/5) — the exact "confirmed bullish news → buy" leg the bot exists for. Failure modes alternate between missing a genuine buy signal entirely and, in two repeats, sizing an order that violates the cash constraint (quantity * price > cash). For a bot whose entire job is executing on binary news signals, failing the buy leg every time is close to disqualifying regardless of how clean its tool syntax is.
-
-3. Gpt-OSS-20b. Best headline-trap avoidance (5/5, and its insufficient_cash "failures" were only a missing word in the final answer — it never actually oversized an order, unlike the other three). Fastest and most token-efficient. But weakest memory hygiene: it fails to close an invalidated thesis 4/5 times (memory.thesis_lifecycle) — i.e., after news arrives that should kill a thesis, it leaves it open, which is a real problem for a bot that runs repeatedly and is meant to carry state across sessions. It also skips get_positions/get_position before acting in close_half_loser in 2 of 5 runs, and had 2 outright HTTP 500 crashes from the vLLM server choking on gpt-oss's harmony "commentary channel" tokens — a serving-compatibility issue on vllm==0.30.0, worth flagging separately from model quality.
-
-4. Qwen3.6-35B-A3B-AWQ — best fit. Dominant on the three axes that matter most for this exact strategy: workflow (0.90 — actually completes the news→memory→trade→remember_decision cycle), memory (0.87 — best cross-session rule/lesson/thesis handling), and tied-best tools (0.92). Trap avoidance is strong (4/5). Its one real weakness: it violates the cash constraint in insufficient_cash 4/5 times — worse than any other model on that specific check — and it's 4-8x slower (30.8s median, 29 tok/s) than the others, which matters for a news-reactive bot.
-
-Caveat that applies regardless of pick
-
-Every model violates the cash/position-sizing constraint at least once (GLM 1/5, Qwen-thinking 1/5, Qwen3.6 4/5, Gpt-OSS 0/5-actual). Sizing/cash checks are the one axis no model here can be trusted on unsupervised — this should be enforced as a hard deterministic clamp in trading-agent-framework's order-submission path (reject or resize any order where qty*price > cash), not left to the LLM's arithmetic. That removes qwen3.6's biggest liability and makes its overall lead (workflow + memory + tools) the deciding factor.
-
-Recommendation: Qwen3.6-35B-A3B-AWQ for news_binary, provided you add a code-level pre-trade cash/sizing guard — its latency (~30s/decision) is likely acceptable since news-driven decisions aren't sub-second, but confirm that against your actual polling/latency budget.
-
 
 #### 📈 `cross_momentum` — Cross Sectional Momentum (Final Version)
 
@@ -305,3 +267,72 @@ The strategy will rely on those symbols as input.
 An agent implementing an opening range breakout strategy. During the first 15min of the regular cash session, the agent set the Opening Range (OR) window. Then the nest 2 hours, it picks up the "breakouts": stock prices and volume raising up a parameterized threshold. Rest of day is to set a traling stop and sell if the price goes down the stop.
 
 Run: `uv run agent opening_range_breakout backtesting`
+
+#### Model pick
+
+##### Benchmark result
+Ranking for news_binary, worst → best fit
+
+┌───────────┬─────────────────────┬──────────┬────────┬───────────┬───────┬─────────┬──────────────────┐
+│   Rank    │        Model        │ workflow │ memory │ reasoning │ tools │ overall │ median s / tok·s │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 1 (worst) │ Qwen3-30B-Thinking  │ 0.50     │ 0.73   │ 0.73      │ 0.88  │ 0.71    │ 15.0s / 197      │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 2         │ GLM-4.7-Flash       │ 0.30     │ 0.73   │ 0.80      │ 0.92  │ 0.69    │ 5.4s / 131       │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 3         │ Gpt-OSS-20b         │ 0.80     │ 0.67   │ 0.73      │ 0.72  │ 0.73    │ 3.8s / 192       │
+├───────────┼─────────────────────┼──────────┼────────┼───────────┼───────┼─────────┼──────────────────┤
+│ 4 (best)  │ Qwen3.6-35B-A3B-AWQ │ 0.90     │ 0.87   │ 0.67      │ 0.92  │ 0.84    │ 30.8s / 29       │
+└───────────┴─────────────────────┴──────────┴────────┴───────────┴───────┴─────────┴──────────────────┘
+
+Reasoning, since raw category scores alone are misleading:
+
+1. Qwen3-30B-Thinking — least fit. Fails the core workflow.news_trade cycle most often (1/5), and in one repeat it actually bought into the headline trap it was supposed to catch (bullish headline, bearish body — it submitted the buy anyway). It also wrote 7 tool calls as raw text instead of structured calls across the run, which in a live deployment means broken function-calling, not just a wrong decision. Best-in-class on thesis_lifecycle (5/5) doesn't offset a real bad trade + unreliable tool emission.
+
+2. GLM-4.7-Flash. Excellent tool mechanics (0.92, zero text-tool-calls, zero errors) and good trap-avoidance (4/5), but it never fully passes news_trade (0/5) — the exact "confirmed bullish news → buy" leg the bot exists for. Failure modes alternate between missing a genuine buy signal entirely and, in two repeats, sizing an order that violates the cash constraint (quantity * price > cash). For a bot whose entire job is executing on binary news signals, failing the buy leg every time is close to disqualifying regardless of how clean its tool syntax is.
+
+3. Gpt-OSS-20b. Best headline-trap avoidance (5/5, and its insufficient_cash "failures" were only a missing word in the final answer — it never actually oversized an order, unlike the other three). Fastest and most token-efficient. But weakest memory hygiene: it fails to close an invalidated thesis 4/5 times (memory.thesis_lifecycle) — i.e., after news arrives that should kill a thesis, it leaves it open, which is a real problem for a bot that runs repeatedly and is meant to carry state across sessions. It also skips get_positions/get_position before acting in close_half_loser in 2 of 5 runs, and had 2 outright HTTP 500 crashes from the vLLM server choking on gpt-oss's harmony "commentary channel" tokens — a serving-compatibility issue on vllm==0.30.0, worth flagging separately from model quality.
+
+4. Qwen3.6-35B-A3B-AWQ — best fit. Dominant on the three axes that matter most for this exact strategy: workflow (0.90 — actually completes the news→memory→trade→remember_decision cycle), memory (0.87 — best cross-session rule/lesson/thesis handling), and tied-best tools (0.92). Trap avoidance is strong (4/5). Its one real weakness: it violates the cash constraint in insufficient_cash 4/5 times — worse than any other model on that specific check — and it's 4-8x slower (30.8s median, 29 tok/s) than the others, which matters for a news-reactive bot.
+
+Caveat that applies regardless of pick
+
+Every model violates the cash/position-sizing constraint at least once (GLM 1/5, Qwen-thinking 1/5, Qwen3.6 4/5, Gpt-OSS 0/5-actual). Sizing/cash checks are the one axis no model here can be trusted on unsupervised — this should be enforced as a hard deterministic clamp in trading-agent-framework's order-submission path (reject or resize any order where qty*price > cash), not left to the LLM's arithmetic. That removes qwen3.6's biggest liability and makes its overall lead (workflow + memory + tools) the deciding factor.
+
+Recommendation: Qwen3.6-35B-A3B-AWQ for news_binary, provided you add a code-level pre-trade cash/sizing guard — its latency (~30s/decision) is likely acceptable since news-driven decisions aren't sub-second, but confirm that against your actual polling/latency budget.
+
+##### Benchmark on 'news binary'
+1. The strategy trails SPY with both models.
+
+┌──────────────────┬──────────────┬────────┬──────────────┬────────────────┐
+│                  │ Total return │ Sharpe │ Max drawdown │ Avg % invested │
+├──────────────────┼──────────────┼────────┼──────────────┼────────────────┤
+│ SPY buy-and-hold │ 12.3%        │ 1.31   │ −8.9%        │ 100%           │
+├──────────────────┼──────────────┼────────┼──────────────┼────────────────┤
+│ QQQ buy-and-hold │ 15.7%        │ —      │ —            │ 100%           │
+├──────────────────┼──────────────┼────────┼──────────────┼────────────────┤
+│ GLM-4.7-flash    │ 10.8%        │ 1.80   │ −3.0%        │ 50%            │
+├──────────────────┼──────────────┼────────┼──────────────┼────────────────┤
+│ Qwen3.6-35B-A3B  │ 6.6%         │ 0.71   │ −12.0%       │ 77%            │
+└──────────────────┴──────────────┴────────┴──────────────┴────────────────┘
+
+GLM's better Sharpe is mostly a side effect of being in cash half the time, not good calls. For example, it sat in cash through April, when SPY rose 10.5%. Part of that cash was a sizing problem: it often bought 1 SPY or 10 SHV (about $1k) on a $10k account.
+
+2. The two runs are not a clean model comparison.
+- The prompt changed between the runs. Four news_binary commits landed between them (f605a9f, 7b31394, dd192d1, 7f85c30). They added a "hawkish = bearish" definition, the line "staying in the current holding needs no signal at all", and a new retry prompt. Qwen ran on a different strategy than GLM did.
+- One run per model. LLM runs aren't deterministic, and the two runs held the same asset on only 20% of days. A 4-point gap from a single path each can't be told apart from noise.
+
+3. Where Qwen lost the ground. It churned QQQ: it sold after dips and bought back days later at similar or higher prices.
+- January: bought at 625, sold at 606, bought at 619, sold at 600, bought at 606.
+- July: bought at 718, sold at 703, bought at 702, sold at 694, bought at 690, sold at 670.
+
+Its long QQQ hold from February to May (606 → 712) made about +$1.5k, and the churn gave it all back: realized QQQ profit for the whole run is about −$14. So the gap comes mostly from the prompt's buy/sell switching rules not stopping the churn, not from the model simply being worse. The rule to leave QQQ/SPY needs two bearish signals, but with a run every 3 hours two signals can pile up within a day.
+
+4. Qwen actually ran the workflow better. It had 0 runs that needed the "no decisi117 for GLM, and it stayed more fully invested. That fits your LLM benchmarkranking. Those benchmarks measure reasoning and tool use, not trading P&L. Qwen was also about 8× slower per call (27s vs 3.5s on average).
+
+## Supporting documentation:
+* [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
+* [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
+* [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
+* [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
+* [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)

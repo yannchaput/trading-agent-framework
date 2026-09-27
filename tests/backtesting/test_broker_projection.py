@@ -66,6 +66,20 @@ def test_selling_more_than_the_holding_is_rejected_at_submission() -> None:
         broker.submit_order(_order(OrderSide.SELL, 15))
 
 
+def test_a_negative_sell_is_rejected_instead_of_buying_past_cash() -> None:
+    # news_binary 2026-05-08: an agent sent quantity=-2.6 with side='sell'. It passed every
+    # `quantity > available` check, then `held - (-2.6)` bought shares and drove cash negative.
+    broker, clock = _holding(10, budget=Decimal(1100))
+    order = Order(strategy_name="momentum", asset=AAPL, side=OrderSide.SELL, quantity=Decimal("-2.6"))
+
+    with pytest.raises(OrderValidationError, match="quantity must be positive"):
+        broker.submit_order(order)
+    _advance(broker, clock, DAY2, DAY3)
+
+    assert broker._positions[AAPL].quantity == Decimal(10)
+    assert broker._cash == Decimal(100)
+
+
 def test_selling_what_is_held_is_accepted() -> None:
     broker, _ = _holding(10)
 

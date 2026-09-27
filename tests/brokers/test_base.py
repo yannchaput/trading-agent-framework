@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.utils.errors import OrderValidationError
 
 
 def _limit_order() -> Order:
@@ -50,6 +52,18 @@ def test_fake_broker_modify_marks_the_original_replaced() -> None:
 def test_market_data_methods_are_part_of_the_broker_interface() -> None:
     expected = {"get_last_price", "get_last_prices", "get_quote", "get_bars"}
     assert expected <= Broker.__abstractmethods__
+
+
+@pytest.mark.parametrize("field", ["quantity", "notional"])
+@pytest.mark.parametrize("value", ["-2.6", "0"])
+def test_submit_order_rejects_a_non_positive_size_before_the_broker_sees_it(field: str, value: str) -> None:
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)))
+    order = Order(strategy_name="momentum", asset=Asset("QQQ"), side=OrderSide.SELL, **{field: Decimal(value)})
+
+    with pytest.raises(OrderValidationError, match=f"{field} must be positive"):
+        broker.submit_order(order)
+
+    assert broker.tracker.get_tracked_order(order.identifier) is None
 
 
 def test_news_provider_defaults_to_none() -> None:
