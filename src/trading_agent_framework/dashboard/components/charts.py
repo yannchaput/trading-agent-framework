@@ -5,7 +5,24 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 from plotly.subplots import make_subplots
+
+# Dark template shared by every figure: plotly_dark with transparent backgrounds, so charts sit on
+# the page's own background (cli.THEME_ARGS). go.layout.Template copies, plotly_dark is untouched.
+GRID_COLOR = "#2a2e39"
+ZERO_LINE_COLOR = "#4b5563"
+CHART_TEMPLATE = go.layout.Template(pio.templates["plotly_dark"])
+CHART_TEMPLATE.layout.paper_bgcolor = "rgba(0,0,0,0)"
+CHART_TEMPLATE.layout.plot_bgcolor = "rgba(0,0,0,0)"
+CHART_TEMPLATE.layout.font.color = "#d1d4dc"
+CHART_TEMPLATE.layout.xaxis.gridcolor = GRID_COLOR
+CHART_TEMPLATE.layout.yaxis.gridcolor = GRID_COLOR
+
+# Red -> dark neutral -> green, for signed values (a white midpoint glares on a dark page).
+DIVERGING_SCALE = [[0.0, "#ef4444"], [0.5, "#1f2430"], [1.0, "#22c55e"]]
+# One colour per series/model, readable on the dark background.
+MODEL_COLORS = ["#22d3ee", "#f59e0b", "#a78bfa", "#22c55e", "#f472b6", "#60a5fa"]
 
 
 def equity_curve_chart(
@@ -24,7 +41,7 @@ def equity_curve_chart(
     if not has_breakdown and not equity:
         fig = go.Figure()
         fig.add_annotation(text="No equity data available", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     fig = go.Figure()
@@ -93,7 +110,7 @@ def equity_curve_chart(
         title=title,
         xaxis_title="Date",
         yaxis_title="Portfolio Value ($)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -106,7 +123,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
     if not equity:
         fig = go.Figure()
         fig.add_annotation(text="No data available", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     df = pd.DataFrame(equity)
@@ -135,7 +152,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
         title=title,
         xaxis_title="Date",
         yaxis_title="Drawdown (%)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
     )
@@ -178,7 +195,7 @@ def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly 
             z=pivot.values,
             x=list(pivot.columns),
             y=[str(y) for y in pivot.index],
-            colorscale="RdBu",
+            colorscale=DIVERGING_SCALE,
             zmid=0,
             text=[[f"{v:.1f}%" if not np.isnan(v) else "" for v in row] for row in pivot.values],
             texttemplate="%{text}",
@@ -188,7 +205,7 @@ def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly 
     )
     fig.update_layout(
         title=title,
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         xaxis_title="Month",
         yaxis_title="Year",
         margin=dict(l=40, r=20, t=40, b=40),
@@ -237,7 +254,7 @@ def returns_distribution(
         if daily_pct.empty:
             return go.Figure()
 
-    # Solid, saturated colors that pop on a white background
+    # Solid, saturated colors that pop on the dark background
     colors = ["#16a34a" if v >= 0 else "#dc2626" for v in daily_pct]
 
     fig = go.Figure()
@@ -255,13 +272,13 @@ def returns_distribution(
     )
 
     # Zero reference line
-    fig.add_hline(y=0, line_width=0.5, line_color="#9ca3af")
+    fig.add_hline(y=0, line_width=0.5, line_color=ZERO_LINE_COLOR)
 
     fig.update_layout(
         title=title,
         xaxis_title="Date",
         yaxis_title="Daily Return (%)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         bargap=0,
@@ -373,13 +390,13 @@ def monthly_returns_distribution(
         )
 
     # Zero reference line
-    fig.add_vline(x=0, line_dash="dot", line_color="#d1d5db", line_width=0.5)
+    fig.add_vline(x=0, line_dash="dot", line_color=ZERO_LINE_COLOR, line_width=0.5)
 
     fig.update_layout(
         title=title,
         xaxis_title="Monthly Return (%)",
         yaxis_title="Density",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         bargap=0.05,
         barmode="overlay",
         margin=dict(l=40, r=20, t=40, b=40),
@@ -401,7 +418,7 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
     if not data or not data.get("dates"):
         fig = go.Figure()
         fig.add_annotation(text="No cumulative return data available", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     dates = pd.to_datetime(data["dates"])
@@ -436,13 +453,13 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
         )
 
     # Zero reference line
-    fig.add_hline(y=0, line_dash="dot", line_color="#d1d5db", line_width=0.5)
+    fig.add_hline(y=0, line_dash="dot", line_color=ZERO_LINE_COLOR, line_width=0.5)
 
     fig.update_layout(
         title=title,
         xaxis_title="Date",
         yaxis_title="Cumulative Return (%)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -514,7 +531,7 @@ def _rolling_metric(
     if s_rolling.empty:
         fig = go.Figure()
         fig.add_annotation(text="Not enough data for rolling window", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     fig = go.Figure()
@@ -546,7 +563,7 @@ def _rolling_metric(
         title=title,
         xaxis_title="Date",
         yaxis_title=y_label,
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -611,7 +628,7 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
     if not values and not trades:
         fig = go.Figure()
         fig.add_annotation(text="No trade data available", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     fig = go.Figure()
@@ -665,7 +682,7 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
         title=title,
         xaxis_title="Date",
         yaxis_title="Portfolio Value ($)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="closest",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
@@ -703,7 +720,7 @@ def agent_calls_chart(calls: pd.DataFrame, title: str = "Agent calls") -> go.Fig
     if calls.empty:
         fig = go.Figure()
         fig.add_annotation(text="No data available", showarrow=False)
-        fig.update_layout(title=title, template="plotly_white")
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, subplot_titles=("Latency per call", "Total tokens per call"))
@@ -718,7 +735,7 @@ def agent_calls_chart(calls: pd.DataFrame, title: str = "Agent calls") -> go.Fig
     )
     fig.update_layout(
         title=title,
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         showlegend=False,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=60, b=40),

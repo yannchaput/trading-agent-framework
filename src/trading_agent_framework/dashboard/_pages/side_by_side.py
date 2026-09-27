@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from trading_agent_framework.dashboard.components.charts import CHART_TEMPLATE, MODEL_COLORS
 from trading_agent_framework.dashboard.reader import load_portfolio_breakdown, load_run
 
 
@@ -36,7 +37,7 @@ def page_side_by_side():
 
     # Unified equity curve — uses equity.parquet (same source as Detail page)
     st.subheader("Equity Curves Overlay")
-    colors = ["#0891b2", "#e74c3c", "#27ae60", "#f39c12", "#8e44ad", "#2c3e50"]
+    colors = MODEL_COLORS
     fig = go.Figure()
     for i, run in enumerate(runs):
         breakdown = load_portfolio_breakdown(run.ref)
@@ -64,7 +65,7 @@ def page_side_by_side():
         title="Equity Curves Overlay",
         xaxis_title="Date",
         yaxis_title="Portfolio Value ($)",
-        template="plotly_white",
+        template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
     )
