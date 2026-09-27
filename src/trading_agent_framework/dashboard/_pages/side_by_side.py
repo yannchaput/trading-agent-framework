@@ -68,6 +68,7 @@ def page_side_by_side():
         template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
+        height=650,
     )
     st.plotly_chart(fig, width="stretch")
 

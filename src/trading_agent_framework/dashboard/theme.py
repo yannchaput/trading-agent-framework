@@ -25,6 +25,14 @@ THEME_CSS = """
     color: #22d3ee; padding: 2px 8px; border-radius: 4px;
     font-size: 0.75rem; font-weight: 500;
 }
+[data-testid="stTopNavLink"][aria-current="page"] span {
+    color: #22c55e !important;
+    font-weight: 700 !important;
+}
+[data-testid="stTopNavLink"]:not([aria-current="page"]) span {
+    color: #d1d4dc !important;
+    font-weight: 400 !important;
+}
 </style>
 """
 
