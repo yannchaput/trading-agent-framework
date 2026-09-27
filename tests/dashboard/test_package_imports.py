@@ -9,6 +9,7 @@ MODULES = [
     "trading_agent_framework.dashboard.models",
     "trading_agent_framework.dashboard.discovery",
     "trading_agent_framework.dashboard.reader",
+    "trading_agent_framework.dashboard.benchmark_reader",
     "trading_agent_framework.dashboard.theme",
     "trading_agent_framework.dashboard.components.charts",
     "trading_agent_framework.dashboard.components.tables",

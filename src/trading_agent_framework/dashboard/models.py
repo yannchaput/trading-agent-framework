@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -134,3 +135,73 @@ class RunIndex:
 
     def strategy_names(self) -> list[str]:
         return sorted(set(r.strategy_name for r in self.runs))
+
+
+# --- vLLM benchmark results (read by benchmark_reader.py) ---------------------------------------
+
+
+@dataclass(frozen=True)
+class BenchmarkRunRef:
+    """A benchmark run directory, <results>/<YYYYMMDD-HHMMSS>/. Built without reading any file."""
+
+    path: Path
+    run_id: str
+    started_at: datetime
+
+    @classmethod
+    def from_path(cls, path: Path) -> BenchmarkRunRef:
+        try:
+            started_at = datetime.strptime(path.name, "%Y%m%d-%H%M%S")
+        except ValueError as exc:
+            raise ValueError(f"Not a benchmark run directory name: {path.name}") from exc
+        return cls(path=path, run_id=path.name, started_at=started_at)
+
+
+@dataclass(frozen=True)
+class ScenarioScore:
+    passed: int
+    runs: int
+    mean_partial: float
+
+
+@dataclass(frozen=True)
+class BenchmarkModel:
+    """One model's line of summary.json, joined with its meta.json entry (served name, vLLM version).
+
+    Numeric fields are None when the model did not run (``ran`` is False, ``error`` says why).
+    """
+
+    key: str
+    display_name: str
+    served_name: str | None
+    vllm_version: str | None
+    ran: bool
+    error: str | None
+    overall: float | None
+    mean_partial: float | None
+    categories: dict[str, float]
+    scenarios: dict[str, ScenarioScore]
+    runs_passed: int | None
+    runs_total: int | None
+    text_tool_calls: int | None
+    avg_tool_calls: float | None
+    median_run_s: float | None
+    median_tokens_per_s: float | None
+    timeouts: int | None
+    errors: int | None
+
+
+@dataclass(frozen=True)
+class BenchmarkRun:
+    ref: BenchmarkRunRef
+    started_at: datetime
+    finished_at: datetime | None
+    repeats: int
+    timeout_s: float
+    scenarios: tuple[str, ...]  # meta.json order, e.g. "reasoning.rsi_signal"
+    models: tuple[BenchmarkModel, ...]  # summary.json order
+
+    @property
+    def categories(self) -> tuple[str, ...]:
+        """Scenario id prefixes, in first-seen scenario order."""
+        return tuple(dict.fromkeys(scenario.split(".", 1)[0] for scenario in self.scenarios))
