@@ -44,6 +44,21 @@ def save_description(ref: RunRef, description: str) -> None:
         json.dump({"description": description}, f, indent=2)
 
 
+def save_decision(ref: RunRef, decision: str) -> None:
+    """Write the dashboard decision ("discarded"/"study"/"validated", or "" to clear) into
+    settings.json's `dashboard_decision` leaf field, preserving every other key already there.
+    """
+    path = os.path.join(ref.path, "settings.json")
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        data = {}
+    data["dashboard_decision"] = decision
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
 def get_benchmark_symbol(ref: RunRef) -> str:
     """Extract the benchmark ticker from settings.json's flat `benchmark_symbol` field.
 

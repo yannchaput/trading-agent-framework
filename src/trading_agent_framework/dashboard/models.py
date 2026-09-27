@@ -58,6 +58,8 @@ class Settings(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
     # Per-agent telemetry totals (written only when the run recorded agent calls); see agents/telemetry.py.
     agents: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Dashboard-only leaf field: "", "discarded", "study", or "validated"; see reader.save_decision.
+    dashboard_decision: str = ""
 
     model_config = {"extra": "allow"}
 

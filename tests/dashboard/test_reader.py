@@ -26,6 +26,7 @@ from trading_agent_framework.dashboard.reader import (
     load_settings,
     load_trades_curve,
     load_yearly_returns,
+    save_decision,
 )
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 
@@ -157,6 +158,28 @@ def test_load_settings_returns_none_on_corrupt_settings_json(tmp_path: Path) -> 
     (run_dir / "settings.json").write_text("{not valid json", encoding="utf-8")
 
     assert load_settings(_ref(run_dir)) is None
+
+
+def test_save_decision_writes_the_leaf_field_and_preserves_other_keys(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload())
+
+    save_decision(_ref(run_dir), "validated")
+
+    settings = load_settings(_ref(run_dir))
+    assert settings is not None
+    assert settings.dashboard_decision == "validated"
+    assert settings.budget == 10000.0  # untouched
+
+
+def test_save_decision_overwrites_a_previous_decision(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload())
+
+    save_decision(_ref(run_dir), "study")
+    save_decision(_ref(run_dir), "discarded")
+
+    assert load_settings(_ref(run_dir)).dashboard_decision == "discarded"
 
 
 NOW = datetime(2026, 1, 5, 21, tzinfo=UTC)

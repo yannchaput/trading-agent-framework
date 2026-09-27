@@ -4,7 +4,7 @@ import streamlit as st
 
 from trading_agent_framework.dashboard.components.tables import render_scorecard_table
 from trading_agent_framework.dashboard.discovery import scan_runs
-from trading_agent_framework.dashboard.reader import load_description, load_metrics, load_settings
+from trading_agent_framework.dashboard.reader import load_description, load_metrics, load_settings, save_decision
 
 
 def page_scorecard():
@@ -39,11 +39,9 @@ def page_scorecard():
             period = f"{settings.backtesting_start.strftime('%Y-%m-%d')} → {settings.backtesting_end.strftime('%Y-%m-%d')}"
 
         model = ""
-        if settings and settings.parameters:
-            for key, val in settings.parameters.items():
-                if "model" in key.lower() and isinstance(val, str) and "/" in val:
-                    model = val.split("/")[-1]
-                    break
+        if settings and settings.agents:
+            models = [agent["model"] for agent in settings.agents.values() if agent.get("model")]
+            model = ", ".join(dict.fromkeys(models))
 
         backtest_time = ""
         if settings and settings.backtest_time_seconds:
@@ -64,6 +62,7 @@ def page_scorecard():
                 "Max DD%": (metrics.max_drawdown_strategy * 100) if metrics else 0,
                 "Volatility%": (metrics.volatility_strategy * 100) if metrics else 0,
                 "Model": model,
+                "Decision": settings.dashboard_decision if settings else "",
                 "Time": backtest_time,
                 "Description": load_description(ref) or "",
                 "_ref": ref,
@@ -73,7 +72,19 @@ def page_scorecard():
     st.sidebar.metric("Total Runs", len(rows))
 
     if rows:
-        selected_indices, _display_df = render_scorecard_table(rows)
+        selected_indices, edited_df = render_scorecard_table(rows)
+
+        # Persist Decision edits: MultiselectColumn cells are lists; collapse each edited cell
+        # back to a single value (the option just added, if any) and write it into
+        # settings.json's dashboard_decision leaf field via save_decision.
+        for i, row in enumerate(rows):
+            old_list = [row["Decision"]] if row["Decision"] else []
+            new_list = edited_df.iloc[i]["Decision"]
+            if set(new_list) == set(old_list):
+                continue
+            added = [d for d in new_list if d not in old_list]
+            new_decision = added[-1] if added else (new_list[-1] if new_list else "")
+            save_decision(row["_ref"], new_decision)
 
         # Persist selection in session state so sidebar navigation buttons
         # can validate it before switching to Run Detail / Side-by-Side.

@@ -27,26 +27,40 @@ def render_metric_table(metrics: dict[str, tuple[float, float]], title: str = ""
     )
 
 
-def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFrame]:
-    """Render the scorecard comparison table with native row-click selection.
+DECISION_OPTIONS = ["discarded", "study", "validated"]
+DECISION_COLORS = ["darkred", "darkorange", "limegreen"]
 
-    Returns a tuple of ``(selected_indices, display_df)`` where
-    ``selected_indices`` is the list of zero-based row indices currently
-    selected and ``display_df`` is the DataFrame shown to the user (without
-    hidden columns like ``_ref``).
+
+def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFrame]:
+    """Render the scorecard comparison table with a "Select" checkbox column (for navigating
+    to Run Detail / Side-by-side) and an editable, colored Decision picker.
+
+    st.dataframe's native row-click selection and an editable per-cell picker can't coexist in
+    one widget, so this uses st.data_editor throughout: "Select" replaces row-click selection,
+    and "Decision" is an editable ``MultiselectColumn`` (colored dropdown) constrained to at
+    most one value per row -- Decision edits are resolved to a single string by the caller.
+
+    Returns a tuple of ``(selected_indices, edited_df)`` where ``selected_indices`` is the list
+    of zero-based row indices with ``Select`` checked and ``edited_df`` is the edited DataFrame
+    (without hidden columns like ``_ref``), reflecting any Decision change just made.
     """
     if not runs_data:
         st.info("No runs match the current filters.")
         return [], pd.DataFrame()
 
     df = pd.DataFrame(runs_data)
+    df.insert(0, "Select", False)
+    # MultiselectColumn cells are lists; a run's decision is a single value or unset ("").
+    df["Decision"] = df["Decision"].apply(lambda d: [d] if d else [])
 
     # Remove hidden columns before passing to the Arrow serializer
-    # (st.dataframe cannot serialize arbitrary Python objects like RunRef).
+    # (st.data_editor cannot serialize arbitrary Python objects like RunRef).
     display_cols = [c for c in df.columns if not c.startswith("_")]
     display_df = df[display_cols]
+    disabled_cols = [c for c in display_cols if c not in ("Select", "Decision")]
 
     column_config = {
+        "Select": st.column_config.CheckboxColumn("Select"),
         "Strategy": st.column_config.TextColumn("Strategy"),
         "Run Date": st.column_config.TextColumn("Run Date"),
         "Mode": st.column_config.TextColumn("Mode"),
@@ -58,18 +72,24 @@ def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFra
         "Max DD%": st.column_config.NumberColumn("Max DD%", format="%.2f%%"),
         "Volatility%": st.column_config.NumberColumn("Volatility%", format="%.2f%%"),
         "Model": st.column_config.TextColumn("Model"),
+        "Decision": st.column_config.MultiselectColumn(
+            "Decision",
+            options=DECISION_OPTIONS,
+            color=DECISION_COLORS,
+        ),
         "Time": st.column_config.TextColumn("Time"),
         "Description": st.column_config.TextColumn("Description"),
     }
 
-    selection = st.dataframe(
+    edited_df = st.data_editor(
         display_df,
         width="stretch",
         hide_index=True,
         column_config=column_config,
+        disabled=disabled_cols,
+        num_rows="fixed",
         key="scorecard_table",
-        selection_mode="multi-row",
-        on_select="rerun",
     )
 
-    return selection.selection.rows, display_df
+    selected_indices = edited_df.index[edited_df["Select"]].tolist()
+    return selected_indices, edited_df
