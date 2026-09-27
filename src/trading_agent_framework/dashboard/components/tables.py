@@ -31,14 +31,17 @@ DECISION_OPTIONS = ["discarded", "study", "validated"]
 DECISION_COLORS = ["darkred", "darkorange", "limegreen"]
 
 
-def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFrame]:
+def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") -> tuple[list[int], pd.DataFrame]:
     """Render the scorecard comparison table with a "Select" checkbox column (for navigating
     to Run Detail / Side-by-side) and an editable, colored Decision picker.
 
     st.dataframe's native row-click selection and an editable per-cell picker can't coexist in
     one widget, so this uses st.data_editor throughout: "Select" replaces row-click selection,
-    and "Decision" is an editable ``MultiselectColumn`` (colored dropdown) constrained to at
-    most one value per row -- Decision edits are resolved to a single string by the caller.
+    and "Decision" is an editable ``MultiselectColumn`` (colored dropdown), used only for its
+    per-option coloring -- ``st.column_config.SelectboxColumn`` has no color support. Streamlit
+    lets a cell hold more than one tag; the caller enforces the actual one-decision-per-row rule
+    by collapsing extra selections and re-rendering under a fresh ``key`` (Streamlit disallows
+    rewriting a data_editor's own session-state value directly).
 
     Returns a tuple of ``(selected_indices, edited_df)`` where ``selected_indices`` is the list
     of zero-based row indices with ``Select`` checked and ``edited_df`` is the edited DataFrame
@@ -88,7 +91,7 @@ def render_scorecard_table(runs_data: list[dict]) -> tuple[list[int], pd.DataFra
         column_config=column_config,
         disabled=disabled_cols,
         num_rows="fixed",
-        key="scorecard_table",
+        key=key,
     )
 
     selected_indices = edited_df.index[edited_df["Select"]].tolist()
