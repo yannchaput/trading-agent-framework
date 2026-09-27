@@ -33,16 +33,38 @@ THEME_CSS = """
     color: #d1d4dc !important;
     font-weight: 400 !important;
 }
-/* Streamlit sizes a data_editor to its own content by default, even with height="stretch",
-   because the page's own block container never flex-grows to the viewport. Force the
-   scorecard table (only) to use the remaining browser height instead. */
+/* Streamlit's own block container never flex-grows to the viewport, so a data_editor's
+   height="stretch" is a no-op at the page's top level -- it just sizes to its own content.
+   Scoped to the scorecard page only (:has() guards every other page's layout): make the
+   block chain down to the scorecard table a real flex column anchored to the tab's full
+   height, then let the table (the only flexed child) absorb whatever space is left below
+   the title and caption. */
+div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-scorecard_table"]) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    padding-bottom: 1.5rem !important;
+}
+div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-scorecard_table"])
+        > div[data-testid="stVerticalBlock"] {
+    flex: 1 1 auto;
+    min-height: 0;
+}
 div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] {
-    height: calc(100vh - 300px) !important;
-    min-height: 320px;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-testid="stFullScreenFrame"],
 div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-testid="stDataFrame"] {
     height: 100% !important;
+}
+/* The grid widget itself (glide-data-grid) bakes a content-fit pixel height as an inline
+   style on this wrapper (e.g. "height: 400px; max-height: 527px"), independent of its DOM
+   ancestors -- overriding just the ancestors above leaves this element, and therefore the
+   visible grid/scrollbars, stuck at the old size. Force it to fill the space we just made. */
+div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-testid="stDataFrameResizable"] {
+    height: 100% !important;
+    max-height: none !important;
 }
 </style>
 """
