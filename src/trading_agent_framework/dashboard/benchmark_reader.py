@@ -18,6 +18,9 @@ from trading_agent_framework.dashboard.models import (
     BenchmarkModel,
     BenchmarkRun,
     BenchmarkRunRef,
+    Check,
+    ScenarioRun,
+    ScenarioRuns,
     ScenarioScore,
 )
 
@@ -82,6 +85,52 @@ def load_benchmark_run(ref: BenchmarkRunRef) -> BenchmarkRun:
         return _build_run(ref, meta, summary)
     except (KeyError, TypeError, ValueError, AttributeError) as exc:
         raise BenchmarkReadError(f"Malformed benchmark run {ref.run_id}: {exc!r}") from exc
+
+
+def load_scenario_runs(ref: BenchmarkRunRef, model_key: str, scenario_id: str) -> ScenarioRuns:
+    """Every repeat of `scenario_id` in <model_key>.jsonl, sorted by repeat.
+
+    Streams the file line by line; a line that is not a valid record is skipped and counted.
+    """
+    path = ref.path / f"{model_key}.jsonl"
+    runs: list[ScenarioRun] = []
+    skipped = 0
+    try:
+        with path.open(encoding="utf-8") as lines:
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    record = json.loads(line)
+                    if record["scenario_id"] != scenario_id:
+                        continue
+                    runs.append(_build_scenario_run(record))
+                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                    skipped += 1
+    except OSError as exc:
+        raise BenchmarkReadError(f"Cannot read {path.name}: {exc}") from exc
+    runs.sort(key=lambda run: run.repeat)
+    return ScenarioRuns(runs=tuple(runs), skipped_lines=skipped)
+
+
+def _build_scenario_run(record: dict[str, Any]) -> ScenarioRun:
+    metrics = record.get("metrics") or {}
+    return ScenarioRun(
+        repeat=int(record["repeat"]),
+        status=str(record["status"]),
+        passed=bool(record["passed"]),
+        partial=float(record["partial"]),
+        error=record.get("error"),
+        checks=tuple(
+            Check(type=str(check["type"]), passed=bool(check["passed"]), reason=str(check.get("reason", "")))
+            for check in record.get("checks") or []
+        ),
+        total_s=_opt_float(metrics.get("total_s")),
+        tool_calls=_opt_int(metrics.get("tool_calls")),
+        model_calls=_opt_int(metrics.get("model_calls")),
+        tokens_per_s=_opt_float(metrics.get("tokens_per_s")),
+        completion_tokens=_opt_int(metrics.get("completion_tokens")),
+    )
 
 
 def _read_json(path: Path) -> Any:

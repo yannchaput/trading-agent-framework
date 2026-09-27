@@ -205,3 +205,33 @@ class BenchmarkRun:
     def categories(self) -> tuple[str, ...]:
         """Scenario id prefixes, in first-seen scenario order."""
         return tuple(dict.fromkeys(scenario.split(".", 1)[0] for scenario in self.scenarios))
+
+
+@dataclass(frozen=True)
+class Check:
+    type: str
+    passed: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class ScenarioRun:
+    """One repeat of one scenario for one model (a <key>.jsonl line, message trace dropped)."""
+
+    repeat: int
+    status: str  # "ok", "timeout", "error"
+    passed: bool
+    partial: float
+    error: str | None
+    checks: tuple[Check, ...]
+    total_s: float | None
+    tool_calls: int | None
+    model_calls: int | None
+    tokens_per_s: float | None
+    completion_tokens: int | None
+
+
+@dataclass(frozen=True)
+class ScenarioRuns:
+    runs: tuple[ScenarioRun, ...]
+    skipped_lines: int  # lines of the whole file that were not valid records

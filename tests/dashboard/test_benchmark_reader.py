@@ -10,11 +10,12 @@ from tests.dashboard.benchmark_fixtures import IN_PROGRESS, LATEST, OLDER, SCENA
 from trading_agent_framework.dashboard.benchmark_reader import (
     BenchmarkReadError,
     load_benchmark_run,
+    load_scenario_runs,
     resolve_results_dir,
     scan_benchmark_runs,
     split_benchmark_dir,
 )
-from trading_agent_framework.dashboard.models import BenchmarkRunRef, ScenarioScore
+from trading_agent_framework.dashboard.models import BenchmarkRunRef, Check, ScenarioScore
 
 
 @pytest.fixture
@@ -141,3 +142,45 @@ def test_the_default_sits_next_to_the_project_root_not_the_cwd(tmp_path: Path) -
     (project / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
 
     assert resolve_results_dir([], start=project / "src") == (tmp_path / "benchmark-vllm-models" / "results").resolve()
+
+
+# --- load_scenario_runs ------------------------------------------------------------------------
+
+
+def test_scenario_runs_are_filtered_and_sorted_by_repeat(results: Path) -> None:
+    result = load_scenario_runs(_ref(results, LATEST), "qwen3627b", "reasoning.rsi_signal")
+
+    assert [run.repeat for run in result.runs] == [1, 2]
+    first = result.runs[0]
+    assert (first.status, first.passed, first.partial) == ("ok", True, 1.0)
+    assert first.checks[0] == Check(type="called", passed=True, reason="found")
+    assert (first.total_s, first.tool_calls, first.model_calls, first.tokens_per_s, first.completion_tokens) == (
+        6.906, 4, 5, 121.35, 882,
+    )
+
+
+def test_a_timed_out_run_is_kept_with_its_error(results: Path) -> None:
+    result = load_scenario_runs(_ref(results, LATEST), "qwen3627b", "reasoning.rsi_signal")
+
+    timed_out = result.runs[1]
+    assert timed_out.status == "timeout"
+    assert timed_out.error == "run exceeded 360s"
+    assert timed_out.checks == ()
+
+
+def test_malformed_lines_are_skipped_and_counted(results: Path) -> None:
+    result = load_scenario_runs(_ref(results, LATEST), "qwen3627b", "tools.limit_order")
+
+    assert len(result.runs) == 1
+    assert result.skipped_lines == 1
+
+
+def test_the_message_trace_is_not_kept(results: Path) -> None:
+    run = load_scenario_runs(_ref(results, LATEST), "glm", "reasoning.rsi_signal").runs[0]
+
+    assert not hasattr(run, "trace")
+
+
+def test_a_missing_model_file_raises_benchmark_read_error(results: Path) -> None:
+    with pytest.raises(BenchmarkReadError):
+        load_scenario_runs(_ref(results, LATEST), "nope", "reasoning.rsi_signal")
