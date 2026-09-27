@@ -10,6 +10,7 @@
 * ~~Create a batch to run all the smoke tests altogether~~
 * ~~Add cash available during backtesting~~
 * Integrate VIX indicator
+* Update pyproject.toml to make dashboard an "extra" dependency
 
 ## MIGRATION
 * ~~Alpaca broker~~
