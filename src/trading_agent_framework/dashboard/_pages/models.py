@@ -125,8 +125,7 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
     best = _best(ran)
     timed = [m for m in ran if m.median_tokens_per_s is not None]
     quick = [m for m in ran if m.median_run_s is not None]
-    text_calls = sum(m.text_tool_calls or 0 for m in ran)
-    cols = st.columns(4)
+    cols = st.columns(3)
     with cols[0]:
         render_metric_card("🏆 Best overall", f"{best.display_name} · {(best.overall or 0.0):.0%}")
     with cols[1]:
@@ -139,8 +138,6 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
         render_metric_card(
             "⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—"
         )
-    with cols[3]:
-        render_metric_card("🛠 Text tool calls", str(text_calls), tone="negative" if text_calls else "positive")
 
 
 def _worst_scenario(model: BenchmarkModel, scenarios: Sequence[str]) -> str:
