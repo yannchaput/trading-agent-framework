@@ -39,7 +39,7 @@ def edit_description_dialog():
 
 
 def page_backtesting():
-    """Main dashboard with sidebar navigation."""
+    """Backtesting tab: sidebar navigation between Scorecard, Run Detail, and Side-by-Side."""
     st.sidebar.title("📊 Strategy Dashboard")
     st.sidebar.markdown("Compare backtesting runs across strategies.")
     st.sidebar.markdown("---")
