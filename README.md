@@ -270,7 +270,53 @@ Run: `uv run agent opening_range_breakout backtesting`
 
 #### Model pick
 
-##### Benchmark result
+##### Last benchmark result
+
+┏━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Metric               ┃ GLM-4.7-Flash ┃ Gpt-OSS-20b ┃ Qwen3-30B-Thinking ┃ Qwen3.6-35B-A3B-AWQ ┃ Qwen3.6-27B-AWQ (winner) ┃
+┡━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Overall score        │           64% │         57% │                65% │                 79% │                      94% │
+│   Reasoning          │           52% │         60% │                44% │                 64% │                      88% │
+│   Memory             │           65% │         55% │                55% │                 75% │                     100% │
+│   Workflow           │           53% │         47% │                67% │                 80% │                      93% │
+│   Tools              │           87% │         67% │                93% │                 97% │                      97% │
+│ Runs passed          │         60/90 │       53/90 │              60/90 │               72/90 │                    85/90 │
+│ Text tool calls      │             0 │           0 │                  8 │                   0 │                        0 │
+│ Avg tool calls / run │          3.24 │        4.19 │               2.84 │                3.62 │                     3.51 │
+│ Median run time      │         4.9 s │       4.9 s │             16.6 s │                30 s │                   29.7 s │
+│ Tokens/s (median)    │         131.7 │         195 │              197.7 │                28.9 │                     44.5 │
+│ Timeouts / errors    │           0/0 │         0/0 │                0/0 │                 0/0 │                      1/0 │
+└──────────────────────┴───────────────┴─────────────┴────────────────────┴─────────────────────┴──────────────────────────┘
+                                   Per-scenario results (passed/runs, mean partial score)                                    
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
+┃ Scenario                       ┃ GLM-4.7-Flash ┃ Gpt-OSS-20b ┃ Qwen3-30B-Thinking ┃ Qwen3.6-35B-A3B-AWQ ┃ Qwen3.6-27B-AWQ ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
+│ reasoning.conflicting_signals  │     1/5 (72%) │   1/5 (72%) │          0/5 (56%) │          5/5 (100%) │      5/5 (100%) │
+│ reasoning.headline_trap        │    5/5 (100%) │   3/5 (90%) │          0/5 (60%) │          5/5 (100%) │      5/5 (100%) │
+│ reasoning.insufficient_cash    │     3/5 (90%) │   3/5 (90%) │         5/5 (100%) │           0/5 (75%) │       3/5 (90%) │
+│ reasoning.position_sizing      │     4/5 (87%) │  5/5 (100%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ reasoning.rsi_signal           │     0/5 (80%) │   3/5 (88%) │          1/5 (80%) │           1/5 (84%) │       4/5 (96%) │
+│ memory.cross_session_rule      │     3/5 (90%) │  5/5 (100%) │          3/5 (90%) │          5/5 (100%) │      5/5 (100%) │
+│ memory.profit_take_rule        │     1/5 (60%) │   0/5 (63%) │          0/5 (50%) │           0/5 (50%) │      5/5 (100%) │
+│ memory.seeded_lesson           │    5/5 (100%) │   2/5 (76%) │          3/5 (76%) │          5/5 (100%) │      5/5 (100%) │
+│ memory.thesis_lifecycle        │     4/5 (92%) │   4/5 (92%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ workflow.news_no_trade         │     4/5 (94%) │   4/5 (97%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ workflow.news_trade            │     4/5 (92%) │   2/5 (76%) │          1/5 (72%) │           4/5 (96%) │      5/5 (100%) │
+│ workflow.stop_loss_recall      │     0/5 (83%) │   1/5 (71%) │          4/5 (94%) │           3/5 (89%) │       4/5 (94%) │
+│ tools.cancel_stale_limit       │     4/5 (86%) │   4/5 (91%) │         5/5 (100%) │          5/5 (100%) │       4/5 (80%) │
+│ tools.close_half_loser         │    5/5 (100%) │   1/5 (77%) │          3/5 (83%) │           4/5 (97%) │      5/5 (100%) │
+│ tools.error_recovery           │     3/5 (80%) │   4/5 (90%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ tools.forced_remember_decision │    5/5 (100%) │  5/5 (100%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ tools.indicator_params         │     4/5 (90%) │   3/5 (85%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+│ tools.limit_order              │    5/5 (100%) │   3/5 (80%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
+└────────────────────────────────┴───────────────┴─────────────┴────────────────────┴─────────────────────┴─────────────────┘
+
+__Winner:__
+__Qwen3.6-27B-AWQ__ is the clear winner on all aspects.
+The only oddity is the latency comparable to Qwen3.6-35B-A3B-AWQ when the latter has 4Gb offloaded on the CPU and the former not.
+However Qwen3.6-35B-A3B-AWQ is 35B with 3B MoE. Qwen3.6-27B-AWQ is 27B full dense model loading all parameters at every pass.
+
+##### Benchmark result applied to news_binary
 Ranking for news_binary, worst → best fit
 
 ┌───────────┬─────────────────────┬──────────┬────────┬───────────┬───────┬─────────┬──────────────────┐
