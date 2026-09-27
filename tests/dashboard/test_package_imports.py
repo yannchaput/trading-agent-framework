@@ -14,6 +14,7 @@ MODULES = [
     "trading_agent_framework.dashboard.components.charts",
     "trading_agent_framework.dashboard.components.tables",
     "trading_agent_framework.dashboard.components.metric_cards",
+    "trading_agent_framework.dashboard._pages.models",
     "trading_agent_framework.dashboard._pages.scorecard",
     "trading_agent_framework.dashboard._pages.detail",
     "trading_agent_framework.dashboard._pages.side_by_side",

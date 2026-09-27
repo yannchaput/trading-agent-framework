@@ -3,8 +3,13 @@
 import streamlit as st
 
 
-def render_metric_card(label: str, value: float | str, fmt: str = ".2f", is_pct: bool = True) -> None:
-    """Render a single KPI metric card. Use inside st.columns()."""
+def render_metric_card(
+    label: str, value: float | str, fmt: str = ".2f", is_pct: bool = True, tone: str | None = None
+) -> None:
+    """Render a single KPI metric card. Use inside st.columns().
+
+    `tone` ("positive"/"negative") overrides the colour, which otherwise follows the sign of a numeric value.
+    """
     if isinstance(value, (int, float)):
         if is_pct:
             display = f"{value * 100:{fmt}}%" if fmt else f"{value * 100:.1f}%"
@@ -14,6 +19,9 @@ def render_metric_card(label: str, value: float | str, fmt: str = ".2f", is_pct:
     else:
         display = str(value)
         css_class = ""
+
+    if tone is not None:
+        css_class = tone
 
     st.markdown(
         f"""
