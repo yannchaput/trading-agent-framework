@@ -91,6 +91,7 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
     edited_df = st.data_editor(
         display_df,
         width="stretch",
+        height="stretch",
         hide_index=True,
         column_config=column_config,
         disabled=disabled_cols,

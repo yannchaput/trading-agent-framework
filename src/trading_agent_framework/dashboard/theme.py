@@ -33,6 +33,17 @@ THEME_CSS = """
     color: #d1d4dc !important;
     font-weight: 400 !important;
 }
+/* Streamlit sizes a data_editor to its own content by default, even with height="stretch",
+   because the page's own block container never flex-grows to the viewport. Force the
+   scorecard table (only) to use the remaining browser height instead. */
+div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] {
+    height: calc(100vh - 300px) !important;
+    min-height: 320px;
+}
+div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-testid="stFullScreenFrame"],
+div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-testid="stDataFrame"] {
+    height: 100% !important;
+}
 </style>
 """
 
