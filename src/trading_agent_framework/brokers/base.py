@@ -24,6 +24,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.utils.clock import MarketClock
+from trading_agent_framework.utils.errors import OrderValidationError
 
 
 class Broker(ABC):
@@ -45,6 +46,12 @@ class Broker(ABC):
         self.is_paper = is_paper
 
     def submit_order(self, order: Order) -> Order:
+        # Checked here, not in Order: orders parsed from broker responses can legitimately carry a 0 size.
+        for field_name, size in (("quantity", order.quantity), ("notional", order.notional)):
+            if size is not None and size <= 0:
+                raise OrderValidationError(
+                    f"{field_name} must be positive, got {size}; the direction goes in `side`, not the sign"
+                )
         order = self._conform_order(order)
         return self._submit_order(order)
 
