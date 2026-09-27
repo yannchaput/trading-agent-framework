@@ -67,6 +67,14 @@ div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-tes
     height: 100% !important;
     max-height: none !important;
 }
+/* Same oversized default top padding (128px) on the Models page; unlike the scorecard, this
+   page just scrolls (many stacked charts), so only the padding needs trimming.
+   models_page_marker (models.py, wrapping just the page title) exists purely as a CSS hook:
+   a childless st.container() never reaches the DOM, and a plain st.dataframe's key (unlike
+   st.data_editor's) isn't surfaced as an "st-key-" class either. */
+div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-models_page_marker"]) {
+    padding-top: 48px !important;
+}
 </style>
 """
 

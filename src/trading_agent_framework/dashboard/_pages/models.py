@@ -38,7 +38,8 @@ def page_models() -> None:
         _load_scenario_runs.clear()
         st.rerun()
 
-    st.title("Model benchmark")
+    with st.container(key="models_page_marker"):
+        st.title("Model benchmark")
     try:
         results_dir = br.resolve_results_dir(sys.argv[1:])
     except ConfigurationError as exc:
