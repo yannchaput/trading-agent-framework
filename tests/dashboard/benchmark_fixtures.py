@@ -10,6 +10,7 @@ from typing import Any
 LATEST = "20260927-132243"
 OLDER = "20260925-233646"
 IN_PROGRESS = "20260928-090000"  # newer than LATEST but has no summary.json yet
+SWITCHED = "20260926-100000"  # a third, standalone run for the run-switch regression test below
 SCENARIOS = ["reasoning.rsi_signal", "reasoning.headline_trap", "tools.limit_order"]
 
 
@@ -140,3 +141,23 @@ def build_results_tree(base: Path) -> Path:
     write_json(base / "notes" / "summary.json", [])
     (base / "README.txt").write_text("not a run\n", encoding="utf-8")
     return base
+
+
+def add_switched_run(base: Path) -> Path:
+    """A third, standalone complete run (older than LATEST, newer than OLDER) where BOTH
+    models ran and `gptoss` -- not `glm` -- wins overall. Added on top of `build_results_tree`
+    only by the test that needs it, so a run-switch test can assert the drill-down's default
+    model is genuinely recomputed for the newly-selected run (not the only valid choice, as
+    OLDER's single ran model would be, and not LATEST's winner either)."""
+    run_dir = base / SWITCHED
+    write_json(run_dir / "meta.json", _meta(
+        [("glm", "GLM-4.7-Flash", "glm-4.7-flash"), ("gptoss", "Gpt-OSS-20b", "gpt-oss-20b")],
+        "2026-09-26T10:00:00", "2026-09-26T11:00:00",
+    ))
+    write_json(run_dir / "summary.json", [
+        _summary("glm", "GLM-4.7-Flash", overall=0.40, mean_partial=0.5),
+        _summary("gptoss", "Gpt-OSS-20b", overall=0.88, mean_partial=0.95),
+    ])
+    _write_jsonl(run_dir / "glm.jsonl", [record("reasoning.rsi_signal", 1, passed=False, partial=0.4)])
+    _write_jsonl(run_dir / "gptoss.jsonl", [record("reasoning.rsi_signal", 1, passed=True, partial=0.95)])
+    return run_dir

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
-from tests.dashboard.benchmark_fixtures import LATEST, OLDER, build_results_tree, write_json
+from tests.dashboard.benchmark_fixtures import LATEST, OLDER, SCENARIOS, SWITCHED, add_switched_run, build_results_tree, write_json
 
 
 def _models_script() -> None:
@@ -54,6 +54,27 @@ def test_drill_down_defaults_to_the_winners_worst_scenario(results: Path, monkey
     assert any("1 malformed line" in caption.value for caption in at.caption)
 
 
+def test_drill_down_falls_back_to_the_first_scenario_when_the_default_model_has_no_scores(
+    results: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    # The default-selected model (the run's winner) has an empty `scenarios` dict --
+    # `_worst_scenario`'s `scored` list is then empty and must fall back to `scenarios[0]`
+    # instead of calling `min()` on an empty sequence.
+    summary_path = results / LATEST / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary = [{**entry, "scenarios": {}} if entry["key"] == "qwen3627b" else entry for entry in summary]
+    write_json(summary_path, summary)
+
+    at = _app(results, monkeypatch)
+
+    assert not at.exception
+    model, scenario = at.main.selectbox[0], at.main.selectbox[1]
+    assert model.value == "qwen3627b"
+    assert scenario.value == SCENARIOS[0]
+
+
 def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(
     results: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -63,6 +84,21 @@ def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(
     assert not at.exception
     assert any("Gpt-OSS-20b did not run" in warning.value for warning in at.warning)
     assert at.main.selectbox[0].value == "glm"
+
+
+def test_switching_runs_recomputes_the_default_model_for_the_new_run(
+    results: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # OLDER has only one *ran* model (glm), so a default-model assertion there can't tell
+    # "recomputed correctly" from "there was only one valid choice". SWITCHED has two ran
+    # models where gptoss -- not glm, and not LATEST's winner qwen3627b -- wins overall, so
+    # landing on "gptoss" here proves the selection was freshly computed for this run.
+    add_switched_run(results)
+    at = _app(results, monkeypatch)
+    at.sidebar.selectbox[0].set_value(SWITCHED).run()
+
+    assert not at.exception
+    assert at.main.selectbox[0].value == "gptoss"
 
 
 def test_a_run_where_no_model_ran_shows_a_warning_and_the_table(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
