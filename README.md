@@ -160,18 +160,16 @@ keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
 
 ### 📊 Strategy Dashboard   
 
-Compare backtesting runs across all strategies in a Streamlit web app.
+Compare backtesting runs across all strategies, and the local vLLM models benchmarked for the agents, in a dark-themed Streamlit web app with two tabs.
 
-**Run:** `uv run dashboard`
+**Run:** `uv run dashboard` (Models tab reads `../benchmark-vllm-models/results` by default; override with `uv run dashboard --benchmark-dir PATH`)
 
 **What it shows:**
-- **Scorecard page** — aggregate table of all strategies' latest runs with key metrics (CAGR, Sharpe, Sortino, Max DD, Win Days%, etc.)
-- **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table.
-- **Side-by-Side page** — compare two runs across all metrics.
-
-**Data sources:** Reads from `logs/` directory — auto-discovers backtesting runs by scanning for `*_tearsheet_metrics.json` files. No manual indexing needed.
-
-**Why:** Rapidly compare strategy performance, debug LLM agent behavior (token usage, latency, call counts), and validate that config changes (model, tools, prompts) produce measurable improvements.
+- **Backtesting tab** — the three pages below, reached from the sidebar:
+  - **Scorecard page** — aggregate table of all strategies' latest runs with key metrics (CAGR, Sharpe, Sortino, Max DD, Win Days%, etc.)
+  - **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table.
+  - **Side-by-Side page** — compare two runs across all metrics.
+- **Models tab** — pick a benchmark run (latest by default): best/fastest model cards, a summary table (overall and per-category scores, runs passed, text tool calls, latency, tokens/s), category bars, a quality-vs-speed scatter, a per-scenario heatmap, and a drill-down listing each repeat's checks with their pass/fail reasons.
 
 ### Feedbacks 💰 
 
