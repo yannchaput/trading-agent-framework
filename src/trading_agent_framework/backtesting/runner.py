@@ -39,10 +39,12 @@ from trading_agent_framework import __version__
 from trading_agent_framework.backtesting.broker import BacktestBroker
 from trading_agent_framework.backtesting.clock import BacktestClock
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY
+from trading_agent_framework.backtesting.ledger import FillRecord
 from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderSide
 from trading_agent_framework.utils.errors import BacktestError
 from trading_agent_framework.utils.log import setup_strategy_logging
 
@@ -334,6 +336,7 @@ def _run(
         "backtest_time_seconds": elapsed,
         "timestep": timestep,
         "sleeptime": strategy.sleeptime,
+        "fees": _fee_totals(broker.ledger.fills, fees),
         "slippage": float(slippage),
         "warmup_trading_days": warmup_trading_days,
         "benchmark_symbol": benchmark,
@@ -345,6 +348,18 @@ def _run(
     report.write_settings(run_dir, settings)
 
     return BacktestResult(run_dir=run_dir, settings=settings, metrics=computed_metrics)
+
+
+def _fee_totals(fills: Sequence[FillRecord], fees: TradingFeeFactory | None) -> dict[str, Any]:
+    """Per-side order count, shares, traded value and fees over the run (floats: report boundary)."""
+    totals: dict[str, Any] = {"broker": None if fees is None else fees.broker.value}
+    for side in (OrderSide.BUY, OrderSide.SELL):
+        side_fills = [fill for fill in fills if fill.side is side]
+        totals[f"{side.value}_orders"] = len(side_fills)
+        totals[f"{side.value}_shares"] = float(sum((fill.filled_quantity for fill in side_fills), Decimal(0)))
+        totals[f"{side.value}_value"] = float(sum((fill.price * fill.filled_quantity for fill in side_fills), Decimal(0)))
+        totals[f"{side.value}_fees"] = float(sum((fill.trade_cost for fill in side_fills), Decimal(0)))
+    return totals
 
 
 def _session_equity_series(session_samples: Sequence[EquitySample]) -> pd.Series:

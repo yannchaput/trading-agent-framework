@@ -1,6 +1,6 @@
 """`CrossMomentumStrategy.rebalance` cash budgeting.
 
-Market orders fill at a later bar's open (plus commission), so the cash the strategy computes at decision
+Market orders fill at a later bar's open (plus fees), so the cash the strategy computes at decision
 time is only an estimate. `cash_buffer_pct` holds a slice of it back so the buys still land.
 """
 

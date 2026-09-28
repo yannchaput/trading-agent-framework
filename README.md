@@ -129,8 +129,13 @@ not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
 `backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
 keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
 `benchmark_symbol` to `"SPY"` if neither is set). `run_backtesting` also accepts
-`data_source`, `timestep` (`"day"` by default), `commission`, `slippage` and
+`data_source`, `timestep` (`"day"` by default), `fees`, `slippage` and
 `risk_free_rate` keyword arguments.
+
+Fees default to the broker named by `BROKER` in the backtest env file (`alpaca` when unset,
+`ibkr`): `brokers/fees.py`'s `TradingFeeFactory` charges each order the broker's commission
+(Alpaca $0, IBKR Pro Fixed max($1, $0.005/share)) plus the regulatory fees every broker passes
+on (SEC and FINRA TAF on sells, CAT on both sides). The run's totals are in `settings.json["fees"]`.
 
 - **Data source**: defaults to `YahooBacktestData(start, end)` -- free daily OHLCV, no
   API key, requires the `backtesting-yahoo` extra (`uv sync --extra backtesting-yahoo`).

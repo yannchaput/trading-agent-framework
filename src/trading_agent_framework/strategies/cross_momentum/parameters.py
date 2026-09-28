@@ -21,7 +21,7 @@ CONFIG = {
     "max_position_pct": 0.10,
     "min_position_pct": 0.02,
     # Share of the estimated buying cash never spent on a rebalance. Orders are sized at the last close
-    # but fill at a later open (plus commission), so the estimate is never exact; this reserve lets the buys land.
+    # but fill at a later open (plus fees), so the estimate is never exact; this reserve lets the buys land.
     "cash_buffer_pct": 0.05,
     # ── Volatility sizing ───────────────────────
     "volatility_window": 20,

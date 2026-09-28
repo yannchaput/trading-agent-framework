@@ -17,6 +17,8 @@ from tests.fakes import FakeBroker, FakeClock
 
 from trading_agent_framework.backtesting.runner import BacktestResult, run_backtest
 from trading_agent_framework.backtesting.warmup import warmup_calendar_days
+from trading_agent_framework.brokers.fees import TradingFeeFactory
+from trading_agent_framework.config.env import BrokerKind
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MarketSession
@@ -64,6 +66,13 @@ class BuyOnceStrategy(Strategy):
     def on_trading_iteration(self) -> None:
         if self.first_iteration:
             self.submit_order(self.create_order(AAPL, 5, "buy"))
+
+
+class IdleStrategy(Strategy):
+    sleeptime = "1D"
+
+    def on_trading_iteration(self) -> None:
+        pass
 
 
 def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
@@ -740,3 +749,49 @@ def test_run_backtest_captures_warnings_logged_during_the_eager_data_load(tmp_pa
 
     log_content = (result.run_dir / "backtest.log").read_text(encoding="utf-8")
     assert "No Yahoo data for GONE" in log_content
+
+
+def _four_session_source() -> tuple[FakeBacktestDataSource, list[MarketSession]]:
+    sessions = _sessions(date(2026, 1, 5), 4)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(AAPL, _bars(sessions, [150.0, 151.0, 152.0, 153.0]))
+    source.set_bars(SPY, _bars(sessions, [400.0, 402.0, 401.0, 405.0]))
+    return source, sessions
+
+
+def test_run_backtest_records_fee_totals_in_settings(tmp_path: Path) -> None:
+    source, sessions = _four_session_source()
+    start = sessions[0].open - timedelta(hours=1)
+    result = run_backtest(
+        _placeholder_strategy(BuyOnceStrategy, tmp_path, start), start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        fees=TradingFeeFactory(BrokerKind.IBKR), slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    [fill] = pd.read_parquet(result.run_dir / "trades.parquet").to_dict("records")
+    expected = {
+        "broker": "ibkr", "buy_orders": 1, "sell_orders": 0,
+        "buy_shares": 5.0, "sell_shares": 0.0,
+        "buy_value": pytest.approx(fill["price"] * 5), "sell_value": 0.0,
+        "buy_fees": 1.01, "sell_fees": 0.0,  # IBKR: max(1, 5 * 0.005) + CAT 0.000015
+    }
+    assert result.settings["fees"] == expected
+    assert json.loads((result.run_dir / "settings.json").read_text())["fees"] == expected
+    assert "commission" not in result.settings
+
+
+def test_run_backtest_records_zero_fee_totals_without_trades(tmp_path: Path) -> None:
+    source, sessions = _four_session_source()
+    start = sessions[0].open - timedelta(hours=1)
+    result = run_backtest(
+        _placeholder_strategy(IdleStrategy, tmp_path, start), start=start, end=sessions[-1].close,
+        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
+        slippage=Decimal(0), risk_free_rate=0.0,
+    )
+
+    assert result.settings["fees"] == {
+        "broker": None, "buy_orders": 0, "sell_orders": 0,
+        "buy_shares": 0.0, "sell_shares": 0.0, "buy_value": 0.0, "sell_value": 0.0,
+        "buy_fees": 0.0, "sell_fees": 0.0,
+    }
