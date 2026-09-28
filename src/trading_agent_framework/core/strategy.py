@@ -542,6 +542,7 @@ class Strategy:
         if resolved_start is None or resolved_end is None:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
+        resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
         warmup_start = resolved_start - timedelta(days=warmup_calendar_days(warmup_trading_days))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)
@@ -558,7 +559,7 @@ class Strategy:
             preload_assets=preload_assets,
             benchmark=benchmark or self.benchmark_symbol,
             timestep=timestep,
-            fees=fees if fees is not None else TradingFeeFactory.from_env(),
+            fees=resolved_fees,
             slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,

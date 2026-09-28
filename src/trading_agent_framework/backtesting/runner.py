@@ -129,6 +129,9 @@ def run_backtest(
     universe and you want it fetched only once -- `YahooBacktestData.load()` skips
     already-cached assets, but the ABC contract doesn't require every source to.
 
+    `fees` (default `None`) is the `TradingFeeFactory` charged on every fill; `None` charges nothing. `Strategy.run_backtesting`
+    resolves it from `BROKER` when omitted, so only direct callers of `run_backtest` see the no-fee default.
+
     `news_source` is handed to the `BacktestBroker` (default: an Alpaca provider built lazily from the env credentials).
 
     `agent_telemetry` (default `True`) records every LLM call the strategy's agents make: per-agent totals go

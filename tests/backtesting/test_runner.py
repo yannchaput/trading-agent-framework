@@ -15,12 +15,14 @@ import pytest
 from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock
 
-from trading_agent_framework.backtesting.runner import BacktestResult, run_backtest
+from trading_agent_framework.backtesting.ledger import FillRecord
+from trading_agent_framework.backtesting.runner import BacktestResult, _fee_totals, run_backtest
 from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import BrokerKind
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.utils.clock import MarketSession
 from trading_agent_framework.utils.errors import BacktestError
 
@@ -794,4 +796,26 @@ def test_run_backtest_records_zero_fee_totals_without_trades(tmp_path: Path) -> 
         "broker": None, "buy_orders": 0, "sell_orders": 0,
         "buy_shares": 0.0, "sell_shares": 0.0, "buy_value": 0.0, "sell_value": 0.0,
         "buy_fees": 0.0, "sell_fees": 0.0,
+    }
+
+
+def _fill(side: OrderSide, quantity: str, price: str, fee: str) -> FillRecord:
+    return FillRecord(
+        time=datetime(2026, 1, 5, 16, tzinfo=UTC), identifier="x", symbol="AAPL", side=side,
+        order_type=OrderType.MARKET, quantity=Decimal(quantity), filled_quantity=Decimal(quantity),
+        price=Decimal(price), trade_cost=Decimal(fee), trade_slippage=Decimal(0),
+    )
+
+
+def test_fee_totals_sum_each_side_separately() -> None:
+    fills = [
+        _fill(OrderSide.BUY, "10", "100", "1.01"),
+        _fill(OrderSide.BUY, "5", "102", "1.01"),
+        _fill(OrderSide.SELL, "15", "110", "2.05"),
+    ]
+
+    assert _fee_totals(fills, TradingFeeFactory(BrokerKind.ALPACA)) == {
+        "broker": "alpaca",
+        "buy_orders": 2, "buy_shares": 15.0, "buy_value": 1510.0, "buy_fees": 2.02,
+        "sell_orders": 1, "sell_shares": 15.0, "sell_value": 1650.0, "sell_fees": 2.05,
     }

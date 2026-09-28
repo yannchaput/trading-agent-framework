@@ -66,6 +66,23 @@ def test_negative_inputs_are_rejected(field: str) -> None:
         ALPACA.fees(**kwargs)
 
 
+@pytest.mark.parametrize("field", ["buy_shares", "sell_shares", "buy_value", "sell_value"])
+@pytest.mark.parametrize("bad", ["NaN", "Infinity"])
+def test_non_finite_inputs_are_rejected(field: str, bad: str) -> None:
+    kwargs = {"buy_shares": D(0), "sell_shares": D(0), "buy_value": D(0), "sell_value": D(0), field: D(bad)}
+    with pytest.raises(ValueError, match=field):
+        ALPACA.fees(**kwargs)
+
+
+def test_an_amount_that_is_already_a_whole_cent_is_not_rounded_up_again() -> None:
+    assert _buy(ALPACA, 10000, 0).buy == D("0.03")  # CAT 10,000 x 0.000003 is exactly 0.03
+
+
+@pytest.mark.parametrize("shares,expected", [(199, D("1.00")), (200, D("1.00")), (201, D("1.005"))])
+def test_the_ibkr_commission_crosses_over_from_the_minimum_at_200_shares(shares: int, expected: Decimal) -> None:
+    assert fees.COMMISSIONS[BrokerKind.IBKR](D(shares)) == expected
+
+
 def test_from_env_defaults_to_alpaca() -> None:
     assert TradingFeeFactory.from_env({}).broker is BrokerKind.ALPACA
 

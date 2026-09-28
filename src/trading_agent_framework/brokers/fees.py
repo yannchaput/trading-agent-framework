@@ -72,8 +72,8 @@ class TradingFeeFactory:
             ("buy_shares", buy_shares), ("sell_shares", sell_shares),
             ("buy_value", buy_value), ("sell_value", sell_value),
         ):
-            if value < 0:
-                raise ValueError(f"{name} must not be negative, got {value}")
+            if not value.is_finite() or value < 0:
+                raise ValueError(f"{name} must be a finite, non-negative number, got {value}")
         buy = sell = Decimal(0)
         if buy_shares > 0:
             buy = _ceil_cent(self._commission(buy_shares) + CAT_FEE_PER_SHARE * buy_shares)

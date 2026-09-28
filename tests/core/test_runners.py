@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -296,3 +296,19 @@ def test_run_backtesting_resolves_fees_from_broker(tmp_path: Path, monkeypatch: 
     assert isinstance(strategy.broker, BacktestBroker)
     assert strategy.broker._fees is not None
     assert strategy.broker._fees.broker is BrokerKind.IBKR
+
+
+def test_run_backtesting_rejects_an_unknown_broker_before_building_the_data_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.utils.errors import ConfigurationError
+
+    built: list[object] = []
+    monkeypatch.setenv("BROKER", "foo")
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    with pytest.raises(ConfigurationError, match="Unknown BROKER"):
+        strategy.run_backtesting(
+            start=datetime(2026, 1, 5, tzinfo=UTC), end=datetime(2026, 1, 9, tzinfo=UTC),
+            data_source=lambda start, end: built.append((start, end)), benchmark="SPY",  # type: ignore[arg-type]
+        )
+
+    assert built == []
