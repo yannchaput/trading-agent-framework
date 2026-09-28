@@ -115,7 +115,8 @@ def _int_setting(source: Mapping[str, str], name: str, default: int) -> int:
 
 
 class BrokerKind(StrEnum):
-    """Which broker trades in paper/live mode (`BROKER`); meaningless in backtesting."""
+    """Which broker trades in paper/live mode (`BROKER`). In backtesting it only picks the
+    simulated fee schedule (`brokers/fees.py`); the broker itself is always `BacktestBroker`."""
 
     ALPACA = "alpaca"
     IBKR = "ibkr"

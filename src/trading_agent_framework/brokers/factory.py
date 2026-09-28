@@ -1,7 +1,8 @@
 """Paper/live broker selection from the strategy env file (`BROKER=alpaca|ibkr`).
 
-Backtests never come here (`main.py` gives them a `PlaceholderBroker`). Broker classes are
-imported inside the builders, so importing this module stays as light as `brokers/__init__.py`.
+Backtests never come here (`main.py` gives them a `PlaceholderBroker`); they read `BROKER` only
+for fees, via `brokers/fees.py`. Broker classes are imported inside the builders, so importing
+this module stays as light as `brokers/__init__.py`.
 """
 
 from __future__ import annotations
