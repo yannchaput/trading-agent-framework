@@ -318,6 +318,17 @@ class CrossMomentumStrategy(Strategy):
             )
         return selected, all_ranks
 
+    def _price_or_zero(self, symbol: str) -> float:
+        """Last price for valuing a holding, or 0.0 if the lookup fails or returns nothing.
+
+        A failed quote must not abort a rebalance halfway through, after its sells are already submitted.
+        """
+        try:
+            return float(self.get_last_price(symbol) or 0.0)
+        except Exception as e:
+            self.log_warning(f"No price for {symbol}: {e}")
+            return 0.0
+
     def rebalance(self, target: list[dict], all_ranks: dict[str, int]) -> None:
         """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in SHV.
 
@@ -384,12 +395,12 @@ class CrossMomentumStrategy(Strategy):
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
             else:
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
-                hysteresis_value += float(pos.quantity) * float(self.get_last_price(symbol) or 0.0)
+                hysteresis_value += float(pos.quantity) * self._price_or_zero(symbol)
 
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
         stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
         parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
-        parking_price = float(self.get_last_price(parking_symbol) or 0.0)
+        parking_price = self._price_or_zero(parking_symbol)
         parking_value = float(parking_position.quantity) * parking_price if parking_position else 0.0
         if parking_price <= 0:
             self.log_warning(f"Parking: no price for {parking_symbol} — no parking orders this week")

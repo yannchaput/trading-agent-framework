@@ -8,12 +8,13 @@ from types import SimpleNamespace
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.utils.errors import BrokerError
 
 
 class FakeStrategy:
     """Just enough of `Strategy` for `rebalance`; records the orders it places."""
 
-    def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=()):
+    def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=()):
         self.parameters = {
             "sell_rank_threshold": 35,
             "cash_buffer_pct": cash_buffer_pct,
@@ -23,6 +24,7 @@ class FakeStrategy:
         self._positions = list(positions)
         self._last_prices = last_prices or {}
         self._reject = set(reject)
+        self._price_errors = set(price_errors)
         self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
         self.orders = []
         self.warnings: list[str] = []
@@ -34,6 +36,8 @@ class FakeStrategy:
         return self._cash
 
     def get_last_price(self, symbol):
+        if symbol in self._price_errors:
+            raise BrokerError(f"no quote for {symbol}")
         return self._last_prices.get(symbol)
 
     def create_order(self, symbol, quantity, side, **kwargs):
@@ -43,6 +47,8 @@ class FakeStrategy:
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
         self.orders.append(order)
+
+    _price_or_zero = CrossMomentumStrategy._price_or_zero
 
     def log_info(self, *args, **kwargs): ...
 
@@ -198,3 +204,23 @@ def test_backtests_preload_the_parking_symbol_once():
     assert [a.symbol for a in assets] == ["AAA", "SHV", "BBB"]
     fake.vars.universe = ["AAA"]
     assert CrossMomentumStrategy._backtest_preload_assets(fake) == [Asset(symbol="AAA"), Asset(symbol="SHV")]
+
+
+def test_a_failing_shv_quote_skips_parking_but_not_the_stock_orders():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, price_errors={"SHV"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert [o for o in fake.orders if o.symbol == "SHV"] == []
+    assert any("SHV" in message for message in fake.warnings)
+
+
+def test_a_failing_quote_for_a_hysteresis_holding_does_not_abort_the_rebalance():
+    prices = {"AAA": 100.0, "HYS": 50.0, "SHV": 50.0}
+    fake = FakeStrategy(cash=800.0, positions=[_held("HYS", 4.0)], last_prices=prices, price_errors={"HYS"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1, "HYS": 30})
+
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert any("HYS" in message for message in fake.warnings)
