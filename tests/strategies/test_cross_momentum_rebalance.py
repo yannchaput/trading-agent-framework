@@ -6,6 +6,7 @@ time is only an estimate. `cash_buffer_pct` holds a slice of it back so the buys
 
 from types import SimpleNamespace
 
+from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 
 
@@ -187,3 +188,13 @@ def test_a_rejected_shv_buy_is_logged_and_does_not_raise():
 
     assert _orders(fake, "AAA", "buy") == [3.0]
     assert any("SHV" in message for message in fake.warnings)
+
+
+def test_backtests_preload_the_parking_symbol_once():
+    fake = SimpleNamespace(parameters={"parking": {"symbol": "SHV"}}, vars=SimpleNamespace(universe=["AAA", "SHV", "BBB"]))
+
+    assets = CrossMomentumStrategy._backtest_preload_assets(fake)
+
+    assert [a.symbol for a in assets] == ["AAA", "SHV", "BBB"]
+    fake.vars.universe = ["AAA"]
+    assert CrossMomentumStrategy._backtest_preload_assets(fake) == [Asset(symbol="AAA"), Asset(symbol="SHV")]

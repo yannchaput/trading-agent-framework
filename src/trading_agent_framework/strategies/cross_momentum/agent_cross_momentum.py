@@ -14,7 +14,8 @@ Implements:
   5. Portfolio risk overlay (beta/vol/corr) — first exposure leg
   6. Fast/slow volatility targeting (equity-curve-based) — second exposure leg
   7. Combined via min(risk_exposure, vol_exposure) — most conservative wins
-  8. Hysteresis: sell below rank 35, buy top 20
+  8. Hysteresis: sell below rank 35, buy top 20; trim target positions above the ±20% band
+  9. Park the de-risked capital (everything but the cash reserve) in SHV instead of idle cash
 """
 
 import calendar
@@ -73,7 +74,8 @@ class CrossMomentumStrategy(Strategy):
     using both a 20-day (fast) and 63-day (slow) window, then takes the
     more conservative estimate via max(vol_20d, 0.75 * vol_63d). Combined
     with the portfolio risk overlay via min() — the most conservative leg
-    determines the final exposure multiplier.
+    determines the final exposure multiplier. Held positions are trimmed to
+    the scaled target, and the capital taken out of stocks is parked in SHV.
     """
 
     # ── Backtesting params ───────────────────────────────────────────────────────
@@ -584,6 +586,11 @@ class CrossMomentumStrategy(Strategy):
         # Step 8: Rebalance
         self.rebalance(target, all_ranks)
 
+    def _backtest_preload_assets(self) -> list[Asset]:
+        """The universe plus the parking symbol, each once: what a backtest loads up front."""
+        symbols = list(dict.fromkeys([*self.vars.universe, self.parameters["parking"]["symbol"]]))
+        return [Asset(symbol=symbol) for symbol in symbols]
+
     def run_backtesting(self):
         """Run the strategy in backtesting mode."""
         if self.vars.history_file_path.exists():
@@ -601,7 +608,7 @@ class CrossMomentumStrategy(Strategy):
             end=self.parameters["backtesting_end"],
             budget=self.parameters["budget"],
             data_source=YahooBacktestData,  # AlpacaBacktestData has no enough history, approximatively 6 year history
-            preload_assets=[Asset(symbol=ticker) for ticker in self.vars.universe],  # preload the ticker universe in memory
+            preload_assets=self._backtest_preload_assets(),  # preload the ticker universe and the parking ETF in memory
             benchmark=self.parameters["benchmark_symbol"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
         )
