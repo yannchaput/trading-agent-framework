@@ -20,6 +20,7 @@ from trading_agent_framework.backtesting import fills
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
 from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord, Ledger
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
@@ -68,7 +69,7 @@ class BacktestBroker(Broker):
         clock: MarketClock,
         budget: Decimal,
         timestep: str = "day",
-        commission: Decimal = Decimal(0),
+        fees: TradingFeeFactory | None = None,
         slippage: Decimal = Decimal(0),
         tracker: OrderTracker | None = None,
         news_source: NewsProvider | None = None,
@@ -76,7 +77,7 @@ class BacktestBroker(Broker):
         super().__init__(strategy_name, tracker, clock=clock, is_paper=True)
         self._data_source = data_source
         self._timestep = timestep
-        self._commission = commission
+        self._fees = fees
         self._slippage = slippage
         self._cash = budget
         self._positions: dict[Asset, Position] = {}
@@ -347,11 +348,11 @@ class BacktestBroker(Broker):
             price = self._estimated_price(order, cutoff)
             if price is None:
                 continue
-            _, commission_cost, notional = self._execution_terms(order, price)
+            _, fee, notional = self._execution_terms(order, price)
             if order.side is OrderSide.BUY:
-                cash -= notional + commission_cost
+                cash -= notional + fee
             else:
-                cash += notional - commission_cost
+                cash += notional - fee
         return _Projection(cash=cash, pending_sells=pending_sells)
 
     def _projected_rejection_reason(self, order: Order) -> str | None:
@@ -380,12 +381,12 @@ class BacktestBroker(Broker):
         price = self._estimated_price(order, now)
         if price is None:
             return None  # unpriceable: let it through and let the fill-time check decide
-        _, commission_cost, notional = self._execution_terms(order, price)
-        needed = notional + commission_cost
+        _, fee, notional = self._execution_terms(order, price)
+        needed = notional + fee
         if needed > projection.cash:
             return (
                 f"insufficient buying power: buying {order.quantity} {symbol} needs about "
-                f"{needed} (commission included), buying power is {projection.cash}"
+                f"{needed} (fees included), buying power is {projection.cash}"
             )
         return None
 
@@ -475,22 +476,30 @@ class BacktestBroker(Broker):
         return True
 
     def _execution_terms(self, order: Order, raw_price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-        """`(execution_price, commission_cost, notional)` for filling `order` at `raw_price`."""
+        """`(execution_price, fee, notional)` for filling `order` at `raw_price`."""
         assert order.quantity is not None  # notional orders are rejected at submission
-        execution_price, commission_per_share = fills.apply_commission_and_slippage(
-            raw_price, order.side, commission=self._commission, slippage=self._slippage
-        )
-        return execution_price, commission_per_share * order.quantity, execution_price * order.quantity
+        execution_price = fills.apply_slippage(raw_price, order.side, slippage=self._slippage)
+        notional = execution_price * order.quantity
+        return execution_price, self._fee(order.side, order.quantity, notional), notional
+
+    def _fee(self, side: OrderSide, quantity: Decimal, notional: Decimal) -> Decimal:
+        """The broker's fee for one order -- a backtest fill is always the whole order."""
+        if self._fees is None:
+            return Decimal(0)
+        zero = Decimal(0)
+        if side is OrderSide.BUY:
+            return self._fees.fees(buy_shares=quantity, sell_shares=zero, buy_value=notional, sell_value=zero).buy
+        return self._fees.fees(buy_shares=zero, sell_shares=quantity, buy_value=zero, sell_value=notional).sell
 
     def _rejection_reason(self, order: Order, raw_price: Decimal) -> str | None:
         """Why filling `order` at `raw_price` is impossible for a long-only cash account, else `None`."""
         assert order.quantity is not None
         symbol = order.asset.symbol
-        _, commission_cost, notional = self._execution_terms(order, raw_price)
+        _, fee, notional = self._execution_terms(order, raw_price)
         if order.side is OrderSide.BUY:
-            needed = notional + commission_cost
+            needed = notional + fee
             if needed > self._cash:
-                return f"insufficient cash: buying {order.quantity} {symbol} needs {needed} (commission included), cash is {self._cash}"
+                return f"insufficient cash: buying {order.quantity} {symbol} needs {needed} (fees included), cash is {self._cash}"
             return None
         existing = self._positions.get(order.asset)
         held = existing.quantity if existing is not None and existing.side is PositionSide.LONG else Decimal(0)
@@ -500,17 +509,17 @@ class BacktestBroker(Broker):
 
     def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
         assert order.quantity is not None  # notional orders are rejected at submission
-        execution_price, commission_cost, notional = self._execution_terms(order, raw_price)
+        execution_price, fee, notional = self._execution_terms(order, raw_price)
         quantity = order.quantity
         if order.side is OrderSide.BUY:
-            self._cash -= notional + commission_cost
+            self._cash -= notional + fee
         else:
-            self._cash += notional - commission_cost
+            self._cash += notional - fee
         self._apply_to_position(order.asset, order.side, quantity, execution_price)
         self.ledger.record_fill(FillRecord(
             time=bar_time, identifier=order.identifier, symbol=order.asset.symbol,
             side=order.side, order_type=order.order_type, quantity=order.quantity,
-            filled_quantity=quantity, price=execution_price, trade_cost=commission_cost,
+            filled_quantity=quantity, price=execution_price, trade_cost=fee,
             trade_slippage=(execution_price - raw_price).copy_abs(),
         ))
         order.avg_fill_price = execution_price

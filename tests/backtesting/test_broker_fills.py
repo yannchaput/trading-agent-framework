@@ -9,6 +9,8 @@ from tests.backtesting.fakes import FakeBacktestDataSource, make_close_indexed_f
 
 from trading_agent_framework.backtesting.broker import BacktestBroker, _PendingOrder
 from trading_agent_framework.backtesting.clock import BacktestClock
+from trading_agent_framework.brokers.fees import TradingFeeFactory
+from trading_agent_framework.config.env import BrokerKind
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
@@ -18,6 +20,9 @@ AAPL = Asset("AAPL")
 DAY1 = datetime(2026, 1, 5, 16, tzinfo=UTC)
 DAY2 = DAY1 + timedelta(days=1)
 DAY3 = DAY2 + timedelta(days=1)
+
+IBKR_FEES = TradingFeeFactory(BrokerKind.IBKR)
+ALPACA_FEES = TradingFeeFactory(BrokerKind.ALPACA)
 
 
 def _broker_with_two_bars(budget: Decimal = Decimal(10000)) -> BacktestBroker:
@@ -112,23 +117,24 @@ def test_fill_records_a_fill_in_the_ledger() -> None:
     assert record.price == Decimal("151.0")
 
 
-def test_commission_and_slippage_reduce_cash_beyond_the_raw_notional() -> None:
+def test_fees_and_slippage_reduce_cash_beyond_the_raw_notional() -> None:
     source = FakeBacktestDataSource()
     df = make_close_indexed_frame([100.0, 100.0], start=DAY1, freq="1D")
     source.set_bars(AAPL, df)
     clock = BacktestClock(start=DAY1, sessions=[])
     broker = BacktestBroker(
         "momentum", data_source=source, clock=clock, budget=Decimal(10000),
-        commission=Decimal("0.01"), slippage=Decimal("0.01"),
+        fees=IBKR_FEES, slippage=Decimal("0.01"),
     )
     clock.on_advance = broker.on_advance
     broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
     clock._now = DAY2
     broker.on_advance(DAY1, DAY2)
 
-    # execution_price = 100 * 1.01 = 101; commission = 101 * 0.01 = 1.01/share
-    expected_cash = Decimal(10000) - (Decimal(10) * Decimal("101.00") + Decimal(10) * Decimal("1.0100"))
+    # execution_price = 100 * 1.01 = 101; IBKR buy of 10 shares = max(1, 0.05) + CAT 0.00003 -> 1.01
+    expected_cash = Decimal(10000) - (Decimal(10) * Decimal("101.00") + Decimal("1.01"))
     assert broker._cash == expected_cash
+    assert broker.ledger.fills[0].trade_cost == Decimal("1.01")
 
 
 def test_unfilled_limit_order_stays_pending_and_is_retried_next_bar() -> None:
@@ -234,11 +240,11 @@ def test_reducing_a_long_position_keeps_it_long_with_smaller_quantity() -> None:
 # --- long-only cash account: unaffordable buys and unheld sells are rejected at fill time ------
 
 
-def _account(closes: list[float], *, budget: Decimal, commission: Decimal = Decimal(0)) -> tuple[BacktestBroker, BacktestClock]:
+def _account(closes: list[float], *, budget: Decimal, fees: TradingFeeFactory | None = None) -> tuple[BacktestBroker, BacktestClock]:
     source = FakeBacktestDataSource()
     source.set_bars(AAPL, make_close_indexed_frame(closes, start=DAY1, freq="1D"))
     clock = BacktestClock(start=DAY1, sessions=[])
-    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=budget, commission=commission)
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=budget, fees=fees)
     clock.on_advance = broker.on_advance
     return broker, clock
 
@@ -285,21 +291,55 @@ def test_a_buy_costing_exactly_the_available_cash_fills_and_one_cent_more_is_rej
     assert short._cash == Decimal("1509.99")
 
 
-def test_commission_counts_toward_the_cash_a_buy_needs() -> None:
-    # 10 shares at 100 = 1000 notional + 1% commission (10) = 1010 needed. At flat prices the
-    # submission-time estimate equals the fill price, so the budget that covers only the notional
-    # is now turned away at submission -- but the invariant under test is the same one.
-    covered, covered_clock = _account([100.0, 100.0], budget=Decimal(1010), commission=Decimal("0.01"))
+def test_fees_count_toward_the_cash_a_buy_needs() -> None:
+    # 10 shares at 100 = 1000 notional + IBKR's 1.01 buy fee = 1001.01 needed. At flat prices the
+    # submission-time estimate equals the fill price, so a budget that covers only the notional
+    # is turned away at submission.
+    covered, covered_clock = _account([100.0, 100.0], budget=Decimal("1001.01"), fees=IBKR_FEES)
     covered_order = covered.submit_order(_order(OrderSide.BUY, 10))
     _advance(covered, covered_clock, DAY1, DAY2)
 
-    notional_only, _ = _account([100.0, 100.0], budget=Decimal(1005), commission=Decimal("0.01"))
+    notional_only, _ = _account([100.0, 100.0], budget=Decimal(1001), fees=IBKR_FEES)
 
     assert covered_order.status is OrderStatus.FILL
     assert covered._cash == Decimal(0)
-    with pytest.raises(OrderValidationError, match="needs about 1010"):  # 1000 fits, the commission does not
+    with pytest.raises(OrderValidationError, match=r"needs about 1001\.01 \(fees included\)"):
         notional_only.submit_order(_order(OrderSide.BUY, 10))
-    assert notional_only._cash == Decimal(1005)
+    assert notional_only._cash == Decimal(1001)
+
+
+def test_a_sell_credits_the_notional_minus_its_own_larger_fee() -> None:
+    # Alpaca: a buy pays only CAT (0.00003 -> 0.01); a sell adds SEC + TAF
+    # (0.0206 + 0.00195 + 0.00003 = 0.02258 -> 0.03).
+    broker, clock = _account([100.0, 100.0, 100.0], budget=Decimal(10000), fees=ALPACA_FEES)
+    broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY1, DAY2)
+    broker.submit_order(_order(OrderSide.SELL, 10))
+    _advance(broker, clock, DAY2, DAY3)
+
+    assert [fill.trade_cost for fill in broker.ledger.fills] == [Decimal("0.01"), Decimal("0.03")]
+    assert broker._cash == Decimal(10000) - Decimal("0.01") - Decimal("0.03")
+
+
+@pytest.mark.parametrize("leftover,accepted", [(Decimal("2.04"), True), (Decimal("2.03"), False)])
+def test_a_buy_funded_by_a_sell_is_charged_both_fees(leftover: Decimal, accepted: bool) -> None:
+    # Hold 10 shares (bought for 1000 + 1.01 IBKR fee) with `leftover` cash, then sell them and
+    # buy 10 again in the same iteration. The pending sell credits 1000 - its 1.03 fee
+    # (1 + SEC 0.0206 + TAF 0.00195 + CAT 0.00003 -> 1.03), and the buy needs 1001.01, so it fits
+    # only when leftover >= 2.04. Without netting the sell fee, 2.03 would wrongly fit too.
+    broker, clock = _account([100.0, 100.0, 100.0], budget=Decimal("1001.01") + leftover, fees=IBKR_FEES)
+    broker.submit_order(_order(OrderSide.BUY, 10))
+    _advance(broker, clock, DAY1, DAY2)
+    assert broker._cash == leftover
+
+    broker.submit_order(_order(OrderSide.SELL, 10))
+    if accepted:
+        broker.submit_order(_order(OrderSide.BUY, 10))
+        _advance(broker, clock, DAY2, DAY3)
+        assert broker._cash == Decimal(0)  # 2.04 + (1000 - 1.03) - (1000 + 1.01)
+    else:
+        with pytest.raises(OrderValidationError, match=r"needs about 1001\.01 \(fees included\)"):
+            broker.submit_order(_order(OrderSide.BUY, 10))
 
 
 def test_a_buy_funded_by_a_sell_filling_on_the_same_bar_fills() -> None:

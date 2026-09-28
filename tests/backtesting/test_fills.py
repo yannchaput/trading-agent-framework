@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from trading_agent_framework.backtesting.fills import Bar, apply_commission_and_slippage, evaluate_fill
+from trading_agent_framework.backtesting.fills import Bar, apply_slippage, evaluate_fill
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 
 D = Decimal
@@ -109,20 +109,12 @@ def test_limit_order_without_a_limit_price_raises() -> None:
 
 
 @pytest.mark.parametrize(
-    "side,commission,slippage,expected_price,expected_commission",
+    "side,slippage,expected_price",
     [
-        (OrderSide.BUY, D(0), D(0), D(100), D(0)),
-        (OrderSide.BUY, D("0.001"), D(0), D(100), D("0.1")),  # 10bps of 100
-        (OrderSide.BUY, D(0), D("0.01"), D(101), D(0)),  # buys pay more
-        (OrderSide.SELL, D(0), D("0.01"), D(99), D(0)),  # sells receive less
+        (OrderSide.BUY, D(0), D(100)),
+        (OrderSide.BUY, D("0.01"), D(101)),  # buys pay more
+        (OrderSide.SELL, D("0.01"), D(99)),  # sells receive less
     ],
 )
-def test_commission_and_slippage(
-    side: OrderSide, commission: Decimal, slippage: Decimal,
-    expected_price: Decimal, expected_commission: Decimal,
-) -> None:
-    price, commission_per_share = apply_commission_and_slippage(
-        D(100), side, commission=commission, slippage=slippage
-    )
-    assert price == expected_price
-    assert commission_per_share == expected_commission
+def test_slippage(side: OrderSide, slippage: Decimal, expected_price: Decimal) -> None:
+    assert apply_slippage(D(100), side, slippage=slippage) == expected_price

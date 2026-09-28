@@ -276,3 +276,23 @@ def test_a_paper_run_tags_its_agent_calls_with_its_own_log_directory_name(tmp_pa
     [run_dir] = (tmp_path / "logs" / "momentum" / "paper").glob("*_paper")
     rows = sqlite3.connect(tmp_path / "memory" / "momentum" / "paper" / "llm_stats.sqlite").execute("SELECT run_id, agent FROM llm_calls").fetchall()
     assert rows == [(run_dir.name, "trader")]
+
+
+def test_run_backtesting_resolves_fees_from_broker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests.backtesting.fakes import FakeBacktestDataSource, make_close_indexed_frame
+
+    from trading_agent_framework.backtesting.broker import BacktestBroker
+    from trading_agent_framework.config.env import BrokerKind
+
+    sessions = weekday_sessions(date(2026, 1, 5), 3)
+    source = FakeBacktestDataSource()
+    source.set_sessions(sessions)
+    source.set_bars(Asset("SPY"), make_close_indexed_frame([150.0, 151.0, 152.0], start=sessions[0].close, freq="1D"))
+    monkeypatch.setenv("BROKER", "ibkr")
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    strategy.run_backtesting(start=sessions[0].open, end=sessions[-1].close, data_source=source, benchmark="SPY")
+
+    assert isinstance(strategy.broker, BacktestBroker)
+    assert strategy.broker._fees is not None
+    assert strategy.broker._fees.broker is BrokerKind.IBKR

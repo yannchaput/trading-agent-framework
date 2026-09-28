@@ -40,6 +40,7 @@ from trading_agent_framework.backtesting.broker import BacktestBroker
 from trading_agent_framework.backtesting.clock import BacktestClock
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY
 from trading_agent_framework.backtesting.warmup import warmup_calendar_days
+from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.errors import BacktestError
@@ -73,7 +74,7 @@ def run_backtest(
     data_source: BacktestDataSource,
     benchmark: str,
     timestep: str,
-    commission: Decimal,
+    fees: TradingFeeFactory | None = None,
     slippage: Decimal,
     risk_free_rate: float,
     warmup_trading_days: int = 0,
@@ -156,7 +157,7 @@ def run_backtest(
             data_source=data_source,
             benchmark=benchmark,
             timestep=timestep,
-            commission=commission,
+            fees=fees,
             slippage=slippage,
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,
@@ -194,7 +195,7 @@ def _run(
     data_source: BacktestDataSource,
     benchmark: str,
     timestep: str,
-    commission: Decimal,
+    fees: TradingFeeFactory | None = None,
     slippage: Decimal,
     risk_free_rate: float,
     warmup_trading_days: int = 0,
@@ -254,7 +255,7 @@ def _run(
         clock=clock,
         budget=budget,
         timestep=timestep,
-        commission=commission,
+        fees=fees,
         slippage=slippage,
         news_source=news_source,
     )
@@ -333,7 +334,6 @@ def _run(
         "backtest_time_seconds": elapsed,
         "timestep": timestep,
         "sleeptime": strategy.sleeptime,
-        "commission": float(commission),
         "slippage": float(slippage),
         "warmup_trading_days": warmup_trading_days,
         "benchmark_symbol": benchmark,

@@ -460,7 +460,7 @@ def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path,
     assert "Hold SHV." in caplog.text
 
 
-def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_backtesting_wires_alpaca_data_and_preload(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
     strategy, _, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
@@ -469,7 +469,7 @@ def test_run_backtesting_wires_alpaca_data_preload_and_fees(tmp_path: Path, monk
 
     assert captured["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
-    assert captured["commission"] == Decimal(0)  # Alpaca charges no commission on US ETFs
+    assert "fees" not in captured  # left to Strategy.run_backtesting, which reads BROKER
     assert captured["warmup_trading_days"] == 10
 
 

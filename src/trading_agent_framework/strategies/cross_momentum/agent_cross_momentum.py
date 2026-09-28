@@ -22,7 +22,6 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -543,6 +542,5 @@ class CrossMomentumStrategy(Strategy):
             data_source=YahooBacktestData,  # AlpacaBacktestData has no enough history, approximatively 6 year history
             preload_assets=[Asset(symbol=ticker) for ticker in self.vars.universe],  # preload the ticker universe in memory
             benchmark=self.parameters["benchmark_symbol"],
-            commission=Decimal("0.001"),
             warmup_trading_days=self.parameters["warmup_trading_days"],
         )

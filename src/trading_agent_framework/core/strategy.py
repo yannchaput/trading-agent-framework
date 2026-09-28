@@ -19,6 +19,7 @@ from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.agents.stats_store import LLMStatsStore, llm_stats_db_path
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
@@ -477,7 +478,7 @@ class Strategy:
         preload_assets: Sequence[Asset] = (),
         benchmark: str | None = None,
         timestep: str = "day",
-        commission: Number = Decimal(0),
+        fees: TradingFeeFactory | None = None,
         slippage: Number = Decimal(0),
         risk_free_rate: float = 0.0,
         warmup_trading_days: int = 0,
@@ -512,7 +513,9 @@ class Strategy:
                 the per-ticker lazy-fetch path.
             benchmark: symbol to use for the backtest's benchmark performance (e.g SPY)
             timestep: "minute" or "day" bars for the backtest
-            commission: per-trade commission (default 0), a single symmetric commission rate — a Decimal fraction of trade notional, applied identically to buys and sells.
+            fees: the broker fee model (`brokers/fees.py`) charged on every fill -- different
+                for buys and sells, per order. Defaults to `TradingFeeFactory.from_env()`: the
+                broker named by `BROKER` in the backtest env file (Alpaca when unset).
             slippage: per-trade slippage (default 0)
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
             warmup_trading_days: extra trading days of history to make available before
@@ -555,7 +558,7 @@ class Strategy:
             preload_assets=preload_assets,
             benchmark=benchmark or self.benchmark_symbol,
             timestep=timestep,
-            commission=_to_decimal(commission),
+            fees=fees if fees is not None else TradingFeeFactory.from_env(),
             slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
             warmup_trading_days=warmup_trading_days,

@@ -24,10 +24,9 @@ Fill rules, all "ties resolved pessimistically" (design spec, section 2):
 - TRAIL: not supported (needs a trailing reference price tracked across bars,
   which is out of scope -- design spec, section 1.3); raises ValueError.
 
-Commission is a fraction of trade notional (e.g. Decimal("0.001") = 10bps), returned
-as a per-share rate -- multiply by fill quantity for the total dollar cost. Slippage
-is a fraction applied against the trader: buys pay price * (1 + slippage), sells
-receive price * (1 - slippage).
+Slippage is a fraction applied against the trader: buys pay price * (1 + slippage), sells
+receive price * (1 - slippage). Fees are not applied here: `BacktestBroker` asks its
+`TradingFeeFactory` (`brokers/fees.py`) for each order's fee.
 """
 
 from __future__ import annotations
@@ -50,7 +49,7 @@ class Bar:
 
 @dataclass(frozen=True, slots=True)
 class FillResult:
-    """Where an order filled, before commission/slippage."""
+    """Where an order filled, before slippage."""
 
     price: Decimal
 
@@ -118,11 +117,6 @@ def _stop_limit_fill(
     return FillResult(price=max(bar.open, stop_limit_price))
 
 
-def apply_commission_and_slippage(
-    price: Decimal, side: OrderSide, *, commission: Decimal, slippage: Decimal
-) -> tuple[Decimal, Decimal]:
-    """Return (execution_price, commission_per_share). The caller multiplies
-    commission_per_share by the fill quantity for the total dollar cost."""
-    execution_price = price * (1 + slippage) if side is OrderSide.BUY else price * (1 - slippage)
-    commission_per_share = execution_price * commission
-    return execution_price, commission_per_share
+def apply_slippage(price: Decimal, side: OrderSide, *, slippage: Decimal) -> Decimal:
+    """The execution price after slippage, which always goes against the trader."""
+    return price * (1 + slippage) if side is OrderSide.BUY else price * (1 - slippage)

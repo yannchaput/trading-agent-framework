@@ -176,7 +176,6 @@ class NewsBinaryStrategy(Strategy):
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,  # No warmup needed (just in case)
         "budget": 10000,
-        "commission": 0.0,  # Commission is 0 on US ETF (Alpaca)
     }
 
     strategy_parameters = {
@@ -333,7 +332,6 @@ class NewsBinaryStrategy(Strategy):
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
             benchmark=self.parameters["benchmark_symbol"],
             budget=Decimal(str(self.parameters["budget"])),
-            commission=Decimal(str(self.parameters["commission"])),
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )

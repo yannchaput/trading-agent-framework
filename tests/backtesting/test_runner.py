@@ -79,7 +79,7 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     assert isinstance(result, BacktestResult)
@@ -132,7 +132,7 @@ def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(
             start=aware_start.replace(tzinfo=None) if naive_start else aware_start,
             end=aware_end.replace(tzinfo=None) if naive_end else aware_end,
             budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+            slippage=Decimal(0), risk_free_rate=0.0,
         )
 
     # The message names the offending argument(s) -- the whole point of validating here.
@@ -157,7 +157,7 @@ def test_run_backtest_accepts_aware_datetimes_in_any_timezone(tmp_path: Path) ->
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close.astimezone(UTC),
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
     assert (result.run_dir / "metrics.json").is_file()
 
@@ -178,7 +178,7 @@ def test_run_backtest_rebinds_the_strategys_broker_and_clock(tmp_path: Path) -> 
     run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     assert isinstance(strategy.broker, BacktestBroker)
@@ -228,7 +228,7 @@ def test_run_backtest_never_lets_the_strategy_observe_an_unclosed_bar(tmp_path: 
     run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     observations = strategy.vars.observations
@@ -268,7 +268,7 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     broker = strategy.broker
@@ -339,7 +339,7 @@ def test_run_backtest_annualizes_metrics_at_session_cadence_even_with_a_minute_t
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     total_return = result.metrics["total_return_strategy"]
@@ -381,7 +381,7 @@ def test_run_backtest_fetches_the_benchmark_at_daily_cadence_even_with_a_minute_
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     expected_benchmark_returns = pd.Series(
@@ -407,7 +407,7 @@ def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_co
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
     # Premise of the whole finding, verified rather than assumed: the raw ledger really
     # is oversampled relative to sessions, so a session-cadence parquet is a real
@@ -466,7 +466,7 @@ def test_run_backtest_reaches_the_last_session_when_end_is_a_bare_midnight(tmp_p
     result = run_backtest(
         strategy, start=start, end=end,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     equity = pd.read_parquet(result.run_dir / "equity.parquet")
@@ -517,7 +517,7 @@ def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     broker = strategy.broker
@@ -604,7 +604,7 @@ def test_run_backtest_widens_only_the_eager_benchmark_load_by_warmup(tmp_path: P
     run_backtest(
         strategy, start=start, end=end,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
         warmup_trading_days=10,
     )
 
@@ -631,7 +631,7 @@ def test_run_backtest_warmup_never_becomes_an_extra_simulated_session(tmp_path: 
         result = run_backtest(
             strategy, start=start, end=sessions[-1].close,
             budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+            slippage=Decimal(0), risk_free_rate=0.0,
             warmup_trading_days=warmup_trading_days,
         )
         return len(pd.read_parquet(result.run_dir / "equity.parquet"))
@@ -652,7 +652,7 @@ def test_run_backtest_records_warmup_trading_days_in_settings(tmp_path: Path) ->
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
         warmup_trading_days=10,
     )
     settings = json.loads((result.run_dir / "settings.json").read_text())
@@ -672,7 +672,7 @@ def test_run_backtest_defaults_warmup_trading_days_to_zero_in_settings(tmp_path:
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
     settings = json.loads((result.run_dir / "settings.json").read_text())
     assert settings["warmup_trading_days"] == 0
@@ -700,7 +700,7 @@ def test_run_backtest_rejects_negative_warmup_trading_days_with_value_error(tmp_
         run_backtest(
             strategy, start=start, end=sessions[-1].close,
             budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+            slippage=Decimal(0), risk_free_rate=0.0,
             warmup_trading_days=-1,
         )
     assert not source.load_calls  # rejected before any data was even requested
@@ -735,7 +735,7 @@ def test_run_backtest_captures_warnings_logged_during_the_eager_data_load(tmp_pa
     result = run_backtest(
         strategy, start=start, end=sessions[-1].close,
         budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        slippage=Decimal(0), risk_free_rate=0.0,
     )
 
     log_content = (result.run_dir / "backtest.log").read_text(encoding="utf-8")
