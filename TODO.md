@@ -1,7 +1,7 @@
 # TODOS
 
 ## General
-* Migrate projects to the 2nd hard dreive (with the models)
+* Migrate projects to the 2nd hard drive (with the models)
 * ~~Enable IBKR broker~~
 * Install Java IB gateway
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
@@ -11,25 +11,16 @@
 * ~~Add cash available during backtesting~~
 * Integrate VIX indicator
 * Update pyproject.toml to make dashboard an "extra" dependency
-
-## MIGRATION
-* ~~Alpaca broker~~
-* ~~Orchestration framework (scheduling, lifecycle,...)~~
-* ~~Data and accountig tools~~
-* ~~Agentic framework - langchain foundation~~
-* ~~Tools~~
-* ~~Memory~~
-* ~~Account configuration (no short sell, no margin trading)~~
-* ~~Backtesting (vectorbt)~~
-* ~~Cache management~~ => not needed
-* ~~dashboard~~
-* ~~Fix `Bar.empty`, `bars.pandas_df`.~~
-* ~~Add warmup_trading_days to AlpacaBacktestDataSource~~
-
+* Add a backtesting dates builder: smoke_test vs short_test vs long_test
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
+* Decommission IBKR
+    * Withdraw money
+    * Cehck fees to delete account
+    * Delete account
+    * DEcommission the code
 
 
 ## Strategies to test
@@ -37,6 +28,9 @@
 * [AI investment comitee](https://lumibot.lumiwealth.com/agents_investment_committee.html)
 
 ## Evolutions
+
+### Dashboard
+* Add a column for the broker
 
 ### Cross sectional momentum
 * Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
@@ -63,7 +57,23 @@
 * ~~Log the system prompt in 'initialize' method~~
 * ~~Fix prompt to avoid chineese character with GLM models~~
 
-### VWAP + idiosyncratic mean reversion
-
 ### LLM benchmark
 * ~~Log a frontmatter before each model benchmark~~
+
+---
+
+## Archives
+
+### MIGRATION
+* ~~Alpaca broker~~
+* ~~Orchestration framework (scheduling, lifecycle,...)~~
+* ~~Data and accountig tools~~
+* ~~Agentic framework - langchain foundation~~
+* ~~Tools~~
+* ~~Memory~~
+* ~~Account configuration (no short sell, no margin trading)~~
+* ~~Backtesting (vectorbt)~~
+* ~~Cache management~~ => not needed
+* ~~dashboard~~
+* ~~Fix `Bar.empty`, `bars.pandas_df`.~~
+* ~~Add warmup_trading_days to AlpacaBacktestDataSource~~

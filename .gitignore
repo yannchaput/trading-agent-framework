@@ -238,3 +238,6 @@ data/universe/us_stock_universe*.json
 
 # SEC EDGAR fundamentals cache (company-level, not strategy/mode scoped)
 /cache/
+
+#Playwright MCP
+.playwright-mcp/

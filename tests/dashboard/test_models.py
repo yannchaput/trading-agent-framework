@@ -39,3 +39,12 @@ def test_settings_parses_dashboard_decision_and_agents() -> None:
     })
     assert settings.dashboard_decision == "validated"
     assert settings.agents["trader"]["model"] == "qwen3.6-35b-a3b-awq"
+
+
+def test_settings_fees_default_to_empty_for_runs_written_before_fee_totals() -> None:
+    assert Settings.model_validate({}).fees == {}
+
+
+def test_settings_parses_the_fee_totals_broker() -> None:
+    settings = Settings.model_validate({"fees": {"broker": "alpaca", "buy_orders": 3}})
+    assert settings.fees["broker"] == "alpaca"

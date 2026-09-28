@@ -79,6 +79,7 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
         "Max DD%": st.column_config.NumberColumn("Max DD%", format="%.2f%%"),
         "Volatility%": st.column_config.NumberColumn("Volatility%", format="%.2f%%"),
         "Model": st.column_config.TextColumn("Model"),
+        "Broker": st.column_config.TextColumn("Broker"),
         "Decision": st.column_config.MultiselectColumn(
             "Decision",
             options=DECISION_OPTIONS,

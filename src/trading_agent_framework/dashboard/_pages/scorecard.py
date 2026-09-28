@@ -78,6 +78,8 @@ def page_scorecard():
             models = [agent["model"] for agent in settings.agents.values() if agent.get("model")]
             model = ", ".join(dict.fromkeys(models))
 
+        broker = (settings.fees.get("broker") or "") if settings else ""
+
         backtest_time = ""
         if settings and settings.backtest_time_seconds:
             m = int(settings.backtest_time_seconds // 60)
@@ -97,6 +99,7 @@ def page_scorecard():
                 "Max DD%": (metrics.max_drawdown_strategy * 100) if metrics else 0,
                 "Volatility%": (metrics.volatility_strategy * 100) if metrics else 0,
                 "Model": model,
+                "Broker": broker,
                 "Decision": settings.dashboard_decision if settings else "",
                 "Time": backtest_time,
                 "Description": load_description(ref) or "",
