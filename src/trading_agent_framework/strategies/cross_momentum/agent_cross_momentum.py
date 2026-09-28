@@ -62,6 +62,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# A position within ±20% of its target value is left alone (no top-up, no trim) to avoid overtrading.
+_REBALANCE_BAND = 0.20
+
 
 class CrossMomentumStrategy(Strategy):
     """Cross-sectional momentum strategy V5 — copy of V2 with fractional share support.
@@ -314,7 +317,7 @@ class CrossMomentumStrategy(Strategy):
         return selected, all_ranks
 
     def rebalance(self, target: list[dict], all_ranks: dict[str, int]) -> None:
-        """Compare current holdings to target, apply hysteresis, submit buy/sell orders.
+        """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in SHV.
 
         Args:
             target: Selected stocks with target_weight (top N, already weighted).
@@ -324,17 +327,41 @@ class CrossMomentumStrategy(Strategy):
             return
 
         target_symbols = {entry["symbol"] for entry in target}
+        target_by_symbol = {entry["symbol"]: entry for entry in target}
+        parking_symbol = self.parameters["parking"]["symbol"]
 
         sell_threshold = self.parameters["sell_rank_threshold"]
         portfolio_value = float(self.portfolio_value or 1.0)
+        min_trade_value = portfolio_value * self.parameters["parking"]["min_trade_pct"]
 
         current_positions = self.get_positions()
 
-        # Phase 1: Sell
+        # Phase 1: Sell (exits, trims, excess parking)
         estimated_sell_proceeds = 0.0
+        hysteresis_value = 0.0
+        parking_position = None
         for pos in current_positions:
             symbol = pos.asset.symbol
+            if symbol == parking_symbol:
+                # The parking sleeve is never ranked: it must not be exited as "not ranked" below
+                parking_position = pos
+                continue
             if symbol in target_symbols:
+                # Trim a target position that sits above its band, so an exposure cut lowers the held book
+                # too, not just new buys; the proceeds are parked or fund this week's buys.
+                entry = target_by_symbol[symbol]
+                target_value = portfolio_value * entry["target_weight"]
+                current_value = float(pos.quantity) * entry["price"]
+                trim_value = current_value - target_value
+                if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
+                    trim_qty = fractional_qty(trim_value / entry["price"])
+                    if trim_qty > 0:
+                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${entry['price']:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
+                        try:
+                            self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
+                            estimated_sell_proceeds += trim_qty * entry["price"]
+                        except Exception as e:
+                            self.log_error(f"Failed to submit trim order for {symbol}: {e}")
                 continue
 
             rank = all_ranks.get(symbol)
@@ -355,6 +382,28 @@ class CrossMomentumStrategy(Strategy):
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
             else:
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
+                hysteresis_value += float(pos.quantity) * float(self.get_last_price(symbol) or 0.0)
+
+        # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
+        stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
+        parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
+        parking_price = float(self.get_last_price(parking_symbol) or 0.0)
+        parking_value = float(parking_position.quantity) * parking_price if parking_position else 0.0
+        if parking_price <= 0:
+            self.log_warning(f"Parking: no price for {parking_symbol} — no parking orders this week")
+        else:
+            self.log_info(f"Parking: {parking_symbol} target ${parking_target:,.0f} (current ${parking_value:,.0f})")
+            excess = parking_value - parking_target
+            if parking_value > parking_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
+                # A zero target sells the exact holding, so float flooring leaves no dust behind
+                sell_qty = float(parking_position.quantity) if parking_target == 0 else fractional_qty(excess / parking_price)
+                if sell_qty > 0:
+                    self.log_info(f"Selling {sell_qty} {parking_symbol} @ ${parking_price:.2f} (parking above target)")
+                    try:
+                        self.submit_order(self.create_order(parking_symbol, sell_qty, "sell", time_in_force="day"))
+                        estimated_sell_proceeds += sell_qty * parking_price
+                    except Exception as e:
+                        self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
 
         # Phase 2: Buy
         # The estimate is priced at the last close, but orders fill at a later open plus fees, so hold
@@ -382,7 +431,7 @@ class CrossMomentumStrategy(Strategy):
                 continue
 
             # If the current position is within ±20% of the target value, skip buying to avoid overtrading
-            if current_value > 0 and abs(diff_value) / target_value < 0.20:
+            if current_value > 0 and abs(diff_value) / target_value < _REBALANCE_BAND:
                 continue
 
             # Compute the fractional quantity to buy taking into account the existing position
@@ -420,6 +469,18 @@ class CrossMomentumStrategy(Strategy):
                 if real_buying_power is not None:
                     self.log_warning(f"Resyncing available cash to broker-reported buying power: ${real_buying_power:.2f}")
                     available_cash = real_buying_power * (1 - self.parameters["cash_buffer_pct"])
+
+        # Phase 3: Park what the stock buys left, up to the parking target
+        if parking_price > 0 and parking_value < parking_target * (1 - _REBALANCE_BAND):
+            buy_value = min(parking_target - parking_value, available_cash)
+            if buy_value >= min_trade_value:
+                quantity = fractional_qty(buy_value / parking_price)
+                if quantity > 0:
+                    self.log_info(f"Buying {quantity} {parking_symbol} @ ${parking_price:.2f} (parking)")
+                    try:
+                        self.submit_order(self.create_order(parking_symbol, quantity, "buy", time_in_force="day"))
+                    except Exception as e:
+                        self.log_warning(f"Failed to submit parking buy order for {parking_symbol}: {e}")
 
     # ── Main iteration ────────────────────────────────────────────────────────
 

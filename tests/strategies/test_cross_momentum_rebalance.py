@@ -12,13 +12,19 @@ from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum impo
 class FakeStrategy:
     """Just enough of `Strategy` for `rebalance`; records the orders it places."""
 
-    def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05):
-        self.parameters = {"sell_rank_threshold": 35, "cash_buffer_pct": cash_buffer_pct}
+    def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=()):
+        self.parameters = {
+            "sell_rank_threshold": 35,
+            "cash_buffer_pct": cash_buffer_pct,
+            "parking": {"symbol": "SHV", "min_trade_pct": min_trade_pct},
+        }
         self._cash = cash
         self._positions = list(positions)
         self._last_prices = last_prices or {}
+        self._reject = set(reject)
         self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
         self.orders = []
+        self.warnings: list[str] = []
 
     def get_positions(self):
         return self._positions
@@ -27,17 +33,23 @@ class FakeStrategy:
         return self._cash
 
     def get_last_price(self, symbol):
-        return self._last_prices[symbol]
+        return self._last_prices.get(symbol)
 
     def create_order(self, symbol, quantity, side, **kwargs):
         return SimpleNamespace(symbol=symbol, quantity=quantity, side=side)
 
     def submit_order(self, order):
+        if order.symbol in self._reject:
+            raise RuntimeError(f"rejected {order.symbol}")
         self.orders.append(order)
 
     def log_info(self, *args, **kwargs): ...
-    def log_warning(self, *args, **kwargs): ...
-    def log_error(self, *args, **kwargs): ...
+
+    def log_warning(self, message, *args, **kwargs):
+        self.warnings.append(message)
+
+    def log_error(self, message, *args, **kwargs):
+        self.warnings.append(message)
 
 
 def _target(symbol, weight, price, rank):
@@ -78,3 +90,100 @@ def test_zero_buffer_spends_everything_available():
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
 
     assert _planned_buy_cost(fake, prices) > 1000.0 * 0.99
+
+
+def _held(symbol, quantity):
+    return SimpleNamespace(asset=SimpleNamespace(symbol=symbol), quantity=quantity)
+
+
+def _orders(fake, symbol, side):
+    return [o.quantity for o in fake.orders if o.symbol == symbol and o.side == side]
+
+
+def test_idle_cash_is_swept_into_shv():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert _orders(fake, "SHV", "buy") == [13.0]  # 950 - 300 = 650 parked, the 5% reserve stays cash
+
+
+def test_an_exposure_drop_trims_the_position_and_parks_the_proceeds():
+    fake = FakeStrategy(cash=0.0, positions=[_held("AAA", 10.0)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "sell") == [6.0]
+    assert _orders(fake, "SHV", "buy") == [11.0]  # target 950 - 400 = 550
+
+
+def test_an_exposure_rise_sells_shv_before_funding_the_stock_buys():
+    fake = FakeStrategy(cash=0.0, positions=[_held("SHV", 20.0)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 100.0, 1)], {"AAA": 1})
+
+    assert [(o.symbol, o.side, o.quantity) for o in fake.orders] == [("SHV", "sell", 19.0), ("AAA", "buy", 9.0)]
+
+
+def test_shv_within_its_band_is_left_alone_and_never_exited_as_unranked():
+    fake = FakeStrategy(cash=500.0, positions=[_held("SHV", 10.0)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.45, 100.0, 1)], {"AAA": 1})  # SHV target 500 = held
+
+    assert _orders(fake, "SHV", "sell") == []
+    assert _orders(fake, "SHV", "buy") == []
+
+
+def test_zero_parking_target_sells_the_whole_shv_holding():
+    fake = FakeStrategy(cash=0.0, positions=[_held("SHV", 3.333333)], last_prices={"AAA": 100.0, "SHV": 30.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 1.0, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "SHV", "sell") == [3.333333]
+
+
+def test_a_trim_below_the_minimum_trade_is_skipped():
+    fake = FakeStrategy(cash=9950.0, positions=[_held("AAA", 0.5)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    # 50 held vs target 20: above the band, but the 30 trim is under 1% of 10 000
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.002, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "sell") == []
+
+
+def test_an_shv_buy_below_the_minimum_trade_is_skipped():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.945, 100.0, 1)], {"AAA": 1})  # SHV target 5 < 10
+
+    assert _orders(fake, "SHV", "buy") == []
+
+
+def test_a_missing_shv_price_skips_parking_but_not_the_stock_orders():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert [o for o in fake.orders if o.symbol == "SHV"] == []
+    assert any("SHV" in message for message in fake.warnings)
+
+
+def test_hysteresis_holdings_reduce_the_parking_target():
+    prices = {"AAA": 100.0, "HYS": 50.0, "SHV": 50.0}
+    fake = FakeStrategy(cash=800.0, positions=[_held("HYS", 4.0)], last_prices=prices)  # HYS worth 200
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1, "HYS": 30})
+
+    assert _orders(fake, "HYS", "sell") == []
+    assert _orders(fake, "SHV", "buy") == [9.0]  # 950 - 300 - 200 = 450
+
+
+def test_a_rejected_shv_buy_is_logged_and_does_not_raise():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, reject={"SHV"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert any("SHV" in message for message in fake.warnings)

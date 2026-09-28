@@ -41,6 +41,13 @@ CONFIG = {
         "min_exposure": 0.40,
         "max_exposure": 1.00,
     },
+    # ── Parking sleeve ─────────────────────────
+    # Capital the exposure legs take out of stocks is parked in this T-bill ETF instead of idle cash.
+    # Trims and parking orders smaller than min_trade_pct of the portfolio are skipped (per-order fees).
+    "parking": {
+        "symbol": "SHV",
+        "min_trade_pct": 0.01,
+    },
     "breadth_overlay": {
         "enabled": True,
         "sma_window": 100,
