@@ -23,6 +23,10 @@ def test_planned_stop_sits_a_tenth_of_an_atr_under_the_pullback_low() -> None:
     assert risk.planned_stop(101.1, 2.0, PARAMS) == D("100.90")
 
 
+def test_planned_stop_rounds_down_in_exact_decimal() -> None:
+    assert risk.planned_stop(101.117, 1.0, PARAMS) == D("101.01")
+
+
 def test_plan_entry_takes_the_smallest_of_risk_size_and_cash_caps() -> None:
     plan = _plan()
     assert plan.stop_price == D("100.90")

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import ROUND_FLOOR, ROUND_HALF_UP, ROUND_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_FLOOR, ROUND_HALF_UP, ROUND_UP, Decimal
 
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -38,7 +38,8 @@ def to_price(value: float | Decimal, rounding: str) -> Decimal:
 
 
 def planned_stop(pullback_low: float, daily_atr: float, params: VwapPullbackParameters) -> Decimal:
-    return to_price(pullback_low - params.stop_buffer_atr * daily_atr, ROUND_UP)
+    exact = Decimal(str(pullback_low)) - _ratio(params.stop_buffer_atr) * Decimal(str(daily_atr))
+    return exact.quantize(_CENT, rounding=ROUND_DOWN)
 
 
 def plan_entry(
