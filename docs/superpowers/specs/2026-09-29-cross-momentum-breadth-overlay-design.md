@@ -68,7 +68,7 @@ def breadth_exposure(step: int, exposures: tuple[float, ...]) -> float
 - New step between the risk overlay and vol targeting (renumbering the comments):
   `breadth = self.vars.breadth`; if `enabled` and `breadth is not None`, compute the step, store it, and set
   `breadth_exposure`; otherwise `breadth_exposure = 1.0`. One log line:
-  `Breadth: 42% of N stocks above their 100d SMA -> step 1 (exposure 70%)`.
+  `Breadth: 42% of stocks above their 100d SMA -> step 1 (exposure 70%)`.
 - `final_exposure = min(risk_exposure, vol_exposure, breadth_exposure)`; the combined-exposure log line gains
   the third leg.
 - Everything downstream (scaling target weights, trim, SHV parking) is unchanged.
