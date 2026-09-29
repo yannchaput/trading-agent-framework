@@ -208,6 +208,8 @@ class Desk:
             self._protect(trade)
             return
         trade.record_exit_fill(filled, fill_price, self._strategy.get_datetime())
+        if order.identifier in trade.exit_order_ids:
+            trade.exit_order_ids.remove(order.identifier)  # booked: its shares have left trade.quantity, so it no longer counts as pending
         if order.identifier == trade.stop_order_id:
             trade.stop_order_id = None
             trade.exit_reason = trade.exit_reason or ("trailing stop" if trade.stop_kind == "trail" else "stop")
@@ -273,7 +275,8 @@ class Desk:
             if trade.status is TradeStatus.CLOSED:
                 return
         free = self._free_quantity(trade)
-        stop_qty = max(Decimal(0), stop.quantity - stop.filled_quantity) if stop is not None and stop.quantity is not None else Decimal(0)
+        # The whole quantity: the stop's filled-but-unbooked shares are still inside trade.quantity (and so inside `free`).
+        stop_qty = stop.quantity if stop is not None and stop.quantity is not None else Decimal(0)
         if self.state.flattened:
             if free - stop_qty > 0:
                 trade.exit_reason = trade.exit_reason or "flatten"
@@ -346,8 +349,9 @@ class Desk:
         return order is not None and (order.is_active() or order.is_filled())
 
     def _exit_pending(self, trade: Trade) -> bool:
+        """An exit sell is working, or has filled with its fill not yet booked (booked ones leave `exit_order_ids`)."""
         orders = [self._strategy.get_order(i) for i in trade.exit_order_ids]
-        return any(o is not None and o.is_active() for o in orders)
+        return any(o is not None and (o.is_active() or o.is_filled()) for o in orders)
 
     # --- order helpers ---------------------------------------------------------------
 
@@ -360,13 +364,14 @@ class Desk:
     def _free_quantity(self, trade: Trade) -> Decimal:
         """Shares held that no working exit sell is already selling: what a new stop or exit sell may cover.
 
-        A working sell's whole quantity is subtracted, filled part included: `trade.quantity` only drops when the desk
-        books the fill (on FILLED), so the filled-but-unbooked shares are still counted in it and are already sold.
+        Every listed exit sell is unbooked (`on_order_filled` and `_settle_exit` drop an id once they book it), so each
+        one still working or already FILLED counts by its whole quantity: `trade.quantity` only drops when the desk books
+        a fill, so its filled-but-unbooked shares are still counted in it and are already sold.
         """
         pending = Decimal(0)
         for order_id in trade.exit_order_ids:
             order = self._strategy.get_order(order_id)
-            if order is not None and order.is_active() and order.quantity is not None:
+            if order is not None and (order.is_active() or order.is_filled()) and order.quantity is not None:
                 pending += order.quantity
         return max(Decimal(0), trade.quantity - pending)
 

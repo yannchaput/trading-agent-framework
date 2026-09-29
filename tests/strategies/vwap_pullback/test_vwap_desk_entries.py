@@ -451,3 +451,56 @@ def test_reconcile_settles_an_exit_sell_that_ended_in_error(tmp_path: Path) -> N
     rig.desk.reconcile(rig.clock.now())
     stop = rig.strategy.get_order(trade.stop_order_id)
     assert tp1.identifier not in trade.exit_order_ids and stop.is_active() and stop.quantity == D(249)
+
+
+def test_reconcile_leaves_alone_an_active_stop_that_is_partly_filled(tmp_path: Path) -> None:
+    # Round 4 R4-1: the stop's filled-but-unbooked shares are still in trade.quantity, so the stop covers them by its whole quantity.
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    stop.filled_quantity = D(100)  # executing at the broker, its fill not yet booked
+    attempts = _spy_sells(rig)
+    rig.desk.reconcile(rig.clock.now())
+    assert trade.stop_order_id == stop.identifier and stop.is_active() and attempts == []
+    assert [o.identifier for o in rig.broker.tracker.get_active_orders()] == [stop.identifier]
+
+
+def test_flattened_sells_only_what_a_partly_filled_unconfirmed_stop_does_not_cover(tmp_path: Path) -> None:
+    # Round 4 R4-1: stop 125 with 50 filled (cancel unconfirmed) and a zero-fill cancelled TP1 of 124: 249 held, the stop covers 125.
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    rig.strategy.get_order(trade.stop_order_id).filled_quantity = D(50)
+    rig.state.flattened = True
+    attempts = _spy_sells(rig)
+    rig.broker.cancel_order(tp1)
+    rig.desk.on_order_canceled(tp1)
+    assert attempts == [D(124)]
+
+
+def test_a_filled_but_unbooked_tp1_sell_still_counts_as_not_free(tmp_path: Path) -> None:
+    # Round 4 R4-2: the TP1 sell filled at the broker; its hook has not reached the desk yet.
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    rig.advance(60)
+    assert tp1.is_filled() and stop.is_active() and trade.quantity == D(249)
+    assert rig.desk._free_quantity(trade) == D(125)
+    attempts = _spy_sells(rig)
+    rig.desk.reconcile(rig.clock.now())
+    assert trade.stop_order_id == stop.identifier and stop.is_active() and stop.quantity == D(125) and attempts == []
+    rig.fill_hook(tp1)
+    assert tp1.identifier not in trade.exit_order_ids
+    assert trade.quantity == D(125) and rig.desk._free_quantity(trade) == D(125)
+
+
+def test_free_slots_counts_a_filled_but_unbooked_full_exit_as_freed(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    before = rig.desk.free_slots()
+    rig.desk.exit_position("AAA", "downgrade")
+    trade = rig.state.book.get("AAA")
+    sell = rig.strategy.get_order(trade.exit_order_ids[-1])
+    rig.advance(60)
+    assert sell.is_filled() and trade.status is TradeStatus.OPEN  # its fill hook has not reached the desk yet
+    assert rig.desk.free_slots() == before + 1
