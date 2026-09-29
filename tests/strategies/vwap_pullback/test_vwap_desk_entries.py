@@ -231,3 +231,23 @@ def test_enter_long_refuses_a_symbol_that_is_not_a_candidate(tmp_path: Path) -> 
     rig = Rig(tmp_path)
     del rig.state.candidates["AAA"]
     assert "not a candidate" in rig.desk.enter_long("AAA", "earnings", "x")["error"]
+
+
+def test_close_unknown_positions_cancels_a_pending_entry_of_ours_for_a_symbol_not_held(tmp_path: Path) -> None:
+    # Final review I2(a): after a restart, an adopted entry for a symbol with no position and no trade must not stay working.
+    rig = Rig(tmp_path)
+    adopted = rig.strategy.submit_order(rig.strategy.create_order("MSFT", 10, "buy", limit_price=90))
+    rig.desk.close_unknown_positions()
+    assert adopted.is_canceled()
+    assert rig.broker.tracker.get_active_orders() == []
+
+
+def test_a_fill_of_our_buy_that_matches_no_trade_is_sold_at_once(tmp_path: Path) -> None:
+    # Final review I2(b): belt and braces -- a buy of ours that fills with no trade to protect it is never carried.
+    rig = Rig(tmp_path)
+    orphan = rig.strategy.submit_order(rig.strategy.create_order("MSFT", 10, "buy"))
+    rig.advance(60)
+    rig.fill_hook(orphan)
+    sells = [o for o in rig.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
+    assert [(o.asset.symbol, o.quantity, o.order_type) for o in sells] == [("MSFT", D(10), OrderType.MARKET)]
+    assert rig.state.book.get("MSFT") is None

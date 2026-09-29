@@ -194,10 +194,10 @@ class Desk:
     # --- order events ----------------------------------------------------------------
 
     def on_order_filled(self, order: Order, price: Decimal, quantity: Decimal) -> None:
-        if getattr(self._strategy.vars, "session", None) is None:
-            return
-        trade = self.state.book.by_order_id(order.identifier)
+        state = getattr(self._strategy.vars, "session", None)
+        trade = state.book.by_order_id(order.identifier) if state is not None else None
         if trade is None:
+            self._sell_orphan_fill(order, quantity)
             return
         filled = order.filled_quantity if order.filled_quantity > 0 else quantity
         fill_price = order.avg_fill_price if order.avg_fill_price is not None else price
@@ -211,6 +211,20 @@ class Desk:
             trade.exit_reason = trade.exit_reason or ("trailing stop" if trade.stop_kind == "trail" else "stop")
         if trade.status is TradeStatus.CLOSED:
             self._archive(trade)
+
+    def _sell_orphan_fill(self, order: Order, quantity: Decimal) -> None:
+        """A buy of this strategy's that filled with no trade to protect it (e.g. adopted after a restart): never carry it."""
+        if order.side is not OrderSide.BUY or self._strategy.broker.tracker.get_tracked_order(order.identifier) is None:
+            return
+        filled = order.filled_quantity if order.filled_quantity > 0 else quantity
+        if filled <= 0:
+            return
+        symbol = order.asset.symbol
+        self._strategy.log_error(f"a buy of {filled} {symbol} by this strategy filled with no trade to protect it; selling it at market now")
+        try:
+            self._strategy.submit_order(self._strategy.create_order(symbol, filled, "sell"))
+        except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
+            self._strategy.log_error(f"market sell of {filled} {symbol} failed (unprotected fill): {exc}")
 
     def on_order_canceled(self, order: Order) -> None:
         if getattr(self._strategy.vars, "session", None) is None:
@@ -548,29 +562,36 @@ class Desk:
                 self._strategy.log_error(f"flatten: sells still open after {self._params.flatten_wait_seconds:.0f}s for {', '.join(still_open)}")
 
     def close_unknown_positions(self) -> None:
-        """After a restart: close a position that this strategy's own open orders point at but no trade of the session knows.
+        """After a restart: cancel this strategy's open orders in symbols no trade of the session knows, then close the
+        positions those orders pointed at.
 
-        A position without an order of ours is not ours to touch: the account may be shared.
+        An order left from before a restart (an entry, a stop) has no trade to manage it, whether or not its symbol is
+        held yet. A position without an order of ours is not ours to touch: the account may be shared.
         """
         state = self.state
         state.unknown_positions_checked = True
         known = {trade.symbol for trade in state.book.active()}
         ours: dict[str, list[Order]] = {}
         for order in self._strategy.broker.tracker.get_active_orders():
-            ours.setdefault(order.asset.symbol, []).append(order)
+            if order.asset.symbol not in known:
+                ours.setdefault(order.asset.symbol, []).append(order)
+        if not ours:
+            return
         try:
             positions = self._strategy.get_positions()
         except _DATA_ERRORS as exc:
             self._strategy.log_warning(f"could not check for positions left from before a restart: {exc}")
             return
+        orphans = [order for orders in ours.values() for order in orders]
+        self._strategy.log_warning(f"cancelling {len(orphans)} open order(s) of this strategy with no trade in this session (restart): {', '.join(sorted(ours))}")
+        for order in orphans:
+            self._cancel(order)
+        if not self._strategy.is_backtesting:
+            self._strategy.wait_for_orders_execution(orphans, timeout=self._params.cancel_wait_seconds)
         for position in positions:
             symbol = position.asset.symbol
-            if symbol in known or symbol not in ours:
+            if symbol not in ours:
                 continue
-            for order in ours[symbol]:
-                self._cancel(order)
-            if not self._strategy.is_backtesting:
-                self._strategy.wait_for_orders_execution(ours[symbol], timeout=self._params.cancel_wait_seconds)
             self._strategy.log_warning(f"closing {position.quantity} {symbol}: held with this strategy's open orders but no trade in this session (restart)")
             try:
                 self._strategy.close_position(symbol)
