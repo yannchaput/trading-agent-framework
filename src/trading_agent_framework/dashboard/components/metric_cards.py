@@ -1,14 +1,22 @@
 """Metric KPI card components."""
 
+from html import escape
+
 import streamlit as st
 
 
 def render_metric_card(
-    label: str, value: float | str, fmt: str = ".2f", is_pct: bool = True, tone: str | None = None
+    label: str,
+    value: float | str,
+    fmt: str = ".2f",
+    is_pct: bool = True,
+    tone: str | None = None,
+    help: str | None = None,
 ) -> None:
     """Render a single KPI metric card. Use inside st.columns().
 
     `tone` ("positive"/"negative") overrides the colour, which otherwise follows the sign of a numeric value.
+    `help` adds an ⓘ next to the label whose hover tooltip shows that text.
     """
     if isinstance(value, (int, float)):
         if is_pct:
@@ -23,10 +31,12 @@ def render_metric_card(
     if tone is not None:
         css_class = tone
 
+    hint = f' <span title="{escape(help, quote=True)}" style="cursor: help;">ⓘ</span>' if help else ""
+
     st.markdown(
         f"""
     <div class="metric-card">
-        <div class="label">{label}</div>
+        <div class="label">{label}{hint}</div>
         <div class="value {css_class}">{display}</div>
     </div>
     """,

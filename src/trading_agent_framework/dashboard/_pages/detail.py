@@ -19,6 +19,20 @@ from trading_agent_framework.dashboard.components.charts import (
 from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
 from trading_agent_framework.dashboard.reader import load_agent_calls, load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
 
+BETA_HELP = (
+    "Sensitivity and volatility relative to the market:\n"
+    "• Beta of 1.0: the asset moves as much as the market.\n"
+    "• Beta of 1.5: the asset is 50% more volatile than the market "
+    "(if the market rises 10%, the asset rises 15%).\n"
+    "• Beta of 0.5: the asset is half as volatile as the market."
+)
+CORRELATION_HELP = (
+    "Tendency to move in the same direction:\n"
+    "• +1: they always move in the same direction.\n"
+    "• 0: no linear relationship.\n"
+    "• -1: they move in strictly opposite directions."
+)
+
 
 def page_detail():
     """Run detail page: all metrics and charts for one run."""
@@ -128,11 +142,11 @@ def page_detail():
         st.subheader("Correlation")
         cols = st.columns(4)
         with cols[0]:
-            render_metric_card("Beta", m.beta, fmt=".2f", is_pct=False)
+            render_metric_card("Beta", m.beta, fmt=".2f", is_pct=False, help=BETA_HELP)
         with cols[1]:
             render_metric_card("Alpha", m.alpha, fmt=".4f", is_pct=False)
         with cols[2]:
-            render_metric_card("Correlation", m.correlation, fmt=".4f", is_pct=False)
+            render_metric_card("Correlation", m.correlation, fmt=".4f", is_pct=False, help=CORRELATION_HELP)
         with cols[3]:
             render_metric_card("Treynor", m.treynor_ratio, fmt=".2f", is_pct=False)
 

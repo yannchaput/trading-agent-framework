@@ -3,7 +3,6 @@
 ## General
 * Migrate projects to the 2nd hard drive (with the models)
 * ~~Enable IBKR broker~~
-* Install Java IB gateway
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
 * ~~Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)~~ => Too complex
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
@@ -30,7 +29,7 @@
 ## Evolutions
 
 ### Dashboard
-* Add a column for the broker
+* ~~Add a column for the broker~~
 
 ### Cross sectional momentum
 * Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
