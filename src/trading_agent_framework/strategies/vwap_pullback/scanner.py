@@ -117,7 +117,7 @@ class Scanner:
     def _baseline(self, df: pd.DataFrame, day: date) -> pd.Series:
         """Average per-minute cumulative volume over the last `rvol_baseline_sessions` dates before `day`."""
         # Group rows by the date their bar STARTED (market time), which is the same for both stamp conventions.
-        starts = minute_starts(df.index, self.bar_stamp).tz_convert(MARKET_TZ)
+        starts = minute_starts(pd.DatetimeIndex(df.index), self.bar_stamp).tz_convert(MARKET_TZ)
         dates = sorted({d for d in starts.date if d < day})[-self._params.rvol_baseline_sessions :]
         per_session = []
         for session_day in dates:
@@ -142,9 +142,14 @@ class Scanner:
         snapshots = []
         for symbol, info in state.candidates.items():
             contexts = intraday_contexts(
-                self._session_frame(bars.get(Asset(symbol)), state), bench_df,
-                session_open=state.session.open, now=now, bar_stamp=state.bar_stamp, beta=info.beta,
-                baseline=state.baselines.get(symbol, pd.Series(dtype=float)), minutes=self._params.bar_minutes,
+                self._session_frame(bars.get(Asset(symbol)), state),
+                bench_df,
+                session_open=state.session.open,
+                now=now,
+                bar_stamp=state.bar_stamp,
+                beta=info.beta,
+                baseline=state.baselines.get(symbol, pd.Series(dtype=float)),
+                minutes=self._params.bar_minutes,
             )
             state.contexts[symbol] = contexts
             snapshot = snapshot_from(symbol, contexts)
@@ -216,5 +221,5 @@ def _before(bars: Bars | None, day: date) -> pd.DataFrame | None:
     if bars is None or bars.df.empty:
         return None
     df = bars.df
-    dates = df.index.tz_convert(MARKET_TZ).date
+    dates = pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ).date
     return df[dates < day]

@@ -9,19 +9,22 @@ calling into a codepath that needs them does. Mirrors `brokers/__init__.py`.
 from __future__ import annotations
 
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.utils import get_version
 
 __version__ = get_version("trading_agent_framework")
 
 __all__ = [
-    "AlpacaBacktestData",
-    "BacktestBroker",
-    "BacktestClock",
+    "AlpacaBacktestData",  # type: ignore
+    "BacktestBroker",  # type: ignore
+    "BacktestClock",  # type: ignore
     "BacktestDataSource",
-    "BacktestResult",
-    "CachedDataSource",
-    "YahooBacktestData",
-    "run_backtest",
+    "BacktestResult",  # type: ignore
+    "CachedDataSource",  # type: ignore
+    "YahooBacktestData",  # type: ignore
+    "run_backtest",  # type: ignore
+    "backtest_window",
+    "PredefinedWindow",
 ]
 
 _LAZY = {

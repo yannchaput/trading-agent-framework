@@ -17,6 +17,7 @@ from typing import Any
 
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
@@ -56,8 +57,8 @@ class VwapPullbackStrategy(Strategy):
     minutes_before_closing = 10  # before_market_closes, and so the flatten, runs at 15:50
 
     parameters = {
-        "backtesting_start": datetime(2026, 8, 3, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 8, 31, tzinfo=MARKET_TZ),
+        "backtesting_start": backtest_window(PredefinedWindow.WEEK)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.WEEK)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 75,  # 70 daily bars for stage 1, plus the RVOL baseline sessions
         "budget": 10000,
@@ -76,7 +77,7 @@ class VwapPullbackStrategy(Strategy):
         super().__init__(broker, mode=mode, **kwargs)
         self.universe = list(universe)
         self.settings = settings or VwapPullbackParameters()
-        self._chat_model = chat_model  # None: the model named by LLM_MODEL (tests inject a fake)
+        self._chat_model = chat_model  # None: the model named by LLM_MODEL env var (for tests inject a fake)
         self.desk: Desk | None = None
         self.scanner: Scanner | None = None
         self._graph: Any = None
@@ -105,9 +106,7 @@ class VwapPullbackStrategy(Strategy):
     def _build_components(self) -> None:
         """Create the desk and the scanner (separate from `initialize` so tests can build them without agents)."""
         self.desk = Desk(self, self.settings, trade_log=self._trade_log_path)
-        self.scanner = Scanner(
-            self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None
-        )
+        self.scanner = Scanner(self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None)
 
     def before_market_opens(self) -> None:
         """Run stage 1 before the open, so the first tick can scan right away."""
@@ -161,7 +160,7 @@ class VwapPullbackStrategy(Strategy):
         """Deterministic part of every tick: fix up orders, scan, then decide which agents are due."""
         assert self.desk is not None and self.scanner is not None
         session = self.vars.session
-        now = state["now"]
+        now = state.get("now") or self.get_datetime()
         # Reconcile first: expired/rejected entries and missing stops are settled before anyone reasons on the book.
         self.desk.reconcile(now)
         self.scanner.scan(session)
@@ -171,7 +170,7 @@ class VwapPullbackStrategy(Strategy):
     def _exit_node(self, state: TickState) -> dict[str, Any]:
         """Run the exit agent on the open trades, then recompute `entry_due` (an exit may have freed a slot)."""
         assert self.desk is not None
-        now = state["now"]
+        now = state.get("now") or self.get_datetime()
         context = {"current_datetime": now.isoformat(), "open_trades": trade_rows(self.desk, now)}
         summary = self._run_agent(self.EXIT_AGENT, self.EXIT_TASK, context)
         if summary["ok"]:  # a failed run reviewed nothing: the same triggers must bring the trades back next tick
@@ -184,7 +183,7 @@ class VwapPullbackStrategy(Strategy):
         No retry turn for undecided setups: a trigger only lasts one bar, so there is nothing to recover.
         """
         assert self.desk is not None
-        now = state["now"]
+        now = state.get("now") or self.get_datetime()
         context = {"current_datetime": now.isoformat(), "setups": setup_rows(self.desk), "free_slots": self.desk.free_slots()}
         summary = self._run_agent(self.ENTRY_AGENT, self.ENTRY_TASK, context)
         session = self.vars.session
