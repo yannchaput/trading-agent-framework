@@ -228,6 +228,97 @@ def compute_volatility_exposure(
     return max(min_exposure, min(max_exposure, exposure))
 
 
+def breadth_share(
+    closes_by_symbol: dict[str, list[float]],
+    sma_window: int,
+    min_stocks: int,
+) -> float | None:
+    """Share of stocks whose latest close is above their own `sma_window`-day simple moving average.
+
+    A stock with fewer than `sma_window` closes, or a non-finite last close or SMA, is left out of both the
+    numerator and the denominator. A close equal to its SMA does not count as above. Returns None when fewer
+    than `min_stocks` stocks are valid, so a thin day can't trigger an exposure cut.
+    """
+    above = 0
+    valid = 0
+    for closes in closes_by_symbol.values():
+        if len(closes) < sma_window:
+            continue
+        sma = sum(closes[-sma_window:]) / sma_window
+        if not (math.isfinite(sma) and math.isfinite(closes[-1])):
+            continue
+        valid += 1
+        if closes[-1] > sma:
+            above += 1
+    if valid < min_stocks:
+        return None
+    return above / valid
+
+
+def next_breadth_step(
+    breadth: float,
+    previous_step: int | None,
+    thresholds: tuple[float, ...],
+    hysteresis: float,
+) -> int:
+    """Breadth step (0 = full exposure, higher = more defensive) with hysteresis on the way back up.
+
+    `thresholds` runs from the least to the most defensive boundary, e.g. (0.50, 0.30): breadth below 0.50
+    is at least step 1, below 0.30 step 2. A cut to a more defensive step is immediate; moving to a less
+    defensive one needs breadth above that step's threshold plus `hysteresis`, and when breadth jumps several
+    steps the result is the least defensive step whose bound is met.
+    """
+    raw = sum(1 for threshold in thresholds if breadth < threshold)
+    if previous_step is None or raw >= previous_step:
+        return raw
+    step = previous_step
+    while step > raw and breadth >= thresholds[step - 1] + hysteresis:
+        step -= 1
+    return step
+
+
+def breadth_exposure(step: int, exposures: tuple[float, ...]) -> float:
+    """Exposure multiplier for a breadth step."""
+    return exposures[step]
+
+
+def load_breadth_step(path: Path, n_steps: int) -> int | None:
+    """Load the persisted breadth step, or None if there is nothing usable.
+
+    None covers a missing file, unreadable or corrupt JSON, a non-dict payload, and a `step` that is not an
+    int (a bool does not count) in `0 <= step < n_steps`; the first reading then applies directly.
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):  # ValueError covers bad JSON and a file that isn't valid text
+        return None
+    if not isinstance(data, dict):
+        return None
+    step = data.get("step")
+    if isinstance(step, bool) or not isinstance(step, int) or not 0 <= step < n_steps:
+        return None
+    return step
+
+
+def save_breadth_step(path: Path, step: int, breadth: float, today_str: str) -> None:
+    """Persist the breadth step so a crash or restart keeps the hysteresis.
+
+    Written atomically (temp file + rename). A disk error only logs a warning: the trading loop must never
+    fail because state couldn't be saved.
+    """
+    tmp_path = path.with_suffix(".json.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(json.dumps({"date": today_str, "step": step, "breadth": breadth}, indent=2))
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        logger.warning("Failed to save breadth step to %s: %s", path, exc)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def _percentile_rank(values: list[float]) -> list[float]:
     """Return cross-sectional percentile ranks (0 to 1) for each value.
 

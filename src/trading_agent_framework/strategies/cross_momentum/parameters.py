@@ -48,8 +48,17 @@ CONFIG = {
         "symbol": "SHV",
         "min_trade_pct": 0.01,
     },
+    # ── Breadth overlay (market regime) ─────────
+    # Share of the scored stocks closing above their own sma_window-day SMA. thresholds are the breadth levels
+    # below which the strategy enters step 1 / step 2; exposures[step] scales the stock weights. Cutting is
+    # immediate; re-risking to a less defensive step needs that step's threshold plus `hysteresis`.
+    # Fewer than min_stocks valid stocks leaves the leg neutral.
     "breadth_overlay": {
         "enabled": True,
         "sma_window": 100,
+        "min_stocks": 50,
+        "thresholds": (0.50, 0.30),
+        "exposures": (1.0, 0.7, 0.4),
+        "hysteresis": 0.05,
     },
 }
