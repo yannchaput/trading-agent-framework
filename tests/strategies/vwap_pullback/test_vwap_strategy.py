@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -107,3 +107,37 @@ def test_main_registers_the_strategy() -> None:
     from trading_agent_framework.main import AGENT_STRATEGIES
 
     assert "vwap_pullback_continuation" in AGENT_STRATEGIES
+
+
+def test_a_backtest_waits_in_one_minute_slices_so_the_stop_follows_the_entry_bar_by_bar(tmp_path: Path) -> None:
+    # Final review I1: with the backtest clock's default infinite slice, one 5-minute tick jumps 10:00 -> 10:05 at
+    # once, so the entry filled on the 10:01 bar gets its stop only at 10:05 and the 10:03 break is never checked.
+    from tests.fakes import FrameDataSource, minute_ohlc
+    from tests.strategies.vwap_pullback.test_vwap_desk_entries import ROWS
+
+    from trading_agent_framework.backtesting.broker import BacktestBroker
+    from trading_agent_framework.backtesting.clock import BacktestClock
+    from trading_agent_framework.strategies.vwap_pullback.features import BarContext
+    from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo
+    from trading_agent_framework.strategies.vwap_pullback.trades import TradeStatus
+
+    clock = BacktestClock(start=TEN_AM, sessions=[make_session(DAY)])
+    frames = {("AAA", "minute"): minute_ohlc(et(2026, 9, 1, 9, 31), ROWS)}
+    broker = BacktestBroker("vwap_pullback_continuation", data_source=FrameDataSource(frames), clock=clock, budget=Decimal("100000"), timestep="minute")
+    clock.on_advance = broker.on_advance
+    strategy = VwapPullbackStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA"], project_root=tmp_path, chat_model=FakeToolCallingChatModel(messages=iter([])))
+    strategy.initialize()
+    assert strategy.clock.max_wait_slice == 60.0
+    assert BacktestClock.max_wait_slice == float("inf")  # set on this run's clock only
+    broker.tracker.listeners.append(strategy.executor._events)  # what executor.run() wires
+    state = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=Decimal("100000"))
+    state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0, z_rs=2.5, z_rvol=2.5)
+    state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
+    state.contexts["AAA"] = [BarContext(time=TEN_AM, open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0, session_open=99.0, session_high=100.2)]
+    strategy.vars.session = state
+    strategy.desk.enter_long("AAA", "earnings", "clean pullback")
+    trade = state.book.get("AAA")
+    strategy.executor.wait_until(TEN_AM + timedelta(seconds=300))  # one 5-minute tick
+    assert trade.status is TradeStatus.CLOSED and trade.exit_reason == "stop"
+    stop_fill = next(f for f in broker.ledger.fills if f.side.value == "sell")
+    assert stop_fill.time == et(2026, 9, 1, 10, 3) and stop_fill.price == Decimal("99.30")  # the breaking bar, at the stop

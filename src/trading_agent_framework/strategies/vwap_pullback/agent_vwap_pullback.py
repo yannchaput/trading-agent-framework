@@ -78,6 +78,12 @@ class VwapPullbackStrategy(Strategy):
     def initialize(self) -> None:
         self.vars.session = None
         self.vars.consecutive_agent_errors = 0
+        if self.is_backtesting:
+            # A backtest clock jumps a whole 5-minute tick at once: an entry filled on the tick's first bar would get
+            # its stop (placed by the fill hook) only at the tick's end, with the bars in between never checked
+            # against it. One-minute slices let the executor dispatch fills, and so place stops, bar by bar.
+            # Set on this run's clock instance only: other strategies' clocks keep the class's infinite slice.
+            self.clock.max_wait_slice = 60.0
         self._build_components()
         assert self.desk is not None
         flatten_time = (datetime(2000, 1, 1, 16, 0) - timedelta(minutes=self.minutes_before_closing)).strftime("%H:%M")
