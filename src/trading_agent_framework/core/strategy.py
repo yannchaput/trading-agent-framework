@@ -37,7 +37,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError, OrderValidationError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -390,12 +390,20 @@ class Strategy:
         *,
         limit_price: Number | None = None,
         stop_price: Number | None = None,
+        trail_price: Number | None = None,
+        trail_percent: Number | None = None,
         time_in_force: TimeInForce | str = TimeInForce.DAY,
     ) -> Order:
-        """Build (not submit) an order; the type follows from the prices given."""
+        """Build (not submit) an order; the type follows from the prices given (a trail makes a trailing stop)."""
         limit = _to_optional_decimal(limit_price)
         stop = _to_optional_decimal(stop_price)
-        if limit is not None and stop is not None:
+        trail = _to_optional_decimal(trail_price)
+        trail_pct = _to_optional_decimal(trail_percent)
+        if trail is not None or trail_pct is not None:
+            if limit is not None or stop is not None:
+                raise OrderValidationError("a trailing stop takes a trail_price or trail_percent, not a limit_price or stop_price")
+            order_type = OrderType.TRAIL
+        elif limit is not None and stop is not None:
             order_type = OrderType.STOP_LIMIT
         elif limit is not None:
             order_type = OrderType.LIMIT
@@ -414,6 +422,8 @@ class Strategy:
             limit_price=None if is_stop_limit else limit,
             stop_price=stop,
             stop_limit_price=limit if is_stop_limit else None,
+            trail_price=trail,
+            trail_percent=trail_pct,
         )
 
     def submit_order(self, order: Order) -> Order:

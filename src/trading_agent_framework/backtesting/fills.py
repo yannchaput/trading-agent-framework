@@ -21,8 +21,9 @@ Fill rules, all "ties resolved pessimistically" (design spec, section 2):
   at min(open, stop_limit_price).
 - STOP_LIMIT sell: triggers iff low <= stop_price AND high >= stop_limit_price,
   at max(open, stop_limit_price).
-- TRAIL: not supported (needs a trailing reference price tracked across bars,
-  which is out of scope -- design spec, section 1.3); raises ValueError.
+- TRAIL: not handled by `evaluate_fill` (it raises ValueError): a trailing stop needs a
+  reference price carried from bar to bar, so `BacktestBroker` calls
+  `evaluate_trailing_stop` with the reference it keeps per pending order.
 
 Slippage is a fraction applied against the trader: buys pay price * (1 + slippage), sells
 receive price * (1 - slippage). Fees are not applied here: `BacktestBroker` asks its
@@ -76,7 +77,7 @@ def evaluate_fill(
             _require(stop_price, "stop_price"),
             _require(stop_limit_price, "stop_limit_price"),
         )
-    raise ValueError(f"backtesting does not support order_type={order_type} (TRAIL)")
+    raise ValueError(f"evaluate_fill does not handle order_type={order_type}; use evaluate_trailing_stop for TRAIL")
 
 
 def _require(value: Decimal | None, name: str) -> Decimal:
@@ -115,6 +116,35 @@ def _stop_limit_fill(
     if bar.low > stop_price or bar.high < stop_limit_price:
         return None
     return FillResult(price=max(bar.open, stop_limit_price))
+
+
+def evaluate_trailing_stop(
+    *,
+    side: OrderSide,
+    bar: Bar,
+    reference: Decimal,
+    trail_price: Decimal | None = None,
+    trail_percent: Decimal | None = None,
+) -> tuple[FillResult | None, Decimal]:
+    """One bar of a trailing stop: `(fill or None, the reference to carry to the next bar)`.
+
+    `reference` is the high-water mark (sell) or low-water mark (buy) of the bars before this one;
+    `trail_percent` is in percent (5 = 5%), as Alpaca and IBKR take it. Ties go against the trader,
+    like every other rule here: the level built from the previous reference is tested first, and only
+    a bar that does not trigger may move the reference with its own high (sell) or low (buy) -- the
+    bar's high might have come after its low.
+    """
+    if (trail_price is None) == (trail_percent is None):
+        raise ValueError("a trailing stop needs exactly one of trail_price or trail_percent")
+    if side is OrderSide.SELL:
+        level = reference - trail_price if trail_price is not None else reference * (1 - trail_percent / 100)  # ty: ignore[unsupported-operator]
+        if bar.low <= level:
+            return FillResult(price=min(bar.open, level)), reference
+        return None, max(reference, bar.high)
+    level = reference + trail_price if trail_price is not None else reference * (1 + trail_percent / 100)  # ty: ignore[unsupported-operator]
+    if bar.high >= level:
+        return FillResult(price=max(bar.open, level)), reference
+    return None, min(reference, bar.low)
 
 
 def apply_slippage(price: Decimal, side: OrderSide, *, slippage: Decimal) -> Decimal:

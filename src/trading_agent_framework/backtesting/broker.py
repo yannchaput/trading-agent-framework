@@ -26,7 +26,7 @@ from trading_agent_framework.brokers.tracker import OrderTracker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
-from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderStatus, PositionSide
+from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderStatus, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
@@ -46,6 +46,10 @@ class _PendingOrder:
     # finds closing after `last_evaluated` is then that in-progress bar (the submitting bar) and
     # must be skipped once rather than used to fill: "nothing fills within the submitting bar".
     needs_skip: bool = False
+    # A TRAIL order's high-water mark (sell) or low-water mark (buy), carried from bar to bar by
+    # `fills.evaluate_trailing_stop`. Seeded with the latest close at submission, like a real broker
+    # seeds it with the price at acceptance; the skipped forming bar does not move it (pessimistic).
+    trail_reference: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,8 @@ class BacktestBroker(Broker):
             raise OrderValidationError(
                 "backtesting only supports quantity-based orders, not notional orders"
             )
+        if order.order_type is OrderType.TRAIL and (order.trail_price is None) == (order.trail_percent is None):
+            raise OrderValidationError("a trailing stop order needs exactly one of trail_price or trail_percent")
         # Reject against the projection (cash/holdings once every pending order fills) *before*
         # tracking, so a rejected order never enters the tracker and the caller -- an LLM agent
         # through `submit_order`, which turns the exception into `{"error": ...}` -- finds out
@@ -114,8 +120,9 @@ class BacktestBroker(Broker):
         # has closed yet, or the latest one closed strictly earlier) -- a bar is currently
         # forming and must be skipped once before any fill (see `_PendingOrder.needs_skip`).
         needs_skip = found is None or found[1] < now
+        trail_reference = found[0].close if order.order_type is OrderType.TRAIL and found is not None else None
         self._pending[order.identifier] = _PendingOrder(
-            order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip
+            order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference
         )
         return order
 
@@ -181,6 +188,15 @@ class BacktestBroker(Broker):
         self._pending[replacement.identifier] = pending
         self.tracker.mark_replaced(order, replacement)
         return replacement
+
+    def preload_bars(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
+        """Batch-fetch `assets` at `timestep` for `[start, end]` before they are read.
+
+        For a strategy that picks its symbols per session (the runner only preloads what it knows up
+        front): one batched `load()` instead of one lazy fetch per symbol. `start`/`end` must be the
+        data source's own window, or a source that caches per asset would keep a shorter frame.
+        """
+        self._data_source.load(assets, start, end, timestep)
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         position = self._positions.get(asset)
@@ -450,11 +466,18 @@ class BacktestBroker(Broker):
         """Try to fill `pending` on `bar`; True once it has left the queue (filled, rejected or errored)."""
         order = pending.order
         try:
-            result = fills.evaluate_fill(
-                order_type=order.order_type, side=order.side, bar=bar,
-                limit_price=order.limit_price, stop_price=order.stop_price,
-                stop_limit_price=order.stop_limit_price,
-            )
+            if order.order_type is OrderType.TRAIL:
+                reference = pending.trail_reference if pending.trail_reference is not None else bar.open
+                result, pending.trail_reference = fills.evaluate_trailing_stop(
+                    side=order.side, bar=bar, reference=reference,
+                    trail_price=order.trail_price, trail_percent=order.trail_percent,
+                )
+            else:
+                result = fills.evaluate_fill(
+                    order_type=order.order_type, side=order.side, bar=bar,
+                    limit_price=order.limit_price, stop_price=order.stop_price,
+                    stop_limit_price=order.stop_limit_price,
+                )
         except ValueError as exc:
             order.set_error(exc)
             self.tracker.process_trade_event(order, OrderEvent.ERROR)

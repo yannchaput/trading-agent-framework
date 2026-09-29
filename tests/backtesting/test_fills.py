@@ -99,7 +99,7 @@ def test_stop_limit_sell_needs_both_the_stop_trigger_and_the_limit_touch() -> No
 
 
 def test_trailing_stop_is_not_supported() -> None:
-    with pytest.raises(ValueError, match="TRAIL"):
+    with pytest.raises(ValueError, match="evaluate_fill does not handle"):
         evaluate_fill(order_type=OrderType.TRAIL, side=OrderSide.BUY, bar=BAR)
 
 

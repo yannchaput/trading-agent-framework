@@ -46,6 +46,7 @@ from ib_async import Order as IbOrder
 from ib_async import OrderStatus as IbOrderStatus
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
+from trading_agent_framework.backtesting.data.base import BacktestDataSource
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
@@ -893,3 +894,38 @@ class FakeIB:
 
     def portfolio(self, account: str = "") -> list[PortfolioItem]:
         return list(self.portfolio_items)
+
+
+# --- backtest data ------------------------------------------------------------------
+
+
+def minute_ohlc(first: datetime, rows: Sequence[tuple[float, float, float, float, float]]) -> pd.DataFrame:
+    """Consecutive one-minute `(open, high, low, close, volume)` rows from `first` (tz-aware), shaped like `Bars.df`."""
+    index = pd.date_range(first, periods=len(rows), freq="1min", name="timestamp")
+    return pd.DataFrame(list(rows), columns=["open", "high", "low", "close", "volume"], index=index, dtype=float)
+
+
+class FrameDataSource(BacktestDataSource):
+    """In-memory `BacktestDataSource`: frames indexed by bar CLOSE time, keyed by `(symbol, timestep)`."""
+
+    name: ClassVar[str] = "frames"
+
+    def __init__(self, frames: dict[tuple[str, str], pd.DataFrame], sessions: Sequence[MarketSession] = ()) -> None:
+        self.frames = frames
+        self._sessions = list(sessions)
+        self.load_calls: list[tuple[tuple[str, ...], datetime, datetime, str]] = []
+
+    def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
+        self.load_calls.append((tuple(asset.symbol for asset in assets), start, end, timestep))
+
+    def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        frame = self.frames.get((asset.symbol, timestep))
+        if frame is None:
+            return None
+        visible = frame[frame.index <= cutoff]
+        if visible.empty:
+            return None
+        return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
+
+    def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
+        return [s for s in self._sessions if start.date() <= s.open.date() <= end.date()]
