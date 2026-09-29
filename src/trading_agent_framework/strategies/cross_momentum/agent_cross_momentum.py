@@ -12,10 +12,11 @@ Implements:
   3. Daily: record portfolio equity for realized-vol tracking
   4. Weekly (Friday): filter, score, rank, select top N, weight by inverse vol
   5. Portfolio risk overlay (beta/vol/corr) — first exposure leg
-  6. Fast/slow volatility targeting (equity-curve-based) — second exposure leg
-  7. Combined via min(risk_exposure, vol_exposure) — most conservative wins
-  8. Hysteresis: sell below rank 35, buy top 20; trim target positions above the ±20% band
-  9. Park the de-risked capital (everything but the cash reserve) in SHV instead of idle cash
+  6. Breadth overlay (share of scored stocks above their 100d SMA, stepped, with hysteresis) — second leg
+  7. Fast/slow volatility targeting (equity-curve-based) — third exposure leg
+  8. Combined via min(risk_exposure, breadth_exposure, vol_exposure) — most conservative wins
+  9. Hysteresis: sell below rank 35, buy top 20; trim target positions above the ±20% band
+  10. Park the de-risked capital (everything but the cash reserve) in SHV instead of idle cash
 """
 
 import calendar
@@ -46,15 +47,20 @@ from .portfolio_risk_overlay import compute_risk_overlay
 from .utils import (
     annualized_volatility,
     apply_filters,
+    breadth_exposure,
+    breadth_share,
     compute_atr_from_df,
     compute_return_from_prices,
     compute_volatility_exposure,
     fractional_qty,
     get_cross_momentum_universe_last_date,
     inverse_volatility_weights,
+    load_breadth_step,
     load_equity_history,
     momentum_score,
+    next_breadth_step,
     parse_insufficient_buying_power,
+    save_breadth_step,
     save_equity_history,
 )
 
@@ -73,7 +79,7 @@ class CrossMomentumStrategy(Strategy):
     Tracks actual daily portfolio equity to compute realized volatility
     using both a 20-day (fast) and 63-day (slow) window, then takes the
     more conservative estimate via max(vol_20d, 0.75 * vol_63d). Combined
-    with the portfolio risk overlay via min() — the most conservative leg
+    with the portfolio risk overlay and the market-breadth overlay via min() — the most conservative leg
     determines the final exposure multiplier. Held positions are trimmed to
     the scaled target, and the capital taken out of stocks is parked in SHV.
     """
@@ -114,6 +120,12 @@ class CrossMomentumStrategy(Strategy):
         self.vars.diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
         self.vars.target_closes = {}
 
+        # Breadth overlay state: this rebalance's reading and the step it put the book on. The step is persisted
+        # (like the equity history) so a crash or restart keeps the hysteresis; None means no history yet.
+        self.vars.breadth = None
+        self.vars.breadth_step = None
+        self.vars.breadth_file_path = Path(f"data/cross_momentum_breadth_{self.trading_mode.value}.json")
+
         # Track actual portfolio equity for realized-vol computation
         self.vars.equity_history = []
         self.vars.history_file_path = Path(f"data/cross_momentum_ptf_history_{self.trading_mode.value}.json")
@@ -134,6 +146,9 @@ class CrossMomentumStrategy(Strategy):
         # Track actual portfolio equity for realized-vol computation
         self.vars.equity_history = load_equity_history(self.vars.history_file_path)
         self.log_info(f"Initialize equity history for volatility exposure compute {self.vars.equity_history}")
+        # Resume the breadth step where the bot left off (None if there is nothing usable on disk)
+        self.vars.breadth_step = load_breadth_step(self.vars.breadth_file_path, len(self.parameters["breadth_overlay"]["exposures"]))
+        self.log_info(f"Initialize breadth step: {self.vars.breadth_step}")
 
     # ── Fast/Slow realized volatility from equity curve ────────────────────
 
@@ -243,6 +258,7 @@ class CrossMomentumStrategy(Strategy):
         Uses ThreadPoolExecutor for parallel processing of the universe.
         """
         self.log_info(f"Computing target portfolio for {len(self.vars.universe)} tickers...")
+        self.vars.breadth = None  # no stale reading if this run returns early
 
         scored: list[dict] = []
         skip_count = 0
@@ -300,6 +316,13 @@ class CrossMomentumStrategy(Strategy):
 
         all_ranks = {entry["symbol"]: entry["rank"] for entry in scored}
 
+        breadth_config = self.parameters["breadth_overlay"]
+        self.vars.breadth = breadth_share(
+            {entry["symbol"]: entry["closes"] for entry in scored},
+            breadth_config["sma_window"],
+            breadth_config["min_stocks"],
+        )
+
         top_n = self.parameters["top_n"]
         selected = scored[:top_n]
 
@@ -317,6 +340,24 @@ class CrossMomentumStrategy(Strategy):
                 f"Target portfolio: {len(selected)} stocks selected. Top: {selected[0]['symbol']} (rank 1, score {selected[0]['score']:.4f})",
             )
         return selected, all_ranks
+
+    def _breadth_exposure(self) -> float:
+        """Exposure multiplier from market breadth (share of scored stocks above their SMA), with hysteresis.
+
+        1.0 when the overlay is disabled or there is no reading; otherwise the current step's multiplier. The
+        step is kept on `self.vars` and persisted, so a breadth hovering at a threshold doesn't flip the book
+        week to week, even across a crash or restart.
+        """
+        config = self.parameters["breadth_overlay"]
+        breadth = self.vars.breadth
+        if not config["enabled"] or breadth is None:
+            return 1.0
+        step = next_breadth_step(breadth, self.vars.breadth_step, config["thresholds"], config["hysteresis"])
+        self.vars.breadth_step = step
+        save_breadth_step(self.vars.breadth_file_path, step, breadth, self.get_datetime().strftime("%Y-%m-%d"))
+        exposure = breadth_exposure(step, config["exposures"])
+        self.log_info(f"Breadth: {breadth:.0%} of stocks above their {config['sma_window']}d SMA -> step {step} (exposure {exposure:.0%})")
+        return exposure
 
     def _price_or_zero(self, symbol: str) -> float:
         """Last price for valuing a holding, or 0.0 if the lookup fails or returns nothing.
@@ -560,7 +601,10 @@ class CrossMomentumStrategy(Strategy):
                     f"Risk overlay: {risk_state.upper()} (beta={risk_metrics.get('beta_63d')}, vol={risk_metrics.get('vol_20d')}, corr={risk_metrics.get('corr_20d')}, exposure={risk_exposure:.0%})"
                 )
 
-        # Step 4: Fast/Slow Volatility Targeting — compute realized vol
+        # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
+        breadth_leg = self._breadth_exposure()
+
+        # Step 5: Fast/Slow Volatility Targeting — compute realized vol
         # from actual equity curve using max(vol_20d, 0.75 * vol_63d).
         vt_config = self.parameters.get("volatility_targeting", {})
         vol_exposure = 1.0
@@ -578,23 +622,23 @@ class CrossMomentumStrategy(Strategy):
             else:
                 self.log_warning(f"Vol targeting: insufficient equity history ({len(self.vars.equity_history)} days, need 64) — defaulting to 100% exposure")
 
-        # Step 5: Combine exposures via min() — most conservative leg wins.
+        # Step 6: Combine exposures via min() — most conservative leg wins.
         # Using min() rather than multiplication avoids two overlays
         # accidentally creating extremely low exposure.
-        final_exposure = min(risk_exposure, vol_exposure)
+        final_exposure = min(risk_exposure, vol_exposure, breadth_leg)
         if final_exposure < 1.0:
-            self.log_info(f"Combined exposure: {final_exposure:.0%} (risk={risk_exposure:.0%}, vol={vol_exposure:.0%})")
+            self.log_info(f"Combined exposure: {final_exposure:.0%} (risk={risk_exposure:.0%}, breadth={breadth_leg:.0%}, vol={vol_exposure:.0%})")
 
-        # Step 6: Scale target weights by final exposure multiplier
+        # Step 7: Scale target weights by final exposure multiplier
         if target and final_exposure < 1.0:
             for entry in target:
                 entry["target_weight"] *= final_exposure
             self.log_info(f"Target weights scaled to {final_exposure:.0%} exposure (total weight: {sum(e['target_weight'] for e in target):.1%})")
 
-        # Step 7: Store target weights for next week's diagnostics
+        # Step 8: Store target weights for next week's diagnostics
         self.vars.diagnostics_logger.set_last_rebalance_weights({entry["symbol"]: entry["target_weight"] for entry in target})
 
-        # Step 8: Rebalance
+        # Step 9: Rebalance
         self.rebalance(target, all_ranks)
 
     def _backtest_preload_assets(self) -> list[Asset]:
@@ -607,6 +651,12 @@ class CrossMomentumStrategy(Strategy):
         if self.vars.history_file_path.exists():
             self.log_info(f"Deleting previous equity history file for a clean backtest: {self.vars.history_file_path}")
             self.vars.history_file_path.unlink()
+
+        # A backtest must start with no breadth history, and never leave a step behind for paper/live
+        # (their files are separate by mode).
+        if self.vars.breadth_file_path.exists():
+            self.log_info(f"Deleting previous breadth step file for a clean backtest: {self.vars.breadth_file_path}")
+            self.vars.breadth_file_path.unlink()
 
         # Preloading the whole universe (via `preload_assets`) avoids
         # `compute_target_portfolio`'s thread pool falling back to fetching it one
