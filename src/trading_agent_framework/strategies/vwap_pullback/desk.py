@@ -224,7 +224,7 @@ class Desk:
             self._record_stop_partial(trade, order)
             trade.stop_order_id = None
             if trade.status is not TradeStatus.CLOSED:
-                self._submit_stop(trade, trade.quantity)
+                self._submit_stop(trade, self._free_quantity(trade))
 
     def _record_stop_partial(self, trade: Trade, order: Order) -> None:
         """A stop that partly filled before ending cancelled/errored: book the filled part, archive the trade if that closed it."""
@@ -253,7 +253,7 @@ class Desk:
             self._market_sell(trade, trade.quantity, "filled after the end-of-day flatten")
             return
         if trade.stop_order_id is None:
-            self._submit_stop(trade, trade.quantity)
+            self._submit_stop(trade, self._free_quantity(trade))
 
     def reconcile(self, now: datetime) -> None:
         """Start-of-tick housekeeping: expire entries from earlier ticks, drop entries the broker rejected, re-place a stop that is gone."""
@@ -274,7 +274,7 @@ class Desk:
                     self._record_stop_partial(trade, stale)
                 trade.stop_order_id = None
                 if trade.status is not TradeStatus.CLOSED:
-                    self._submit_stop(trade, trade.quantity)
+                    self._submit_stop(trade, self._free_quantity(trade))
 
     def _has_working_stop(self, trade: Trade) -> bool:
         if trade.stop_order_id is None:
@@ -294,10 +294,19 @@ class Desk:
             return {"error": f"no open trade in {symbol.strip().upper()}"}
         return trade
 
-    def _submit_stop(self, trade: Trade, quantity: Decimal) -> None:
-        """Place the trade's stop (plain or trailing) for `quantity`; if that fails, sell `quantity` now."""
+    def _free_quantity(self, trade: Trade) -> Decimal:
+        """Shares held that no working exit sell is already selling: what a new stop or exit sell may cover."""
+        pending = Decimal(0)
+        for order_id in trade.exit_order_ids:
+            order = self._strategy.get_order(order_id)
+            if order is not None and order.is_active() and order.quantity is not None:
+                pending += max(Decimal(0), order.quantity - order.filled_quantity)
+        return max(Decimal(0), trade.quantity - pending)
+
+    def _submit_stop(self, trade: Trade, quantity: Decimal) -> bool:
+        """Place the trade's stop (plain or trailing) for `quantity`: True when placed; False when it fell back to a market sell (or that failed too)."""
         if quantity <= 0:
-            return
+            return False
         if trade.stop_kind == "trail" and trade.trail_price is not None:
             order = self._strategy.create_order(trade.symbol, quantity, "sell", trail_price=trade.trail_price)
         else:
@@ -307,9 +316,10 @@ class Desk:
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             self._strategy.log_error(f"stop for {trade.symbol} could not be placed ({exc}); selling {quantity} now")
             self._market_sell(trade, quantity, "protective stop failed")
-            return
+            return False
         trade.stop_order_id = submitted.identifier
         trade.stop_kind = trade.stop_kind or "stop"
+        return True
 
     def _market_sell(self, trade: Trade, quantity: Decimal, reason: str) -> Order | None:
         try:
@@ -386,19 +396,18 @@ class Desk:
         if trade.tp1_done:
             return {"error": "partial profit was already taken on this trade"}
         if self._split(trade, fraction)[0] <= 0:
-            return {"error": f"a position of {trade.quantity} shares is too small to split"}
+            return {"error": f"a position of {self._free_quantity(trade)} free shares is too small to split"}
         released = self._release_stop(trade)
         if released is not None:
             return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
         sold, remaining = self._split(trade, fraction)  # the release may have booked a partial stop fill
         if sold <= 0:
-            self._submit_stop(trade, trade.quantity)
-            return {"error": f"a position of {trade.quantity} shares is too small to split; the stop was placed again"}
+            return self._restored(trade, f"a position of {self._free_quantity(trade)} free shares is too small to split")
         if self._market_sell(trade, sold, "partial profit") is None:
-            self._submit_stop(trade, trade.quantity)
-            return {"error": "the sell failed; the stop was placed again for the whole position"}
+            return self._restored(trade, "the sell failed")
         trade.tp1_done = True
-        self._submit_stop(trade, remaining)
+        if not self._submit_stop(trade, remaining):
+            return {"error": f"the partial sell of {sold} was submitted but the stop for the remaining {remaining} could not be placed; those shares were sold at market instead (or the sale failed: check the position)"}
         self._strategy.log_info(f"partial profit {trade.symbol}: sold {sold}, {remaining} left under the stop")
         return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
 
@@ -449,11 +458,14 @@ class Desk:
         starts_at = last - trail
         if starts_at < trade.stop_level:
             return {"error": f"a {trail_atr} ATR trail would start at {starts_at}, below the current stop {trade.stop_level}; use a tighter trail"}
+        if self._free_quantity(trade) <= 0:
+            return {"error": "nothing left to protect; an exit is already pending"}
         released = self._release_stop(trade)
         if released is not None:
             return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
         trade.stop_kind, trade.trail_price, trade.stop_level = "trail", trail, starts_at
-        self._submit_stop(trade, trade.quantity)
+        if not self._submit_stop(trade, self._free_quantity(trade)):
+            return {"error": "the trailing stop could not be placed; the free shares were sold at market instead (or that failed too: check the position)"}
         self._strategy.log_info(f"stop {trade.symbol} replaced by a {trail} trailing stop")
         return {"status": "trailing stop placed", "trail_price": float(trail), "starts_at": float(starts_at)}
 
@@ -461,15 +473,19 @@ class Desk:
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
+        if self._free_quantity(trade) <= 0:
+            return {"error": "nothing left to sell; an exit is already pending"}
         released = self._release_stop(trade)
         if released is not None:
             return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        if self._market_sell(trade, trade.quantity, reason) is None:
-            self._submit_stop(trade, trade.quantity)
-            return {"error": "the sell failed; the stop was placed again"}
+        free = self._free_quantity(trade)
+        if free <= 0:  # the release booked a partial stop fill that left nothing
+            return {"error": "nothing left to sell; an exit is already pending"}
+        if self._market_sell(trade, free, reason) is None:
+            return self._restored(trade, "the sell failed")
         trade.exit_reason = reason
         self._strategy.log_info(f"exit {trade.symbol}: {reason}")
-        return {"status": "exit submitted", "quantity": int(trade.quantity)}
+        return {"status": "exit submitted", "quantity": int(free)}
 
     def hold(self, symbol: str, reason: str) -> dict[str, Any]:
         trade = self._open_trade(symbol)
@@ -478,13 +494,19 @@ class Desk:
         self._strategy.log_info(f"hold {trade.symbol}: {reason}")
         return {"symbol": trade.symbol, "status": "holding"}
 
-    @staticmethod
-    def _split(trade: Trade, fraction: float) -> tuple[Decimal, Decimal]:
-        """`(sold, remaining)` for selling `fraction` of the trade's shares; `sold` is 0 when the position is too small to split."""
-        sold = (trade.quantity * Decimal(str(fraction))).to_integral_value(rounding=ROUND_FLOOR)
-        if sold <= 0 or sold >= trade.quantity:
-            return Decimal(0), trade.quantity
-        return sold, trade.quantity - sold
+    def _restored(self, trade: Trade, problem: str) -> dict[str, Any]:
+        """After a failed exit step released the stop: put the stop back on the free shares and say honestly whether that worked."""
+        if self._submit_stop(trade, self._free_quantity(trade)):
+            return {"error": f"{problem}; the stop was placed again"}
+        return {"error": f"{problem}, and the stop could not be placed again; the free shares were sold at market instead (or that failed too: check the position)"}
+
+    def _split(self, trade: Trade, fraction: float) -> tuple[Decimal, Decimal]:
+        """`(sold, remaining)` for selling `fraction` of the free shares; `sold` is 0 when they are too small to split."""
+        free = self._free_quantity(trade)
+        sold = (free * Decimal(str(fraction))).to_integral_value(rounding=ROUND_FLOOR)
+        if sold <= 0 or sold >= free:
+            return Decimal(0), free
+        return sold, free - sold
 
     # --- session boundaries --------------------------------------------------------------
 
@@ -508,7 +530,8 @@ class Desk:
                 self._strategy.log_error(f"flatten {trade.symbol}: {released}")
                 continue
             trade.exit_reason = reason
-            sell = self._market_sell(trade, trade.quantity, reason)
+            free = self._free_quantity(trade)
+            sell = self._market_sell(trade, free, reason) if free > 0 else None
             if sell is not None:
                 sells.append(sell)
         if sells and not self._strategy.is_backtesting:

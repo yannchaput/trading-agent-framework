@@ -79,3 +79,33 @@ def test_hold_and_unknown_symbols(tmp_path: Path) -> None:
     rig = _open(tmp_path)
     assert rig.desk.hold("AAA", "inside 1R") == {"symbol": "AAA", "status": "holding"}
     assert "no open trade" in rig.desk.exit_position("ZZZ", "x")["error"]
+
+
+def test_exit_after_a_partial_sells_only_the_free_shares(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    rig.desk.take_partial_profit("AAA", 0.5)
+    assert rig.desk.exit_position("AAA", "x") == {"status": "exit submitted", "quantity": 125}
+    assert trade.stop_order_id is None
+    assert rig.strategy.get_order(trade.exit_order_ids[-1]).quantity == D(125)
+    assert "nothing left to sell" in rig.desk.exit_position("AAA", "again")["error"]
+
+
+def test_trailing_stop_after_a_partial_covers_the_free_shares(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    rig.desk.take_partial_profit("AAA", 0.5)
+    assert rig.desk.replace_stop_with_trailing("AAA", 0.5)["status"] == "trailing stop placed"
+    trail = rig.strategy.get_order(trade.stop_order_id)
+    assert trail.order_type is OrderType.TRAIL and trail.quantity == D(125) and trail.is_active()
+
+
+def test_a_stop_that_cannot_be_placed_is_reported_as_an_error(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    assert rig.desk._submit_stop(trade, D(10_000)) is False  # more than is held: refused, and so is the market-sell fallback
+    trade.stop_level = D("99.30")
+    rig.desk._release_stop(trade)
+    rig.desk._submit_stop = lambda t, q: False  # type: ignore[method-assign]
+    result = rig.desk.replace_stop_with_trailing("AAA", 1.0)
+    assert "could not be placed" in result["error"] and "status" not in result
