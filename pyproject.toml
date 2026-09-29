@@ -1,6 +1,6 @@
 [project]
 name = "trading-agent-framework"
-version = "0.1.0"
+version = "0.1.1"
 description = "A trading agent harness managing runtime, the broker layer, agent layer, memory etc."
 readme = "README.md"
 requires-python = ">=3.14"

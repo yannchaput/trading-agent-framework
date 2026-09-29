@@ -17,6 +17,9 @@ from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.market_data import market_data_tools
 from trading_agent_framework.agents.tools.prebuilt import PrebuiltTools
 from trading_agent_framework.agents.tools.trading import trading_tools
+from trading_agent_framework.utils import get_version
+
+__version__ = get_version("trading_agent_framework")
 
 if TYPE_CHECKING:
     from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
