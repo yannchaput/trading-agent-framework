@@ -231,10 +231,13 @@ class Desk:
     def on_order_canceled(self, order: Order) -> None:
         if getattr(self._strategy.vars, "session", None) is None:
             return
+        trade = self.state.book.by_order_id(order.identifier)
+        if trade is not None and order.identifier in trade.exit_order_ids:
+            self._settle_exit(trade, order)  # also when the desk cancelled it itself: the partial fill is booked exactly once
+            return
         if order.identifier in self._expected_cancels:
             self._expected_cancels.discard(order.identifier)
             return
-        trade = self.state.book.by_order_id(order.identifier)
         if trade is None:
             return
         if order.identifier == trade.entry_order_id:
@@ -245,6 +248,27 @@ class Desk:
             trade.stop_order_id = None
             if trade.status is not TradeStatus.CLOSED:
                 self._submit_stop(trade, self._free_quantity(trade))
+
+    def _settle_exit(self, trade: Trade, order: Order) -> None:
+        """An exit sell that ended cancelled/expired: book its filled part once, then keep the rest protected (or sold, once flattened)."""
+        self._expected_cancels.discard(order.identifier)
+        trade.exit_order_ids.remove(order.identifier)
+        if order.filled_quantity > 0:
+            trade.record_exit_fill(order.filled_quantity, order.avg_fill_price or trade.stop_level, self._strategy.get_datetime())
+        if trade.status is TradeStatus.CLOSED:
+            trade.exit_reason = trade.exit_reason or "exit"
+            self._archive(trade)
+            return
+        if order.filled_quantity <= 0 or self._exit_pending(trade):
+            return
+        free = self._free_quantity(trade)
+        if free <= 0:
+            return
+        if self.state.flattened:
+            trade.exit_reason = trade.exit_reason or "flatten"
+            self._market_sell(trade, free, "exit sell ended unfilled after the flatten")
+        elif not self._has_working_stop(trade):
+            self._submit_stop(trade, free)
 
     def _record_stop_partial(self, trade: Trade, order: Order) -> None:
         """A stop that partly filled before ending cancelled/errored: book the filled part, archive the trade if that closed it."""
@@ -588,8 +612,6 @@ class Desk:
                 if trade.status is TradeStatus.CLOSED:
                     continue
             trade.stop_order_id = None
-            if self._exit_pending(trade):
-                continue  # a working exit sell already covers its shares
             free = self._free_quantity(trade)
             if free <= 0:
                 continue

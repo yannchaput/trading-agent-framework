@@ -338,3 +338,46 @@ def test_free_slots_counts_a_partly_filled_full_exit_as_freed(tmp_path: Path) ->
     before = rig.desk.free_slots()
     _working_exit_sell(rig, 249, 100)
     assert rig.desk.free_slots() == before + 1
+
+
+def test_flatten_sells_the_other_shares_when_a_tp1_sell_is_working_and_the_stop_cancel_is_late(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    rig.desk.take_partial_profit("AAA", 0.5)
+    tp1 = rig.strategy.get_order(trade.exit_order_ids[-1])
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert tp1.is_active() and tp1.quantity == D(124) and stop.quantity == D(125)
+    rig.strategy.trading_mode = TradingMode.PAPER
+    rig.strategy.cancel_order = lambda order: None
+    rig.strategy.wait_for_order_execution = lambda order, timeout=None: False
+
+    def flatten_wait(orders, timeout=None) -> bool:
+        rig.broker.cancel_order(stop)  # confirmed only during the flatten wait
+        rig.desk.on_order_canceled(stop)
+        return True
+
+    rig.strategy.wait_for_orders_execution = flatten_wait
+    attempts: list[D] = []
+    real_sell = rig.desk._market_sell
+    rig.desk._market_sell = lambda t, quantity, reason: attempts.append(quantity) or real_sell(t, quantity, reason)
+    rig.desk.flatten_all("end of day")
+    assert attempts == [D(125)]
+
+
+def test_a_partly_filled_exit_sell_that_ends_cancelled_books_its_fill_and_the_rest_is_stopped_again(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    rig.broker.cancel_order(rig.strategy.get_order(trade.stop_order_id))
+    trade.stop_order_id = None
+    sell = rig.desk._market_sell(trade, D(249), "exit")
+    sell.filled_quantity = D(100)
+    sell.avg_fill_price = D("101")
+    rig.broker.cancel_order(sell)
+    rig.desk.on_order_canceled(sell)
+    assert trade.quantity == D(149) and trade.realised_pnl != D(0)
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert stop.is_active() and stop.quantity == D(149)
+    rig.desk.on_order_canceled(sell)  # a repeated hook books nothing twice
+    assert trade.quantity == D(149)
