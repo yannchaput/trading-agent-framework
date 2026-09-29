@@ -315,12 +315,16 @@ class Desk:
         return trade
 
     def _free_quantity(self, trade: Trade) -> Decimal:
-        """Shares held that no working exit sell is already selling: what a new stop or exit sell may cover."""
+        """Shares held that no working exit sell is already selling: what a new stop or exit sell may cover.
+
+        A working sell's whole quantity is subtracted, filled part included: `trade.quantity` only drops when the desk
+        books the fill (on FILLED), so the filled-but-unbooked shares are still counted in it and are already sold.
+        """
         pending = Decimal(0)
         for order_id in trade.exit_order_ids:
             order = self._strategy.get_order(order_id)
             if order is not None and order.is_active() and order.quantity is not None:
-                pending += max(Decimal(0), order.quantity - order.filled_quantity)
+                pending += order.quantity
         return max(Decimal(0), trade.quantity - pending)
 
     def _submit_stop(self, trade: Trade, quantity: Decimal) -> bool:
@@ -584,6 +588,8 @@ class Desk:
                 if trade.status is TradeStatus.CLOSED:
                     continue
             trade.stop_order_id = None
+            if self._exit_pending(trade):
+                continue  # a working exit sell already covers its shares
             free = self._free_quantity(trade)
             if free <= 0:
                 continue

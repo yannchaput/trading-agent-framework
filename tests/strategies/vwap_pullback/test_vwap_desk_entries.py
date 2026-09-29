@@ -291,3 +291,50 @@ def test_flatten_sells_the_shares_of_a_stop_whose_cancel_was_confirmed_late(tmp_
     sells = [o for o in rig.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
     assert [(o.order_type, o.quantity) for o in sells] == [(OrderType.MARKET, D(249))]
     assert trade.exit_reason == "end of day"
+
+
+def _working_exit_sell(rig: Rig, quantity: int, filled: int):
+    trade = rig.state.book.get("AAA")
+    rig.broker.cancel_order(rig.strategy.get_order(trade.stop_order_id))  # the stop would otherwise already cover every share
+    sell = rig.strategy.submit_order(rig.strategy.create_order("AAA", quantity, "sell", limit_price=200))
+    trade.exit_order_ids.append(sell.identifier)
+    sell.filled_quantity = D(filled)  # partly filled by the tracker, not yet booked by the desk hook
+    return trade, sell
+
+
+def test_free_quantity_counts_a_partly_filled_exit_sells_full_quantity_as_not_free(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade, sell = _working_exit_sell(rig, 124, 60)
+    assert sell.is_active() and trade.quantity == D(249)
+    assert rig.desk._free_quantity(trade) == D(125)
+
+
+def test_flatten_does_not_resell_the_filled_part_of_a_partly_filled_flatten_sell(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    rig.strategy.trading_mode = TradingMode.PAPER  # the live path: waits happen
+    rig.strategy.wait_for_order_execution = lambda order, timeout=None: True
+
+    def flatten_wait(orders, timeout=None) -> bool:
+        for order in orders:
+            if order.side is OrderSide.SELL and order.order_type is OrderType.MARKET:
+                order.filled_quantity = D(100)  # partly filled, still working when the wait ends
+        return False
+
+    rig.strategy.wait_for_orders_execution = flatten_wait
+    attempts: list[D] = []
+    real_sell = rig.desk._market_sell
+    rig.desk._market_sell = lambda t, quantity, reason: attempts.append(quantity) or real_sell(t, quantity, reason)
+    rig.desk.flatten_all("end of day")
+    assert attempts == [D(249)]  # no second sell for the part the first one already filled
+    assert trade.status is TradeStatus.OPEN
+
+
+def test_free_slots_counts_a_partly_filled_full_exit_as_freed(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    before = rig.desk.free_slots()
+    _working_exit_sell(rig, 249, 100)
+    assert rig.desk.free_slots() == before + 1
