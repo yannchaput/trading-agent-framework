@@ -4,8 +4,8 @@ import dataclasses
 
 import pandas as pd
 import pytest
-
 from tests.fakes import et, make_bars_frame
+
 from trading_agent_framework.strategies.vwap_pullback.features import BarContext
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.screening import (
