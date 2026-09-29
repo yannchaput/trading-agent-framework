@@ -6,6 +6,7 @@ from pathlib import Path
 from tests.strategies.vwap_pullback.test_vwap_desk_entries import Rig
 
 from trading_agent_framework.entities.enums import OrderType
+from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus
 
 
 def _open(tmp_path: Path) -> Rig:
@@ -109,3 +110,18 @@ def test_a_stop_that_cannot_be_placed_is_reported_as_an_error(tmp_path: Path) ->
     rig.desk._submit_stop = lambda t, q: False  # type: ignore[method-assign]
     result = rig.desk.replace_stop_with_trailing("AAA", 1.0)
     assert "could not be placed" in result["error"] and "status" not in result
+
+
+def test_a_pending_full_exit_frees_its_slot_before_the_sell_fills(tmp_path: Path) -> None:
+    # Final review I3 (spec §4): pending entries count as taken, pending full exits as freed.
+    rig = _open(tmp_path)
+    for symbol in ("BBB", "CCC", "DDD"):
+        rig.state.book.add(Trade(
+            symbol=symbol, entry_order_id=f"entry-{symbol}", planned_quantity=D(10), stop_price=D(90), r_per_share=D(1),
+            catalyst="earnings", reason="x", entered_at=rig.clock.now(), status=TradeStatus.OPEN, quantity=D(10),
+        ))
+    assert rig.desk.free_slots() == 0
+    assert rig.desk.exit_position("AAA", "lost VWAP")["status"] == "exit submitted"
+    trade = rig.state.book.get("AAA")
+    assert trade.status is TradeStatus.OPEN and rig.strategy.get_order(trade.exit_order_ids[-1]).is_active()
+    assert rig.desk.free_slots() == 1

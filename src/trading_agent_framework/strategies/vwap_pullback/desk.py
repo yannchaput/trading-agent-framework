@@ -80,8 +80,10 @@ class Desk:
         return risk.circuit_breaker_tripped(self.session_pnl(), self.state.session_open_equity, self._params)
 
     def free_slots(self) -> int:
+        """Spec §4: pending entries count as taken, pending full exits (no free share left, an exit sell working) as freed."""
         book = self.state.book
-        return risk.free_slots(len(book.open_trades()), len(book.pending()), self._params)
+        holding = [t for t in book.open_trades() if not (self._free_quantity(t) <= 0 and self._exit_pending(t))]
+        return risk.free_slots(len(holding), len(book.pending()), self._params)
 
     def entry_due(self) -> bool:
         triggered = any(setup.state is SetupState.TRIGGERED for setup in self.state.setups.values())
