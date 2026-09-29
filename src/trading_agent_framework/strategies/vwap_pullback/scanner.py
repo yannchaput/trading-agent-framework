@@ -8,6 +8,7 @@ strategy clock.
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING
@@ -26,7 +27,7 @@ from trading_agent_framework.strategies.vwap_pullback.features import (
 )
 from trading_agent_framework.strategies.vwap_pullback.news import lean_headlines
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
-from trading_agent_framework.strategies.vwap_pullback.screening import daily_profile, rank_stage2, select_stage1, snapshot_from
+from trading_agent_framework.strategies.vwap_pullback.screening import daily_profile, rank_stage2, select_stage1, snapshot_from, stage2_funnel
 from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo, SessionState
 from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState, advance
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -169,6 +170,8 @@ class Scanner:
         for symbol in sorted(tracked):
             setup = state.setups.get(symbol, Setup(symbol=symbol))
             state.setups[symbol] = advance(setup, state.contexts.get(symbol, []), state.candidates[symbol].daily_atr, self._params)
+        counts = Counter(setup.state.value for setup in state.setups.values())
+        self._strategy.log_info(f"{stage2_funnel(snapshots, ranked, self._params)} | setups: {dict(sorted(counts.items())) or 'none'}")
         self.refresh_headlines(state, now)
 
     @staticmethod

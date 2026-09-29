@@ -99,6 +99,21 @@ def snapshot_from(symbol: str, contexts: Sequence[BarContext]) -> IntradaySnapsh
     return IntradaySnapshot(symbol=symbol, ret=last.close / last.session_open - 1, rs=last.rs, rvol=last.rvol, last_close=last.close, vwap=last.vwap)
 
 
+def stage2_funnel(snapshots: Sequence[IntradaySnapshot], ranked: Sequence[RankedCandidate], params: VwapPullbackParameters) -> str:
+    """One log line saying where the stage-2 candidates are lost: each floor condition, the floor itself, then the tracked set.
+
+    The three floor counts overlap (a symbol can fail several), so they do not add up to `floor_fail`.
+    """
+    no_rvol = sum(1 for s in snapshots if s.rvol is None or s.rvol < params.rvol_min)
+    no_rs = sum(1 for s in snapshots if s.rs <= 0)
+    below_vwap = sum(1 for s in snapshots if s.last_close <= s.vwap)
+    passing = sum(1 for s in snapshots if s.rvol is not None and s.rvol >= params.rvol_min and s.rs > 0 and s.last_close > s.vwap)
+    return (
+        f"stage 2: {len(snapshots)} with bars | rvol<{params.rvol_min:g}: {no_rvol}, rs<=0: {no_rs}, below vwap: {below_vwap} "
+        f"| pass floor: {passing} | tracked: {len(ranked)}"
+    )
+
+
 def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParameters, sticky: Collection[str]) -> list[RankedCandidate]:
     """The top `tracked_size` symbols passing the floor by composite z-score, then every `sticky` symbol not already in (by name).
 

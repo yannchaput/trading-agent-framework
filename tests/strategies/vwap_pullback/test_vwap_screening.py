@@ -15,6 +15,7 @@ from trading_agent_framework.strategies.vwap_pullback.screening import (
     rank_stage2,
     select_stage1,
     snapshot_from,
+    stage2_funnel,
 )
 
 PARAMS = VwapPullbackParameters()
@@ -89,3 +90,17 @@ def test_snapshot_from_uses_the_latest_context() -> None:
     snapshot = snapshot_from("AAA", [context])
     assert snapshot == IntradaySnapshot(symbol="AAA", ret=pytest.approx(0.01), rs=0.008, rvol=2.5, last_close=101, vwap=100.5)
     assert snapshot_from("AAA", []) is None
+
+
+def test_stage2_funnel_counts_each_floor_condition_and_the_survivors() -> None:
+    def snap(symbol: str, *, rvol: float | None, rs: float, close: float, vwap: float = 10.0) -> IntradaySnapshot:
+        return IntradaySnapshot(symbol=symbol, ret=0.01, rs=rs, rvol=rvol, last_close=close, vwap=vwap)
+
+    snapshots = [
+        snap("OK", rvol=2.0, rs=0.01, close=11.0),
+        snap("LOWVOL", rvol=1.0, rs=0.01, close=11.0),
+        snap("NOBASE", rvol=None, rs=0.01, close=11.0),
+        snap("WEAK", rvol=2.0, rs=-0.01, close=9.0),  # fails RS and VWAP, not RVOL
+    ]
+    line = stage2_funnel(snapshots, rank_stage2(snapshots, PARAMS, sticky=()), PARAMS)
+    assert line == "stage 2: 4 with bars | rvol<1.5: 2, rs<=0: 1, below vwap: 1 | pass floor: 1 | tracked: 1"
