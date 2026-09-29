@@ -41,6 +41,10 @@ class Desk:
         self._expected_cancels: set[str] = set()  # stops this desk cancelled itself (hand-offs, flatten)
 
     @property
+    def params(self) -> VwapPullbackParameters:
+        return self._params
+
+    @property
     def state(self) -> SessionState:
         return self._strategy.vars.session
 
