@@ -144,7 +144,8 @@ def page_scorecard():
                 st.text_area(
                     "Description",
                     value=desc,
-                    height=120,
+                    height=300,
+                    key="run_description",
                     disabled=True,
                     label_visibility="collapsed",
                 )

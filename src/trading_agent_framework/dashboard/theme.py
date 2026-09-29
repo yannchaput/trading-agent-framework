@@ -75,6 +75,15 @@ div[data-testid="stElementContainer"][class*="st-key-scorecard_table"] [data-tes
 div[data-testid="stMainBlockContainer"]:has(div[class*="st-key-models_page_marker"]) {
     padding-top: 48px !important;
 }
+/* The run description (scorecard.py, text_area keyed "run_description"): light box with
+   dark text. The disabled textarea dims its text, so colour and opacity are forced too. */
+div[class*="st-key-run_description"] div[data-baseweb="textarea"],
+div[class*="st-key-run_description"] textarea {
+    background-color: #131722 !important;
+    color: #d1d4dc !important;
+    -webkit-text-fill-color: #d1d4dc !important;
+    opacity: 1 !important;
+}
 </style>
 """
 
