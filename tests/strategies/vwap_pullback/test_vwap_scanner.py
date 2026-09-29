@@ -52,6 +52,9 @@ def test_prepare_session_runs_stage_one_and_builds_rvol_baselines(tmp_path: Path
     assert state.baselines["AAA"].tolist() == [100.0, 200.0, 300.0, 400.0, 500.0]
     assert "BBB" not in state.baselines  # no minute data: no baseline, so it cannot pass the stage-2 floor
     assert state.session_open_equity == Decimal("25000")
+    minute_calls = [call for call in broker.bars_calls if call[2] == "minute"]
+    assert minute_calls
+    assert all(call[3] is False for call in minute_calls)
 
 
 def _state(**candidates: CandidateInfo) -> SessionState:
@@ -72,6 +75,7 @@ def test_scan_builds_contexts_and_advances_setups(tmp_path: Path) -> None:
     assert [c.time for c in state.contexts["AAA"]][-1] == et(2026, 9, 2, 9, 50)
     assert state.setups["AAA"].state is SetupState.IMPULSE
     assert state.setups["AAA"].impulse_high == pytest.approx(101.21)
+    assert [call[3] for call in broker.bars_calls if call[2] == "minute"] == [False]
     assert broker.news.calls == []  # headlines are only fetched for pullback/triggered setups and open trades
 
 

@@ -90,7 +90,7 @@ class Scanner:
         if self._preload is not None:
             self._preload([*assets, Asset(self._benchmark)], "minute")
         length = (self._params.rvol_baseline_sessions + 1) * _SESSION_MINUTES
-        bars = self._strategy.get_historical_prices_for_assets(assets, length, "minute")
+        bars = self._strategy.get_historical_prices_for_assets(assets, length, "minute", include_after_hours=False)
         baselines: dict[str, pd.Series] = {}
         for asset in assets:
             found = bars.get(asset)
@@ -119,7 +119,7 @@ class Scanner:
         bench = Asset(self._benchmark)
         minutes_open = int((now - state.session.open).total_seconds() // 60)
         length = max(10, min(minutes_open + 5, _SESSION_MINUTES + 10))
-        bars = self._strategy.get_historical_prices_for_assets([*(Asset(s) for s in state.candidates), bench], length, "minute")
+        bars = self._strategy.get_historical_prices_for_assets([*(Asset(s) for s in state.candidates), bench], length, "minute", include_after_hours=False)
         bench_df = self._session_frame(bars.get(bench), state)
         snapshots = []
         for symbol, info in state.candidates.items():
