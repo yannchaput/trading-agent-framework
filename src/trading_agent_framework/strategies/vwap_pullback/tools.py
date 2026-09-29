@@ -39,6 +39,8 @@ def setup_rows(desk: "Desk") -> list[dict[str, Any]]:  # noqa: UP037
     for symbol, setup in sorted(state.setups.items()):
         if setup.state not in (SetupState.PULLBACK, SetupState.TRIGGERED):
             continue
+        if setup.state is SetupState.TRIGGERED and not desk.awaits_decision(symbol):
+            continue  # passed on often enough already: the agent is not asked about it again
         row: dict[str, Any] = {"symbol": symbol, **health(setup)}
         info = state.candidates.get(symbol)
         if info is not None:

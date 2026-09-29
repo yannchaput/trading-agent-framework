@@ -112,12 +112,17 @@ class Desk:
         holding = [t for t in book.open_trades() if not (self._free_quantity(t) <= 0 and self._exit_pending(t))]
         return risk.free_slots(len(holding), len(book.pending()), self._params)
 
+    def awaits_decision(self, symbol: str) -> bool:
+        """Whether `symbol` is triggered and the entry agent may still be asked: it has not used up its passes."""
+        setup = self.state.setups.get(symbol)
+        return setup is not None and setup.state is SetupState.TRIGGERED and self.state.passes.get(symbol, 0) < self._params.max_passes_per_symbol
+
     def entry_due(self) -> bool:
         """Whether the entry agent should run this tick: a trigger exists AND an entry could actually be accepted.
 
         Checking the same rules `enter_long` enforces means the LLM is never woken for a setup it cannot enter.
         """
-        triggered = any(setup.state is SetupState.TRIGGERED for setup in self.state.setups.values())
+        triggered = any(self.awaits_decision(symbol) for symbol in self.state.setups)
         now = self._strategy.get_datetime()
         return triggered and not self.state.flattened and risk.in_entry_window(now, self._params) and self.free_slots() > 0 and not self.breaker_tripped()
 
@@ -211,6 +216,7 @@ class Desk:
         """The entry agent's `pass_on_setup`: record the decision (logged; the trigger expires by itself)."""
         symbol = symbol.strip().upper()
         self.state.decided.add(symbol)
+        self.state.passes[symbol] = self.state.passes.get(symbol, 0) + 1
         self._strategy.log_info(f"pass {symbol}: {reason}")
         return {"symbol": symbol, "status": "passed"}
 

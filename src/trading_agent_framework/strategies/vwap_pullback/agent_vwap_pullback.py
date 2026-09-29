@@ -30,7 +30,6 @@ from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPull
 from trading_agent_framework.strategies.vwap_pullback.prompts import build_entry_prompt, build_exit_prompt
 from trading_agent_framework.strategies.vwap_pullback.scanner import Scanner
 from trading_agent_framework.strategies.vwap_pullback.session import SessionState
-from trading_agent_framework.strategies.vwap_pullback.setups import SetupState
 from trading_agent_framework.strategies.vwap_pullback.tools import entry_tools, exit_tools, setup_rows, trade_rows
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FatalStrategyError
@@ -187,7 +186,7 @@ class VwapPullbackStrategy(Strategy):
         context = {"current_datetime": now.isoformat(), "setups": setup_rows(self.desk), "free_slots": self.desk.free_slots()}
         summary = self._run_agent(self.ENTRY_AGENT, self.ENTRY_TASK, context)
         session = self.vars.session
-        undecided = [s for s, setup in session.setups.items() if setup.state is SetupState.TRIGGERED and s not in session.decided]
+        undecided = [s for s in session.setups if self.desk.awaits_decision(s) and s not in session.decided]
         if undecided:
             self.log_warning(f"[{self.ENTRY_AGENT}] no enter_long or pass_on_setup for {', '.join(undecided)}; treated as a pass")
         return {"runs": [summary]}

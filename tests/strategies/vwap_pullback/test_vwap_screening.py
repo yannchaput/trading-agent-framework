@@ -79,6 +79,7 @@ def test_rank_stage2_keeps_sticky_symbols_even_when_they_fail_the_floor() -> Non
     ranked = rank_stage2([_snapshot("A"), _snapshot("HELD", rs=-0.01)], PARAMS, sticky={"HELD", "GONE"})
     assert [c.symbol for c in ranked] == ["A", "GONE", "HELD"]
     assert ranked[2].composite == 0.0
+    assert [c.on_floor for c in ranked] == [True, False, False]  # placeholders must not overwrite measured scores
 
 
 def test_rank_stage2_excludes_missing_rvol() -> None:

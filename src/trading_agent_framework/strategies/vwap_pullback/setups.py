@@ -55,6 +55,7 @@ class Setup:
     trigger_close: float | None = None  # close of the triggering bar, the entry reference for R
     triggered_at: datetime | None = None
     retracement: float = 0.0  # of the impulse leg (session open -> impulse high), at the last close
+    max_retracement: float = 0.0  # the deepest `retracement` since the impulse high: the pullback's depth (it shrinks again on the bounce)
     largest_red_body_atr: float = 0.0  # biggest down-bar body of the pullback, in daily ATRs (a health flag)
     last_close: float | None = None
     last_vwap: float | None = None
@@ -119,7 +120,7 @@ def _impulse_or_pullback(setup: Setup, bar: BarContext, daily_atr: float, params
     assert setup.impulse_high is not None  # set on entering IMPULSE
     leg = setup.impulse_high - bar.session_open
     retracement = (setup.impulse_high - bar.close) / leg if leg > 0 else 0.0
-    setup = replace(setup, retracement=max(retracement, 0.0))
+    setup = replace(setup, retracement=max(retracement, 0.0), max_retracement=max(setup.max_retracement, retracement))
     red_body = bar.open - bar.close  # > 0 only for a down bar
     reason = _broken_reason(setup, bar, red_body, retracement, daily_atr, params)
     if reason is not None:
@@ -174,7 +175,7 @@ def _new_high(setup: Setup, bar: BarContext) -> Setup:
     """Back to IMPULSE at a new high: the impulse now runs to this bar and any pullback so far is discarded."""
     return replace(
         setup, state=SetupState.IMPULSE, impulse_high=bar.high, impulse_bars=setup.bars_seen, impulse_volume_total=setup.volume_total,
-        pullback_low=None, pullback_bars=0, pullback_volume_total=0.0, largest_red_body_atr=0.0, retracement=0.0,
+        pullback_low=None, pullback_bars=0, pullback_volume_total=0.0, largest_red_body_atr=0.0, retracement=0.0, max_retracement=0.0,
     )
 
 
@@ -196,7 +197,7 @@ def mark_done(setup: Setup) -> Setup:
 def health(setup: Setup) -> dict[str, object]:
     """The health flags the entry agent reads (spec §3), rounded for the prompt.
 
-    Healthy pullback: vol_ratio < 1 (quieter than the impulse), duration_ratio <= 1, moderate retracement,
+    Healthy pullback: vol_ratio < 1 (quieter than the impulse), duration_ratio <= 1, moderate pullback depth,
     still above VWAP, positive RS, no big red bar.
     """
     return {
@@ -204,7 +205,7 @@ def health(setup: Setup) -> dict[str, object]:
         "above_vwap": setup.last_close is not None and setup.last_vwap is not None and setup.last_close > setup.last_vwap,
         "vol_ratio": round(setup.pullback_avg_volume / setup.impulse_avg_volume, 2) if setup.impulse_avg_volume else None,
         "duration_ratio": round(setup.pullback_bars / setup.impulse_bars, 2) if setup.impulse_bars else None,
-        "retracement_pct": round(100 * setup.retracement, 1),
+        "retracement_pct": round(100 * setup.max_retracement, 1),  # the pullback's depth, what the prompt's band applies to
         "rs_now_pct": round(100 * setup.last_rs, 2) if setup.last_rs is not None else None,
         "rvol_now": round(setup.last_rvol, 2) if setup.last_rvol is not None else None,
         "largest_red_body_atr": round(setup.largest_red_body_atr, 2),

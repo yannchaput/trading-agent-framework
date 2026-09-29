@@ -57,6 +57,13 @@ def test_health_flags() -> None:
     assert flags["above_vwap"] is True
 
 
+def test_health_reports_the_pullback_depth_not_the_shallower_retracement_after_the_bounce() -> None:
+    triggered = _run(B1, B2, B3, B4, B5)
+    assert triggered.state is SetupState.TRIGGERED
+    assert triggered.retracement < triggered.max_retracement  # the trigger bar closed higher than the pullback's low close
+    assert health(triggered)["retracement_pct"] == pytest.approx(30.6, abs=0.1)
+
+
 @pytest.mark.parametrize(
     ("last_bar", "reason"),
     [

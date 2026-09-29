@@ -160,6 +160,8 @@ class Scanner:
         sticky = {symbol for symbol, setup in state.setups.items() if setup.state is not SetupState.WATCH}
         ranked = rank_stage2(snapshots, self._params, sticky)
         for candidate in ranked:
+            if not candidate.on_floor:
+                continue  # a setup mid-pullback trades quietly, so its RVOL falls below the floor: keep its last measured scores
             info = state.candidates[candidate.symbol]
             info.composite, info.z_rs, info.z_rvol = candidate.composite, candidate.z_rs, candidate.z_rvol
         tracked = {candidate.symbol for candidate in ranked}

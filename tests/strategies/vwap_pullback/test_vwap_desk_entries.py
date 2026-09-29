@@ -504,3 +504,15 @@ def test_free_slots_counts_a_filled_but_unbooked_full_exit_as_freed(tmp_path: Pa
     rig.advance(60)
     assert sell.is_filled() and trade.status is TradeStatus.OPEN  # its fill hook has not reached the desk yet
     assert rig.desk.free_slots() == before + 1
+
+
+def test_a_symbol_passed_on_max_times_no_longer_wakes_the_entry_agent(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    limit = rig.desk.params.max_passes_per_symbol
+    for _ in range(limit - 1):
+        rig.desk.pass_on_setup("AAA", "weak")
+    assert rig.desk.awaits_decision("AAA")
+    assert rig.desk.entry_due()
+    rig.desk.pass_on_setup("AAA", "weak")
+    assert not rig.desk.awaits_decision("AAA")
+    assert not rig.desk.entry_due()
