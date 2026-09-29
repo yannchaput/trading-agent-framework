@@ -46,8 +46,9 @@ which the strategy enters step 1 and step 2; `exposures = (1.0, 0.7, 0.4)` are t
   `hysteresis` (0.05): from step 2 into step 1 needs breadth ≥ 0.35; into step 0 needs ≥ 0.55. When breadth
   jumps several steps, land on the least defensive step whose bound is met (e.g. 0.20 → 0.52 lands on step 1;
   0.20 → 0.60 lands on step 0).
-- The current step lives in `self.vars.breadth_step` (in memory, `None` at start so the first reading applies
-  directly). A live restart resets it, which only removes the buffer for one reading.
+- The current step lives in `self.vars.breadth_step` and is **persisted**, so a crash or a stop/start in
+  paper or live resumes on the same step instead of losing the hysteresis (see section 3b). `None` means "no
+  history" and the first reading applies directly.
 - `breadth is None` → step 0 exposure 1.0 and the stored step is left unchanged.
 
 ## 3. Pure functions (`utils.py`)
@@ -62,6 +63,30 @@ def breadth_exposure(step: int, exposures: tuple[float, ...]) -> float
   the denominator is the number of stocks with enough closes; `None` if that number is below `min_stocks`.
 - `next_breadth_step`: as in section 2 (`thresholds` is ordered from the least to the most defensive boundary).
 - `breadth_exposure`: `exposures[step]`.
+
+## 3b. Persistence of the step
+
+Same pattern as the equity history (`load_equity_history` / `save_equity_history`): one small JSON file per
+trading mode, `data/cross_momentum_breadth_{mode}.json`, holding
+`{"date": "YYYY-MM-DD", "step": 1, "breadth": 0.42}`.
+
+```python
+def load_breadth_step(path: Path, n_steps: int) -> int | None
+def save_breadth_step(path: Path, step: int, breadth: float, today_str: str) -> None
+```
+
+- `load_breadth_step` returns `None` for a missing file, unreadable or corrupt JSON, a non-dict payload, or a
+  `step` that is not an `int` (a `bool` does not count) in `0 <= step < n_steps`. `None` means the first
+  reading applies directly.
+- `save_breadth_step` writes atomically (temp file + `os.replace`, parent directory created). A disk error only
+  logs a warning; it never raises into the trading loop.
+- `initialize()` loads the step into `self.vars.breadth_step` (alongside the equity history).
+- `_breadth_exposure()` saves the step every time it applies a reading, stamped with the strategy clock's date
+  (`self.get_datetime()`, never wall-clock time).
+- `run_backtesting()` deletes the file first, like the equity history, so a backtest starts clean and never
+  inherits or leaves state for paper/live (their files are separate by mode).
+- The step is stored as-is even if the bot was down for weeks: the next reading cuts immediately if it is
+  more defensive, and re-risks only past the buffer, exactly as if the bot had kept running.
 
 ## 4. Wiring in `on_trading_iteration`
 
@@ -94,6 +119,11 @@ def breadth_exposure(step: int, exposures: tuple[float, ...]) -> float
   (step 0, breadth 0.25 → 2); buffer (step 2, 0.33 → 2; 0.35 → 1; step 1, 0.52 → 1; 0.55 → 0); multi-step
   jumps (0.20 → 0.52 → 1, 0.20 → 0.60 → 0); `previous_step None` → raw step.
 - `breadth_exposure`: maps 0/1/2 to 1.0/0.7/0.4.
+- Persistence with a temp path: save then load round-trips the step; a missing file, corrupt JSON, a non-dict
+  payload, an out-of-range step, a float step and a boolean step all load as `None`; a failing write (parent
+  path is a file) does not raise.
+- Restart continuity: after a reading of 0.25 (step 2) is applied and saved, a fresh strategy that loads the
+  file in `initialize()` treats 0.33 as still step 2 (hysteresis survives) and 0.36 as step 1.
 - Strategy wiring with the existing fake-strategy style: a breadth of 0.4 caps `final_exposure` at 0.7 when the
   other legs are 1.0; a `None` breadth leaves it at 1.0; `enabled: False` ignores breadth; the stored step
   drives hysteresis across two consecutive calls.
