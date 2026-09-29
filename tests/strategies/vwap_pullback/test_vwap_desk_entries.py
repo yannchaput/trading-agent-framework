@@ -1,0 +1,202 @@
+from __future__ import annotations
+
+import dataclasses
+import json
+from datetime import date, datetime, timedelta
+from decimal import Decimal as D
+from pathlib import Path
+
+import pytest
+from tests.fakes import FakeClock, FrameDataSource, et, make_session, minute_ohlc
+
+from trading_agent_framework.backtesting.broker import BacktestBroker
+from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core import Strategy
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderType
+from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.vwap_pullback.desk import Desk
+from trading_agent_framework.strategies.vwap_pullback.features import BarContext
+from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
+from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo, SessionState
+from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState
+from trading_agent_framework.strategies.vwap_pullback.trades import TradeStatus
+
+DAY = date(2026, 9, 1)
+FLAT = (100.0, 100.2, 99.8, 100.0, 1000.0)
+# Close-stamped minute bars 09:31..11:00: flat at 100, then a drop through 99.30 at 10:03.
+ROWS = [FLAT] * 32 + [(100.0, 100.0, 99.0, 99.2, 1000.0)] + [(99.2, 99.4, 99.0, 99.2, 1000.0)] * 57
+
+
+class Rig:
+    def __init__(self, tmp_path: Path, *, now: datetime | None = None, params: VwapPullbackParameters | None = None) -> None:
+        self.clock = FakeClock(now or et(2026, 9, 1, 10, 0), [make_session(DAY)])
+        frames = {(symbol, "minute"): minute_ohlc(et(2026, 9, 1, 9, 31), ROWS) for symbol in ("AAA", "MSFT")}
+        self.broker = BacktestBroker("vwap", data_source=FrameDataSource(frames), clock=self.clock, budget=D("100000"), timestep="minute")
+        self.strategy = Strategy(self.broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
+        self.strategy.minutes_before_closing = 10  # as VwapPullbackStrategy: the flatten runs at 15:50
+        self.strategy.vars.session = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=D("100000"))
+        self.state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0, z_rs=2.5, z_rvol=2.5)
+        self.state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
+        self.state.contexts["AAA"] = [BarContext(time=et(2026, 9, 1, 10, 0), open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0,
+            session_open=99.0, session_high=100.2,
+        )]
+        self.log = tmp_path / "trades.jsonl"
+        self.desk = Desk(self.strategy, params or VwapPullbackParameters(), trade_log=lambda: self.log)
+
+    @property
+    def state(self) -> SessionState:
+        return self.strategy.vars.session
+
+    def advance(self, seconds: float) -> None:
+        before = self.clock.now()
+        self.clock.advance(seconds)
+        self.broker.on_advance(before, self.clock.now())
+
+    def fill_hook(self, order: Order) -> None:
+        assert order.is_filled()
+        self.desk.on_order_filled(order, order.avg_fill_price, order.filled_quantity)
+
+    def open_trade(self) -> None:
+        self.desk.enter_long("AAA", "earnings", "clean pullback")
+        entry = self.strategy.get_order(self.state.book.get("AAA").entry_order_id)
+        self.advance(60)
+        self.fill_hook(entry)
+
+
+def test_enter_long_sizes_the_trade_and_submits_a_limit_buy(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    result = rig.desk.enter_long("aaa", "earnings", "clean pullback")
+    assert result == {"symbol": "AAA", "quantity": 249, "limit_price": 100.1, "stop_price": 99.3, "r_per_share": 0.7, "status": "entry submitted"}
+    trade = rig.state.book.get("AAA")
+    assert trade.status is TradeStatus.PENDING and trade.catalyst == "earnings"
+    assert rig.state.setups["AAA"].state is SetupState.IN_TRADE
+    order = rig.strategy.get_order(trade.entry_order_id)
+    assert order.order_type is OrderType.LIMIT and order.limit_price == D("100.10")
+    assert "AAA" in rig.state.decided
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda rig: rig.state.setups.__setitem__("AAA", Setup(symbol="AAA", state=SetupState.PULLBACK)), "no triggered setup"),
+        (lambda rig: setattr(rig.state, "flattened", True), "flattened"),
+        (lambda rig: rig.clock.advance(-20 * 60), "only allowed between"),
+    ],
+)
+def test_enter_long_refusals(tmp_path: Path, change, message: str) -> None:
+    rig = Rig(tmp_path)
+    change(rig)
+    assert message in rig.desk.enter_long("AAA", "earnings", "x")["error"]
+
+
+def test_enter_long_refuses_an_unknown_catalyst_and_a_full_book(tmp_path: Path) -> None:
+    assert "catalyst" in Rig(tmp_path).desk.enter_long("AAA", "rumour", "x")["error"]
+    full = Rig(tmp_path, params=dataclasses.replace(VwapPullbackParameters(), max_positions=0))
+    assert "slot" in full.desk.enter_long("AAA", "earnings", "x")["error"]
+
+
+def test_an_entry_fill_places_the_protective_stop(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    assert trade.status is TradeStatus.OPEN and trade.quantity == D(249) and trade.entry_price == D("100")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert stop.order_type is OrderType.STOP and stop.stop_price == D("99.30") and stop.quantity == D(249) and stop.side is OrderSide.SELL
+
+
+def test_a_stop_fill_closes_the_trade_and_writes_the_trade_log(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    stop = rig.strategy.get_order(rig.state.book.get("AAA").stop_order_id)
+    rig.advance(120)  # the 10:03 bar trades through 99.30
+    rig.fill_hook(stop)
+    assert rig.state.book.get("AAA") is None
+    assert rig.state.setups["AAA"].state is SetupState.DONE
+    row = json.loads(rig.log.read_text().splitlines()[0])
+    assert row["symbol"] == "AAA" and row["exit_reason"] == "stop" and row["realised_pnl"] == str(D("-0.70") * 249)
+
+
+def test_reconcile_expires_an_unfilled_entry_from_an_earlier_tick(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.desk.enter_long("AAA", "earnings", "x")
+    entry = rig.strategy.get_order(rig.state.book.get("AAA").entry_order_id)
+    rig.clock.advance(5)  # still the same bar: nothing filled
+    rig.desk.reconcile(rig.clock.now())
+    assert entry.is_canceled()
+    rig.desk.on_order_canceled(entry)
+    assert rig.state.book.get("AAA") is None
+    assert rig.state.setups["AAA"].state is SetupState.PULLBACK
+
+
+def test_reconcile_drops_an_entry_the_broker_rejected(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.desk.enter_long("AAA", "earnings", "x")
+    entry = rig.strategy.get_order(rig.state.book.get("AAA").entry_order_id)
+    entry.set_error("insufficient cash")
+    rig.broker.tracker.process_trade_event(entry, OrderEvent.ERROR)
+    rig.desk.reconcile(rig.clock.now())
+    assert rig.state.book.get("AAA") is None
+    assert rig.state.setups["AAA"].state is SetupState.PULLBACK
+    assert rig.desk.free_slots() == 4
+
+
+def test_reconcile_replaces_a_stop_that_errored(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    old = rig.strategy.get_order(trade.stop_order_id)
+    rig.broker.cancel_order(old)  # drop it from the broker's queue ...
+    old.set_error("rejected")  # ... and make it look rejected, with no hook reaching the strategy
+    rig.desk.reconcile(rig.clock.now())
+    assert trade.stop_order_id != old.identifier
+    assert rig.strategy.get_order(trade.stop_order_id).is_active()
+
+
+def test_unexpected_stop_cancel_places_it_again(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    old = rig.strategy.get_order(trade.stop_order_id)
+    rig.broker.cancel_order(old)
+    rig.desk.on_order_canceled(old)
+    assert trade.stop_order_id != old.identifier and rig.strategy.get_order(trade.stop_order_id).is_active()
+
+
+def test_flatten_all_cancels_the_stop_and_sells_and_later_entry_fills_are_sold(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    rig.desk.flatten_all("end of day")
+    assert stop.is_canceled()
+    sell = rig.strategy.get_order(trade.exit_order_ids[-1])
+    assert sell.order_type is OrderType.MARKET and sell.quantity == D(249)
+    assert trade.exit_reason == "end of day" and rig.state.flattened
+
+
+def test_close_unknown_positions_leaves_foreign_positions_alone(tmp_path: Path) -> None:
+    # AAA: held, with a stop of ours from before a restart, but no trade in the session -> closed.
+    # MSFT: held with no order of ours (a shared account) -> untouched.
+    rig = Rig(tmp_path)
+    for symbol in ("AAA", "MSFT"):
+        rig.broker.submit_order(Order(strategy_name="vwap", asset=Asset(symbol), side=OrderSide.BUY, quantity=D(10)))
+    rig.advance(60)
+    ours = rig.strategy.submit_order(rig.strategy.create_order("AAA", 10, "sell", stop_price=90))  # a stop from before the restart
+    rig.desk.close_unknown_positions()
+    assert ours.is_canceled()
+    pending = [o for o in rig.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
+    assert [(o.asset.symbol, o.quantity) for o in pending] == [("AAA", D(10))]
+    assert rig.state.unknown_positions_checked
+
+
+def test_entry_due_and_exit_review_due(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    assert rig.desk.entry_due()
+    rig.open_trade()
+    assert not rig.desk.entry_due()  # the only triggered setup is now in a trade
+    assert rig.desk.exit_review_due(rig.clock.now()) == []  # 100 is above VWAP 99.9 and the EMA, below +1R
+    rig.clock.advance(timedelta(minutes=15).total_seconds())
+    assert rig.desk.exit_review_due(rig.clock.now()) == ["AAA"]
+    rig.desk.mark_reviewed(rig.clock.now())
+    assert rig.desk.exit_review_due(rig.clock.now()) == []
