@@ -534,12 +534,20 @@ class Desk:
     # --- session boundaries --------------------------------------------------------------
 
     def flatten_all(self, reason: str) -> None:
-        """Cancel every entry and stop of this session's trades and market-sell what they hold (only this strategy's trades)."""
+        """Cancel every entry and stop of this session's trades and market-sell what they hold (only this strategy's trades).
+
+        Without a session (its preparation kept failing) there is no trade book: this strategy's open orders are
+        cancelled and the positions they point at closed instead. A stop whose cancel is confirmed only after its
+        wait is caught by a re-check once the flatten sells have had their wait: its free shares are sold then.
+        """
         state = getattr(self._strategy.vars, "session", None)
         if state is None:
+            self._strategy.log_warning(f"{reason} with no session state: closing what this strategy's open orders point at")
+            self._close_orphans(known=set())
             return
         state.flattened = True
         sells: list[Order] = []
+        unconfirmed: list[Order] = []
         for trade in list(state.book.active()):
             if trade.status is TradeStatus.PENDING:
                 order = self._strategy.get_order(trade.entry_order_id)
@@ -551,17 +559,39 @@ class Desk:
                 continue
             if released is not None:
                 self._strategy.log_error(f"flatten {trade.symbol}: {released}")
+                stop = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+                if stop is not None:
+                    unconfirmed.append(stop)
                 continue
             trade.exit_reason = reason
             free = self._free_quantity(trade)
             sell = self._market_sell(trade, free, reason) if free > 0 else None
             if sell is not None:
                 sells.append(sell)
-        if sells and not self._strategy.is_backtesting:
-            self._strategy.wait_for_orders_execution(sells, timeout=self._params.flatten_wait_seconds)
+        if (sells or unconfirmed) and not self._strategy.is_backtesting:
+            self._strategy.wait_for_orders_execution([*sells, *unconfirmed], timeout=self._params.flatten_wait_seconds)
             still_open = [order.asset.symbol for order in sells if order.is_active()]
             if still_open:
                 self._strategy.log_error(f"flatten: sells still open after {self._params.flatten_wait_seconds:.0f}s for {', '.join(still_open)}")
+        self._sell_unprotected(reason)
+
+    def _sell_unprotected(self, reason: str) -> None:
+        """After the flatten: market-sell the free shares of every trade whose stop is gone (cancelled, expired) unfilled."""
+        for trade in list(self.state.book.open_trades()):
+            stop = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+            if stop is not None and (stop.is_active() or stop.is_filled()):
+                continue
+            if stop is not None:
+                self._record_stop_partial(trade, stop)
+                if trade.status is TradeStatus.CLOSED:
+                    continue
+            trade.stop_order_id = None
+            free = self._free_quantity(trade)
+            if free <= 0:
+                continue
+            self._strategy.log_warning(f"flatten {trade.symbol}: its stop is gone and {free} shares are unsold; selling them now")
+            trade.exit_reason = reason
+            self._market_sell(trade, free, reason)
 
     def close_unknown_positions(self) -> None:
         """After a restart: cancel this strategy's open orders in symbols no trade of the session knows, then close the
@@ -572,7 +602,10 @@ class Desk:
         """
         state = self.state
         state.unknown_positions_checked = True
-        known = {trade.symbol for trade in state.book.active()}
+        self._close_orphans(known={trade.symbol for trade in state.book.active()})
+
+    def _close_orphans(self, *, known: set[str]) -> None:
+        """Cancel this strategy's active orders in symbols outside `known`, then close the positions they pointed at."""
         ours: dict[str, list[Order]] = {}
         for order in self._strategy.broker.tracker.get_active_orders():
             if order.asset.symbol not in known:
@@ -582,10 +615,10 @@ class Desk:
         try:
             positions = self._strategy.get_positions()
         except _DATA_ERRORS as exc:
-            self._strategy.log_warning(f"could not check for positions left from before a restart: {exc}")
+            self._strategy.log_warning(f"could not check for positions to close: {exc}")
             return
         orphans = [order for orders in ours.values() for order in orders]
-        self._strategy.log_warning(f"cancelling {len(orphans)} open order(s) of this strategy with no trade in this session (restart): {', '.join(sorted(ours))}")
+        self._strategy.log_warning(f"cancelling {len(orphans)} open order(s) of this strategy with no trade to manage them: {', '.join(sorted(ours))}")
         for order in orphans:
             self._cancel(order)
         if not self._strategy.is_backtesting:
@@ -594,7 +627,7 @@ class Desk:
             symbol = position.asset.symbol
             if symbol not in ours:
                 continue
-            self._strategy.log_warning(f"closing {position.quantity} {symbol}: held with this strategy's open orders but no trade in this session (restart)")
+            self._strategy.log_warning(f"closing {position.quantity} {symbol}: held with this strategy's open orders but no trade to manage it")
             try:
                 self._strategy.close_position(symbol)
             except BrokerError as exc:

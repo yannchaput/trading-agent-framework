@@ -251,3 +251,43 @@ def test_a_fill_of_our_buy_that_matches_no_trade_is_sold_at_once(tmp_path: Path)
     sells = [o for o in rig.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
     assert [(o.asset.symbol, o.quantity, o.order_type) for o in sells] == [("MSFT", D(10), OrderType.MARKET)]
     assert rig.state.book.get("MSFT") is None
+
+
+def test_flatten_without_a_session_cancels_our_orders_and_closes_only_our_positions(tmp_path: Path) -> None:
+    # Final review I5(a): session preparation kept failing (no session), yet what this strategy holds must not ride overnight.
+    rig = Rig(tmp_path)
+    rig.broker._data_source.frames[("BBB", "minute")] = minute_ohlc(et(2026, 9, 1, 9, 31), ROWS)
+    for symbol in ("AAA", "MSFT"):
+        rig.broker.submit_order(Order(strategy_name="vwap", asset=Asset(symbol), side=OrderSide.BUY, quantity=D(10)))
+    rig.advance(60)
+    stop = rig.strategy.submit_order(rig.strategy.create_order("AAA", 10, "sell", stop_price=90))
+    entry = rig.strategy.submit_order(rig.strategy.create_order("BBB", 5, "buy", limit_price=90))
+    rig.strategy.vars.session = None
+    rig.desk.flatten_all("end-of-day flatten")
+    assert stop.is_canceled() and entry.is_canceled()
+    pending = [o for o in rig.broker.tracker.get_active_orders()]
+    assert [(o.asset.symbol, o.side, o.quantity) for o in pending] == [("AAA", OrderSide.SELL, D(10))]  # MSFT is not ours
+
+
+def test_flatten_sells_the_shares_of_a_stop_whose_cancel_was_confirmed_late(tmp_path: Path) -> None:
+    # Final review I5(b): the stop cancel is confirmed only after the 10 s wait; its hook is swallowed as expected,
+    # so without a re-check after the flatten wait those shares would have neither a stop nor a sell.
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    rig.strategy.trading_mode = TradingMode.PAPER  # the live path: waits happen
+    rig.strategy.cancel_order = lambda order: None  # the cancel request goes out ...
+    rig.strategy.wait_for_order_execution = lambda order, timeout=None: False  # ... and is not confirmed within the wait
+
+    def flatten_wait(orders, timeout=None) -> bool:
+        rig.broker.cancel_order(stop)  # ... it is confirmed during the flatten wait
+        rig.desk.on_order_canceled(stop)
+        return True
+
+    rig.strategy.wait_for_orders_execution = flatten_wait
+    rig.desk.flatten_all("end of day")
+    assert stop.is_canceled()
+    sells = [o for o in rig.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
+    assert [(o.order_type, o.quantity) for o in sells] == [(OrderType.MARKET, D(249))]
+    assert trade.exit_reason == "end of day"
