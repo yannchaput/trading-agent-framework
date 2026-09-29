@@ -153,7 +153,8 @@ class VwapPullbackStrategy(Strategy):
         now = state["now"]
         context = {"current_datetime": now.isoformat(), "open_trades": trade_rows(self.desk, now)}
         summary = self._run_agent(self.EXIT_AGENT, self.EXIT_TASK, context)
-        self.desk.mark_reviewed(now)
+        if summary["ok"]:  # a failed run reviewed nothing: the same triggers must bring the trades back next tick
+            self.desk.mark_reviewed(now)
         return {"runs": [summary], "entry_due": self.desk.entry_due()}
 
     def _entry_node(self, state: TickState) -> dict[str, Any]:

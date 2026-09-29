@@ -141,3 +141,17 @@ def test_a_backtest_waits_in_one_minute_slices_so_the_stop_follows_the_entry_bar
     assert trade.status is TradeStatus.CLOSED and trade.exit_reason == "stop"
     stop_fill = next(f for f in broker.ledger.fills if f.side.value == "sell")
     assert stop_fill.time == et(2026, 9, 1, 10, 3) and stop_fill.price == Decimal("99.30")  # the breaking bar, at the stop
+
+
+def test_a_failed_exit_run_does_not_mark_the_trades_reviewed(tmp_path: Path) -> None:
+    # Final review M2: the triggers that called the exit agent must bring the trades back next tick.
+    strategy = _strategy(tmp_path)
+    strategy.vars.session = _session()
+    reviewed: list[object] = []
+    strategy.desk.mark_reviewed = reviewed.append
+    strategy._agents = _Agents({"vwap_exit": _Handle(AgentError("model down"))})
+    strategy._exit_node({"now": TEN_AM})
+    assert reviewed == []
+    strategy._agents = _Agents({"vwap_exit": _Handle(AgentRunResult(output="held", tool_calls=[]))})
+    strategy._exit_node({"now": TEN_AM})
+    assert reviewed == [TEN_AM]

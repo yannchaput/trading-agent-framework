@@ -32,3 +32,4 @@ def test_exit_prompt_names_every_action_and_the_flatten_time() -> None:
     prompt = build_exit_prompt(VwapPullbackParameters(), flatten_time="15:50")
     for word in ("take_partial_profit", "tighten_stop", "replace_stop_with_trailing", "exit_position", "hold", "already_stopped_out", "15:50", "0.25", "2.0"):
         assert word in prompt
+    assert "it says what was and was not done" in prompt and "nothing was changed" not in prompt

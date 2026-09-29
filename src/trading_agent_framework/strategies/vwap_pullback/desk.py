@@ -384,12 +384,10 @@ class Desk:
                 return STOPPED_OUT
             if order.is_active():
                 return "the stop cancel was not confirmed in time; nothing else was changed"
-            self._record_stop_partial(trade, order)
-            if trade.status is TradeStatus.CLOSED:
-                trade.stop_order_id = None
-                return STOPPED_OUT
+        # Cancelled just now, or already inactive and unfilled (cancelled/expired, its hook not yet seen): book any partial fill.
+        self._record_stop_partial(trade, order)
         trade.stop_order_id = None
-        return None
+        return STOPPED_OUT if trade.status is TradeStatus.CLOSED else None
 
     def _archive(self, trade: Trade) -> None:
         self.state.book.archive(trade)

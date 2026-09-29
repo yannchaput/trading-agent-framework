@@ -57,5 +57,5 @@ def build_exit_prompt(params: VwapPullbackParameters, *, flatten_time: str) -> s
         "- hold(symbol, reason): change nothing this time. Moves inside 1R are noise: holding is the default.\n"
         f"Call search_news only if a new headline needs context -- at most {params.news_calls_per_run} searches per run. If a tool "
         "returns 'already_stopped_out', the stop already closed that trade: nothing more to do for it. If it returns an 'error', "
-        "nothing was changed. Finish with a one-line summary and make no further tool call."
+        "read it: it says what was and was not done. Finish with a one-line summary and make no further tool call."
     )

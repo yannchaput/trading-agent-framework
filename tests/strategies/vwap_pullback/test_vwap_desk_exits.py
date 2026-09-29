@@ -125,3 +125,14 @@ def test_a_pending_full_exit_frees_its_slot_before_the_sell_fills(tmp_path: Path
     trade = rig.state.book.get("AAA")
     assert trade.status is TradeStatus.OPEN and rig.strategy.get_order(trade.exit_order_ids[-1]).is_active()
     assert rig.desk.free_slots() == 1
+
+
+def test_releasing_a_stop_that_already_ended_part_filled_books_the_partial(tmp_path: Path) -> None:
+    # Final review M1: a stop already cancelled after a partial fill, its hook not seen yet, when an exit releases it.
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    stop.filled_quantity, stop.avg_fill_price = D(100), D("99.30")
+    rig.broker.cancel_order(stop)
+    assert rig.desk.exit_position("AAA", "lost VWAP") == {"status": "exit submitted", "quantity": 149}
+    assert trade.quantity == D(149) and trade.realised_pnl == D("-70.00")
