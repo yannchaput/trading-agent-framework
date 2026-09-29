@@ -127,7 +127,9 @@ class Desk:
             return {"error": "no free position slot"}
         if self._has_exposure(symbol):
             return {"error": f"{symbol} already has a position or an open order"}
-        info = state.candidates[symbol]
+        info = state.candidates.get(symbol)
+        if info is None:
+            return {"error": f"{symbol} is not a candidate this session"}
         try:
             last = self._strategy.get_last_price(symbol)
             account = self._strategy.broker.get_account()
@@ -219,8 +221,19 @@ class Desk:
             self._settle_entry(trade, order)
         elif order.identifier == trade.stop_order_id:
             self._strategy.log_warning(f"the stop for {trade.symbol} was cancelled outside the strategy; placing it again")
+            self._record_stop_partial(trade, order)
             trade.stop_order_id = None
-            self._submit_stop(trade, trade.quantity)
+            if trade.status is not TradeStatus.CLOSED:
+                self._submit_stop(trade, trade.quantity)
+
+    def _record_stop_partial(self, trade: Trade, order: Order) -> None:
+        """A stop that partly filled before ending cancelled/errored: book the filled part, archive the trade if that closed it."""
+        if order.filled_quantity <= 0:
+            return
+        trade.record_exit_fill(order.filled_quantity, order.avg_fill_price or trade.stop_level, self._strategy.get_datetime())
+        if trade.status is TradeStatus.CLOSED:
+            trade.exit_reason = trade.exit_reason or ("trailing stop" if trade.stop_kind == "trail" else "stop")
+            self._archive(trade)
 
     def _settle_entry(self, trade: Trade, order: Order) -> None:
         """An entry that ended without a full fill: keep and protect what filled, or drop the trade."""
@@ -236,6 +249,7 @@ class Desk:
 
     def _protect(self, trade: Trade) -> None:
         if self.state.flattened:  # a late entry fill after the flatten: never carry it
+            trade.exit_reason = trade.exit_reason or "filled after the end-of-day flatten"
             self._market_sell(trade, trade.quantity, "filled after the end-of-day flatten")
             return
         if trade.stop_order_id is None:
@@ -255,8 +269,12 @@ class Desk:
                     self._cancel(order)
             elif trade.status is TradeStatus.OPEN and not self._has_working_stop(trade) and not self._exit_pending(trade):
                 self._strategy.log_warning(f"{trade.symbol} has no working stop; placing it again")
+                stale = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+                if stale is not None:
+                    self._record_stop_partial(trade, stale)
                 trade.stop_order_id = None
-                self._submit_stop(trade, trade.quantity)
+                if trade.status is not TradeStatus.CLOSED:
+                    self._submit_stop(trade, trade.quantity)
 
     def _has_working_stop(self, trade: Trade) -> bool:
         if trade.stop_order_id is None:
@@ -328,12 +346,18 @@ class Desk:
                 self._strategy.cancel_order(order)
             except BrokerError as exc:
                 self._expected_cancels.discard(order.identifier)
+                if order.is_filled():  # Alpaca raises when cancelling an already-filled order
+                    return STOPPED_OUT
                 return f"could not cancel the stop: {exc}"
             self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
             if order.is_filled():
                 return STOPPED_OUT
             if order.is_active():
                 return "the stop cancel was not confirmed in time; nothing else was changed"
+            self._record_stop_partial(trade, order)
+            if trade.status is TradeStatus.CLOSED:
+                trade.stop_order_id = None
+                return STOPPED_OUT
         trade.stop_order_id = None
         return None
 

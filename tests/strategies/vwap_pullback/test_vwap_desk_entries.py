@@ -200,3 +200,34 @@ def test_entry_due_and_exit_review_due(tmp_path: Path) -> None:
     assert rig.desk.exit_review_due(rig.clock.now()) == ["AAA"]
     rig.desk.mark_reviewed(rig.clock.now())
     assert rig.desk.exit_review_due(rig.clock.now()) == []
+
+
+def test_a_partially_filled_stop_that_is_cancelled_reduces_the_trade_and_is_replaced(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    old = rig.strategy.get_order(trade.stop_order_id)
+    old.filled_quantity = D(100)
+    old.avg_fill_price = D("99.30")
+    rig.broker.cancel_order(old)
+    rig.desk.on_order_canceled(old)
+    assert trade.quantity == D(149) and trade.realised_pnl == D("-70.00")
+    replacement = rig.strategy.get_order(trade.stop_order_id)
+    assert replacement.identifier != old.identifier and replacement.quantity == D(149) and replacement.is_active()
+
+
+def test_release_stop_books_a_partial_fill(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    old = rig.strategy.get_order(trade.stop_order_id)
+    old.filled_quantity = D(100)
+    old.avg_fill_price = D("99.30")
+    assert rig.desk._release_stop(trade) is None
+    assert trade.quantity == D(149) and trade.stop_order_id is None
+
+
+def test_enter_long_refuses_a_symbol_that_is_not_a_candidate(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    del rig.state.candidates["AAA"]
+    assert "not a candidate" in rig.desk.enter_long("AAA", "earnings", "x")["error"]
