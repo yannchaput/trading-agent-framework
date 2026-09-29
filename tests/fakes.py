@@ -567,6 +567,8 @@ class FakeBroker(Broker):
         self.last_prices: dict[str, Decimal] = {}
         self.quotes: dict[str, Quote] = {}
         self.bar_frames: dict[str, pd.DataFrame] = {}
+        self.timestep_frames: dict[tuple[str, str], pd.DataFrame] = {}
+        self.news: Any = None
         self.bars_calls: list[tuple[tuple[str, ...], int, str, bool]] = []
         self.market_data_error: BrokerError | None = None
 
@@ -655,11 +657,11 @@ class FakeBroker(Broker):
         requested = list(assets)
         symbols = tuple(asset.symbol for asset in requested)
         self.bars_calls.append((symbols, length, timestep, include_after_hours))
-        return {
-            asset: Bars(asset=asset, timestep=timestep, df=self.bar_frames[asset.symbol].iloc[-length:])
-            for asset in requested
-            if asset.symbol in self.bar_frames
-        }
+        frames = {asset: self.timestep_frames.get((asset.symbol, timestep), self.bar_frames.get(asset.symbol)) for asset in requested}
+        return {asset: Bars(asset=asset, timestep=timestep, df=frame.iloc[-length:]) for asset, frame in frames.items() if frame is not None}
+
+    def news_provider(self) -> Any:
+        return self.news
 
     def start_stream(self) -> None:
         self.calls.append("start_stream")
@@ -929,3 +931,19 @@ class FrameDataSource(BacktestDataSource):
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
         return [s for s in self._sessions if start.date() <= s.open.date() <= end.date()]
+
+
+class FakeNewsProvider:
+    """A `NewsProvider` over canned lean articles per symbol, filtered to `[start, end]` like the real one."""
+
+    def __init__(self, articles: dict[str, list[dict[str, object]]] | None = None) -> None:
+        self.articles = articles or {}
+        self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int, bool]] = []
+
+    def get_news(
+        self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False
+    ) -> list[dict[str, object]]:
+        self.calls.append((tuple(symbols), start, end, limit, include_content))
+        rows = [a for symbol in symbols for a in self.articles.get(symbol, [])]
+        in_window = [a for a in rows if (start is None or datetime.fromisoformat(str(a["created_at"])) >= start) and datetime.fromisoformat(str(a["created_at"])) <= end]
+        return in_window[:limit]
