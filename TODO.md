@@ -32,10 +32,10 @@
 * ~~Add a column for the broker~~
 
 ### Cross sectional momentum
-* Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.
+* ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
 * ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~ => Poor results
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
-* Compute the residual volatility compared to the market (cf chatgpt thread)
+* ~~Compute the residual volatility compared to the market (cf chatgpt thread)~~
 
 ### Opening range breakout
 * ~~Override LUMIBOT_CACHE_FOLDER~~
