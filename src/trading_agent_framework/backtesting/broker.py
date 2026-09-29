@@ -245,10 +245,35 @@ class BacktestBroker(Broker):
     ) -> dict[Asset, Bars]:
         result: dict[Asset, Bars] = {}
         for asset in assets:
-            bars = self._source_bars(asset, self.clock.now(), length, timestep)
+            if include_after_hours or timestep != "minute":
+                bars = self._source_bars(asset, self.clock.now(), length, timestep)
+            else:
+                bars = self._regular_hours_bars(asset, self.clock.now(), length, timestep)
             if bars is not None:
                 result[asset] = bars
         return result
+
+    def _regular_hours_bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        """The last `length` intraday bars inside a regular session, read through `_source_bars` (the gate).
+
+        A source's minute frames may carry extended hours (Alpaca's do), so the raw last `length` rows can
+        span far fewer sessions than the caller asked for. Bars are stamped at their CLOSE: a row belongs to
+        a session when `open < ts <= close`. `length` doubles until enough rows survive the filter or the
+        source has no more history.
+        """
+        request = length
+        while True:
+            bars = self._source_bars(asset, cutoff, request, timestep)
+            if bars is None or bars.df.empty:
+                return bars
+            df = bars.df
+            first, last = df.index[0].to_pydatetime(), df.index[-1].to_pydatetime()
+            sessions = self._data_source.sessions(first, last)
+            inside = [any(s.open < ts <= s.close for s in sessions) for ts in df.index.to_pydatetime()]
+            regular = df[inside]
+            if len(regular) >= length or len(df) < request:
+                return dataclasses.replace(bars, df=regular.tail(length))
+            request *= 2
 
     def start_stream(self) -> None:
         pass
