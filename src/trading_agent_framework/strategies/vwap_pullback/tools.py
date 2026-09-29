@@ -18,11 +18,14 @@ if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
     from trading_agent_framework.strategies.vwap_pullback.desk import Desk
 
+# Same values as `prompts.CATALYSTS`; as a Literal, LangChain turns it into an enum in the tool schema, so the
+# model is told the allowed values and a wrong one is rejected before `Desk.enter_long` even runs.
 Catalyst = Literal["earnings", "guidance", "analyst", "contract_or_product", "sector_or_macro", "none"]
-MAX_BARS = 24
+MAX_BARS = 24  # two hours of 5-minute bars: enough context, bounded tokens
 
 
 def _after(created_at: str, moment: datetime) -> bool:
+    """Whether an ISO-8601 `created_at` (a trailing "Z" allowed) is later than `moment`; False when unparseable."""
     try:
         return datetime.fromisoformat(created_at.replace("Z", "+00:00")) > moment
     except ValueError:
@@ -75,8 +78,12 @@ def trade_rows(desk: "Desk", now: datetime) -> list[dict[str, Any]]:  # noqa: UP
 def budgeted_search_news(strategy: "Strategy", calls_per_run: int) -> Callable[..., dict[str, Any]]:  # noqa: UP037
     """The shared `search_news` tool, refused after `calls_per_run` calls in one agent run."""
     inner = news_tools(strategy)[0]
+    # Calls made in the current agent run. A new run id (every agent invocation gets one) resets the count,
+    # so the budget is per run; a local model left unbudgeted has looped 100+ times on a search tool.
     usage: dict[str, Any] = {"run_id": None, "count": 0}
 
+    # Same signature and docstring as the wrapped tool, spelled out (not functools.wraps) so LangChain reads
+    # a plain function's annotations when it builds the schema.
     def search_news(symbols: str = "", start: str | None = None, end: str | None = None, limit: int = 10, include_content: bool = False) -> dict[str, Any]:
         """Search recent news headlines and summaries, optionally filtered to symbols."""
         run_id = current_run_id()
@@ -91,6 +98,8 @@ def budgeted_search_news(strategy: "Strategy", calls_per_run: int) -> Callable[.
 
 
 def _bars_tool(desk: "Desk") -> Callable[..., dict[str, Any]]:  # noqa: UP037
+    """`get_intraday_bars`, shared by both agents: reads the scan's cached contexts, never fetches data."""
+
     def get_intraday_bars(symbol: str, length: int = 12) -> dict[str, Any]:
         """Get a tracked symbol's recent 5-minute bars with VWAP, oldest first."""
         contexts = desk.state.contexts.get(symbol.strip().upper())
@@ -109,7 +118,11 @@ def _bars_tool(desk: "Desk") -> Callable[..., dict[str, Any]]:  # noqa: UP037
 
 
 def entry_tools(strategy: "Strategy", desk: "Desk") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
-    """The entry agent's tools."""
+    """The entry agent's tools: read setups and bars, search news (budgeted), then enter or pass.
+
+    Every action delegates to `desk`, which enforces all the risk rules; the tool docstrings below are
+    one line on purpose (they are sent to the model on every call).
+    """
 
     def get_setups() -> dict[str, Any]:
         """List the pullback and triggered setups with their health, planned stop and headlines."""
@@ -127,7 +140,11 @@ def entry_tools(strategy: "Strategy", desk: "Desk") -> list[Callable[..., dict[s
 
 
 def exit_tools(strategy: "Strategy", desk: "Desk") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
-    """The exit agent's tools."""
+    """The exit agent's tools: read trades and bars, search news (budgeted), then one action per trade.
+
+    The stop hand-offs (cancel the working stop, wait, then sell or re-place) all happen inside `desk`;
+    each tool gets its own budgeted `search_news`, so the entry and exit agents do not share one budget.
+    """
 
     def get_open_trades() -> dict[str, Any]:
         """List the open trades with their stop, open profit in R, VWAP, 9-EMA and new headlines."""

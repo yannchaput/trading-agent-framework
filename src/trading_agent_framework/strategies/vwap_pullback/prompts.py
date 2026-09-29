@@ -1,13 +1,21 @@
-"""The entry and exit agents' system prompts, built from the parameters so no threshold is written twice."""
+"""The entry and exit agents' system prompts, built from the parameters so no threshold is written twice.
+
+The prompts describe judgement, not mechanics: the agents never size an order, place a stop or pick a
+price (the desk does). Field names they mention (vol_ratio, unrealised_r, ...) must match the rows built
+by `setups.health` and `tools.setup_rows`/`tools.trade_rows`, and tool names must match `tools.py`.
+"""
 
 from __future__ import annotations
 
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 
+# The only labels `enter_long` accepts (the tool's `Catalyst` Literal and `Desk.enter_long` both check it).
+# Recorded on each trade so a backtest can show whether catalyst-driven entries outperform "none".
 CATALYSTS: tuple[str, ...] = ("earnings", "guidance", "analyst", "contract_or_product", "sector_or_macro", "none")
 
 
 def build_entry_prompt(params: VwapPullbackParameters) -> str:
+    """System prompt of the entry agent: judge each triggered setup (health, catalyst, news) and enter or pass."""
     catalysts = ", ".join(CATALYSTS)
     return (
         "You are the entry trader of an intraday VWAP pullback continuation strategy. Long only, no margin, never short. "
@@ -37,6 +45,7 @@ def build_entry_prompt(params: VwapPullbackParameters) -> str:
 
 
 def build_exit_prompt(params: VwapPullbackParameters, *, flatten_time: str) -> str:
+    """System prompt of the exit agent: one action (or hold) per open trade; `flatten_time` is when the code sells everything."""
     tp_low, tp_high = params.tp1_fraction_band
     trail_low, trail_high = params.trail_atr_band
     return (

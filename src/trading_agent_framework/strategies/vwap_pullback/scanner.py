@@ -35,25 +35,29 @@ from trading_agent_framework.utils.errors import BrokerError
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
 
+# Batch-loads bars for `assets` at a timestep before they are read (backtests only; see `Strategy._preload`).
 Preload = Callable[[Sequence[Asset], str], None]
 
 _REGULAR_OPEN = time(9, 30)
-_REGULAR_CLOSE = time(16, 0)
+_REGULAR_CLOSE = time(16, 0)  # early closes need no special case: an early session simply has fewer minutes
 _SESSION_MINUTES = 390
 _NEWS_LOOKBACK = timedelta(hours=18)  # from the open back to roughly the previous close
 _EMPTY = pd.DataFrame(columns=["open", "high", "low", "close", "volume"], index=pd.DatetimeIndex([], tz=MARKET_TZ))
 
 
 class Scanner:
+    """Finds and tracks setups: stage 1 once per session, stage 2 + setup state machine + headlines every tick."""
+
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, universe: Sequence[str], *, benchmark: str = "SPY", preload: Preload | None = None) -> None:
         self._strategy = strategy
         self._params = params
-        self._universe = list(universe)
-        self._benchmark = benchmark
-        self._preload = preload
+        self._universe = list(universe)  # the cross_momentum universe file's symbols
+        self._benchmark = benchmark  # relative strength is measured against it
+        self._preload = preload  # None live: the broker fetches on demand
 
     @property
     def bar_stamp(self) -> BarStamp:
+        """How this run's minute bars are indexed: backtest data sources stamp at the close, live Alpaca at the open."""
         return "close" if self._strategy.is_backtesting else "open"
 
     # --- stage 1 -------------------------------------------------------------------
@@ -61,6 +65,7 @@ class Scanner:
     def prepare_session(self) -> SessionState:
         """Stage 1 for the next (or current) session: candidates, their beta and ATR, and their RVOL baselines."""
         strategy = self._strategy
+        # `next_session` is the first session whose close is still ahead: today's, before or during the session.
         session = strategy.clock.next_session()
         if session is None:
             raise BrokerError("no upcoming market session to prepare")
@@ -69,6 +74,7 @@ class Scanner:
         universe = [Asset(symbol) for symbol in self._universe]
         if self._preload is not None:
             self._preload([*universe, bench], "day")
+        # One batched daily fetch for the whole universe plus the benchmark.
         daily = strategy.get_historical_prices_for_assets([*universe, bench], self._params.stage1_lookback_sessions + 1, "day")
         bench_daily = _before(daily.get(bench), day)
         profiles = []
@@ -78,6 +84,7 @@ class Scanner:
             if profile is not None:
                 profiles.append(profile)
         chosen = select_stage1(profiles, self._params)
+        # Opening equity is the base of the daily circuit breaker (-1.5% of it stops new entries).
         state = SessionState(day=day, session=session, bar_stamp=self.bar_stamp, session_open_equity=strategy.get_portfolio_value())
         state.candidates = {p.symbol: CandidateInfo(symbol=p.symbol, daily_atr=p.daily_atr, beta=p.beta) for p in chosen}
         state.baselines = self._baselines([Asset(p.symbol) for p in chosen], day)
@@ -85,10 +92,17 @@ class Scanner:
         return state
 
     def _baselines(self, assets: Sequence[Asset], day: date) -> dict[str, pd.Series]:
+        """RVOL baseline per stage-1 survivor, from its minute bars of the previous `rvol_baseline_sessions` sessions.
+
+        A symbol with no usable minute history gets no baseline, so its RVOL is None and it cannot pass the
+        stage-2 floor (rather than being compared against a made-up baseline).
+        """
         if not assets:
             return {}
         if self._preload is not None:
             self._preload([*assets, Asset(self._benchmark)], "minute")
+        # N previous sessions + today of regular-hours minutes. Regular hours only: extended-hours rows would
+        # eat the row budget and the baseline would cover fewer sessions than asked.
         length = (self._params.rvol_baseline_sessions + 1) * _SESSION_MINUTES
         bars = self._strategy.get_historical_prices_for_assets(assets, length, "minute", include_after_hours=False)
         baselines: dict[str, pd.Series] = {}
@@ -101,6 +115,8 @@ class Scanner:
         return baselines
 
     def _baseline(self, df: pd.DataFrame, day: date) -> pd.Series:
+        """Average per-minute cumulative volume over the last `rvol_baseline_sessions` dates before `day`."""
+        # Group rows by the date their bar STARTED (market time), which is the same for both stamp conventions.
         starts = minute_starts(df.index, self.bar_stamp).tz_convert(MARKET_TZ)
         dates = sorted({d for d in starts.date if d < day})[-self._params.rvol_baseline_sessions :]
         per_session = []
@@ -117,8 +133,10 @@ class Scanner:
         """One tick: contexts for every candidate, stage-2 ranking, setups advanced, headlines refreshed."""
         now = self._strategy.get_datetime()
         bench = Asset(self._benchmark)
+        # Enough minute rows to cover today's session so far (+ slack), never more than one session.
         minutes_open = int((now - state.session.open).total_seconds() // 60)
         length = max(10, min(minutes_open + 5, _SESSION_MINUTES + 10))
+        # One batched minute fetch per tick for every candidate plus the benchmark.
         bars = self._strategy.get_historical_prices_for_assets([*(Asset(s) for s in state.candidates), bench], length, "minute", include_after_hours=False)
         bench_df = self._session_frame(bars.get(bench), state)
         snapshots = []
@@ -132,14 +150,17 @@ class Scanner:
             snapshot = snapshot_from(symbol, contexts)
             if snapshot is not None:
                 snapshots.append(snapshot)
+        # Setups already past WATCH stay tracked whatever their rank today (see `rank_stage2`).
         sticky = {symbol for symbol, setup in state.setups.items() if setup.state is not SetupState.WATCH}
         ranked = rank_stage2(snapshots, self._params, sticky)
         for candidate in ranked:
             info = state.candidates[candidate.symbol]
             info.composite, info.z_rs, info.z_rvol = candidate.composite, candidate.z_rs, candidate.z_rvol
         tracked = {candidate.symbol for candidate in ranked}
+        # A WATCH setup that fell out of the ranking has nothing worth keeping: drop it (it restarts if it ranks again).
         for symbol in [s for s, setup in state.setups.items() if s not in tracked and setup.state is SetupState.WATCH]:
             del state.setups[symbol]
+        # A newly tracked symbol replays the whole session so far, so it can be found already mid-pattern.
         for symbol in sorted(tracked):
             setup = state.setups.get(symbol, Setup(symbol=symbol))
             state.setups[symbol] = advance(setup, state.contexts.get(symbol, []), state.candidates[symbol].daily_atr, self._params)
@@ -147,6 +168,7 @@ class Scanner:
 
     @staticmethod
     def _session_frame(bars: Bars | None, state: SessionState) -> pd.DataFrame:
+        """Today's regular-session minute rows of `bars` (an empty frame when there is no data)."""
         if bars is None or bars.df.empty:
             return _EMPTY
         return session_slice(bars.df, state.session.open, state.session.close, state.bar_stamp)
@@ -157,6 +179,7 @@ class Scanner:
         A headline that was not in the previous fetch marks the symbol in `state.new_headline` (an exit-review
         event); a symbol's first fetch is its baseline, not news.
         """
+        # Only the symbols an agent may look at soon: WATCH/IMPULSE setups do not need news yet.
         wanted = {s for s, setup in state.setups.items() if setup.state in (SetupState.PULLBACK, SetupState.TRIGGERED)}
         wanted |= {trade.symbol for trade in state.book.open_trades()}
         if not wanted:
@@ -175,6 +198,7 @@ class Scanner:
             if fetched is not None and now - fetched < refresh:
                 continue
             try:
+                # `end=now` (the strategy clock): no future article can reach a backtest.
                 articles = provider.get_news([symbol], start=since, end=now, limit=self._params.headlines_per_symbol * 3)
             except BrokerError as exc:
                 self._strategy.log_warning(f"news for {symbol} unavailable: {exc}")

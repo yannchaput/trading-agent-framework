@@ -18,16 +18,21 @@ _END = "__end__"  # langgraph.graph.END
 
 
 class TickState(TypedDict, total=False):
-    now: datetime
-    exit_due: list[str]
-    entry_due: bool
+    """What the nodes of one tick share. Rebuilt by every `invoke`; nothing here outlives the tick."""
+
+    now: datetime  # the tick's time (strategy clock), set by the caller
+    exit_due: list[str]  # symbols of open trades the exit agent should review (set by classify)
+    entry_due: bool  # a setup triggered and an entry is allowed (set by classify, refreshed by the exit node)
+    # Per-agent run summaries; `operator.add` makes LangGraph append each node's list instead of replacing it.
     runs: Annotated[list[dict[str, Any]], operator.add]
 
 
+# A node receives the state and returns only the keys it updates.
 Node = Callable[[TickState], dict[str, Any]]
 
 
 def route_after_classify(state: TickState) -> str:
+    """Exit reviews come first (they may free a slot for an entry this same tick), then entries, else stop."""
     if state.get("exit_due"):
         return EXIT_NODE
     if state.get("entry_due"):
@@ -36,10 +41,12 @@ def route_after_classify(state: TickState) -> str:
 
 
 def route_after_exit(state: TickState) -> str:
+    """After the exit agent, enter only if `entry_due` is still true (the exit node recomputes it)."""
     return ENTRY_NODE if state.get("entry_due") else _END
 
 
 def build_tick_graph(*, classify: Node, run_exit: Node, run_entry: Node) -> Any:
+    """Compile START -> classify -> [exit_agent] -> [entry_agent] -> END; each agent node only when due."""
     from langgraph.graph import END, START, StateGraph
 
     builder = StateGraph(TickState)

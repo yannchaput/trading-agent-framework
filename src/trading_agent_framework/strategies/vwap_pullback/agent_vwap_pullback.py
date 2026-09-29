@@ -39,12 +39,20 @@ MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS = 3
 
 
 class VwapPullbackStrategy(Strategy):
+    """Wires `Scanner`, `Desk`, the two agents and the per-tick graph into the framework's lifecycle hooks.
+
+    Hook map: `before_market_opens` prepares the session (stage 1); `on_trading_iteration` runs one graph
+    pass per tick; `on_filled_order`/`on_canceled_order` forward to the desk (protective stops, trade
+    bookkeeping); `before_market_closes` flattens at 15:50.
+    """
+
     ENTRY_AGENT = "vwap_entry"
     EXIT_AGENT = "vwap_exit"
+    # The task sent with each run; the context dict (setups or trades) is appended by `AgentHandle.run`.
     ENTRY_TASK = "Review the triggered pullback setups and enter or pass on each one. The current datetime and the setups are in the context below."
     EXIT_TASK = "Review the open trades and manage each one. The current datetime and the trades are in the context below."
 
-    sleeptime = "5M"
+    sleeptime = "5M"  # one tick per 5-minute bar; the LLM only runs on ticks where something is due
     minutes_before_closing = 10  # before_market_closes, and so the flatten, runs at 15:50
 
     parameters = {
@@ -76,6 +84,7 @@ class VwapPullbackStrategy(Strategy):
     # --- lifecycle -------------------------------------------------------------------
 
     def initialize(self) -> None:
+        """Build the desk, the scanner, both agents and the tick graph (once per run)."""
         self.vars.session = None
         self.vars.consecutive_agent_errors = 0
         if self.is_backtesting:
@@ -86,6 +95,7 @@ class VwapPullbackStrategy(Strategy):
             self.clock.max_wait_slice = 60.0
         self._build_components()
         assert self.desk is not None
+        # "15:50" for the exit prompt (a regular close; early-close days flatten earlier, `minutes_to_flatten` is exact).
         flatten_time = (datetime(2000, 1, 1, 16, 0) - timedelta(minutes=self.minutes_before_closing)).strftime("%H:%M")
         self.agents.create(name=self.ENTRY_AGENT, system_prompt=build_entry_prompt(self.settings), model=self._chat_model, tools=entry_tools(self, self.desk))
         self.agents.create(name=self.EXIT_AGENT, system_prompt=build_exit_prompt(self.settings, flatten_time=flatten_time), model=self._chat_model, tools=exit_tools(self, self.desk))
@@ -93,34 +103,42 @@ class VwapPullbackStrategy(Strategy):
         self.log_info(f"VwapPullbackStrategy initialized: {len(self.universe)} symbols, sleeptime {self.sleeptime}")
 
     def _build_components(self) -> None:
+        """Create the desk and the scanner (separate from `initialize` so tests can build them without agents)."""
         self.desk = Desk(self, self.settings, trade_log=self._trade_log_path)
         self.scanner = Scanner(
             self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None
         )
 
     def before_market_opens(self) -> None:
+        """Run stage 1 before the open, so the first tick can scan right away."""
         self._ensure_session()
 
     def on_trading_iteration(self) -> None:
+        """One tick: make sure the session is prepared, run the restart check once, then one graph pass."""
         if not self.is_backtesting and self.settings.live_bar_delay_seconds > 0:
             self.sleep(self.settings.live_bar_delay_seconds)  # let the last minute bar be published
         state = self._ensure_session()
+        # No session (preparation failed; retried next tick) or already flattened: nothing to do this tick.
         if state is None or state.flattened:
             return
         assert self.desk is not None
+        # First tick of a session: cancel/close what a previous run of this strategy left behind (restart).
         if not state.unknown_positions_checked:
             self.desk.close_unknown_positions()
         self._graph.invoke({"now": self.get_datetime()})
 
     def before_market_closes(self) -> None:
+        """15:50 (`minutes_before_closing`): sell everything this strategy holds; the strategy is strictly intraday."""
         if self.desk is not None:
             self.desk.flatten_all("end-of-day flatten")
 
     def on_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Order hook (executor thread): an entry fill gets its protective stop, an exit fill is booked."""
         if self.desk is not None:
             self.desk.on_order_filled(order, price, quantity)
 
     def on_canceled_order(self, order: Order) -> None:
+        """Order hook: settle an expired entry, re-place a stop cancelled from outside, re-protect after an exit dies."""
         if self.desk is not None:
             self.desk.on_order_canceled(order)
 
@@ -140,15 +158,18 @@ class VwapPullbackStrategy(Strategy):
     # --- graph nodes -------------------------------------------------------------------
 
     def _classify_node(self, state: TickState) -> dict[str, Any]:
+        """Deterministic part of every tick: fix up orders, scan, then decide which agents are due."""
         assert self.desk is not None and self.scanner is not None
         session = self.vars.session
         now = state["now"]
+        # Reconcile first: expired/rejected entries and missing stops are settled before anyone reasons on the book.
         self.desk.reconcile(now)
         self.scanner.scan(session)
-        session.decided.clear()
+        session.decided.clear()  # the entry agent's decisions are per tick
         return {"exit_due": self.desk.exit_review_due(now), "entry_due": self.desk.entry_due()}
 
     def _exit_node(self, state: TickState) -> dict[str, Any]:
+        """Run the exit agent on the open trades, then recompute `entry_due` (an exit may have freed a slot)."""
         assert self.desk is not None
         now = state["now"]
         context = {"current_datetime": now.isoformat(), "open_trades": trade_rows(self.desk, now)}
@@ -158,6 +179,10 @@ class VwapPullbackStrategy(Strategy):
         return {"runs": [summary], "entry_due": self.desk.entry_due()}
 
     def _entry_node(self, state: TickState) -> dict[str, Any]:
+        """Run the entry agent on the setups; a triggered setup it neither entered nor passed is logged as a pass.
+
+        No retry turn for undecided setups: a trigger only lasts one bar, so there is nothing to recover.
+        """
         assert self.desk is not None
         now = state["now"]
         context = {"current_datetime": now.isoformat(), "setups": setup_rows(self.desk), "free_slots": self.desk.free_slots()}
@@ -171,6 +196,7 @@ class VwapPullbackStrategy(Strategy):
     def _run_agent(self, name: str, task: str, context: dict[str, Any]) -> dict[str, Any]:
         """Run one agent; an `AgentError` is logged and counted, and aborts a backtest after 3 in a row."""
         try:
+            # A fresh run id per call: it scopes the per-run news budget and the tools' duplicate-call memos.
             result: AgentRunResult = self.agents[name].run(task, context=context, run_id=uuid.uuid4().hex)
         except AgentError as exc:
             self.vars.consecutive_agent_errors += 1
@@ -187,11 +213,17 @@ class VwapPullbackStrategy(Strategy):
     # --- backtesting ---------------------------------------------------------------------
 
     def _trade_log_path(self) -> Path | None:
+        """`trades.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
         if self.run_id is None:
             return None
         return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / "trades.jsonl"
 
     def _preload(self, assets: Sequence[Asset], timestep: str) -> None:
+        """Backtests only: batch-load `assets` over the data source's own window before the scanner reads them.
+
+        The window must equal the one `run_backtesting` builds the data source with (backtest start minus the
+        warm-up, to the end): a source that caches one frame per asset would otherwise keep a shorter frame.
+        """
         from trading_agent_framework.backtesting.broker import BacktestBroker
         from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
@@ -201,6 +233,7 @@ class VwapPullbackStrategy(Strategy):
         self.broker.preload_bars(assets, start, self.parameters["backtesting_end"], timestep)
 
     def run_backtesting(self):
+        """Backtest over the class `parameters` window on Alpaca minute bars (only the benchmark preloaded)."""
         # class parameters: the same window the data source is built with, so preload_bars matches it
         return super().run_backtesting(
             data_source=AlpacaBacktestData,  # minute bars with enough history (Yahoo keeps ~30 days of minutes)

@@ -2,6 +2,9 @@
 
 Everything that becomes an order price or a quantity is `Decimal`; float inputs come from bar maths and are
 converted through `to_price`, rounded to the cent in the direction that is safe for that price.
+
+The agent never picks a size or a price: `Desk.enter_long` calls `plan_entry`, and any rule it breaks comes
+back to the agent as the text of an `EntryRefused`.
 """
 
 from __future__ import annotations
@@ -22,13 +25,16 @@ class EntryRefused(Exception):
 
 @dataclass(frozen=True, slots=True)
 class EntryPlan:
-    quantity: Decimal
+    """A sized entry: buy `quantity` at a marketable `limit_price`, protect with a stop at `stop_price`."""
+
+    quantity: Decimal  # whole shares
     limit_price: Decimal
-    stop_price: Decimal
-    r_per_share: Decimal
+    stop_price: Decimal  # the initial protective stop, placed by the desk once the entry fills
+    r_per_share: Decimal  # trigger close - stop: the risk unit ("R") of this trade
 
 
 def _ratio(value: float) -> Decimal:
+    """A float parameter as an exact Decimal (via `str`, so 0.1 stays 0.1 and not 0.1000000000000000055...)."""
     return Decimal(str(value))
 
 
@@ -38,6 +44,12 @@ def to_price(value: float | Decimal, rounding: str) -> Decimal:
 
 
 def planned_stop(pullback_low: float, daily_atr: float, params: VwapPullbackParameters) -> Decimal:
+    """Protective stop: `stop_buffer_atr` daily ATRs under the pullback low, rounded DOWN to the cent.
+
+    Computed in exact Decimal: doing the subtraction in float first gives e.g. 101.1 - 0.2 = 100.8999...,
+    which would round down a whole cent too far. Rounding down keeps a sell stop at or below the intended
+    level (slightly wider, never tighter).
+    """
     exact = Decimal(str(pullback_low)) - _ratio(params.stop_buffer_atr) * Decimal(str(daily_atr))
     return exact.quantize(_CENT, rounding=ROUND_DOWN)
 
@@ -54,7 +66,11 @@ def plan_entry(
     pending_sell_proceeds: Decimal,
     params: VwapPullbackParameters,
 ) -> EntryPlan:
-    """The size, limit and stop of an entry, or `EntryRefused` with the reason."""
+    """The size, limit and stop of an entry, or `EntryRefused` with the reason.
+
+    Refusals, in order: stop not below the trigger; R outside the ATR band; price already too far above the
+    trigger (chasing); a size that rounds to zero shares.
+    """
     stop = planned_stop(pullback_low, daily_atr, params)
     trigger = to_price(trigger_close, ROUND_HALF_UP)
     r = trigger - stop
@@ -62,13 +78,19 @@ def plan_entry(
     low, high = params.r_band_atr
     if r <= 0:
         raise EntryRefused(f"the stop {stop} is not below the trigger close {trigger}")
+    # Too tight a stop is noise and gets hit by the bar's wiggle; too wide a stop makes the trade meaningless.
     if r < _ratio(low) * atr or r > _ratio(high) * atr:
         raise EntryRefused(f"risk per share {r} is outside {low}-{high} x daily ATR ({atr.quantize(_CENT)})")
+    # The trigger may be several minutes old; if price has already run, the risk/reward is gone.
     if last_price > trigger + _ratio(params.chase_guard_r) * r:
         raise EntryRefused(f"price {last_price} is more than {params.chase_guard_r}R above the trigger close {trigger}; not chasing")
+    # Marketable limit: a little above the last price, so it fills like a market order but caps the price paid.
     limit = (last_price + _ratio(params.entry_limit_atr) * atr).quantize(_CENT, rounding=ROUND_UP)
-    by_risk = equity * _ratio(params.risk_per_trade) / r
-    by_size = equity * _ratio(params.max_position_pct) / limit
+    # Size = the smallest of three caps:
+    by_risk = equity * _ratio(params.risk_per_trade) / r  # losing R per share costs risk_per_trade of equity
+    by_size = equity * _ratio(params.max_position_pct) / limit  # no position above max_position_pct of equity
+    # Cash-account rule (as news_binary): never size against buying_power alone (a margin account's is a
+    # multiple of equity); sells already submitted are credited because they fund this buy.
     by_cash = min(buying_power, cash + pending_sell_proceeds) * _ratio(params.cash_buffer) / limit
     quantity = min(by_risk, by_size, by_cash).to_integral_value(rounding=ROUND_FLOOR)
     if quantity <= 0:
@@ -77,12 +99,15 @@ def plan_entry(
 
 
 def in_entry_window(now: datetime, params: VwapPullbackParameters) -> bool:
+    """Whether `now` (any timezone) is inside the entry window, both ends inclusive, in market time."""
     return params.no_entry_before <= now.astimezone(MARKET_TZ).time() <= params.no_entry_after
 
 
 def free_slots(open_trades: int, pending_entries: int, params: VwapPullbackParameters) -> int:
+    """Position slots left: pending entries count as taken (they will most likely fill)."""
     return max(0, params.max_positions - open_trades - pending_entries)
 
 
 def circuit_breaker_tripped(session_pnl: Decimal, session_open_equity: Decimal, params: VwapPullbackParameters) -> bool:
+    """True once the session's realised + open P&L has lost `max_daily_loss_pct` of the opening equity."""
     return session_open_equity > 0 and session_pnl <= -_ratio(params.max_daily_loss_pct) * session_open_equity

@@ -4,6 +4,15 @@ The only module of the package that submits, cancels or modifies orders. The age
 `tools.py`, the strategy's order hooks through `on_order_filled`/`on_order_canceled`. Agent-facing methods
 return `{"error": ...}` instead of raising; hook paths log and never raise. A position is never left
 without a stop: a stop that cannot be placed is replaced by an immediate market sell.
+
+Invariants every method preserves:
+- never leave shares without a protective stop (or, after the flatten, without a sell);
+- never sell twice, or more than is held: brokers refuse a sell above held minus pending sells, so the
+  working stop is always cancelled (and the cancel waited for) before any other exit sell;
+- never carry this strategy's position past the close; never touch a position no order of ours points at.
+
+Accounting (see `trades.py`): `trade.quantity` only drops when a fill is booked; `_free_quantity` gives the
+shares no unbooked exit sell covers, which is what any new stop or exit sell may be sized on.
 """
 
 from __future__ import annotations
@@ -29,31 +38,46 @@ if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
     from trading_agent_framework.strategies.vwap_pullback.session import SessionState
 
+# Returned (as {"status": STOPPED_OUT}) when an exit action finds the stop already filled: the trade is out,
+# nothing else was done. The exit prompt tells the agent what it means.
 STOPPED_OUT = "already_stopped_out"
+# Market-data / account failures a desk read may hit: live BrokerError, backtest BacktestError.
 _DATA_ERRORS = (BrokerError, BacktestError)
 
 
 class Desk:
+    """The order desk of one strategy run. Reads the session from `strategy.vars.session` on every call.
+
+    Sections: views (read-only, used by tools, prompts and the graph), entries, order events (hooks),
+    order helpers, exits (the exit agent's actions), session boundaries (flatten, restart).
+    """
+
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, *, trade_log: Callable[[], Path | None] = lambda: None) -> None:
         self._strategy = strategy
         self._params = params
-        self._trade_log = trade_log
-        self._expected_cancels: set[str] = set()  # stops this desk cancelled itself (hand-offs, flatten)
+        self._trade_log = trade_log  # where closed trades are appended as JSON lines (None: not logged)
+        # Stops this desk cancelled itself (hand-offs, flatten): their CANCELED hook must not be taken for an
+        # outside cancel, which would place the stop again right after the desk removed it on purpose.
+        self._expected_cancels: set[str] = set()
 
     @property
     def params(self) -> VwapPullbackParameters:
+        """The strategy's parameters (read by the tools for budgets and bands)."""
         return self._params
 
     @property
     def state(self) -> SessionState:
+        """The current session (replaced every session by the strategy; never cached here)."""
         return self._strategy.vars.session
 
     # --- views ---------------------------------------------------------------------
 
     def levels(self, symbol: str) -> Levels | None:
+        """Latest 5-minute close, VWAP, EMA and bar ATR of `symbol` from the last scan; None without bars."""
         return latest_levels(self.state.contexts.get(symbol, []), ema_length=self._params.ema_length, atr_length=self._params.atr_length)
 
     def last_close(self, symbol: str) -> Decimal | None:
+        """Latest 5-minute close as Decimal (no I/O: from the last scan)."""
         levels = self.levels(symbol)
         return None if levels is None else Decimal(str(levels.close))
 
@@ -69,14 +93,17 @@ class Desk:
         return stop, risk.to_price(reference, ROUND_HALF_UP) - stop
 
     def minutes_to_flatten(self, now: datetime) -> int:
+        """Minutes until the flatten (session close - `minutes_before_closing`; early closes included)."""
         flatten_at = self.state.session.close - timedelta(minutes=self._strategy.minutes_before_closing)
         return max(0, int((flatten_at - now).total_seconds() // 60))
 
     def session_pnl(self) -> Decimal:
+        """Realised + open P&L of today's trades, open trades marked at their last 5-minute close."""
         prices = {t.symbol: p for t in self.state.book.open_trades() if (p := self.last_close(t.symbol)) is not None}
         return self.state.book.session_pnl(prices)
 
     def breaker_tripped(self) -> bool:
+        """Daily loss limit reached: no new entries for the rest of the session."""
         return risk.circuit_breaker_tripped(self.session_pnl(), self.state.session_open_equity, self._params)
 
     def free_slots(self) -> int:
@@ -86,17 +113,23 @@ class Desk:
         return risk.free_slots(len(holding), len(book.pending()), self._params)
 
     def entry_due(self) -> bool:
+        """Whether the entry agent should run this tick: a trigger exists AND an entry could actually be accepted.
+
+        Checking the same rules `enter_long` enforces means the LLM is never woken for a setup it cannot enter.
+        """
         triggered = any(setup.state is SetupState.TRIGGERED for setup in self.state.setups.values())
         now = self._strategy.get_datetime()
         return triggered and not self.state.flattened and risk.in_entry_window(now, self._params) and self.free_slots() > 0 and not self.breaker_tripped()
 
     def _flags(self, trade: Trade) -> frozenset[str] | None:
+        """The trade's exit-review flags at the latest bar; None before any bar (nothing to judge yet)."""
         levels = self.levels(trade.symbol)
         if levels is None:
             return None
         return trade_flags(trade, last_close=Decimal(str(levels.close)), vwap=levels.vwap, ema=levels.ema)
 
     def exit_review_due(self, now: datetime) -> list[str]:
+        """Symbols of the open trades the exit agent should review this tick (new flag, new headline, or time)."""
         due = []
         for trade in self.state.book.open_trades():
             flags = self._flags(trade)
@@ -114,9 +147,15 @@ class Desk:
     # --- entries -------------------------------------------------------------------
 
     def enter_long(self, symbol: str, catalyst: str, reason: str) -> dict[str, Any]:
+        """The entry agent's `enter_long`: validate, size (`risk.plan_entry`), submit a marketable limit buy.
+
+        Every rule is re-checked here, whatever the prompt said, and a refusal comes back as `{"error": ...}`.
+        The protective stop is NOT placed here: it goes in when the entry fills (`on_order_filled` -> `_protect`).
+        """
         symbol = symbol.strip().upper()
         state = self.state
         setup = state.setups.get(symbol)
+        # Guards, cheapest first; each names the rule so the agent can explain the pass in its summary.
         if setup is None or setup.state is not SetupState.TRIGGERED:
             current = setup.state.value if setup is not None else "untracked"
             return {"error": f"{symbol} has no triggered setup right now (state: {current}); only triggered setups can be entered"}
@@ -155,11 +194,12 @@ class Desk:
             submitted = self._strategy.submit_order(self._strategy.create_order(symbol, plan.quantity, "buy", limit_price=plan.limit_price))
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             return {"error": str(exc)}
+        # The trade exists from submission (PENDING): it takes a slot, and the fill/cancel hooks find it by order id.
         state.book.add(Trade(
             symbol=symbol, entry_order_id=submitted.identifier, planned_quantity=plan.quantity, stop_price=plan.stop_price,
             r_per_share=plan.r_per_share, catalyst=catalyst, reason=reason, entered_at=now,
         ))
-        state.setups[symbol] = mark_in_trade(setup)
+        state.setups[symbol] = mark_in_trade(setup)  # freeze the setup: one trade per symbol per session
         state.decided.add(symbol)
         self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share} ({catalyst}: {reason})")
         return {
@@ -168,12 +208,14 @@ class Desk:
         }
 
     def pass_on_setup(self, symbol: str, reason: str) -> dict[str, Any]:
+        """The entry agent's `pass_on_setup`: record the decision (logged; the trigger expires by itself)."""
         symbol = symbol.strip().upper()
         self.state.decided.add(symbol)
         self._strategy.log_info(f"pass {symbol}: {reason}")
         return {"symbol": symbol, "status": "passed"}
 
     def _has_exposure(self, symbol: str) -> bool:
+        """Whether `symbol` already has a trade, an open order or a position (any of them: no second entry)."""
         if self.state.book.get(symbol) is not None:
             return True
         if any(order.asset.symbol == symbol for order in self._strategy.broker.tracker.get_active_orders()):
@@ -196,11 +238,18 @@ class Desk:
     # --- order events ----------------------------------------------------------------
 
     def on_order_filled(self, order: Order, price: Decimal, quantity: Decimal) -> None:
+        """FILLED hook (executor thread): book the fill on its trade.
+
+        Entry fill -> the trade opens and gets its protective stop. Exit fill (stop, trail, partial, exit,
+        flatten sell) -> shares booked out, the order's id dropped from the unbooked list, the trade archived
+        when nothing is left. A buy of ours with no trade at all is sold at once (`_sell_orphan_fill`).
+        """
         state = getattr(self._strategy.vars, "session", None)
         trade = state.book.by_order_id(order.identifier) if state is not None else None
         if trade is None:
             self._sell_orphan_fill(order, quantity)
             return
+        # FILLED is terminal, so the order's cumulative filled_quantity is the whole fill (partial events included).
         filled = order.filled_quantity if order.filled_quantity > 0 else quantity
         fill_price = order.avg_fill_price if order.avg_fill_price is not None else price
         if order.identifier == trade.entry_order_id:
@@ -231,6 +280,12 @@ class Desk:
             self._strategy.log_error(f"market sell of {filled} {symbol} failed (unprotected fill): {exc}")
 
     def on_order_canceled(self, order: Order) -> None:
+        """CANCELED/expired hook: settle whatever the ended order leaves behind.
+
+        Order of the checks matters: an exit sell is settled first even when the desk cancelled it itself
+        (its partial fill must be booked); then the desk's own stop cancels are ignored; then an ended entry
+        is settled, and a stop cancelled from OUTSIDE the strategy is placed again at once.
+        """
         if getattr(self._strategy.vars, "session", None) is None:
             return
         trade = self.state.book.by_order_id(order.identifier)
@@ -315,6 +370,7 @@ class Desk:
         self._strategy.log_info(f"entry {trade.symbol} ended unfilled ({order.status.value}); setup back to pullback")
 
     def _protect(self, trade: Trade) -> None:
+        """Right after an entry fill: place the protective stop (or sell at once if the session is already flattened)."""
         if self.state.flattened:  # a late entry fill after the flatten: never carry it
             trade.exit_reason = trade.exit_reason or "filled after the end-of-day flatten"
             self._market_sell(trade, trade.quantity, "filled after the end-of-day flatten")
@@ -324,29 +380,29 @@ class Desk:
 
     def reconcile(self, now: datetime) -> None:
         """Start-of-tick housekeeping: expire entries from earlier ticks, drop entries the broker rejected, re-place a stop that is gone."""
+        # Hooks can be missed: a broker rejection arrives as ERROR, which reaches no strategy hook. Every tick
+        # therefore re-derives the book's consistency from the orders themselves before anything else runs.
         for trade in list(self.state.book.active()):
             if trade.status is TradeStatus.PENDING:
                 order = self._strategy.get_order(trade.entry_order_id)
+                # Entry ended (rejected/errored/cancelled) without a hook reaching us: keep what filled, or drop it.
                 if order is None or (not order.is_active() and not order.is_filled()):
                     if order is None:
                         self.state.book.discard(trade.symbol)
                     else:
                         self._settle_entry(trade, order)
+                # Entry still working from an earlier tick: the trigger is stale, cancel it (the hook settles it).
                 elif order.is_active() and trade.entered_at < now:
                     self._cancel(order)
             elif trade.status is TradeStatus.OPEN:
+                # Exit sells that ended without a hook: book their partial fills and re-protect what they left.
                 for order_id in list(trade.exit_order_ids):
                     order = self._strategy.get_order(order_id)
                     if order is not None and not order.is_active() and not order.is_filled() and trade.status is TradeStatus.OPEN:
                         self._settle_exit(trade, order)  # ended without a hook reaching us
+                # Then make sure the working stop covers every free share (a missing or undersized stop is fixed).
                 if trade.status is TradeStatus.OPEN:
                     self._reprotect(trade)
-
-    def _has_working_stop(self, trade: Trade) -> bool:
-        if trade.stop_order_id is None:
-            return False
-        order = self._strategy.get_order(trade.stop_order_id)
-        return order is not None and (order.is_active() or order.is_filled())
 
     def _exit_pending(self, trade: Trade) -> bool:
         """An exit sell is working, or has filled with its fill not yet booked (booked ones leave `exit_order_ids`)."""
@@ -356,6 +412,7 @@ class Desk:
     # --- order helpers ---------------------------------------------------------------
 
     def _open_trade(self, symbol: str) -> Trade | dict[str, Any]:
+        """The OPEN trade in `symbol`, or the `{"error": ...}` an exit tool returns as is."""
         trade = self.state.book.get(symbol.strip().upper())
         if trade is None or trade.status is not TradeStatus.OPEN:
             return {"error": f"no open trade in {symbol.strip().upper()}"}
@@ -394,15 +451,17 @@ class Desk:
         return True
 
     def _market_sell(self, trade: Trade, quantity: Decimal, reason: str) -> Order | None:
+        """Submit a market sell for the trade; the order is listed as an unbooked exit. None (logged) if refused."""
         try:
             submitted = self._strategy.submit_order(self._strategy.create_order(trade.symbol, quantity, "sell"))
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             self._strategy.log_error(f"market sell of {quantity} {trade.symbol} failed ({reason}): {exc}")
             return None
-        trade.exit_order_ids.append(submitted.identifier)
+        trade.exit_order_ids.append(submitted.identifier)  # counted as pending by `_free_quantity` until booked
         return submitted
 
     def _cancel(self, order: Order) -> None:
+        """Request a cancel; a broker refusal is logged, not raised (the outcome arrives through the hooks)."""
         try:
             self._strategy.cancel_order(order)
         except BrokerError as exc:
@@ -423,7 +482,7 @@ class Desk:
         if order.is_filled():
             return STOPPED_OUT
         if order.is_active():
-            self._expected_cancels.add(order.identifier)
+            self._expected_cancels.add(order.identifier)  # so its CANCELED hook is not read as an outside cancel
             try:
                 self._strategy.cancel_order(order)
             except BrokerError as exc:
@@ -431,6 +490,7 @@ class Desk:
                 if order.is_filled():  # Alpaca raises when cancelling an already-filled order
                     return STOPPED_OUT
                 return f"could not cancel the stop: {exc}"
+            # Waits on the strategy clock and dispatches order hooks meanwhile (instant in a backtest: cancels are synchronous).
             self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
             if order.is_filled():
                 return STOPPED_OUT
@@ -442,6 +502,7 @@ class Desk:
         return STOPPED_OUT if trade.status is TradeStatus.CLOSED else None
 
     def _archive(self, trade: Trade) -> None:
+        """A trade closed: move it out of the book, mark its setup DONE, append it to `trades.jsonl`."""
         self.state.book.archive(trade)
         setup = self.state.setups.get(trade.symbol)
         if setup is not None:
@@ -456,7 +517,11 @@ class Desk:
 
     # --- exits (the exit agent's actions) --------------------------------------------------
 
+    # Every exit action follows the same hand-off: validate everything first (a refusal never touches the
+    # working stop), release the stop (cancel + wait), act, then put a stop back on whatever is still held.
+
     def take_partial_profit(self, symbol: str, fraction: float) -> dict[str, Any]:
+        """The exit agent's TP1: sell `fraction` of the free shares once, then re-place the stop on the rest."""
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
@@ -485,6 +550,7 @@ class Desk:
         return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
 
     def tighten_stop(self, symbol: str, stop_price: float) -> dict[str, Any]:
+        """The exit agent's `tighten_stop`: raise a plain stop in place (`modify_order`, so there is no unprotected gap)."""
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
@@ -506,12 +572,18 @@ class Desk:
             replacement = self._strategy.modify_order(order, stop_price=new_level)
         except Exception as exc:  # the broker's modify may raise its own error type (BacktestError, BrokerError)
             return {"error": f"the stop could not be modified: {exc}"}
+        # Alpaca and the backtest broker replace the order under a new id (IBKR keeps it): always follow the returned one.
         trade.stop_order_id = replacement.identifier
         trade.stop_level = new_level
         self._strategy.log_info(f"stop {trade.symbol} raised to {new_level}")
         return {"status": "stop raised", "stop_price": float(new_level)}
 
     def replace_stop_with_trailing(self, symbol: str, trail_atr: float) -> dict[str, Any]:
+        """The exit agent's `replace_stop_with_trailing`: swap the stop for a broker-side trailing stop.
+
+        The trail distance is `trail_atr` 5-minute ATRs, sent as a dollar `trail_price`. It is refused when
+        it would start below the current stop (that would loosen the protection).
+        """
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
@@ -536,6 +608,8 @@ class Desk:
         released = self._release_stop(trade)
         if released is not None:
             return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
+        # Set before submitting: `_submit_stop` reads stop_kind/trail_price to build a TRAIL order (and any
+        # later re-placement of the stop, e.g. after a partial exit, re-creates it as a trail).
         trade.stop_kind, trade.trail_price, trade.stop_level = "trail", trail, starts_at
         if not self._submit_stop(trade, self._free_quantity(trade)):
             return {"error": "the trailing stop could not be placed; the free shares were sold at market instead (or that failed too: check the position)"}
@@ -543,9 +617,11 @@ class Desk:
         return {"status": "trailing stop placed", "trail_price": float(trail), "starts_at": float(starts_at)}
 
     def exit_position(self, symbol: str, reason: str) -> dict[str, Any]:
+        """The exit agent's `exit_position`: release the stop and market-sell every free share now."""
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
+        # Checked before releasing the stop: never cancel a stop the desk could not replace with a sell.
         if self._free_quantity(trade) <= 0:
             return {"error": "nothing left to sell; an exit is already pending"}
         released = self._release_stop(trade)
@@ -561,6 +637,7 @@ class Desk:
         return {"status": "exit submitted", "quantity": int(free)}
 
     def hold(self, symbol: str, reason: str) -> dict[str, Any]:
+        """The exit agent's `hold`: change nothing (the default for noise inside 1R); logged for the record."""
         trade = self._open_trade(symbol)
         if isinstance(trade, dict):
             return trade
@@ -595,9 +672,10 @@ class Desk:
             self._strategy.log_warning(f"{reason} with no session state: closing what this strategy's open orders point at")
             self._close_orphans(known=set())
             return
+        # From now on: no entries, and a late entry fill is sold instead of protected (`_protect`).
         state.flattened = True
         sells: list[Order] = []
-        unconfirmed: list[Order] = []
+        unconfirmed: list[Order] = []  # stops whose cancel was not confirmed in time (waited on below)
         for trade in list(state.book.active()):
             if trade.status is TradeStatus.PENDING:
                 order = self._strategy.get_order(trade.entry_order_id)
@@ -618,6 +696,8 @@ class Desk:
             sell = self._market_sell(trade, free, reason) if free > 0 else None
             if sell is not None:
                 sells.append(sell)
+        # Live: give the sells (and the late stop cancels) time to complete, dispatching their hooks meanwhile.
+        # No tick runs after the flatten, so this wait and the re-check below are the last chance before the close.
         if (sells or unconfirmed) and not self._strategy.is_backtesting:
             self._strategy.wait_for_orders_execution([*sells, *unconfirmed], timeout=self._params.flatten_wait_seconds)
             still_open = [order.asset.symbol for order in sells if order.is_active()]
