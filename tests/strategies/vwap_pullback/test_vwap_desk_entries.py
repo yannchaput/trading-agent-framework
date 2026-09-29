@@ -381,3 +381,73 @@ def test_a_partly_filled_exit_sell_that_ends_cancelled_books_its_fill_and_the_re
     assert stop.is_active() and stop.quantity == D(149)
     rig.desk.on_order_canceled(sell)  # a repeated hook books nothing twice
     assert trade.quantity == D(149)
+
+
+def _after_tp1(rig: Rig):
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    rig.desk.take_partial_profit("AAA", 0.5)
+    tp1 = rig.strategy.get_order(trade.exit_order_ids[-1])
+    assert tp1.quantity == D(124) and rig.strategy.get_order(trade.stop_order_id).quantity == D(125)
+    return trade, tp1
+
+
+def _spy_sells(rig: Rig) -> list[D]:
+    attempts: list[D] = []
+    real_sell = rig.desk._market_sell
+    rig.desk._market_sell = lambda t, quantity, reason: attempts.append(quantity) or real_sell(t, quantity, reason)
+    return attempts
+
+
+def test_a_zero_fill_cancelled_flatten_sell_is_sold_again(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.open_trade()
+    trade = rig.state.book.get("AAA")
+    rig.broker.cancel_order(rig.strategy.get_order(trade.stop_order_id))
+    trade.stop_order_id = None
+    sell = rig.desk._market_sell(trade, D(249), "flatten")
+    rig.state.flattened = True
+    attempts = _spy_sells(rig)
+    rig.broker.cancel_order(sell)
+    rig.desk.on_order_canceled(sell)
+    assert attempts == [D(249)]
+
+
+def test_a_zero_fill_cancelled_tp1_sell_resizes_the_stop_to_every_share(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    rig.broker.cancel_order(tp1)
+    rig.desk.on_order_canceled(tp1)
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert trade.quantity == D(249) and stop.is_active() and stop.quantity == D(249)
+
+
+def test_a_partly_filled_cancelled_tp1_sell_books_the_fill_and_resizes_the_stop(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    tp1.filled_quantity = D(100)
+    tp1.avg_fill_price = D("101")
+    rig.broker.cancel_order(tp1)
+    rig.desk.on_order_canceled(tp1)
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert trade.quantity == D(149) and stop.is_active() and stop.quantity == D(149)
+
+
+def test_flattened_never_sells_the_shares_an_unconfirmed_stop_still_covers(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    rig.state.flattened = True
+    attempts = _spy_sells(rig)
+    rig.broker.cancel_order(tp1)
+    rig.desk.on_order_canceled(tp1)
+    assert attempts == [D(124)]
+
+
+def test_reconcile_settles_an_exit_sell_that_ended_in_error(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    trade, tp1 = _after_tp1(rig)
+    rig.broker.cancel_order(tp1)  # the simulated broker drops it from its pending sells ...
+    tp1.set_error("rejected")  # ... and it ends in ERROR with no hook reaching the desk
+    rig.desk.reconcile(rig.clock.now())
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    assert tp1.identifier not in trade.exit_order_ids and stop.is_active() and stop.quantity == D(249)
