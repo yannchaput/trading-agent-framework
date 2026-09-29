@@ -407,7 +407,10 @@ class Desk:
             return self._restored(trade, "the sell failed")
         trade.tp1_done = True
         if not self._submit_stop(trade, remaining):
-            return {"error": f"the partial sell of {sold} was submitted but the stop for the remaining {remaining} could not be placed; those shares were sold at market instead (or the sale failed: check the position)"}
+            return {"error": (
+                f"the partial sell of {sold} was submitted but the stop for the remaining {remaining} could not be placed; "
+                "those shares were sold at market instead (or that failed too: check the position)"
+            )}
         self._strategy.log_info(f"partial profit {trade.symbol}: sold {sold}, {remaining} left under the stop")
         return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
 
