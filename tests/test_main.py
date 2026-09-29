@@ -8,8 +8,8 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 
-def test_registry_lists_both_strategies() -> None:
-    assert set(main_module.AGENT_STRATEGIES) == {"cross_momentum", "news_binary"}
+def test_registry_lists_the_strategies() -> None:
+    assert set(main_module.AGENT_STRATEGIES) == {"cross_momentum", "news_binary", "vwap_pullback_continuation"}
 
 
 def test_news_binary_builder_returns_the_strategy() -> None:

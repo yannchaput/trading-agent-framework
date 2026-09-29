@@ -17,6 +17,7 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 StrategyBuilder = Callable[[Broker, TradingMode], Strategy | None]
@@ -35,9 +36,18 @@ def _build_news_binary(broker: Broker, mode: TradingMode) -> Strategy | None:
 
 
 # MAPPING OF STRATEGY NAMES TO STRATEGY BUILDERS
+def _build_vwap_pullback(broker: Broker, mode: TradingMode) -> Strategy | None:
+    universe = load_cross_momentum_universe()
+    if not universe:
+        Console().print("Universe file not found — run `uv run batch-universe` before executing this strategy.", style="bold red")
+        return None
+    return VwapPullbackStrategy(broker=broker, mode=mode, universe=universe)
+
+
 AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
     "cross_momentum": _build_cross_momentum,
     "news_binary": _build_news_binary,
+    "vwap_pullback_continuation": _build_vwap_pullback,
 }
 
 
