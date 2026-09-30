@@ -13,6 +13,7 @@ import pandas as pd
 from trading_agent_framework.agents.stats_store import llm_stats_db_path
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
+from trading_agent_framework.utils.clock import MARKET_TZ
 
 
 def load_description(ref: RunRef) -> str | None:
@@ -456,6 +457,69 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
         )
 
     return {"values": values, "trades": trades}
+
+
+def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
+    """Per trading day, the peak value invested (at cost) and the most positions held at once, rebuilt from the fills.
+
+    equity.parquet samples each session at its close, so an intraday strategy (flat by then) always shows 100% cash
+    there; this is what the fills say happened in between. `peak_pct` is the peak against the previous session's
+    closing equity (the budget on the first day); None when neither is known. A position carried overnight counts
+    from the start of the next day at its remaining cost; a session without fills gets a zero row. None when there
+    are no fills.
+    """
+    path = os.path.join(ref.path, "trades.parquet")
+    if not os.path.isfile(path):
+        return None
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return None
+    if df.empty or "status" not in df.columns:
+        return None
+    fills = df[df["status"] == "fill"].copy()
+    if fills.empty:
+        return None
+    fills["time"] = pd.to_datetime(fills["time"], utc=True).dt.tz_convert(MARKET_TZ)
+    fills = fills.sort_values("time", kind="stable")
+
+    closes = pd.Series(dtype=float)
+    curve = load_equity_curve(ref)
+    if curve:
+        closes = pd.Series({pd.Timestamp(row["date"]).date(): row["value"] for row in curve}).sort_index()
+    settings = load_settings(ref)
+    budget = settings.budget if settings is not None else None
+
+    holdings: dict[str, list[float]] = {}  # symbol -> [shares, remaining cost]
+    rows: list[dict[str, Any]] = []
+    by_day = dict(tuple(fills.groupby(fills["time"].dt.date, sort=True)))
+    # Every session of the equity curve gets a row, so a day without trades shows as zero rather than as nothing.
+    for day in sorted(set(by_day) | set(closes.index)):
+        peak = sum(cost for _, cost in holdings.values())
+        most = len(holdings)
+        for _, fill in by_day.get(day, fills.iloc[0:0]).iterrows():
+            symbol, qty, price = str(fill["symbol"]), float(fill["filled_quantity"]), float(fill["price"])
+            shares, cost = holdings.get(symbol, [0.0, 0.0])
+            if str(fill["side"]).lower() == "buy":
+                shares, cost = shares + qty, cost + qty * price
+            elif shares > 0:
+                cost -= cost * min(qty, shares) / shares  # the sold shares leave at their average cost
+                shares -= qty
+            if shares > 1e-9:
+                holdings[symbol] = [shares, cost]
+            else:
+                holdings.pop(symbol, None)
+            peak = max(peak, sum(c for _, c in holdings.values()))
+            most = max(most, len(holdings))
+        earlier = closes[closes.index < day] if not closes.empty else closes
+        base = float(earlier.iloc[-1]) if not earlier.empty else budget
+        rows.append({
+            "date": day.isoformat(),
+            "peak_invested": round(peak, 2),
+            "peak_pct": round(100 * peak / base, 2) if base else None,
+            "max_positions": most,
+        })
+    return rows
 
 
 def load_run(ref: RunRef) -> Run:

@@ -8,6 +8,7 @@ from trading_agent_framework.dashboard.components.charts import (
     cumulative_returns_chart,
     drawdown_chart,
     equity_curve_chart,
+    intraday_exposure_chart,
     monthly_returns_distribution,
     monthly_returns_heatmap,
     returns_distribution,
@@ -17,7 +18,16 @@ from trading_agent_framework.dashboard.components.charts import (
     trades_chart,
 )
 from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
-from trading_agent_framework.dashboard.reader import load_agent_calls, load_cumulative_returns, load_parameters, load_portfolio_breakdown, load_run, load_trades_curve, load_yearly_returns
+from trading_agent_framework.dashboard.reader import (
+    load_agent_calls,
+    load_cumulative_returns,
+    load_intraday_exposure,
+    load_parameters,
+    load_portfolio_breakdown,
+    load_run,
+    load_trades_curve,
+    load_yearly_returns,
+)
 
 BETA_HELP = (
     "Sensitivity and volatility relative to the market:\n"
@@ -187,6 +197,12 @@ def page_detail():
             n_buys = sum(1 for t in trades_data["trades"] if t["side"] == "buy")
             n_sells = sum(1 for t in trades_data["trades"] if t["side"] == "sell")
             st.caption(f"{len(trades_data['trades'])} trades — {n_buys} buys, {n_sells} sells")
+            exposure = load_intraday_exposure(ref)
+            if exposure:
+                st.subheader("Intraday exposure")
+                st.plotly_chart(intraday_exposure_chart(exposure), width="stretch")
+                st.caption("Peak value invested (at cost) during each day, against the previous session's closing equity. "
+                           "The equity curve is sampled at the close, so it cannot show positions opened and closed within a day.")
         else:
             st.info("No trade data available for this run.")
 

@@ -19,6 +19,7 @@ from trading_agent_framework.dashboard.reader import (
     load_agent_calls,
     load_cumulative_returns,
     load_equity_curve,
+    load_intraday_exposure,
     load_metrics,
     load_parameters,
     load_portfolio_breakdown,
@@ -320,6 +321,88 @@ def test_load_trades_curve_returns_none_when_no_fills(tmp_path: Path) -> None:
 def test_load_trades_curve_returns_none_when_file_missing(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     assert load_trades_curve(_ref(run_dir), budget=10000.0) is None
+
+
+def _fill(hour: int, minute: int, symbol: str, side: OrderSide, qty: int, price: str, day: int = 5) -> FillRecord:
+    # 2026-01-05/06 are winter sessions: market time is UTC-5.
+    return FillRecord(
+        time=datetime(2026, 1, day, hour + 5, minute, tzinfo=UTC), identifier=f"{symbol}{day}{hour}{minute}", symbol=symbol, side=side,
+        order_type=OrderType.MARKET, quantity=Decimal(qty), filled_quantity=Decimal(qty), price=Decimal(price),
+        trade_cost=Decimal(0), trade_slippage=Decimal(0),
+    )
+
+
+def _write_fills(run_dir: Path, fills: list[FillRecord]) -> None:
+    ledger = Ledger()
+    for fill in fills:
+        ledger.record_fill(fill)
+    report.write_trades(run_dir, ledger)
+
+
+def test_load_intraday_exposure_reports_the_peak_invested_of_overlapping_positions(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(budget=10000.0))
+    _write_fills(run_dir, [
+        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # 1,000 invested
+        _fill(10, 30, "BBB", OrderSide.BUY, 5, "200"),  # 2,000: the peak, two positions
+        _fill(11, 0, "AAA", OrderSide.SELL, 10, "110"),
+        _fill(12, 0, "BBB", OrderSide.SELL, 5, "190"),
+    ])
+
+    assert load_intraday_exposure(_ref(run_dir)) == [
+        {"date": "2026-01-05", "peak_invested": 2000.0, "peak_pct": 20.0, "max_positions": 2},
+    ]
+
+
+def test_load_intraday_exposure_measures_a_day_against_the_previous_sessions_close(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(budget=10000.0))
+    report.write_equity(run_dir, [
+        EquitySample(time=NOW, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
+        EquitySample(time=LATER, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
+    ])
+    _write_fills(run_dir, [
+        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+        _fill(10, 5, "AAA", OrderSide.SELL, 10, "100"),
+        _fill(10, 0, "AAA", OrderSide.BUY, 20, "100", day=6),  # 2,000 of the 8,000 closing equity of the 5th
+        _fill(15, 0, "AAA", OrderSide.SELL, 20, "100", day=6),
+    ])
+
+    rows = load_intraday_exposure(_ref(run_dir))
+
+    assert [(r["date"], r["peak_pct"]) for r in rows] == [("2026-01-05", 10.0), ("2026-01-06", 25.0)]
+
+
+def test_load_intraday_exposure_keeps_a_position_carried_overnight_at_its_cost(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(budget=10000.0))
+    _write_fills(run_dir, [
+        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # held overnight
+        _fill(10, 0, "BBB", OrderSide.BUY, 10, "50", day=6),  # 1,000 + 500 the next day
+        _fill(11, 0, "AAA", OrderSide.SELL, 5, "120", day=6),  # half of AAA's cost leaves: 500 + 500
+    ])
+
+    rows = load_intraday_exposure(_ref(run_dir))
+
+    assert [(r["date"], r["peak_invested"], r["max_positions"]) for r in rows] == [("2026-01-05", 1000.0, 1), ("2026-01-06", 1500.0, 2)]
+
+
+def test_load_intraday_exposure_shows_a_session_without_trades_as_zero(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(budget=10000.0))
+    report.write_equity(run_dir, _equity_samples())  # sessions of the 5th and the 6th
+    _write_fills(run_dir, [_fill(10, 0, "AAA", OrderSide.BUY, 10, "100"), _fill(11, 0, "AAA", OrderSide.SELL, 10, "100")])
+
+    rows = load_intraday_exposure(_ref(run_dir))
+
+    assert rows[1] == {"date": "2026-01-06", "peak_invested": 0.0, "peak_pct": 0.0, "max_positions": 0}
+
+
+def test_load_intraday_exposure_returns_none_without_fills(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    assert load_intraday_exposure(_ref(run_dir)) is None
+    _write_fills(run_dir, [])
+    assert load_intraday_exposure(_ref(run_dir)) is None
 
 
 # --- agent telemetry ------------------------------------------------------------------

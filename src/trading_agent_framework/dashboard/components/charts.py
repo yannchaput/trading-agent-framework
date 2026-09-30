@@ -693,6 +693,34 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
     return fig
 
 
+def intraday_exposure_chart(rows: list[dict[str, Any]], title: str = "Intraday exposure") -> go.Figure:
+    """One bar per trading day: the peak share of equity invested during the day (`reader.load_intraday_exposure`)."""
+    if not rows:
+        fig = go.Figure()
+        fig.add_annotation(text="No trade data available", showarrow=False)
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
+        return fig
+    fig = go.Figure(
+        go.Bar(
+            x=[row["date"] for row in rows],
+            y=[row["peak_pct"] for row in rows],
+            customdata=[(row["peak_invested"], row["max_positions"]) for row in rows],
+            marker_color="#16a34a",
+            hovertemplate="%{x}<br>Peak %{y:.1f}% of equity<br>$%{customdata[0]:,.0f} invested<br>%{customdata[1]} position(s) at once<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Peak invested (% of equity)",
+        template=CHART_TEMPLATE,
+        showlegend=False,
+        margin=dict(l=40, r=20, t=40, b=40),
+    )
+    fig.update_xaxes(type="category")  # trading days only: no empty weekend gaps
+    return fig
+
+
 def rolling_sortino_chart(
     dates: list[str],
     strategy_daily: list[float],
