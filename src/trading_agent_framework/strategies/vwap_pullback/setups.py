@@ -29,7 +29,7 @@ class SetupState(StrEnum):
     TRIGGERED = "triggered"  # this bar resumed upward: the entry agent may enter now
     IN_TRADE = "in_trade"  # an entry was accepted (the entry order may still be pending)
     DONE = "done"  # the trade closed: one trade per symbol per session
-    BROKEN = "broken"  # the pattern failed; ignored for the rest of the session
+    BROKEN = "broken"  # the pattern failed; ignored for the rest of the session. See '_broken_reason' method.
 
 
 # States the price action no longer moves: the setup is either traded or dead.
@@ -90,8 +90,14 @@ def step(setup: Setup, bar: BarContext, daily_atr: float, params: VwapPullbackPa
     """The setup after one more completed bar."""
     # Book-keeping first, whatever the state: counters and the latest bar's measures.
     seen = replace(
-        setup, last_bar_time=bar.time, bars_seen=setup.bars_seen + 1, volume_total=setup.volume_total + bar.volume,
-        last_close=bar.close, last_vwap=bar.vwap, last_rs=bar.rs, last_rvol=bar.rvol,
+        setup,
+        last_bar_time=bar.time,
+        bars_seen=setup.bars_seen + 1,
+        volume_total=setup.volume_total + bar.volume,
+        last_close=bar.close,
+        last_vwap=bar.vwap,
+        last_rs=bar.rs,
+        last_rvol=bar.rvol,
     )
     if seen.state in _FROZEN:
         return seen
@@ -131,7 +137,7 @@ def _impulse_or_pullback(setup: Setup, bar: BarContext, daily_atr: float, params
         if setup.prev_high is not None and bar.close > setup.prev_high and bar.volume > setup.pullback_avg_volume:
             return replace(setup, state=SetupState.TRIGGERED, trigger_close=bar.close, triggered_at=bar.time)
         # A new high without trigger volume: the impulse simply continued; start over from IMPULSE.
-        if bar.high > setup.impulse_high:
+        if setup.impulse_high is not None and bar.high > setup.impulse_high:
             return _new_high(setup, bar)
         pulled = replace(
             setup,
@@ -145,19 +151,39 @@ def _impulse_or_pullback(setup: Setup, bar: BarContext, daily_atr: float, params
             return replace(pulled, state=SetupState.BROKEN, broken_reason="pullback lasted longer than the impulse")
         return pulled
     # IMPULSE: extend the impulse on a new high, then check whether this bar retraced enough to start a pullback.
-    if bar.high > setup.impulse_high:
+    if setup.impulse_high is not None and bar.high > setup.impulse_high:
         setup = _new_high(setup, bar)
     if retracement >= params.pullback_min_retrace:
         # The retracing bar is the pullback's first bar.
         return replace(
-            setup, state=SetupState.PULLBACK, pullback_low=bar.low, pullback_bars=1, pullback_volume_total=bar.volume,
+            setup,
+            state=SetupState.PULLBACK,
+            pullback_low=bar.low,
+            pullback_bars=1,
+            pullback_volume_total=bar.volume,
             largest_red_body_atr=red_body / daily_atr if red_body > 0 and daily_atr > 0 else 0.0,
         )
     return setup
 
 
 def _broken_reason(setup: Setup, bar: BarContext, red_body: float, retracement: float, daily_atr: float, params: VwapPullbackParameters) -> str | None:
-    """Why this bar invalidates the pattern, or None. Checked on every IMPULSE/PULLBACK bar, first."""
+    """Return a string explaining why this bar invalidates the pattern, or None if the pattern still holds.
+
+    Checks five failure conditions: loss of VWAP support, loss of relative strength, excessive retracement,
+    oversized bearish candle, or abnormally heavy selling volume. Evaluated on every IMPULSE/PULLBACK bar
+    before any state transitions.
+
+    Args:
+        setup: Current setup state tracking impulse/pullback metrics.
+        bar: The bar being evaluated.
+        red_body: Size of the down-bar body (open - close), positive only for down bars.
+        retracement: Depth of pullback as a fraction of the impulse leg (0.0 to 1.0+).
+        daily_atr: Daily Average True Range, used to normalize candle sizes.
+        params: Strategy parameters controlling break thresholds.
+
+    Returns:
+        A string describing why the pattern broke, or None if all conditions pass.
+    """
     if bar.close < bar.vwap:
         return "close below VWAP"
     if bar.rs <= 0:
@@ -174,8 +200,17 @@ def _broken_reason(setup: Setup, bar: BarContext, red_body: float, retracement: 
 def _new_high(setup: Setup, bar: BarContext) -> Setup:
     """Back to IMPULSE at a new high: the impulse now runs to this bar and any pullback so far is discarded."""
     return replace(
-        setup, state=SetupState.IMPULSE, impulse_high=bar.high, impulse_bars=setup.bars_seen, impulse_volume_total=setup.volume_total,
-        pullback_low=None, pullback_bars=0, pullback_volume_total=0.0, largest_red_body_atr=0.0, retracement=0.0, max_retracement=0.0,
+        setup,
+        state=SetupState.IMPULSE,
+        impulse_high=bar.high,
+        impulse_bars=setup.bars_seen,
+        impulse_volume_total=setup.volume_total,
+        pullback_low=None,
+        pullback_bars=0,
+        pullback_volume_total=0.0,
+        largest_red_body_atr=0.0,
+        retracement=0.0,
+        max_retracement=0.0,
     )
 
 
