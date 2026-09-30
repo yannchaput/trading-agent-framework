@@ -51,6 +51,20 @@ def test_search_news_has_a_per_run_budget(tmp_path: Path) -> None:
         assert "error" not in search(symbols="AAA")
 
 
+def test_get_intraday_bars_has_a_per_run_budget(tmp_path: Path) -> None:
+    # One response of a local model once asked for 14 bar fetches at once; their results overflowed the 32k context.
+    rig = Rig(tmp_path)
+    budget = rig.desk.params.bars_calls_per_run
+    for tools in (entry_tools(rig.strategy, rig.desk), exit_tools(rig.strategy, rig.desk)):
+        bars = _tools(tools)["get_intraday_bars"]
+        with agent_call_context(run_id="run-1"):
+            for _ in range(budget):
+                assert "error" not in bars("AAA")
+            assert "budget" in bars("AAA")["error"]
+        with agent_call_context(run_id="run-2"):
+            assert "error" not in bars("AAA")
+
+
 def test_entry_tools_delegate_to_the_desk(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     tools = _tools(entry_tools(rig.strategy, rig.desk))

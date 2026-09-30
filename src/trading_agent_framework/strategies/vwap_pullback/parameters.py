@@ -59,6 +59,7 @@ class VwapPullbackParameters:
     exit_review_minutes: int = 15  # an open trade is reviewed at least this often, event or not
     headlines_per_symbol: int = 3  # headlines attached to a setup or trade row
     news_calls_per_run: int = 4  # search_news budget per agent run (local models loop on search tools otherwise)
+    bars_calls_per_run: int = 4  # get_intraday_bars budget per agent run (14 parallel fetches once overflowed the 32k context)
     max_passes_per_symbol: int = 2  # after this many passes a symbol's triggers no longer reach the entry agent (same setup, same verdict)
     tp1_fraction_band: tuple[float, float] = (0.25, 0.5)  # share of the position take_partial_profit may sell
     trail_atr_band: tuple[float, float] = (0.5, 2.0)  # trailing distance in 5-minute ATRs allowed to the exit agent

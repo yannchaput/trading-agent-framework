@@ -74,33 +74,53 @@ def trade_rows(desk: "Desk", now: datetime) -> list[dict[str, Any]]:  # noqa: UP
     return rows
 
 
+def _run_budget(calls_per_run: int) -> Callable[[], bool]:
+    """A per-agent-run call counter: each call returns whether the budget still had room (and spends one).
+
+    A new run id (every agent invocation gets one) resets the count, so the budget is per run; a local
+    model left unbudgeted has looped 100+ times on a search tool, and fanned out 14 bar fetches in one response.
+    """
+    usage: dict[str, Any] = {"run_id": None, "count": 0}
+
+    def spend() -> bool:
+        run_id = current_run_id()
+        if run_id != usage["run_id"]:
+            usage["run_id"], usage["count"] = run_id, 0
+        if usage["count"] >= calls_per_run:
+            return False
+        usage["count"] += 1
+        return True
+
+    return spend
+
+
 def budgeted_search_news(strategy: "Strategy", calls_per_run: int) -> Callable[..., dict[str, Any]]:  # noqa: UP037
     """The shared `search_news` tool, refused after `calls_per_run` calls in one agent run."""
     inner = news_tools(strategy)[0]
-    # Calls made in the current agent run. A new run id (every agent invocation gets one) resets the count,
-    # so the budget is per run; a local model left unbudgeted has looped 100+ times on a search tool.
-    usage: dict[str, Any] = {"run_id": None, "count": 0}
+    spend = _run_budget(calls_per_run)
 
     # Same signature and docstring as the wrapped tool, spelled out (not functools.wraps) so LangChain reads
     # a plain function's annotations when it builds the schema.
     def search_news(symbols: str = "", start: str | None = None, end: str | None = None, limit: int = 10, include_content: bool = False) -> dict[str, Any]:
         """Search recent news headlines and summaries, optionally filtered to symbols."""
-        run_id = current_run_id()
-        if run_id != usage["run_id"]:
-            usage["run_id"], usage["count"] = run_id, 0
-        if usage["count"] >= calls_per_run:
+        if not spend():
             return {"error": "news budget for this run is spent; decide with what you have"}
-        usage["count"] += 1
         return inner(symbols=symbols, start=start, end=end, limit=limit, include_content=include_content)
 
     return search_news
 
 
 def _bars_tool(desk: "Desk") -> Callable[..., dict[str, Any]]:  # noqa: UP037
-    """`get_intraday_bars`, shared by both agents: reads the scan's cached contexts, never fetches data."""
+    """`get_intraday_bars`, shared by both agents: reads the scan's cached contexts, never fetches data.
+
+    Budgeted per run: each result is up to `MAX_BARS` rows and the model may request many in one response.
+    """
+    spend = _run_budget(desk.params.bars_calls_per_run)
 
     def get_intraday_bars(symbol: str, length: int = 12) -> dict[str, Any]:
         """Get a tracked symbol's recent 5-minute bars with VWAP, oldest first."""
+        if not spend():
+            return {"error": "bars budget for this run is spent; decide with what you have"}
         contexts = desk.state.contexts.get(symbol.strip().upper())
         if not contexts:
             return {"error": f"no intraday bars for {symbol.strip().upper()}"}
