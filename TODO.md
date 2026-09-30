@@ -59,6 +59,9 @@
 ### LLM benchmark
 * ~~Log a frontmatter before each model benchmark~~
 
+### VWAP Pullback continuation
+* Add indicators on equity curve
+
 ---
 
 ## Archives
