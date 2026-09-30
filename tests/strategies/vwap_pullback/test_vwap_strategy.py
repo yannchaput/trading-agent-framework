@@ -131,7 +131,7 @@ def test_a_backtest_waits_in_one_minute_slices_so_the_stop_follows_the_entry_bar
     assert BacktestClock.max_wait_slice == float("inf")  # set on this run's clock only
     broker.tracker.listeners.append(strategy.executor._events)  # what executor.run() wires
     state = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=Decimal("100000"))
-    state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0, z_rs=2.5, z_rvol=2.5)
+    state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0)
     state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
     state.contexts["AAA"] = [BarContext(time=TEN_AM, open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0, session_open=99.0, session_high=100.2)]
     strategy.vars.session = state

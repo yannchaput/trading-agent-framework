@@ -33,7 +33,7 @@ def _after(created_at: str, moment: datetime) -> bool:
 
 
 def setup_rows(desk: "Desk") -> list[dict[str, Any]]:  # noqa: UP037
-    """Pullback and triggered setups: health, stage-2 z-scores, the stop and R an entry would get, headlines."""
+    """Pullback and triggered setups: health, the stop and R an entry would get, headlines."""
     state = desk.state
     rows: list[dict[str, Any]] = []
     for symbol, setup in sorted(state.setups.items()):
@@ -42,9 +42,6 @@ def setup_rows(desk: "Desk") -> list[dict[str, Any]]:  # noqa: UP037
         if setup.state is SetupState.TRIGGERED and not desk.awaits_decision(symbol):
             continue  # passed on often enough already: the agent is not asked about it again
         row: dict[str, Any] = {"symbol": symbol, **health(setup)}
-        info = state.candidates.get(symbol)
-        if info is not None:
-            row |= {"z_rs": round(info.z_rs, 2), "z_rvol": round(info.z_rvol, 2)}
         planned = desk.planned_risk(symbol)
         if planned is not None:
             row |= {"planned_stop": float(planned[0]), "r_per_share": float(planned[1])}

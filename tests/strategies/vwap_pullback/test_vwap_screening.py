@@ -72,14 +72,12 @@ def test_rank_stage2_applies_the_floor_and_keeps_the_top_n() -> None:
     ]
     ranked = rank_stage2(snapshots, dataclasses.replace(PARAMS, tracked_size=2), sticky=set())
     assert [c.symbol for c in ranked] == ["A", "B"]
-    assert ranked[0].z_rs > 0 and ranked[0].z_rvol > 0
 
 
 def test_rank_stage2_keeps_sticky_symbols_even_when_they_fail_the_floor() -> None:
     ranked = rank_stage2([_snapshot("A"), _snapshot("HELD", rs=-0.01)], PARAMS, sticky={"HELD", "GONE"})
     assert [c.symbol for c in ranked] == ["A", "GONE", "HELD"]
     assert ranked[2].composite == 0.0
-    assert [c.on_floor for c in ranked] == [True, False, False]  # placeholders must not overwrite measured scores
 
 
 def test_rank_stage2_excludes_missing_rvol() -> None:

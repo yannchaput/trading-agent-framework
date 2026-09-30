@@ -22,7 +22,8 @@ def test_setup_rows_show_pullback_and_triggered_setups_with_plan_and_headlines(t
     assert [row["symbol"] for row in rows] == ["AAA"]
     row = rows[0]
     assert row["state"] == "triggered" and row["planned_stop"] == 99.3 and row["r_per_share"] == 0.7
-    assert row["z_rs"] == 2.5 and row["headlines"][0]["headline"] == "AAA beats"
+    assert row["headlines"][0]["headline"] == "AAA beats"
+    assert "z_rs" not in row and "z_rvol" not in row  # no rule reads them any more: not worth the tokens
 
 
 def test_trade_rows_show_the_stop_open_r_levels_and_new_headlines(tmp_path: Path) -> None:

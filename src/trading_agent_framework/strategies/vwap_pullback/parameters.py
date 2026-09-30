@@ -46,7 +46,7 @@ class VwapPullbackParameters:
     stop_buffer_atr: float = 0.1  # protective stop = pullback low - this many ATRs
     r_band_atr: tuple[float, float] = (0.15, 1.0)  # R must lie in [low, high] ATRs: not noise-tight, not meaningless
     risk_per_trade: float = 0.005  # equity fraction lost if the stop is hit (0.5%)
-    max_position_pct: float = 0.25  # cap on one position's value, as a fraction of equity
+    max_position_pct: float = 0.50  # cap on one position's value, as a fraction of equity (0.25 left most of the risk budget unused)
     cash_buffer: float = 0.95  # spend at most 95% of available cash (fees, price drift)
     max_positions: int = 4  # concurrent open trades + pending entries
     max_daily_loss_pct: float = 0.015  # circuit breaker: no new entries once session P&L <= -1.5% of opening equity
@@ -60,7 +60,6 @@ class VwapPullbackParameters:
     headlines_per_symbol: int = 3  # headlines attached to a setup or trade row
     news_calls_per_run: int = 4  # search_news budget per agent run (local models loop on search tools otherwise)
     max_passes_per_symbol: int = 2  # after this many passes a symbol's triggers no longer reach the entry agent (same setup, same verdict)
-    none_catalyst_min_z: float = 2.0  # with catalyst "none", enter only if both RS and RVOL z-scores exceed this
     tp1_fraction_band: tuple[float, float] = (0.25, 0.5)  # share of the position take_partial_profit may sell
     trail_atr_band: tuple[float, float] = (0.5, 2.0)  # trailing distance in 5-minute ATRs allowed to the exit agent
 

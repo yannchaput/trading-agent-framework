@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import logging
 from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -25,6 +26,8 @@ from trading_agent_framework.strategies.vwap_pullback.trades import TradeStatus
 DAY = date(2026, 9, 1)
 FLAT = (100.0, 100.2, 99.8, 100.0, 1000.0)
 # Close-stamped minute bars 09:31..11:00: flat at 100, then a drop through 99.30 at 10:03.
+# The order-handling tests below count shares sized under a 25% position cap; they pin it, whatever the default.
+PARAMS = dataclasses.replace(VwapPullbackParameters(), max_position_pct=0.25)
 ROWS = [FLAT] * 32 + [(100.0, 100.0, 99.0, 99.2, 1000.0)] + [(99.2, 99.4, 99.0, 99.2, 1000.0)] * 57
 
 
@@ -36,13 +39,13 @@ class Rig:
         self.strategy = Strategy(self.broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
         self.strategy.minutes_before_closing = 10  # as VwapPullbackStrategy: the flatten runs at 15:50
         self.strategy.vars.session = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=D("100000"))
-        self.state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0, z_rs=2.5, z_rvol=2.5)
+        self.state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0)
         self.state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
         self.state.contexts["AAA"] = [BarContext(time=et(2026, 9, 1, 10, 0), open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0,
             session_open=99.0, session_high=100.2,
         )]
         self.log = tmp_path / "trades.jsonl"
-        self.desk = Desk(self.strategy, params or VwapPullbackParameters(), trade_log=lambda: self.log)
+        self.desk = Desk(self.strategy, params or PARAMS, trade_log=lambda: self.log)
 
     @property
     def state(self) -> SessionState:
@@ -92,8 +95,56 @@ def test_enter_long_refusals(tmp_path: Path, change, message: str) -> None:
 
 def test_enter_long_refuses_an_unknown_catalyst_and_a_full_book(tmp_path: Path) -> None:
     assert "catalyst" in Rig(tmp_path).desk.enter_long("AAA", "rumour", "x")["error"]
-    full = Rig(tmp_path, params=dataclasses.replace(VwapPullbackParameters(), max_positions=0))
+    full = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
     assert "slot" in full.desk.enter_long("AAA", "earnings", "x")["error"]
+
+
+def test_the_label_the_agent_sets_is_logged_at_debug_even_when_the_entry_is_refused(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    full = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
+    with caplog.at_level(logging.DEBUG):
+        assert "slot" in full.desk.enter_long("AAA", "analyst", "x")["error"]
+    labelled = [r for r in caplog.records if r.levelno == logging.DEBUG and "AAA" in r.getMessage() and "analyst" in r.getMessage()]
+    assert len(labelled) == 1
+
+
+def test_an_unknown_label_is_not_logged_as_a_label(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG):
+        Rig(tmp_path).desk.enter_long("AAA", "rumour", "x")
+    assert not [r for r in caplog.records if "rumour" in r.getMessage()]
+
+
+def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+@pytest.mark.parametrize(
+    ("catalyst", "params", "reason"),
+    [
+        ("rumour", PARAMS, "catalyst must be one of"),  # a validation guard
+        ("analyst", dataclasses.replace(PARAMS, max_positions=0), "no free position slot"),  # a rule guard
+    ],
+)
+def test_a_refused_entry_logs_a_warning_with_the_symbol_and_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture, catalyst: str, params, reason: str) -> None:
+    rig = Rig(tmp_path, params=params)
+    with caplog.at_level(logging.DEBUG):
+        error = rig.desk.enter_long("AAA", catalyst, "x")["error"]
+    warnings = _warnings(caplog)
+    assert len(warnings) == 1 and "AAA" in warnings[0] and reason in warnings[0] and error in warnings[0]
+
+
+def test_a_sizing_refusal_logs_the_reason_risk_gave(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.state.setups["AAA"] = dataclasses.replace(rig.state.setups["AAA"], pullback_low=99.99)  # a stop tighter than the ATR band allows
+    with caplog.at_level(logging.DEBUG):
+        error = rig.desk.enter_long("AAA", "earnings", "x")["error"]
+    assert "outside" in error
+    assert [w for w in _warnings(caplog) if "AAA" in w and error in w]
+
+
+def test_an_accepted_entry_logs_no_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.DEBUG):
+        assert Rig(tmp_path).desk.enter_long("AAA", "earnings", "clean pullback")["status"] == "entry submitted"
+    assert not _warnings(caplog)
 
 
 def test_an_entry_fill_places_the_protective_stop(tmp_path: Path) -> None:

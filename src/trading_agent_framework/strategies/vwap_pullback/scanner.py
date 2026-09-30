@@ -159,11 +159,6 @@ class Scanner:
         # Setups already past WATCH stay tracked whatever their rank today (see `rank_stage2`).
         sticky = {symbol for symbol, setup in state.setups.items() if setup.state is not SetupState.WATCH}
         ranked = rank_stage2(snapshots, self._params, sticky)
-        for candidate in ranked:
-            if not candidate.on_floor:
-                continue  # a setup mid-pullback trades quietly, so its RVOL falls below the floor: keep its last measured scores
-            info = state.candidates[candidate.symbol]
-            info.composite, info.z_rs, info.z_rvol = candidate.composite, candidate.z_rs, candidate.z_rvol
         tracked = {candidate.symbol for candidate in ranked}
         # A WATCH setup that fell out of the ranking has nothing worth keeping: drop it (it restarts if it ranks again).
         for symbol in [s for s, setup in state.setups.items() if s not in tracked and setup.state is SetupState.WATCH]:

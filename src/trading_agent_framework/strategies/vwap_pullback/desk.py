@@ -154,9 +154,16 @@ class Desk:
     def enter_long(self, symbol: str, catalyst: str, reason: str) -> dict[str, Any]:
         """The entry agent's `enter_long`: validate, size (`risk.plan_entry`), submit a marketable limit buy.
 
-        Every rule is re-checked here, whatever the prompt said, and a refusal comes back as `{"error": ...}`.
+        Every rule is re-checked here, whatever the prompt said, and a refusal comes back as `{"error": ...}`
+        (and is logged as a warning, so the run log says why an entry the agent chose never happened).
         The protective stop is NOT placed here: it goes in when the entry fills (`on_order_filled` -> `_protect`).
         """
+        result = self._enter_long(symbol, catalyst, reason)
+        if "error" in result:
+            self._strategy.log_warning(f"entry {symbol.strip().upper()} refused: {result['error']}")
+        return result
+
+    def _enter_long(self, symbol: str, catalyst: str, reason: str) -> dict[str, Any]:
         symbol = symbol.strip().upper()
         state = self.state
         setup = state.setups.get(symbol)
@@ -166,6 +173,7 @@ class Desk:
             return {"error": f"{symbol} has no triggered setup right now (state: {current}); only triggered setups can be entered"}
         if catalyst not in CATALYSTS:
             return {"error": f"catalyst must be one of {', '.join(CATALYSTS)}"}
+        self._strategy.log_debug(f"entry agent labelled {symbol}: catalyst {catalyst}")
         if state.flattened:
             return {"error": "the session is already flattened; no more entries today"}
         now = self._strategy.get_datetime()

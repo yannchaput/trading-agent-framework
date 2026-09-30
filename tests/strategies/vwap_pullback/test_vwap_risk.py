@@ -32,7 +32,7 @@ def test_plan_entry_takes_the_smallest_of_risk_size_and_cash_caps() -> None:
     assert plan.stop_price == D("100.90")
     assert plan.r_per_share == D("0.95")
     assert plan.limit_price == D("102.00")
-    assert plan.quantity == D(245)  # risk 526, 25% cap 245, cash 931
+    assert plan.quantity == D(490)  # risk 526, 50% cap 490, cash 931
 
 
 def test_plan_entry_refuses_a_stop_too_tight_for_the_band() -> None:

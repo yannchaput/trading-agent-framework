@@ -21,18 +21,11 @@ from trading_agent_framework.utils.clock import MarketSession
 
 @dataclass
 class CandidateInfo:
-    """A stage-1 survivor: its daily measures, plus its latest stage-2 scores.
-
-    The daily fields are fixed for the session; the z-scores are overwritten by every scan that ranks
-    the symbol (they stay at their last value when it drops out of the ranking).
-    """
+    """A stage-1 survivor: its daily measures, fixed for the session."""
 
     symbol: str
     daily_atr: float  # daily ATR(14), the unit of every ATR-based threshold for this symbol
     beta: float  # 60-day beta to the benchmark, used for beta-adjusted relative strength
-    composite: float = 0.0  # mean of z(return), z(RS), z(RVOL) at the last scan
-    z_rs: float = 0.0  # cross-sectional z-score of relative strength (the "catalyst: none" gate reads it)
-    z_rvol: float = 0.0  # cross-sectional z-score of relative volume (same)
 
 
 @dataclass

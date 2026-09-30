@@ -46,13 +46,10 @@ class IntradaySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class RankedCandidate:
-    """A symbol tracked this tick, with the scores the entry agent later reads."""
+    """A symbol tracked this tick, in composite-score order."""
 
     symbol: str
-    composite: float  # mean of z(ret), z(rs), z(rvol) across the symbols passing the floor
-    z_rs: float
-    z_rvol: float
-    on_floor: bool = True  # False for a sticky symbol below the floor: its scores are placeholders, not measurements
+    composite: float  # mean of z(ret), z(rs), z(rvol) across the symbols passing the floor: the tracking order
 
 
 def daily_profile(symbol: str, daily: pd.DataFrame, bench_daily: pd.DataFrame | None, params: VwapPullbackParameters) -> DailyProfile | None:
@@ -119,8 +116,8 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     """The top `tracked_size` symbols passing the floor by composite z-score, then every `sticky` symbol not already in (by name).
 
     Floor: RVOL at least `rvol_min`, RS above 0, last close above VWAP. A symbol with no RVOL baseline
-    cannot pass it. A sticky symbol (a setup already past WATCH) stays tracked whatever its rank; it is
-    returned with `on_floor=False` (placeholder zeros) when it is not among the symbols passing the floor.
+    cannot pass it. A sticky symbol (a setup already past WATCH) stays tracked whatever its rank; it gets
+    a composite of 0.0 when it is not among the symbols passing the floor.
     """
     # Hard floor: unusual volume, outperforming the market, and holding above VWAP.
     passing = [s for s in snapshots if s.rvol is not None and s.rvol >= params.rvol_min and s.rs > 0 and s.last_close > s.vwap]
@@ -128,7 +125,7 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     z_rs = zscores({s.symbol: s.rs for s in passing})
     z_rvol = zscores({s.symbol: s.rvol for s in passing if s.rvol is not None})
     candidates = [
-        RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3, z_rs=z_rs[s.symbol], z_rvol=z_rvol[s.symbol])
+        RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3)
         for s in passing
     ]
     ranked = sorted(candidates, key=lambda c: (-c.composite, c.symbol))[: params.tracked_size]
@@ -136,5 +133,5 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     # tracked even if its ranking fades, otherwise its pullback (the whole point) would never be seen.
     kept = {c.symbol for c in ranked}
     by_symbol = {c.symbol: c for c in candidates}
-    extras = [by_symbol.get(symbol, RankedCandidate(symbol=symbol, composite=0.0, z_rs=0.0, z_rvol=0.0, on_floor=False)) for symbol in sorted(set(sticky) - kept)]
+    extras = [by_symbol.get(symbol, RankedCandidate(symbol=symbol, composite=0.0)) for symbol in sorted(set(sticky) - kept)]
     return ranked + extras

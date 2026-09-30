@@ -24,7 +24,7 @@ def test_entry_prompt_names_the_tools_the_catalysts_and_the_thresholds() -> None
     prompt = build_entry_prompt(VwapPullbackParameters())
     for word in ("enter_long", "pass_on_setup", "search_news", "M&A", "offering", *CATALYSTS):
         assert word in prompt
-    assert "2.0" in prompt  # none_catalyst_min_z
+    assert "catalyst 'none'" not in prompt  # news is context for the judgement, never a gate of its own
     assert "at most 4" in prompt  # news_calls_per_run
 
 
