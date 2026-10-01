@@ -8,7 +8,7 @@ builds it, `Scanner.scan` and `Desk` mutate it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 
 import pandas as pd
@@ -42,8 +42,5 @@ class SessionState:
     contexts: dict[str, list[BarContext]] = field(default_factory=dict)  # today's completed 5-minute bars per candidate
     scores: dict[str, float] = field(default_factory=dict)  # this tick's stage-2 composite per tracked symbol passing the floor (rebuilt by every scan)
     book: TradeBook = field(default_factory=TradeBook)  # this session's trades (pending, open, closed)
-    headlines: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # lean headlines per symbol
-    headlines_fetched_at: dict[str, datetime] = field(default_factory=dict)  # throttles news fetches per symbol
-    new_headline: set[str] = field(default_factory=set)  # symbols with a headline the exit agent has not reviewed
     unknown_positions_checked: bool = False  # the restart check (orphan orders/positions) ran for this session
     flattened: bool = False  # the 15:50 flatten ran: no more entries, late fills are sold instead of protected

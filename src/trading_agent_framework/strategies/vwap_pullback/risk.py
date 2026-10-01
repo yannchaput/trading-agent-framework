@@ -89,7 +89,7 @@ def plan_entry(
     # Size = the smallest of three caps:
     by_risk = equity * _ratio(params.risk_per_trade) / r  # losing R per share costs risk_per_trade of equity
     by_size = equity * _ratio(params.max_position_pct) / limit  # no position above max_position_pct of equity
-    # Cash-account rule (as news_binary): never size against buying_power alone (a margin account's is a
+    # Cash-account rule: never size against buying_power alone (a margin account's is a
     # multiple of equity); sells already submitted are credited because they fund this buy.
     by_cash = min(buying_power, cash + pending_sell_proceeds) * _ratio(params.cash_buffer) / limit
     quantity = min(by_risk, by_size, by_cash).to_integral_value(rounding=ROUND_FLOOR)

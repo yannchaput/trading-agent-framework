@@ -14,7 +14,8 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.scanner import Scanner
 from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo, SessionState
-from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState
+from trading_agent_framework.strategies.vwap_pullback.setups import SetupState
+from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus
 
 DAY = date(2026, 9, 2)
 PARAMS = dataclasses.replace(VwapPullbackParameters(), rvol_baseline_sessions=2)
@@ -76,7 +77,6 @@ def test_scan_builds_contexts_and_advances_setups(tmp_path: Path) -> None:
     assert state.setups["AAA"].state is SetupState.IMPULSE
     assert state.setups["AAA"].impulse_high == pytest.approx(101.21)
     assert [call[3] for call in broker.bars_calls if call[2] == "minute"] == [False]
-    assert broker.news.calls == []  # headlines are only fetched for pullback/triggered setups and open trades
 
 
 def test_scan_stores_this_ticks_stage2_scores(tmp_path: Path) -> None:
@@ -94,17 +94,20 @@ def test_scan_stores_this_ticks_stage2_scores(tmp_path: Path) -> None:
     assert state.scores == {"AAA": 0.0}  # rebuilt: one symbol passes the floor, so its composite is 0.0
 
 
-def test_refresh_headlines_fetches_active_setups_and_flags_new_ones(tmp_path: Path) -> None:
-    strategy, broker = _strategy(tmp_path, et(2026, 9, 2, 10, 0))
-    broker.news = FakeNewsProvider({"AAA": [{"headline": "AAA beats", "created_at": "2026-09-02T07:00:00-04:00", "source": "b"}]})
+def test_scan_fetches_no_news(tmp_path: Path) -> None:
+    strategy, broker = _strategy(tmp_path, et(2026, 9, 2, 9, 50, 30))
+    rising = [(100 + 0.06 * i, 100 + 0.06 * (i + 1) + 0.01, 100 + 0.06 * i - 0.01, 100 + 0.06 * (i + 1), 300.0) for i in range(20)]
+    broker.timestep_frames = {
+        ("AAA", "minute"): minute_ohlc(et(2026, 9, 2, 9, 30), rising),
+        ("SPY", "minute"): minute_ohlc(et(2026, 9, 2, 9, 30), [(400, 400, 400, 400, 1000)] * 20),
+    }
+    broker.news = FakeNewsProvider()
     state = _state(AAA=CandidateInfo(symbol="AAA", daily_atr=1.0, beta=1.0))
-    state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.PULLBACK)
-    scanner = Scanner(strategy, PARAMS, ["AAA"])
-    scanner.refresh_headlines(state, et(2026, 9, 2, 10, 0))
-    assert state.headlines["AAA"][0]["headline"] == "AAA beats"
-    assert state.new_headline == set()  # the first fetch is the baseline, not news
-    broker.news.articles["AAA"].append({"headline": "AAA upgraded", "created_at": "2026-09-02T10:10:00-04:00", "source": "b"})
-    scanner.refresh_headlines(state, et(2026, 9, 2, 10, 10))  # within the refresh interval: no call
-    assert len(broker.news.calls) == 1
-    scanner.refresh_headlines(state, et(2026, 9, 2, 10, 15))
-    assert state.new_headline == {"AAA"}
+    state.baselines["AAA"] = pd.Series([100.0 * (m + 1) for m in range(390)])
+    # An open trade: the symbol whose headlines used to be fetched on every scan.
+    state.book.add(Trade(
+        symbol="AAA", entry_order_id="aaa-entry", planned_quantity=Decimal(1), stop_price=Decimal(99), r_per_share=Decimal(1),
+        entered_at=et(2026, 9, 2, 9, 45), status=TradeStatus.OPEN, quantity=Decimal(1),
+    ))
+    Scanner(strategy, PARAMS, ["AAA"]).scan(state)
+    assert broker.news.calls == []

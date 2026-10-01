@@ -1,16 +1,15 @@
-"""Session preparation (stage 1) and the per-tick scan (stage 2, setups, headlines), spec §2-§3.
+"""Session preparation (stage 1) and the per-tick scan (stage 2, setups).
 
-The I/O side of candidate selection: bars and news come in through the strategy and broker, go through the
-pure `features`/`screening`/`setups` modules, and land in `SessionState`. Price reads go through the strategy
-(and so, in a backtest, through `BacktestBroker._source_bars`, the no-look-ahead gate); news is cut at the
-strategy clock.
+The I/O side of candidate selection: bars come in through the strategy and broker, go through the pure
+`features`/`screening`/`setups` modules, and land in `SessionState`. Price reads go through the strategy
+(and so, in a backtest, through `BacktestBroker._source_bars`, the no-look-ahead gate).
 """
 
 from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Callable, Sequence
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING
 
 import pandas as pd
@@ -25,7 +24,6 @@ from trading_agent_framework.strategies.vwap_pullback.features import (
     rvol_baseline,
     session_slice,
 )
-from trading_agent_framework.strategies.vwap_pullback.news import lean_headlines
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.screening import daily_profile, rank_stage2, select_stage1, snapshot_from, stage2_funnel
 from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo, SessionState
@@ -42,12 +40,11 @@ Preload = Callable[[Sequence[Asset], str], None]
 _REGULAR_OPEN = time(9, 30)
 _REGULAR_CLOSE = time(16, 0)  # early closes need no special case: an early session simply has fewer minutes
 _SESSION_MINUTES = 390
-_NEWS_LOOKBACK = timedelta(hours=18)  # from the open back to roughly the previous close
 _EMPTY = pd.DataFrame(columns=["open", "high", "low", "close", "volume"], index=pd.DatetimeIndex([], tz=MARKET_TZ))
 
 
 class Scanner:
-    """Finds and tracks setups: stage 1 once per session, stage 2 + setup state machine + headlines every tick."""
+    """Finds and tracks setups: stage 1 once per session, stage 2 + setup state machine every tick."""
 
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, universe: Sequence[str], *, benchmark: str = "SPY", preload: Preload | None = None) -> None:
         self._strategy = strategy
@@ -131,7 +128,7 @@ class Scanner:
     # --- stage 2 and setups -----------------------------------------------------------
 
     def scan(self, state: SessionState) -> None:
-        """One tick: contexts for every candidate, stage-2 ranking, setups advanced, headlines refreshed."""
+        """One tick: contexts for every candidate, stage-2 ranking and scores, setups advanced."""
         now = self._strategy.get_datetime()
         bench = Asset(self._benchmark)
         # Enough minute rows to cover today's session so far (+ slack), never more than one session.
@@ -171,7 +168,6 @@ class Scanner:
             state.setups[symbol] = advance(setup, state.contexts.get(symbol, []), state.candidates[symbol].daily_atr, self._params)
         counts = Counter(setup.state.value for setup in state.setups.values())
         self._strategy.log_info(f"{stage2_funnel(snapshots, ranked, self._params)} | setups: {dict(sorted(counts.items())) or 'none'}")
-        self.refresh_headlines(state, now)
 
     @staticmethod
     def _session_frame(bars: Bars | None, state: SessionState) -> pd.DataFrame:
@@ -179,43 +175,6 @@ class Scanner:
         if bars is None or bars.df.empty:
             return _EMPTY
         return session_slice(bars.df, state.session.open, state.session.close, state.bar_stamp)
-
-    def refresh_headlines(self, state: SessionState, now: datetime) -> None:
-        """Headlines for pullback/triggered setups and open trades, at most once per `exit_review_minutes` per symbol.
-
-        A headline that was not in the previous fetch marks the symbol in `state.new_headline` (an exit-review
-        event); a symbol's first fetch is its baseline, not news.
-        """
-        # Only the symbols an agent may look at soon: WATCH/IMPULSE setups do not need news yet.
-        wanted = {s for s, setup in state.setups.items() if setup.state in (SetupState.PULLBACK, SetupState.TRIGGERED)}
-        wanted |= {trade.symbol for trade in state.book.open_trades()}
-        if not wanted:
-            return
-        try:
-            provider = self._strategy.broker.news_provider()
-        except BrokerError as exc:
-            self._strategy.log_warning(f"no news provider, setups go without headlines: {exc}")
-            return
-        if provider is None:
-            return
-        refresh = timedelta(minutes=self._params.exit_review_minutes)
-        since = state.session.open - _NEWS_LOOKBACK
-        for symbol in sorted(wanted):
-            fetched = state.headlines_fetched_at.get(symbol)
-            if fetched is not None and now - fetched < refresh:
-                continue
-            try:
-                # `end=now` (the strategy clock): no future article can reach a backtest.
-                articles = provider.get_news([symbol], start=since, end=now, limit=self._params.headlines_per_symbol * 3)
-            except BrokerError as exc:
-                self._strategy.log_warning(f"news for {symbol} unavailable: {exc}")
-                continue
-            rows = lean_headlines(articles, self._params.headlines_per_symbol)
-            previous = state.headlines.get(symbol)
-            if previous is not None and {r["headline"] for r in rows} - {r["headline"] for r in previous}:
-                state.new_headline.add(symbol)
-            state.headlines[symbol] = rows
-            state.headlines_fetched_at[symbol] = now
 
 
 def _before(bars: Bars | None, day: date) -> pd.DataFrame | None:

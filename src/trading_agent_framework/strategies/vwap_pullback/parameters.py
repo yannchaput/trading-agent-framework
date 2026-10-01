@@ -54,10 +54,6 @@ class VwapPullbackParameters:
     no_entry_before: time = time(9, 45)  # market time; the open's price discovery is skipped
     no_entry_after: time = time(15, 0)  # market time; late entries have no room before the 15:50 flatten
 
-    # --- exit reviews and headlines (`desk.Desk.exit_review_due`, `scanner.Scanner.refresh_headlines`) ---
-    exit_review_minutes: int = 15  # an open trade is reviewed at least this often, event or not
-    headlines_per_symbol: int = 3  # headlines attached to a setup or trade row
-
     # --- order handling (`desk.Desk`, strategy) ---
     cancel_wait_seconds: float = 10.0  # how long a stop hand-off waits for a cancel to be confirmed
     flatten_wait_seconds: float = 60.0  # live: how long the 15:50 flatten waits for its sells before re-checking
