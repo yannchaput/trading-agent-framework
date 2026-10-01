@@ -32,6 +32,11 @@ def test_settings_dashboard_decision_defaults_to_unset() -> None:
     assert Settings.model_validate({}).dashboard_decision == ""
 
 
+def test_settings_dashboard_regime_defaults_to_unset_and_parses() -> None:
+    assert Settings.model_validate({}).dashboard_regime == ""
+    assert Settings.model_validate({"dashboard_regime": "Neutral"}).dashboard_regime == "Neutral"
+
+
 def test_settings_parses_dashboard_decision_and_agents() -> None:
     settings = Settings.model_validate({
         "dashboard_decision": "validated",

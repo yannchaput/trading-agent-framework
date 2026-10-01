@@ -4,16 +4,25 @@ import streamlit as st
 
 from trading_agent_framework.dashboard.components.tables import render_scorecard_table
 from trading_agent_framework.dashboard.discovery import scan_runs
-from trading_agent_framework.dashboard.reader import load_description, load_metrics, load_settings, save_decision
+from trading_agent_framework.dashboard.reader import (
+    load_description,
+    load_metrics,
+    load_settings,
+    save_decision,
+    save_regime,
+)
+
+# Picker column -> the reader function that persists its value into the run's settings.json.
+_PICKER_SAVERS = {"Decision": save_decision, "Regime": save_regime}
 
 
-def _resolve_conflicting_decisions(rows: list[dict], table_key: str) -> bool:
-    """Persist any row whose Decision cell in the previous widget instance ended up holding more
-    than one tag, and report whether a correction was made.
+def _resolve_conflicting_picks(rows: list[dict], table_key: str) -> bool:
+    """Persist any row whose Decision/Regime cell in the previous widget instance ended up holding
+    more than one tag, and report whether a correction was made.
 
-    Streamlit's ``MultiselectColumn`` lets a cell hold more than one tag; only one decision may
-    apply per row, so a two-tag edit is resolved here to the option most recently added. Once a
-    correction is persisted, ``rows[i]["Decision"]`` is updated so the caller's next render starts
+    Streamlit's ``MultiselectColumn`` lets a cell hold more than one tag; only one value may
+    apply per cell, so a two-tag edit is resolved here to the option most recently added. Once a
+    correction is persisted, ``rows[i][column]`` is updated so the caller's next render starts
     from the resolved value. Streamlit refuses to let a caller rewrite a data_editor's own
     session-state value directly (``StreamlitValueAssignmentNotAllowedError``, even before the
     widget renders), so a `True` return tells the caller to render the table under a *new* widget
@@ -25,19 +34,20 @@ def _resolve_conflicting_decisions(rows: list[dict], table_key: str) -> bool:
 
     changed = False
     for key, edits in state.get("edited_rows", {}).items():
-        new_list = edits.get("Decision")
-        if new_list is None or len(new_list) <= 1:
-            continue
+        for column, save in _PICKER_SAVERS.items():
+            new_list = edits.get(column)
+            if new_list is None or len(new_list) <= 1:
+                continue
 
-        i = int(key)
-        old_decision = rows[i]["Decision"]
-        old_list = [old_decision] if old_decision else []
-        added = [d for d in new_list if d not in old_list]
-        new_decision = added[-1] if added else new_list[-1]
+            i = int(key)
+            old_value = rows[i][column]
+            old_list = [old_value] if old_value else []
+            added = [v for v in new_list if v not in old_list]
+            new_value = added[-1] if added else new_list[-1]
 
-        rows[i]["Decision"] = new_decision
-        save_decision(rows[i]["_ref"], new_decision)
-        changed = True
+            rows[i][column] = new_value
+            save(rows[i]["_ref"], new_value)
+            changed = True
 
     return changed
 
@@ -101,6 +111,7 @@ def page_scorecard():
                 "Model": model,
                 "Broker": broker,
                 "Decision": settings.dashboard_decision if settings else "",
+                "Regime": settings.dashboard_regime if settings else "",
                 "Time": backtest_time,
                 "Description": load_description(ref) or "",
                 "_ref": ref,
@@ -114,20 +125,21 @@ def page_scorecard():
             st.session_state.scorecard_table_key = 0
         table_key = f"scorecard_table_{st.session_state.scorecard_table_key}"
 
-        if _resolve_conflicting_decisions(rows, table_key):
+        if _resolve_conflicting_picks(rows, table_key):
             st.session_state.scorecard_table_key += 1
             table_key = f"scorecard_table_{st.session_state.scorecard_table_key}"
 
         selected_indices, edited_df = render_scorecard_table(rows, key=table_key)
 
-        # Persist Decision edits: MultiselectColumn cells are lists holding at most one value by
-        # the time we get here (_resolve_conflicting_decisions already resolved any multi-tag
-        # edit above), so this only needs to catch a genuine single-value change.
+        # Persist Decision/Regime edits: MultiselectColumn cells are lists holding at most one
+        # value by the time we get here (_resolve_conflicting_picks already resolved any
+        # multi-tag edit above), so this only needs to catch a genuine single-value change.
         for i, row in enumerate(rows):
-            new_list = edited_df.iloc[i]["Decision"]
-            new_decision = new_list[0] if new_list else ""
-            if new_decision != row["Decision"]:
-                save_decision(row["_ref"], new_decision)
+            for column, save in _PICKER_SAVERS.items():
+                new_list = edited_df.iloc[i][column]
+                new_value = new_list[0] if new_list else ""
+                if new_value != row[column]:
+                    save(row["_ref"], new_value)
 
         # Persist selection in session state so sidebar navigation buttons
         # can validate it before switching to Run Detail / Side-by-Side.

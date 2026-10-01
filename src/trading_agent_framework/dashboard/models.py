@@ -63,6 +63,8 @@ class Settings(BaseModel):
     fees: dict[str, Any] = Field(default_factory=dict)
     # Dashboard-only leaf field: "", "discarded", "study", or "validated"; see reader.save_decision.
     dashboard_decision: str = ""
+    # Dashboard-only leaf field: "", "Bearish", "Neutral", "Bullish", or "All-Weather"; see reader.save_regime.
+    dashboard_regime: str = ""
 
     model_config = {"extra": "allow"}
 

@@ -45,19 +45,31 @@ def save_description(ref: RunRef, description: str) -> None:
         json.dump({"description": description}, f, indent=2)
 
 
-def save_decision(ref: RunRef, decision: str) -> None:
-    """Write the dashboard decision ("discarded"/"study"/"validated", or "" to clear) into
-    settings.json's `dashboard_decision` leaf field, preserving every other key already there.
-    """
+def _save_settings_leaf(ref: RunRef, key: str, value: str) -> None:
+    """Set one top-level settings.json key, preserving every other key already there."""
     path = os.path.join(ref.path, "settings.json")
     try:
         with open(path) as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError):
         data = {}
-    data["dashboard_decision"] = decision
+    data[key] = value
     with open(path, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def save_decision(ref: RunRef, decision: str) -> None:
+    """Write the dashboard decision ("discarded"/"study"/"validated", or "" to clear) into
+    settings.json's `dashboard_decision` leaf field, preserving every other key already there.
+    """
+    _save_settings_leaf(ref, "dashboard_decision", decision)
+
+
+def save_regime(ref: RunRef, regime: str) -> None:
+    """Write the dashboard regime ("Bearish"/"Neutral"/"Bullish"/"All-Weather", or "" to clear)
+    into settings.json's `dashboard_regime` leaf field, preserving every other key already there.
+    """
+    _save_settings_leaf(ref, "dashboard_regime", regime)
 
 
 def get_benchmark_symbol(ref: RunRef) -> str:
@@ -459,18 +471,6 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
     return {"values": values, "trades": trades}
 
 
-def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
-    """Per trading day, the peak value invested (at cost) and the most positions held at once, rebuilt from the fills.
-
-    equity.parquet samples each session at its close, so an intraday strategy (flat by then) always shows 100% cash
-    there; this is what the fills say happened in between. `peak_pct` is the peak against the previous session's
-    closing equity (the budget on the first day); None when neither is known. A position carried overnight counts
-    from the start of the next day at its remaining cost; a session without fills gets a zero row. None when there
-    are no fills.
-    """
-    path = os.path.join(ref.path, "trades.parquet")
-    if not os.path.isfile(path):
-        return None
 _LINE_DASH = {"solid": "solid", "dashed": "dash", "dotted": "dot"}
 _LINE_COLORS = ["#f59e0b", "#a78bfa", "#22d3ee", "#f472b6", "#22c55e", "#60a5fa"]
 _DEFAULT_PANE = "default_plot"
@@ -512,6 +512,18 @@ def load_indicator_lines(ref: RunRef) -> dict[str, list[dict[str, Any]]] | None:
     return panes or None
 
 
+def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
+    """Per trading day, the peak value invested (at cost) and the most positions held at once, rebuilt from the fills.
+
+    equity.parquet samples each session at its close, so an intraday strategy (flat by then) always shows 100% cash
+    there; this is what the fills say happened in between. `peak_pct` is the peak against the previous session's
+    closing equity (the budget on the first day); None when neither is known. A position carried overnight counts
+    from the start of the next day at its remaining cost; a session without fills gets a zero row. None when there
+    are no fills.
+    """
+    path = os.path.join(ref.path, "trades.parquet")
+    if not os.path.isfile(path):
+        return None
     try:
         df = pd.read_parquet(path)
     except Exception:

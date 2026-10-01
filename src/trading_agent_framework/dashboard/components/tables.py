@@ -33,19 +33,23 @@ def render_metric_table(metrics: dict[str, tuple[float, float]], title: str = ""
 
 DECISION_OPTIONS = ["discarded", "study", "validated"]
 DECISION_COLORS = ["darkred", "darkorange", "limegreen"]
+REGIME_OPTIONS = ["Bearish", "Neutral", "Bullish", "All-Weather"]
+REGIME_COLORS = ["darkred", "gray", "limegreen", "dodgerblue"]
+# Editable single-choice columns, rendered as MultiselectColumns (see render_scorecard_table).
+PICKER_COLUMNS = ("Decision", "Regime")
 
 
 def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") -> tuple[list[int], pd.DataFrame]:
     """Render the scorecard comparison table with a "Select" checkbox column (for navigating
-    to Run Detail / Side-by-side) and an editable, colored Decision picker.
+    to Run Detail / Side-by-side) and editable, colored Decision and Regime pickers.
 
     st.dataframe's native row-click selection and an editable per-cell picker can't coexist in
     one widget, so this uses st.data_editor throughout: "Select" replaces row-click selection,
-    and "Decision" is an editable ``MultiselectColumn`` (colored dropdown), used only for its
-    per-option coloring -- ``st.column_config.SelectboxColumn`` has no color support. Streamlit
-    lets a cell hold more than one tag; the caller enforces the actual one-decision-per-row rule
-    by collapsing extra selections and re-rendering under a fresh ``key`` (Streamlit disallows
-    rewriting a data_editor's own session-state value directly).
+    and "Decision"/"Regime" are editable ``MultiselectColumn`` (colored dropdown), used only for
+    their per-option coloring -- ``st.column_config.SelectboxColumn`` has no color support.
+    Streamlit lets a cell hold more than one tag; the caller enforces the actual
+    one-value-per-cell rule by collapsing extra selections and re-rendering under a fresh
+    ``key`` (Streamlit disallows rewriting a data_editor's own session-state value directly).
 
     Returns a tuple of ``(selected_indices, edited_df)`` where ``selected_indices`` is the list
     of zero-based row indices with ``Select`` checked and ``edited_df`` is the edited DataFrame
@@ -57,14 +61,15 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
 
     df = pd.DataFrame(runs_data)
     df.insert(0, "Select", False)
-    # MultiselectColumn cells are lists; a run's decision is a single value or unset ("").
-    df["Decision"] = df["Decision"].apply(lambda d: [d] if d else [])
+    # MultiselectColumn cells are lists; a run's decision/regime is a single value or unset ("").
+    for column in PICKER_COLUMNS:
+        df[column] = df[column].apply(lambda v: [v] if v else [])
 
     # Remove hidden columns before passing to the Arrow serializer
     # (st.data_editor cannot serialize arbitrary Python objects like RunRef).
     display_cols = [c for c in df.columns if not c.startswith("_")]
     display_df = df[display_cols]
-    disabled_cols = [c for c in display_cols if c not in ("Select", "Decision")]
+    disabled_cols = [c for c in display_cols if c not in ("Select", *PICKER_COLUMNS)]
 
     column_config = {
         "Select": st.column_config.CheckboxColumn("Select"),
@@ -84,6 +89,11 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
             "Decision",
             options=DECISION_OPTIONS,
             color=DECISION_COLORS,
+        ),
+        "Regime": st.column_config.MultiselectColumn(
+            "Regime",
+            options=REGIME_OPTIONS,
+            color=REGIME_COLORS,
         ),
         "Time": st.column_config.TextColumn("Time"),
         "Description": st.column_config.TextColumn("Description"),
