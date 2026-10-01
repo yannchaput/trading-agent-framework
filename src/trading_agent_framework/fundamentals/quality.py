@@ -1,0 +1,135 @@
+"""Pure quality screen: which companies were simple, predictable, cash-generative, lightly indebted and
+reasonably priced on a date, from annual SEC figures known on that date.
+
+No I/O, no clock, no state (same rules as `sec.py`). `assess` applies the numeric gates to one company's
+reduced annual figures (`sec.annual_figures`); `rank` scores the companies that were also priced.
+"""
+
+from __future__ import annotations
+
+import statistics
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from datetime import date, datetime
+from itertools import pairwise
+from typing import Any
+
+from trading_agent_framework.fundamentals.sec import MAX_FISCAL_YEAR_DAYS, MIN_FISCAL_YEAR_DAYS
+
+_DAYS_PER_MONTH = 30.4375
+_REQUIRED_FLOWS = ("revenue", "operating_income", "operating_cash_flow", "capex")
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenParams:
+    years: int = 5
+    min_growth_years: int = 3
+    max_filing_age_months: int = 18
+    max_net_debt_to_operating_income: float = 4.0
+    excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))  # utilities; finance, insurance, real estate
+    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)  # fcf_yield, fcf_margin, operating-margin stability
+    top_n: int = 15
+    max_age_days: int = 30
+    max_fetch_failure_ratio: float = 0.2
+
+
+@dataclass(frozen=True, slots=True)
+class Survivor:
+    """A company that passed the numeric gates; the sector, price and split gates come after."""
+
+    symbol: str
+    fiscal_year_end: date
+    filed: date  # filing date of the latest fiscal year's revenue figure
+    free_cash_flow: int  # latest fiscal year
+    fcf_margin: float  # mean over the window
+    operating_margin: float  # latest fiscal year
+    operating_margin_stdev: float
+    revenue_growth: float  # compound annual rate over the window
+    net_debt_to_operating_income: float
+    debt_reported: bool
+    shares: int | None
+    counted_on: date | None
+
+
+def _known(rows: Sequence[Mapping[str, Any]], cutoff: date) -> list[Mapping[str, Any]]:
+    """Rows filed strictly before `cutoff`: SEC gives no filing time, so a row filed today is known tomorrow."""
+    return [row for row in rows if date.fromisoformat(row["filed"]) < cutoff]
+
+
+def _latest_versions(rows: Sequence[Mapping[str, Any]]) -> dict[tuple[str, date], Mapping[str, Any]]:
+    """(field, period end) -> the most recently filed version."""
+    latest: dict[tuple[str, date], Mapping[str, Any]] = {}
+    for row in sorted(rows, key=lambda row: row["filed"]):
+        latest[(row["field"], date.fromisoformat(row["end"]))] = row
+    return latest
+
+
+def _consecutive(year_ends: Sequence[date]) -> bool:
+    return all(MIN_FISCAL_YEAR_DAYS <= (later - earlier).days <= MAX_FISCAL_YEAR_DAYS for earlier, later in pairwise(year_ends))
+
+
+def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, params: ScreenParams) -> Survivor | str:
+    """Apply the numeric gates to one company; the rejection reason is the first gate that fails."""
+    if figures is None or figures.get("status") == "absent":
+        return "no_data"
+    cutoff = as_of.date()
+    flows = _latest_versions(_known(figures.get("flows", []), cutoff))
+    if not flows:
+        return "no_data"
+
+    year_ends = sorted(end for field, end in flows if field == "revenue")
+    if not year_ends:
+        return "insufficient_history"
+    window = year_ends[-params.years :]
+    latest_end = window[-1]
+    if (cutoff - latest_end).days > params.max_filing_age_months * _DAYS_PER_MONTH:
+        return "stale_filing"
+    if len(window) < params.years or not _consecutive(window):
+        return "insufficient_history"
+
+    revenues: list[int] = []
+    operating_incomes: list[int] = []
+    free_cash_flows: list[int] = []
+    for end in window:
+        rows = [flows.get((field, end)) for field in _REQUIRED_FLOWS]
+        if any(row is None for row in rows):
+            return "insufficient_history"
+        revenue, operating_income, operating_cash_flow, capex = (row["value"] for row in rows)  # ty: ignore[not-subscriptable]
+        if revenue <= 0:
+            return "insufficient_history"
+        revenues.append(revenue)
+        operating_incomes.append(operating_income)
+        free_cash_flows.append(operating_cash_flow - capex)
+
+    if any(value <= 0 for value in operating_incomes):
+        return "operating_loss"
+    if any(value <= 0 for value in free_cash_flows):
+        return "negative_fcf"
+    increases = sum(later > earlier for earlier, later in pairwise(revenues))
+    if increases < params.min_growth_years or revenues[-1] < revenues[0]:
+        return "shrinking_revenue"
+
+    balances = _latest_versions(_known(figures.get("balances", []), cutoff))
+    debt_row, cash_row = balances.get(("debt", latest_end)), balances.get(("cash", latest_end))
+    net_debt = (debt_row["value"] if debt_row else 0) - (cash_row["value"] if cash_row else 0)
+    if net_debt > params.max_net_debt_to_operating_income * operating_incomes[-1]:
+        return "too_much_debt"
+
+    margins = [income / revenue for income, revenue in zip(operating_incomes, revenues, strict=True)]
+    share_rows = _known(figures.get("shares", []), cutoff)
+    # `max` keeps the first of equal keys, and `annual_figures` lists cover-page counts first.
+    share_row = max(share_rows, key=lambda row: (row["end"], row["filed"])) if share_rows else None
+    return Survivor(
+        symbol=symbol,
+        fiscal_year_end=latest_end,
+        filed=date.fromisoformat(flows[("revenue", latest_end)]["filed"]),
+        free_cash_flow=free_cash_flows[-1],
+        fcf_margin=statistics.fmean(fcf / revenue for fcf, revenue in zip(free_cash_flows, revenues, strict=True)),
+        operating_margin=margins[-1],
+        operating_margin_stdev=statistics.pstdev(margins),
+        revenue_growth=(revenues[-1] / revenues[0]) ** (1 / (len(revenues) - 1)) - 1,
+        net_debt_to_operating_income=net_debt / operating_incomes[-1],
+        debt_reported=debt_row is not None,
+        shares=share_row["value"] if share_row else None,
+        counted_on=date.fromisoformat(share_row["end"]) if share_row else None,
+    )
