@@ -17,6 +17,7 @@ dependencies = [
     "python-dotenv>=1.2",
     "rich>=13.9",
     "vectorbt>=1.1.0,<2.0",
+    "yfinance>=0.2.61",
 ]
 
 [project.optional-dependencies]

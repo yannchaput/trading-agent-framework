@@ -2564,6 +2564,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "vectorbt" },
+    { name = "yfinance" },
 ]
 
 [package.optional-dependencies]
@@ -2600,6 +2601,7 @@ requires-dist = [
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "rich", specifier = ">=13.9" },
     { name = "vectorbt", specifier = ">=1.1.0,<2.0" },
+    { name = "yfinance", specifier = ">=0.2.61" },
     { name = "yfinance", marker = "extra == 'backtesting-yahoo'", specifier = ">=0.2.61" },
 ]
 provides-extras = ["backtesting-yahoo"]
