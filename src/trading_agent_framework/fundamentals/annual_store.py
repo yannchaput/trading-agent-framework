@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -23,7 +24,23 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "AnnualFiguresStore")
 
-_EMPTY_FIGURES: dict[str, list[dict[str, Any]]] = {"flows": [], "balances": [], "shares": []}
+_STATUSES = frozenset({"ok", "absent"})
+_FIGURE_KEYS = ("flows", "balances", "shares")
+
+
+def _empty_figures() -> dict[str, list[dict[str, Any]]]:
+    return {key: [] for key in _FIGURE_KEYS}
+
+
+def _parse_fetched_at(value: object) -> datetime | None:
+    """`value` as a timezone-aware datetime, or `None` when it is not an ISO string or is naive."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 class AnnualFiguresStore:
@@ -71,14 +88,16 @@ class AnnualFiguresStore:
         if cik is None:
             return None
         record = self._records.get(cik) or self._read(cik)
-        if record is not None and not is_stale(datetime.fromisoformat(record["fetched_at"]), as_of, max_age_days):
+        if record is not None and not is_stale(_fetched_at(record), as_of, max_age_days):
             self._records[cik] = record
             return record
         base = {"cik": cik, "fetched_at": self._wall_clock().isoformat()}
         try:
             fresh = {**base, "status": "ok", **sec.annual_figures(self._client.fetch_company_facts_payload(cik))}
         except FundamentalsNotFoundError:
-            fresh = {**base, "status": "absent", **_EMPTY_FIGURES}
+            fresh = {**base, "status": "absent", **_empty_figures()}
+            if record is not None and record["status"] == "ok":
+                logger.log_warning(f"{symbol} (CIK {cik}) had annual figures but SEC now has no company facts for it: recorded as absent")
         except FundamentalsError as exc:
             if record is None:
                 raise
@@ -98,14 +117,37 @@ class AnnualFiguresStore:
             record = json.loads(self._path(cik).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return None  # no file yet, or one truncated by an interrupted write: a cache miss
-        if not isinstance(record, dict) or "fetched_at" not in record or "status" not in record:
+        if not isinstance(record, dict):
+            return None
+        if record.get("status") not in _STATUSES or record.get("cik") != cik:
+            return None
+        if _parse_fetched_at(record.get("fetched_at")) is None:
+            return None
+        if not all(isinstance(record.get(key), list) for key in _FIGURE_KEYS):
             return None
         return record
 
     def _write(self, record: dict[str, Any]) -> None:
-        path = self._path(record["cik"])
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps(record), encoding="utf-8")
-        os.replace(temporary, path)
-        self._records[record["cik"]] = record
+        """Keep `record` in memory, then try to persist it. A failed write only costs a refetch next process."""
+        cik = record["cik"]
+        self._records[cik] = record
+        path = self._path(cik)
+        temporary: str | None = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            # A unique name per write: parallel runs sharing the cache must not share a temp file.
+            descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f"CIK{cik}.", suffix=".tmp")
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(record, handle)
+            os.replace(temporary, path)
+        except OSError as exc:
+            logger.log_warning(f"annual figures for CIK {cik} could not be saved to {path}: {exc}")
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)
+
+
+def _fetched_at(record: dict[str, Any]) -> datetime:
+    """A record's fetch time; safe because `_read` validated it and the store writes only valid ones."""
+    parsed = _parse_fetched_at(record["fetched_at"])
+    assert parsed is not None
+    return parsed
