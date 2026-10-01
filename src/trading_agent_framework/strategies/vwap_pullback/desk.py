@@ -57,11 +57,6 @@ class Desk:
         self._expected_cancels: set[str] = set()
 
     @property
-    def params(self) -> VwapPullbackParameters:
-        """The strategy's parameters."""
-        return self._params
-
-    @property
     def state(self) -> SessionState:
         """The current session (replaced every session by the strategy; never cached here)."""
         return self._strategy.vars.session

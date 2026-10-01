@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal as D
 from pathlib import Path
 
-from tests.strategies.vwap_pullback.test_vwap_desk_entries import Rig
+from tests.strategies.vwap_pullback.test_vwap_desk_entries import Rig, _spy_sells
 
 from trading_agent_framework.strategies.vwap_pullback.desk import STOPPED_OUT
 from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus
@@ -21,6 +21,14 @@ def test_releasing_a_stop_that_already_filled_reports_it_and_sells_nothing(tmp_p
     rig.advance(120)  # the stop fills in the broker; the hook has not reached the desk yet
     assert rig.desk._release_stop(trade) == STOPPED_OUT
     assert trade.exit_order_ids == []
+
+
+def test_the_flatten_sells_nothing_when_the_stop_already_filled(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    rig.advance(120)  # the stop fills at the broker; its hook has not reached the desk yet
+    attempts = _spy_sells(rig)
+    rig.desk.flatten_all("end-of-day flatten")
+    assert attempts == []
 
 
 def test_a_stop_that_cannot_be_placed_reports_false(tmp_path: Path) -> None:
