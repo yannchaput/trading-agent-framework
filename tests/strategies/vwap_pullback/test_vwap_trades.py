@@ -13,7 +13,7 @@ T0 = et(2026, 9, 1, 10, 0)
 
 
 def _trade(symbol: str = "AAA") -> Trade:
-    return Trade(symbol=symbol, entry_order_id=f"{symbol}-entry", planned_quantity=D(100), stop_price=D("99.00"), r_per_share=D("1.00"), catalyst="earnings", reason="clean pullback", entered_at=T0)
+    return Trade(symbol=symbol, entry_order_id=f"{symbol}-entry", planned_quantity=D(100), stop_price=D("99.00"), r_per_share=D("1.00"), entered_at=T0)
 
 
 def test_a_trade_lifecycle_records_pnl_and_closes() -> None:
@@ -28,7 +28,7 @@ def test_a_trade_lifecycle_records_pnl_and_closes() -> None:
     assert trade.realised_pnl == D("0.00")
     assert trade.closed_at == et(2026, 9, 1, 11, 0)
     row = trade.to_json()
-    assert row["symbol"] == "AAA" and row["realised_pnl"] == "0.00" and row["catalyst"] == "earnings"
+    assert row["symbol"] == "AAA" and row["realised_pnl"] == "0.00" and "catalyst" not in row and "reason" not in row
 
 
 def test_unrealised_pnl_and_r() -> None:

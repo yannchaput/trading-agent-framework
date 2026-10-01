@@ -1,9 +1,9 @@
-"""Every order the vwap_pullback strategy places (spec §5): entries, protective stops, exit hand-offs, the flatten.
+"""Every order the vwap_pullback strategy places: entries, protective stops, exit hand-offs, the flatten.
 
-The only module of the package that submits, cancels or modifies orders. The agents reach it through
-`tools.py`, the strategy's order hooks through `on_order_filled`/`on_order_canceled`. Agent-facing methods
-return `{"error": ...}` instead of raising; hook paths log and never raise. A position is never left
-without a stop: a stop that cannot be placed is replaced by an immediate market sell.
+The only module of the package that submits, cancels or modifies orders. The strategy reaches it through
+`enter_triggered` every tick and through its order hooks (`on_order_filled`/`on_order_canceled`).
+`enter_long` returns `{"error": ...}` instead of raising; hook paths log and never raise. A position is
+never left without a stop: a stop that cannot be placed is replaced by an immediate market sell.
 
 Invariants every method preserves:
 - never leave shares without a protective stop (or, after the flatten, without a sell);
@@ -29,7 +29,6 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.vwap_pullback import risk
 from trading_agent_framework.strategies.vwap_pullback.features import Levels, latest_levels
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
-from trading_agent_framework.strategies.vwap_pullback.prompts import CATALYSTS
 from trading_agent_framework.strategies.vwap_pullback.setups import SetupState, back_to_pullback, mark_done, mark_in_trade
 from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus, exit_review_due, trade_flags
 from trading_agent_framework.utils.errors import BacktestError, BrokerError
@@ -62,7 +61,7 @@ class Desk:
 
     @property
     def params(self) -> VwapPullbackParameters:
-        """The strategy's parameters (read by the tools for budgets and bands)."""
+        """The strategy's parameters."""
         return self._params
 
     @property
@@ -80,17 +79,6 @@ class Desk:
         """Latest 5-minute close as Decimal (no I/O: from the last scan)."""
         levels = self.levels(symbol)
         return None if levels is None else Decimal(str(levels.close))
-
-    def planned_risk(self, symbol: str) -> tuple[Decimal, Decimal] | None:
-        """`(stop, R)` an entry in `symbol` would get now; None before a pullback exists."""
-        setup, info = self.state.setups.get(symbol), self.state.candidates.get(symbol)
-        if setup is None or info is None or setup.pullback_low is None:
-            return None
-        reference = setup.trigger_close if setup.trigger_close is not None else setup.last_close
-        if reference is None:
-            return None
-        stop = risk.planned_stop(setup.pullback_low, info.daily_atr, self._params)
-        return stop, risk.to_price(reference, ROUND_HALF_UP) - stop
 
     def minutes_to_flatten(self, now: datetime) -> int:
         """Minutes until the flatten (session close - `minutes_before_closing`; early closes included)."""
@@ -111,20 +99,6 @@ class Desk:
         book = self.state.book
         holding = [t for t in book.open_trades() if not (self._free_quantity(t) <= 0 and self._exit_pending(t))]
         return risk.free_slots(len(holding), len(book.pending()), self._params)
-
-    def awaits_decision(self, symbol: str) -> bool:
-        """Whether `symbol` is triggered and the entry agent may still be asked: it has not used up its passes."""
-        setup = self.state.setups.get(symbol)
-        return setup is not None and setup.state is SetupState.TRIGGERED and self.state.passes.get(symbol, 0) < self._params.max_passes_per_symbol
-
-    def entry_due(self) -> bool:
-        """Whether the entry agent should run this tick: a trigger exists AND an entry could actually be accepted.
-
-        Checking the same rules `enter_long` enforces means the LLM is never woken for a setup it cannot enter.
-        """
-        triggered = any(self.awaits_decision(symbol) for symbol in self.state.setups)
-        now = self._strategy.get_datetime()
-        return triggered and not self.state.flattened and risk.in_entry_window(now, self._params) and self.free_slots() > 0 and not self.breaker_tripped()
 
     def _flags(self, trade: Trade) -> frozenset[str] | None:
         """The trade's exit-review flags at the latest bar; None before any bar (nothing to judge yet)."""
@@ -151,29 +125,48 @@ class Desk:
 
     # --- entries -------------------------------------------------------------------
 
-    def enter_long(self, symbol: str, catalyst: str, reason: str) -> dict[str, Any]:
-        """The entry agent's `enter_long`: validate, size (`risk.plan_entry`), submit a marketable limit buy.
+    def enter_triggered(self) -> list[str]:
+        """Try every triggered setup, best stage-2 score first; the symbols whose entry was submitted.
 
-        Every rule is re-checked here, whatever the prompt said, and a refusal comes back as `{"error": ...}`
-        (and is logged as a warning, so the run log says why an entry the agent chose never happened).
+        The score is the filter when triggers outnumber free slots: the best-ranked take the slots. A
+        triggered symbol with no score this tick (tracked only because its setup is under way) goes after
+        every scored one. A refused entry is logged by `enter_long` and the next trigger is tried.
+        """
+        state = self.state
+        triggered = [symbol for symbol, setup in state.setups.items() if setup.state is SetupState.TRIGGERED]
+        if not triggered or state.flattened or not risk.in_entry_window(self._strategy.get_datetime(), self._params) or self.breaker_tripped():
+            return []
+        # Unscored last (False sorts before True), then the higher score, then the symbol: the same order from run to run.
+        triggered.sort(key=lambda symbol: (symbol not in state.scores, -state.scores.get(symbol, 0.0), symbol))
+        entered: list[str] = []
+        for index, symbol in enumerate(triggered):
+            if self.free_slots() <= 0:
+                self._strategy.log_info(f"no free position slot for {', '.join(triggered[index:])}")
+                break
+            if "error" not in self.enter_long(symbol):
+                entered.append(symbol)
+        return entered
+
+    def enter_long(self, symbol: str) -> dict[str, Any]:
+        """Enter a triggered setup: validate, size (`risk.plan_entry`), submit a marketable limit buy.
+
+        Every rule is checked here, and a refusal comes back as `{"error": ...}` (and is logged as a warning,
+        so the run log says why a triggered setup was not entered).
         The protective stop is NOT placed here: it goes in when the entry fills (`on_order_filled` -> `_protect`).
         """
-        result = self._enter_long(symbol, catalyst, reason)
+        result = self._enter_long(symbol)
         if "error" in result:
             self._strategy.log_warning(f"entry {symbol.strip().upper()} refused: {result['error']}")
         return result
 
-    def _enter_long(self, symbol: str, catalyst: str, reason: str) -> dict[str, Any]:
+    def _enter_long(self, symbol: str) -> dict[str, Any]:
         symbol = symbol.strip().upper()
         state = self.state
         setup = state.setups.get(symbol)
-        # Guards, cheapest first; each names the rule so the agent can explain the pass in its summary.
+        # Guards, cheapest first; each names the rule so the warning in the log explains itself.
         if setup is None or setup.state is not SetupState.TRIGGERED:
             current = setup.state.value if setup is not None else "untracked"
             return {"error": f"{symbol} has no triggered setup right now (state: {current}); only triggered setups can be entered"}
-        if catalyst not in CATALYSTS:
-            return {"error": f"catalyst must be one of {', '.join(CATALYSTS)}"}
-        self._strategy.log_debug(f"entry agent labelled {symbol}: catalyst {catalyst}")
         if state.flattened:
             return {"error": "the session is already flattened; no more entries today"}
         now = self._strategy.get_datetime()
@@ -210,23 +203,14 @@ class Desk:
         # The trade exists from submission (PENDING): it takes a slot, and the fill/cancel hooks find it by order id.
         state.book.add(Trade(
             symbol=symbol, entry_order_id=submitted.identifier, planned_quantity=plan.quantity, stop_price=plan.stop_price,
-            r_per_share=plan.r_per_share, catalyst=catalyst, reason=reason, entered_at=now,
+            r_per_share=plan.r_per_share, entered_at=now,
         ))
         state.setups[symbol] = mark_in_trade(setup)  # freeze the setup: one trade per symbol per session
-        state.decided.add(symbol)
-        self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share} ({catalyst}: {reason})")
+        self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share}")
         return {
             "symbol": symbol, "quantity": int(plan.quantity), "limit_price": float(plan.limit_price),
             "stop_price": float(plan.stop_price), "r_per_share": float(plan.r_per_share), "status": "entry submitted",
         }
-
-    def pass_on_setup(self, symbol: str, reason: str) -> dict[str, Any]:
-        """The entry agent's `pass_on_setup`: record the decision (logged; the trigger expires by itself)."""
-        symbol = symbol.strip().upper()
-        self.state.decided.add(symbol)
-        self.state.passes[symbol] = self.state.passes.get(symbol, 0) + 1
-        self._strategy.log_info(f"pass {symbol}: {reason}")
-        return {"symbol": symbol, "status": "passed"}
 
     def _has_exposure(self, symbol: str) -> bool:
         """Whether `symbol` already has a trade, an open order or a position (any of them: no second entry)."""

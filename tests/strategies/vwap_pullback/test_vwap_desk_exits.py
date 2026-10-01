@@ -118,7 +118,7 @@ def test_a_pending_full_exit_frees_its_slot_before_the_sell_fills(tmp_path: Path
     for symbol in ("BBB", "CCC", "DDD"):
         rig.state.book.add(Trade(
             symbol=symbol, entry_order_id=f"entry-{symbol}", planned_quantity=D(10), stop_price=D(90), r_per_share=D(1),
-            catalyst="earnings", reason="x", entered_at=rig.clock.now(), status=TradeStatus.OPEN, quantity=D(10),
+            entered_at=rig.clock.now(), status=TradeStatus.OPEN, quantity=D(10),
         ))
     assert rig.desk.free_slots() == 0
     assert rig.desk.exit_position("AAA", "lost VWAP")["status"] == "exit submitted"

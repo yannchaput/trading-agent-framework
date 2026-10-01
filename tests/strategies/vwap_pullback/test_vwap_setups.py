@@ -8,7 +8,7 @@ from tests.fakes import et
 
 from trading_agent_framework.strategies.vwap_pullback.features import BarContext
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
-from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState, advance, back_to_pullback, health, mark_in_trade, step
+from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState, advance, back_to_pullback, mark_in_trade, step
 
 PARAMS = VwapPullbackParameters()
 ATR = 2.0  # daily ATR: impulse = 1.6 move, large red body > 0.5
@@ -48,20 +48,11 @@ def test_a_healthy_path_goes_watch_impulse_pullback_triggered() -> None:
     assert triggered.triggered_at == B5.time
 
 
-def test_health_flags() -> None:
-    flags = health(_run(B1, B2, B3, B4))
-    assert flags["state"] == "pullback"
-    assert flags["vol_ratio"] == 0.45
-    assert flags["duration_ratio"] == 1.0
-    assert flags["retracement_pct"] == pytest.approx(30.6, abs=0.1)
-    assert flags["above_vwap"] is True
-
-
-def test_health_reports_the_pullback_depth_not_the_shallower_retracement_after_the_bounce() -> None:
+def test_max_retracement_keeps_the_pullback_depth_after_the_bounce() -> None:
     triggered = _run(B1, B2, B3, B4, B5)
     assert triggered.state is SetupState.TRIGGERED
     assert triggered.retracement < triggered.max_retracement  # the trigger bar closed higher than the pullback's low close
-    assert health(triggered)["retracement_pct"] == pytest.approx(30.6, abs=0.1)
+    assert triggered.max_retracement == pytest.approx(0.306, abs=0.001)
 
 
 @pytest.mark.parametrize(

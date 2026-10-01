@@ -3,8 +3,8 @@
 Everything that becomes an order price or a quantity is `Decimal`; float inputs come from bar maths and are
 converted through `to_price`, rounded to the cent in the direction that is safe for that price.
 
-The agent never picks a size or a price: `Desk.enter_long` calls `plan_entry`, and any rule it breaks comes
-back to the agent as the text of an `EntryRefused`.
+Size and prices are always the code's: `Desk.enter_long` calls `plan_entry`, and any rule it breaks comes
+back as the text of an `EntryRefused`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ _CENT = Decimal("0.01")
 
 
 class EntryRefused(Exception):
-    """Why `plan_entry` refused; the message reaches the entry agent as `{"error": ...}`."""
+    """Why `plan_entry` refused; `Desk.enter_long` returns the message as `{"error": ...}` and logs it."""
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,7 +1,7 @@
 """Every threshold, window and risk knob of the vwap_pullback strategy (spec §8), in one frozen dataclass.
 
 Ratios are floats (they multiply bar maths); `risk.py` turns them into `Decimal` before touching money.
-Nothing else in the package hard-codes a threshold: the prompts, the screens, the state machine and the
+Nothing else in the package hard-codes a threshold: the screens, the state machine and the
 desk all read them from here, so tuning happens in one place.
 """
 
@@ -55,12 +55,9 @@ class VwapPullbackParameters:
     no_entry_before: time = time(9, 45)  # market time; the open's price discovery is skipped
     no_entry_after: time = time(15, 0)  # market time; late entries have no room before the 15:50 flatten
 
-    # --- agents (`prompts.py`, `tools.py`, `desk.Desk.exit_review_due`) ---
+    # --- exit reviews and headlines (`desk.Desk.exit_review_due`, `scanner.Scanner.refresh_headlines`) ---
     exit_review_minutes: int = 15  # an open trade is reviewed at least this often, event or not
     headlines_per_symbol: int = 3  # headlines attached to a setup or trade row
-    news_calls_per_run: int = 4  # search_news budget per agent run (local models loop on search tools otherwise)
-    bars_calls_per_run: int = 4  # get_intraday_bars budget per agent run (14 parallel fetches once overflowed the 32k context)
-    max_passes_per_symbol: int = 2  # after this many passes a symbol's triggers no longer reach the entry agent (same setup, same verdict)
     tp1_fraction_band: tuple[float, float] = (0.25, 0.5)  # share of the position take_partial_profit may sell
     trail_atr_band: tuple[float, float] = (0.5, 2.0)  # trailing distance in 5-minute ATRs allowed to the exit agent
 

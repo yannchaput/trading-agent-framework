@@ -38,8 +38,6 @@ class Trade:
     planned_quantity: Decimal  # the size the entry order asked for
     stop_price: Decimal  # the initial stop, which defines R
     r_per_share: Decimal
-    catalyst: str  # the entry agent's label (earnings, guidance, ...); kept for per-catalyst analysis
-    reason: str  # the entry agent's one-line reason
     entered_at: datetime
     status: TradeStatus = TradeStatus.PENDING
     quantity: Decimal = Decimal(0)  # shares held now (as booked; see the module docstring)
@@ -100,8 +98,6 @@ class Trade:
         risked = self.r_per_share * self.filled_quantity
         return {
             "symbol": self.symbol,
-            "catalyst": self.catalyst,
-            "reason": self.reason,
             "entered_at": self.entered_at.isoformat(),
             "closed_at": self.closed_at.isoformat() if self.closed_at else None,
             "entry_price": str(self.entry_price) if self.entry_price is not None else None,

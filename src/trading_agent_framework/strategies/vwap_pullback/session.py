@@ -2,7 +2,7 @@
 
 Nothing here survives a restart or carries over to the next day, by design: the strategy is strictly
 intraday, so a fresh session starts from an empty book and fresh candidates. `Scanner.prepare_session`
-builds it, `Scanner.scan` and `Desk` mutate it, `tools.py` renders it for the agents.
+builds it, `Scanner.scan` and `Desk` mutate it.
 """
 
 from __future__ import annotations
@@ -45,7 +45,5 @@ class SessionState:
     headlines: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # lean headlines per symbol
     headlines_fetched_at: dict[str, datetime] = field(default_factory=dict)  # throttles news fetches per symbol
     new_headline: set[str] = field(default_factory=set)  # symbols with a headline the exit agent has not reviewed
-    decided: set[str] = field(default_factory=set)  # triggered symbols the entry agent entered or passed this tick
-    passes: dict[str, int] = field(default_factory=dict)  # times the entry agent passed on each symbol this session
     unknown_positions_checked: bool = False  # the restart check (orphan orders/positions) ran for this session
     flattened: bool = False  # the 15:50 flatten ran: no more entries, late fills are sold instead of protected

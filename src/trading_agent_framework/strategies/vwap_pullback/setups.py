@@ -26,7 +26,7 @@ class SetupState(StrEnum):
     WATCH = "watch"  # tracked, no impulse yet
     IMPULSE = "impulse"  # strong move off the open; watching for a pullback
     PULLBACK = "pullback"  # orderly retracement above VWAP; watching for resumption
-    TRIGGERED = "triggered"  # this bar resumed upward: the entry agent may enter now
+    TRIGGERED = "triggered"  # this bar resumed upward: the desk enters it now
     IN_TRADE = "in_trade"  # an entry was accepted (the entry order may still be pending)
     DONE = "done"  # the trade closed: one trade per symbol per session
     BROKEN = "broken"  # the pattern failed; ignored for the rest of the session. See '_broken_reason' method.
@@ -227,21 +227,3 @@ def mark_in_trade(setup: Setup) -> Setup:
 def mark_done(setup: Setup) -> Setup:
     """The trade closed: the symbol is not traded again this session."""
     return replace(setup, state=SetupState.DONE)
-
-
-def health(setup: Setup) -> dict[str, object]:
-    """The health flags the entry agent reads (spec §3), rounded for the prompt.
-
-    Healthy pullback: vol_ratio < 1 (quieter than the impulse), duration_ratio <= 1, moderate pullback depth,
-    still above VWAP, positive RS, no big red bar.
-    """
-    return {
-        "state": setup.state.value,
-        "above_vwap": setup.last_close is not None and setup.last_vwap is not None and setup.last_close > setup.last_vwap,
-        "vol_ratio": round(setup.pullback_avg_volume / setup.impulse_avg_volume, 2) if setup.impulse_avg_volume else None,
-        "duration_ratio": round(setup.pullback_bars / setup.impulse_bars, 2) if setup.impulse_bars else None,
-        "retracement_pct": round(100 * setup.max_retracement, 1),  # the pullback's depth, what the prompt's band applies to
-        "rs_now_pct": round(100 * setup.last_rs, 2) if setup.last_rs is not None else None,
-        "rvol_now": round(setup.last_rvol, 2) if setup.last_rvol is not None else None,
-        "largest_red_body_atr": round(setup.largest_red_body_atr, 2),
-    }

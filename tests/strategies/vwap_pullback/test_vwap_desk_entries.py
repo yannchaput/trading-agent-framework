@@ -21,7 +21,8 @@ from trading_agent_framework.strategies.vwap_pullback.features import BarContext
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.session import CandidateInfo, SessionState
 from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState
-from trading_agent_framework.strategies.vwap_pullback.trades import TradeStatus
+from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus
+from trading_agent_framework.utils.errors import BacktestError
 
 DAY = date(2026, 9, 1)
 FLAT = (100.0, 100.2, 99.8, 100.0, 1000.0)
@@ -61,7 +62,7 @@ class Rig:
         self.desk.on_order_filled(order, order.avg_fill_price, order.filled_quantity)
 
     def open_trade(self) -> None:
-        self.desk.enter_long("AAA", "earnings", "clean pullback")
+        self.desk.enter_long("AAA")
         entry = self.strategy.get_order(self.state.book.get("AAA").entry_order_id)
         self.advance(60)
         self.fill_hook(entry)
@@ -69,14 +70,13 @@ class Rig:
 
 def test_enter_long_sizes_the_trade_and_submits_a_limit_buy(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    result = rig.desk.enter_long("aaa", "earnings", "clean pullback")
+    result = rig.desk.enter_long("aaa")
     assert result == {"symbol": "AAA", "quantity": 249, "limit_price": 100.1, "stop_price": 99.3, "r_per_share": 0.7, "status": "entry submitted"}
     trade = rig.state.book.get("AAA")
-    assert trade.status is TradeStatus.PENDING and trade.catalyst == "earnings"
+    assert trade.status is TradeStatus.PENDING
     assert rig.state.setups["AAA"].state is SetupState.IN_TRADE
     order = rig.strategy.get_order(trade.entry_order_id)
     assert order.order_type is OrderType.LIMIT and order.limit_price == D("100.10")
-    assert "AAA" in rig.state.decided
 
 
 @pytest.mark.parametrize(
@@ -90,60 +90,38 @@ def test_enter_long_sizes_the_trade_and_submits_a_limit_buy(tmp_path: Path) -> N
 def test_enter_long_refusals(tmp_path: Path, change, message: str) -> None:
     rig = Rig(tmp_path)
     change(rig)
-    assert message in rig.desk.enter_long("AAA", "earnings", "x")["error"]
+    assert message in rig.desk.enter_long("AAA")["error"]
 
 
-def test_enter_long_refuses_an_unknown_catalyst_and_a_full_book(tmp_path: Path) -> None:
-    assert "catalyst" in Rig(tmp_path).desk.enter_long("AAA", "rumour", "x")["error"]
+def test_enter_long_refuses_a_full_book(tmp_path: Path) -> None:
     full = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
-    assert "slot" in full.desk.enter_long("AAA", "earnings", "x")["error"]
-
-
-def test_the_label_the_agent_sets_is_logged_at_debug_even_when_the_entry_is_refused(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    full = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
-    with caplog.at_level(logging.DEBUG):
-        assert "slot" in full.desk.enter_long("AAA", "analyst", "x")["error"]
-    labelled = [r for r in caplog.records if r.levelno == logging.DEBUG and "AAA" in r.getMessage() and "analyst" in r.getMessage()]
-    assert len(labelled) == 1
-
-
-def test_an_unknown_label_is_not_logged_as_a_label(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    with caplog.at_level(logging.DEBUG):
-        Rig(tmp_path).desk.enter_long("AAA", "rumour", "x")
-    assert not [r for r in caplog.records if "rumour" in r.getMessage()]
+    assert "slot" in full.desk.enter_long("AAA")["error"]
 
 
 def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
 
 
-@pytest.mark.parametrize(
-    ("catalyst", "params", "reason"),
-    [
-        ("rumour", PARAMS, "catalyst must be one of"),  # a validation guard
-        ("analyst", dataclasses.replace(PARAMS, max_positions=0), "no free position slot"),  # a rule guard
-    ],
-)
-def test_a_refused_entry_logs_a_warning_with_the_symbol_and_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture, catalyst: str, params, reason: str) -> None:
-    rig = Rig(tmp_path, params=params)
+def test_a_refused_entry_logs_a_warning_with_the_symbol_and_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
     with caplog.at_level(logging.DEBUG):
-        error = rig.desk.enter_long("AAA", catalyst, "x")["error"]
+        error = rig.desk.enter_long("AAA")["error"]
     warnings = _warnings(caplog)
-    assert len(warnings) == 1 and "AAA" in warnings[0] and reason in warnings[0] and error in warnings[0]
+    assert len(warnings) == 1 and "AAA" in warnings[0] and "no free position slot" in warnings[0] and error in warnings[0]
 
 
 def test_a_sizing_refusal_logs_the_reason_risk_gave(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     rig = Rig(tmp_path)
     rig.state.setups["AAA"] = dataclasses.replace(rig.state.setups["AAA"], pullback_low=99.99)  # a stop tighter than the ATR band allows
     with caplog.at_level(logging.DEBUG):
-        error = rig.desk.enter_long("AAA", "earnings", "x")["error"]
+        error = rig.desk.enter_long("AAA")["error"]
     assert "outside" in error
     assert [w for w in _warnings(caplog) if "AAA" in w and error in w]
 
 
 def test_an_accepted_entry_logs_no_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     with caplog.at_level(logging.DEBUG):
-        assert Rig(tmp_path).desk.enter_long("AAA", "earnings", "clean pullback")["status"] == "entry submitted"
+        assert Rig(tmp_path).desk.enter_long("AAA")["status"] == "entry submitted"
     assert not _warnings(caplog)
 
 
@@ -170,7 +148,7 @@ def test_a_stop_fill_closes_the_trade_and_writes_the_trade_log(tmp_path: Path) -
 
 def test_reconcile_expires_an_unfilled_entry_from_an_earlier_tick(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    rig.desk.enter_long("AAA", "earnings", "x")
+    rig.desk.enter_long("AAA")
     entry = rig.strategy.get_order(rig.state.book.get("AAA").entry_order_id)
     rig.clock.advance(5)  # still the same bar: nothing filled
     rig.desk.reconcile(rig.clock.now())
@@ -182,7 +160,7 @@ def test_reconcile_expires_an_unfilled_entry_from_an_earlier_tick(tmp_path: Path
 
 def test_reconcile_drops_an_entry_the_broker_rejected(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    rig.desk.enter_long("AAA", "earnings", "x")
+    rig.desk.enter_long("AAA")
     entry = rig.strategy.get_order(rig.state.book.get("AAA").entry_order_id)
     entry.set_error("insufficient cash")
     rig.broker.tracker.process_trade_event(entry, OrderEvent.ERROR)
@@ -241,11 +219,9 @@ def test_close_unknown_positions_leaves_foreign_positions_alone(tmp_path: Path) 
     assert rig.state.unknown_positions_checked
 
 
-def test_entry_due_and_exit_review_due(tmp_path: Path) -> None:
+def test_exit_review_due(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    assert rig.desk.entry_due()
     rig.open_trade()
-    assert not rig.desk.entry_due()  # the only triggered setup is now in a trade
     assert rig.desk.exit_review_due(rig.clock.now()) == []  # 100 is above VWAP 99.9 and the EMA, below +1R
     rig.clock.advance(timedelta(minutes=15).total_seconds())
     assert rig.desk.exit_review_due(rig.clock.now()) == ["AAA"]
@@ -281,7 +257,7 @@ def test_release_stop_books_a_partial_fill(tmp_path: Path) -> None:
 def test_enter_long_refuses_a_symbol_that_is_not_a_candidate(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     del rig.state.candidates["AAA"]
-    assert "not a candidate" in rig.desk.enter_long("AAA", "earnings", "x")["error"]
+    assert "not a candidate" in rig.desk.enter_long("AAA")["error"]
 
 
 def test_close_unknown_positions_cancels_a_pending_entry_of_ours_for_a_symbol_not_held(tmp_path: Path) -> None:
@@ -557,13 +533,99 @@ def test_free_slots_counts_a_filled_but_unbooked_full_exit_as_freed(tmp_path: Pa
     assert rig.desk.free_slots() == before + 1
 
 
-def test_a_symbol_passed_on_max_times_no_longer_wakes_the_entry_agent(tmp_path: Path) -> None:
+def _add_trigger(rig: Rig, symbol: str) -> None:
+    """Another triggered setup shaped like the rig's AAA (the data source needs its minute bars too)."""
+    rig.broker._data_source.frames[(symbol, "minute")] = minute_ohlc(et(2026, 9, 1, 9, 31), ROWS)
+    rig.state.candidates[symbol] = CandidateInfo(symbol=symbol, daily_atr=2.0, beta=1.0)
+    rig.state.setups[symbol] = Setup(symbol=symbol, state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
+    rig.state.contexts[symbol] = list(rig.state.contexts["AAA"])
+
+
+def test_enter_triggered_enters_every_trigger_when_slots_allow(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    limit = rig.desk.params.max_passes_per_symbol
-    for _ in range(limit - 1):
-        rig.desk.pass_on_setup("AAA", "weak")
-    assert rig.desk.awaits_decision("AAA")
-    assert rig.desk.entry_due()
-    rig.desk.pass_on_setup("AAA", "weak")
-    assert not rig.desk.awaits_decision("AAA")
-    assert not rig.desk.entry_due()
+    _add_trigger(rig, "BBB")
+    assert rig.desk.enter_triggered() == ["AAA", "BBB"]  # no score this tick: symbol order
+    assert {trade.symbol for trade in rig.state.book.pending()} == {"AAA", "BBB"}
+    assert rig.state.setups["AAA"].state is SetupState.IN_TRADE and rig.state.setups["BBB"].state is SetupState.IN_TRADE
+
+
+def test_enter_triggered_gives_the_slots_to_the_best_stage2_scores(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=3))
+    for symbol in ("BBB", "CCC", "DDD"):
+        _add_trigger(rig, symbol)
+    # BBB is tracked but outside the stage-2 floor this tick: no score. AAA and DDD tie below zero.
+    rig.state.scores = {"AAA": -0.5, "CCC": 1.5, "DDD": -0.5}
+    assert rig.desk.enter_triggered() == ["CCC", "AAA", "DDD"]  # best score, then the symbol on a tie
+    assert rig.state.book.get("BBB") is None  # unscored goes last, even behind a negative score
+    assert rig.state.setups["BBB"].state is SetupState.TRIGGERED  # left to expire on the next bar
+
+
+def test_enter_triggered_a_second_call_in_the_same_tick_submits_nothing(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    assert rig.desk.enter_triggered() == ["AAA"]
+    orders = len(rig.broker.tracker.get_active_orders())
+    assert rig.desk.enter_triggered() == []
+    assert len(rig.broker.tracker.get_active_orders()) == orders
+
+
+def test_enter_triggered_without_a_trigger_reads_nothing_and_submits_nothing(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.PULLBACK)
+
+    def no_read(*args, **kwargs):
+        raise AssertionError("no account or price read is expected without a trigger")
+
+    rig.broker.get_account = no_read
+    rig.strategy.get_last_price = no_read
+    assert rig.desk.enter_triggered() == []
+    assert rig.broker.tracker.get_active_orders() == []
+
+
+def _trip_the_breaker(rig: Rig) -> None:
+    lost = Trade(symbol="ZZZ", entry_order_id="zzz-entry", planned_quantity=D(1), stop_price=D(1), r_per_share=D(1), entered_at=rig.clock.now())
+    lost.realised_pnl = D("-2000")  # more than 1.5% of the 100,000 opening equity
+    rig.state.book.closed.append(lost)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        lambda rig: setattr(rig.state, "flattened", True),
+        lambda rig: rig.clock.advance(-20 * 60),  # 09:40: before the entry window
+        _trip_the_breaker,
+    ],
+)
+def test_enter_triggered_submits_nothing_when_entries_are_closed(tmp_path: Path, block) -> None:
+    rig = Rig(tmp_path)
+    block(rig)
+    assert rig.desk.enter_triggered() == []
+    assert rig.broker.tracker.get_active_orders() == []
+    assert rig.state.setups["AAA"].state is SetupState.TRIGGERED
+
+
+def test_enter_triggered_submits_nothing_without_a_free_slot(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, params=dataclasses.replace(PARAMS, max_positions=0))
+    assert rig.desk.enter_triggered() == []
+    assert rig.broker.tracker.get_active_orders() == []
+
+
+def test_a_refused_entry_does_not_stop_the_following_ones(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    _add_trigger(rig, "BBB")
+    rig.state.setups["AAA"] = dataclasses.replace(rig.state.setups["AAA"], pullback_low=99.99)  # a stop tighter than the ATR band allows
+    assert rig.desk.enter_triggered() == ["BBB"]
+    assert rig.state.book.get("AAA") is None
+
+
+def test_a_price_read_that_fails_for_one_symbol_does_not_stop_the_following_ones(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    _add_trigger(rig, "BBB")
+    real_price = rig.strategy.get_last_price
+
+    def flaky(symbol, *args, **kwargs):
+        if symbol == "AAA":
+            raise BacktestError("no bars for AAA")
+        return real_price(symbol, *args, **kwargs)
+
+    rig.strategy.get_last_price = flaky
+    assert rig.desk.enter_triggered() == ["BBB"]
