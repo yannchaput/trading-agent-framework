@@ -1,0 +1,309 @@
+# Fundamentals quality screen
+
+Date: 2026-10-02 · Branch: `feature/fundamentals-quality-screen` · First of two specs for the Bill Ackman
+portfolio strategy (the second covers the three-agent strategy that consumes this screen)
+
+## Problem
+
+The Bill Ackman strategy (lumibot's
+[example](https://lumibot.lumiwealth.com/agents_example_bill_ackman_portfolio_ai_trading_bot.html)) has a
+researcher agent pick "simple, predictable companies that make lots of cash and trade at a good price". The
+lumibot example gives it a fixed list of 10 tickers. Here the researcher picks from the cross_momentum
+universe file (1,200 symbols), which no LLM can read company by company. Code must first cut the universe to
+a short list of candidates that match the criteria, with the numbers that justify each one.
+
+Nothing in the framework does that today: `fundamentals/` serves one company at a time to an agent tool, has
+no cash-flow fields, and its cache never expires.
+
+## Goal
+
+A code-only screen, with no LLM and no strategy knowledge, that answers: *of these symbols, which were
+simple, predictable, cash-generative, lightly indebted and reasonably priced on date D, using only what was
+public on D?*
+
+```python
+screen = QualityScreen(store, splits, params=ScreenParams())
+result = screen.run(symbols, as_of=strategy.clock.now(), price_of=strategy.get_last_price)
+result.candidates   # ranked list[Candidate], best first, at most params.top_n
+result.rejections   # dict[str, str]: symbol -> reason
+```
+
+Success: the test suite and `ruff check` pass; the manual smoke script runs the real screen on about 20
+symbols and prints a ranked list with a reason for every rejected symbol; a second run the same day makes no
+SEC request.
+
+## Non-goals
+
+- **No strategy, no agents, no fact-sheet wording.** The second spec turns `Candidate` into what agents read.
+- **No batch command.** Data is fetched lazily on first use.
+- **No quarterly or trailing-twelve-month figures.** Annual (10-K) figures only: quarterly cash-flow values in
+  XBRL are year-to-date cumulatives and error-prone to unwind.
+- **No IFRS support.** A 20-F filer with no `us-gaap` facts is rejected as `no_data`.
+- **No fix for the agent drill-down tools' cache.** `get_income_statement` and the other fundamentals tools
+  keep reading the never-expiring raw cache. The second spec handles that, where those tools are used.
+- **No dashboard view.**
+
+## 1. Modules
+
+All under `fundamentals/`.
+
+| Module | Kind | Responsibility |
+|---|---|---|
+| `sec.py` (extended) | pure | Cash-flow, debt and share-count tag lists; `annual_figures(payload)` reduces a company-facts payload to the rows the screen needs; `parse_sic(submissions_payload)`. |
+| `quality.py` (new) | pure | `ScreenParams`, `Candidate`, `ScreenResult`, the gates, the score and the ranking. |
+| `splits.py` (new) | pure + I/O | Pure `restate_shares(...)`; `SplitHistory`, the only module that imports `yfinance` for splits (lazily). |
+| `annual_store.py` (new) | I/O | `AnnualFiguresStore`: lazy per-symbol fetch through `SecEdgarClient`, reduced on-disk cache, freshness. |
+| `screen.py` (new) | wiring | `QualityScreen.run(...)`: asks the store and the split history for data, calls the pure functions, logs the summary. |
+| `edgar_client.py` (extended) | I/O | An uncached fetch path, so the store can read a company-facts payload without writing 4 MB to disk. |
+
+`quality.py` and the additions to `sec.py` follow the same purity rule as `brokers/alpaca/orders.py`: no I/O,
+no clock, no state. The screen never receives a `Strategy` or a broker; `as_of` and `price_of` are passed in,
+as `MemoryStore` takes `now`.
+
+## 2. Data
+
+### 2.1 What is kept per company
+
+`annual_figures(payload)` returns, and the store writes to `cache/sec/annual/CIK<10 digits>.json`:
+
+```json
+{
+  "cik": "0000320193",
+  "fetched_at": "2026-10-02T14:03:11+00:00",
+  "status": "ok",
+  "sic": 3571,
+  "flows": [{"field": "revenue", "start": "2024-09-29", "end": "2025-09-27", "value": 416161000000, "filed": "2025-10-31"}],
+  "balances": [{"field": "debt", "end": "2025-09-27", "value": 90678000000, "filed": "2025-10-31"}],
+  "shares": [{"end": "2026-07-17", "value": 14594180000, "filed": "2026-07-31"}]
+}
+```
+
+- **`flows`**: revenue, operating income, operating cash flow, capex. Only facts from a 10-K or 10-K/A whose
+  period lasts 350 to 380 days.
+- **`balances`**: debt and cash. Only facts from a 10-K or 10-K/A.
+- **`shares`**: share counts from 10-K and 10-Q filings.
+- Every version of a figure is kept (a later 10-K restates earlier years), each with its own `filed` date, so
+  the as-of selection in §3.1 can be exact.
+- `sic` is absent until the sector gate first asks for it (§3.2).
+- `status` is `"ok"` or `"absent"` (§5).
+
+A reduced file is a few KB. The raw payload (about 4 MB) is never written by the store.
+
+### 2.2 Tags
+
+Each field tries its tags in order and uses the first one present for a given period.
+
+| Field | Tags |
+|---|---|
+| revenue | existing `INCOME_STATEMENT_TAGS["revenue"]` |
+| operating_income | `OperatingIncomeLoss` |
+| operating_cash_flow | `NetCashProvidedByUsedInOperatingActivities`, `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` |
+| capex | `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsToAcquireProductiveAssets` |
+| debt | `LongTermDebt`; else `LongTermDebtNoncurrent` + `LongTermDebtCurrent` (the current part counts as 0 when absent); else `DebtLongtermAndShorttermCombinedAmount` |
+| cash | existing `BALANCE_SHEET_TAGS["cash"]` |
+| shares | `dei:EntityCommonStockSharesOutstanding`; else `us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding` |
+
+`shares` reads the `dei` namespace first; the existing code reads only `us-gaap`. The fallback matters for
+multi-class companies, whose per-class cover-page counts are dimensioned facts that the company-facts API
+omits.
+
+### 2.3 Fiscal years
+
+A fiscal year is identified by its period **end date**, never by XBRL's `fy` field: each 10-K repeats three
+years of figures, all tagged with the filing's own `fy` (verified on Apple's payload).
+
+### 2.4 Freshness
+
+`fetched_at` is stamped from an injected `wall_clock` callable (the real fetch time). A file is stale when
+
+```
+fetched_at < as_of - params.max_age_days        (default 30)
+```
+
+`as_of` is the caller's clock, so one rule covers every mode: in a backtest `as_of` is simulated and a file
+fetched today is fresh for every past date; in paper/live the file is refetched monthly. No wall-clock value
+is compared against data, and the data cutoff itself is always `as_of`.
+
+A stale file is refetched on the next `run`. If that refetch fails on a transport error, the stale file is
+used and a warning is logged.
+
+### 2.5 Cost
+
+The first run over 1,200 symbols downloads about 5 GB once (10 to 20 minutes at the client's rate limit) and
+leaves a few MB on disk. Later runs read the reduced files once per process and keep them in memory.
+
+## 3. The screen
+
+### 3.1 As-of selection
+
+For `as_of`, the screen uses, per field and period end, the latest version with `filed <= as_of`. The
+**window** is the 5 most recent fiscal years that have a revenue row filed on or before `as_of`. Balance
+figures are those whose `end` equals the latest fiscal year's end.
+
+The **share count** is the entry with the latest `end` among those with `filed <= as_of`; `counted_on` is its
+`end` date.
+
+### 3.2 Gates
+
+Gates run in this order. The first one that fails is the recorded reason.
+
+| # | Reason | Rule | Parameter (default) |
+|---|---|---|---|
+| 1 | `no_data` | Status `absent`, or no flows at all as of the date. | |
+| 2 | `stale_filing` | Latest fiscal year ended more than N months before `as_of`. | `max_filing_age_months` (18) |
+| 3 | `insufficient_history` | Fewer than N consecutive fiscal years with revenue, operating income, operating cash flow and capex. Consecutive means each year's end is 350 to 380 days after the previous one. | `years` (5) |
+| 4 | `operating_loss` | Operating income <= 0 in any year of the window. | |
+| 5 | `negative_fcf` | Free cash flow (operating cash flow minus capex) <= 0 in any year. | |
+| 6 | `shrinking_revenue` | Fewer than N of the yearly revenue changes are increases, or the latest year's revenue is below the first year's. | `min_growth_years` (3 of 4) |
+| 7 | `too_much_debt` | Net debt (debt minus cash) above a multiple of the latest year's operating income. Net debt <= 0 passes. | `max_net_debt_to_operating_income` (4.0) |
+| 8 | `excluded_sector` | SIC code inside an excluded range. A missing SIC code passes. | `excluded_sic_ranges` ((4900, 4999), (6000, 6799)) |
+| 9 | `no_price` | `price_of(symbol)` returns `None`, or there is no share count. | |
+| 10 | `no_split_data` | The split lookup failed (§4). | |
+
+Notes:
+
+- **Missing debt.** A company with no debt tag is treated as debt-free and its candidate carries
+  `debt_reported=False`. Missing cash counts as 0.
+- **Sector.** The SIC code comes from SEC's submissions payload. It costs one request per company, so the gate
+  runs after the numeric gates, only on their survivors, and the code is saved in the reduced file. The ranges
+  exclude utilities (4900–4999) and finance, insurance and real estate (6000–6799).
+- **Price-dependent gates last.** Gates 1 to 8 need no price, so `price_of` is called only for their survivors.
+
+### 3.3 Metrics and score
+
+For each survivor:
+
+| Metric | Definition |
+|---|---|
+| `market_cap` | restated share count (§4) x price |
+| `fcf_yield` | latest year's free cash flow / `market_cap` |
+| `fcf_margin` | mean over the window of (free cash flow / revenue) |
+| `operating_margin` | latest year's operating income / revenue |
+| `operating_margin_stdev` | population standard deviation of the yearly operating margins |
+| `revenue_growth` | compound annual growth rate from the first to the last year of the window |
+| `net_debt_to_operating_income` | net debt / latest operating income (negative when net cash) |
+
+Each of the three scored metrics becomes a percentile rank among the survivors: `(rank - 1) / (n - 1)`,
+ascending, average rank for ties, and `1.0` when there is a single survivor.
+
+```
+score = 0.4 * pct(fcf_yield) + 0.3 * pct(fcf_margin) + 0.3 * (1 - pct(operating_margin_stdev))
+```
+
+The weights are `ScreenParams.weights`. Candidates are sorted by score descending, then market cap descending,
+then symbol, and the first `top_n` (default 15) are returned with `rank` starting at 1.
+
+### 3.4 Types
+
+```python
+@dataclass(frozen=True, slots=True)
+class ScreenParams:
+    years: int = 5
+    min_growth_years: int = 3
+    max_filing_age_months: int = 18
+    max_net_debt_to_operating_income: float = 4.0
+    excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))
+    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)   # fcf_yield, fcf_margin, margin stability
+    top_n: int = 15
+    max_age_days: int = 30
+    max_fetch_failure_ratio: float = 0.2
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    symbol: str
+    rank: int
+    score: float
+    sic: int | None
+    market_cap: Decimal
+    fcf_yield: float
+    fcf_margin: float
+    operating_margin: float
+    operating_margin_stdev: float
+    revenue_growth: float
+    net_debt_to_operating_income: float
+    debt_reported: bool
+    fiscal_year_end: date
+    filed: date            # filing date of the latest fiscal year's figures
+
+@dataclass(frozen=True, slots=True)
+class ScreenResult:
+    candidates: list[Candidate]
+    rejections: dict[str, str]
+```
+
+**Number types.** Statement figures stay integers, as SEC reports them. Price and `market_cap` are `Decimal`.
+Ratios and the score are floats: they are dimensionless ranking inputs, not money, so this is not a fourth
+float boundary in the sense of CLAUDE.md.
+
+## 4. Splits
+
+Bar prices are split-adjusted to today (Yahoo `auto_adjust=True`, Alpaca adjusted bars), but a share count is
+as reported on its date. Without correction, a 2-for-1 split after the count halves market cap and doubles
+`fcf_yield`.
+
+- `restate_shares(shares, counted_on, splits)` (pure) multiplies the count by the ratio of every split dated
+  after `counted_on`. Splits dated on or before `counted_on` are ignored. Splits after `as_of` are applied
+  too, on purpose: the price being multiplied is already adjusted for them, so this undoes a price adjustment
+  and leaks no information.
+- `SplitHistory.splits(symbol)` returns `[(date, ratio), ...]` from yfinance (`Ticker.splits`), imported
+  lazily. Results are cached in `cache/splits.json` with a `fetched_at` per symbol and the freshness rule of
+  §2.4. It is called only for symbols that reach gate 10.
+- An empty history is a valid answer. A failed lookup rejects the symbol as `no_split_data`: a silently wrong
+  valuation is the failure this module exists to prevent.
+- `yfinance` moves from the `backtesting-yahoo` extra to the core dependencies (the extra keeps its entry).
+
+## 5. Errors
+
+- **Per-symbol problems are rejections, never exceptions.**
+- **Real absences are cached.** No CIK for the ticker, or HTTP 404 on company facts: the reduced file is
+  written with `status: "absent"` and the symbol is not requested again until the file is stale.
+- **Transport errors are not cached.** A network failure or SEC's throttle page (HTML with a 2xx status)
+  leaves no file, so the next run retries. The symbol is rejected as `no_data` for this run.
+- **A hollow screen raises.** If more than `max_fetch_failure_ratio` (20%) of the symbols passed to `run`
+  failed on transport errors, `run` raises `FundamentalsError` instead of returning a ranking built on what
+  happened to download.
+- **Configuration.** A missing `SEC_EDGAR_USER_AGENT` raises `ConfigurationError` when the client is built,
+  as today.
+- **A corrupt reduced file** is treated as a cache miss and refetched, as `SecEdgarClient.get_json` already
+  does for its own cache.
+- **Logging.** Each run logs one summary line: symbols in, candidates out, and the count per rejection reason.
+
+`edgar_client.py` needs to tell a 404 from a transport error. `FundamentalsError` gains a subclass
+`FundamentalsNotFoundError`, raised on HTTP 404; existing callers that catch `FundamentalsError` are
+unaffected.
+
+## 6. Testing
+
+The automated suite stays off the network and uses hand-written fixtures, not mocks.
+
+- **`tests/fundamentals/test_sec.py`** (extended): `annual_figures` on a payload where each 10-K repeats three
+  years; every restated version is kept; quarterly and non-10-K facts are dropped; the tag fallbacks of §2.2,
+  including the two-part debt sum and the `dei` share count; `parse_sic`.
+- **`tests/fundamentals/test_quality.py`**: as-of selection (a restatement filed after `as_of` is ignored);
+  one test per gate reason, each on a company that passes every earlier gate; gate order; the three scored
+  metrics; percentile ranks with ties and with a single survivor; the sort and its tie-breaks; `top_n`.
+- **`tests/fundamentals/test_splits.py`**: `restate_shares` with no split, one split, several splits, and a
+  split dated on or before `counted_on`; `SplitHistory` with an injected fetch function: caching, freshness,
+  empty history, failed lookup.
+- **`tests/fundamentals/test_annual_store.py`**: `httpx.MockTransport` and a temp cache directory: lazy fetch;
+  the reduced file is written and the raw payload is not; a second call makes no request; the freshness rule
+  in both directions (simulated past `as_of`, and `as_of` beyond `max_age_days`); a 404 is cached as
+  `absent`; a transport error is not cached; a stale file survives a failed refetch; a corrupt file is
+  refetched; the SIC code is fetched once and saved.
+- **`tests/fundamentals/test_screen.py`**: `QualityScreen.run` with a fake store and fake split history:
+  `price_of` is called only for survivors of gates 1 to 8; the hollow-screen error at the threshold; the
+  summary log line.
+- **`scripts/tests/smoke_quality_screen.py`** (manual, real SEC and yfinance): runs the screen on about 20
+  symbols and prints the candidates and the rejections.
+
+## 7. Known limits
+
+- **The universe file is a current snapshot**, so a backtest screens today's survivors. `cross_momentum` has
+  the same bias.
+- **SIC codes are current, not point-in-time.** A company that changed industry is classified by its present
+  code on every backtest date.
+- **The gates are stricter than Ackman's real book.** From memory of their figures (not verified), several
+  Pershing Square holdings would fail: HLT and QSR on debt, UBER on its loss years. The screen finds
+  companies matching the stated criteria, not his holdings.
+- **Capex tags vary.** A company reporting capital expenditure under a tag outside §2.2 is rejected as
+  `insufficient_history`.
