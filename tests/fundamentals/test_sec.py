@@ -148,3 +148,190 @@ def test_filing_url_strips_dashes_and_leading_zeros() -> None:
 def test_strip_html_removes_tags_and_collapses_whitespace() -> None:
     raw = "<html><body><p>Hello &amp; welcome</p><script>bad()</script></body></html>"
     assert sec.strip_html(raw) == "Hello & welcome"
+
+
+def _annual(val: int, year: int, filed: str, *, form: str = "10-K") -> dict[str, object]:
+    return {"val": val, "start": f"{year}-01-01", "end": f"{year}-12-31", "filed": filed, "form": form}
+
+
+def _instant(val: int, end: str, filed: str, *, form: str = "10-K") -> dict[str, object]:
+    return {"val": val, "end": end, "filed": filed, "form": form}
+
+
+def _usd(*rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {"USD": list(rows)}}
+
+
+def _share_units(*rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {"shares": list(rows)}}
+
+
+def _company(gaap: dict[str, object] | None = None, dei: dict[str, object] | None = None) -> dict[str, object]:
+    return {"facts": {"us-gaap": gaap or {}, "dei": dei or {}}}
+
+
+def _rows(figures: dict[str, list[dict[str, object]]], kind: str, field: str) -> list[dict[str, object]]:
+    return [row for row in figures[kind] if row["field"] == field]
+
+
+def test_annual_figures_keeps_every_filed_version_of_a_fiscal_year() -> None:
+    # Each 10-K repeats earlier years; the 2025 filing restates 2023.
+    payload = _company(
+        {
+            "Revenues": _usd(
+                _annual(100, 2023, "2024-02-15"),
+                _annual(110, 2024, "2025-02-15"),
+                _annual(101, 2023, "2026-02-15"),
+                _annual(120, 2025, "2026-02-15"),
+            )
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["end"], row["filed"], row["value"]) for row in revenue] == [
+        ("2023-12-31", "2024-02-15", 100),
+        ("2023-12-31", "2026-02-15", 101),
+        ("2024-12-31", "2025-02-15", 110),
+        ("2025-12-31", "2026-02-15", 120),
+    ]
+    assert revenue[0]["start"] == "2023-01-01"
+
+
+def test_annual_figures_drops_quarters_and_filings_that_are_not_annual_reports() -> None:
+    payload = _company(
+        {
+            "Revenues": _usd(
+                {"val": 30, "start": "2025-10-01", "end": "2025-12-31", "filed": "2026-02-15", "form": "10-K"},
+                _annual(999, 2025, "2026-01-20", form="8-K"),
+                _annual(998, 2025, "2026-02-01", form="10-Q"),
+                _annual(120, 2025, "2026-03-01", form="10-K/A"),
+            )
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["filed"], row["value"]) for row in revenue] == [("2026-03-01", 120)]
+
+
+def test_annual_figures_uses_the_first_tag_that_covers_each_period() -> None:
+    payload = _company(
+        {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
+            "Revenues": _usd(_annual(90, 2024, "2025-02-15"), _annual(125, 2025, "2026-02-15")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["end"], row["value"]) for row in revenue] == [("2024-12-31", 90), ("2025-12-31", 120)]
+
+
+def test_annual_figures_reads_the_four_flow_fields_with_their_fallback_tags() -> None:
+    payload = _company(
+        {
+            "Revenues": _usd(_annual(100, 2025, "2026-02-15")),
+            "OperatingIncomeLoss": _usd(_annual(20, 2025, "2026-02-15")),
+            "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations": _usd(_annual(25, 2025, "2026-02-15")),
+            "PaymentsToAcquireProductiveAssets": _usd(_annual(5, 2025, "2026-02-15")),
+        }
+    )
+
+    flows = sec.annual_figures(payload)["flows"]
+
+    assert {row["field"]: row["value"] for row in flows} == {"revenue": 100, "operating_income": 20, "operating_cash_flow": 25, "capex": 5}
+
+
+def test_annual_figures_prefers_total_long_term_debt() -> None:
+    payload = _company(
+        {
+            "LongTermDebt": _usd(_instant(90, "2025-12-31", "2026-02-15")),
+            "LongTermDebtNoncurrent": _usd(_instant(70, "2025-12-31", "2026-02-15")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [90]
+
+
+def test_annual_figures_sums_noncurrent_and_current_debt_when_there_is_no_total() -> None:
+    payload = _company(
+        {
+            "LongTermDebtNoncurrent": _usd(_instant(70, "2024-12-31", "2025-02-15"), _instant(80, "2025-12-31", "2026-02-15")),
+            "LongTermDebtCurrent": _usd(_instant(12, "2025-12-31", "2026-02-15")),
+        }
+    )
+
+    debt = _rows(sec.annual_figures(payload), "balances", "debt")
+
+    assert [(row["end"], row["value"]) for row in debt] == [("2024-12-31", 70), ("2025-12-31", 92)]
+
+
+def test_annual_figures_falls_back_to_the_combined_debt_tag() -> None:
+    payload = _company({"DebtLongtermAndShorttermCombinedAmount": _usd(_instant(55, "2025-12-31", "2026-02-15"))})
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [55]
+
+
+def test_annual_figures_reads_cash_from_annual_reports_only() -> None:
+    payload = _company(
+        {
+            "CashAndCashEquivalentsAtCarryingValue": _usd(
+                _instant(40, "2025-12-31", "2026-02-15"),
+                _instant(45, "2026-03-31", "2026-05-01", form="10-Q"),
+            )
+        }
+    )
+
+    assert [(row["end"], row["value"]) for row in _rows(sec.annual_figures(payload), "balances", "cash")] == [("2025-12-31", 40)]
+
+
+def test_annual_figures_keeps_both_share_counts_cover_page_first() -> None:
+    payload = _company(
+        gaap={
+            "WeightedAverageNumberOfDilutedSharesOutstanding": _share_units(
+                {"val": 1010, "start": "2026-01-01", "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"}
+            )
+        },
+        dei={
+            "EntityCommonStockSharesOutstanding": _share_units(
+                _instant(1000, "2026-01-31", "2026-02-15"),
+                _instant(1005, "2026-04-20", "2026-05-01", form="10-Q"),
+                _instant(9999, "2026-05-01", "2026-05-02", form="8-K"),
+            )
+        },
+    )
+
+    shares = sec.annual_figures(payload)["shares"]
+
+    assert shares == [
+        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15"},
+        {"end": "2026-04-20", "value": 1005, "filed": "2026-05-01"},
+        {"end": "2026-03-31", "value": 1010, "filed": "2026-05-01"},
+    ]
+
+
+def test_annual_figures_skips_rows_without_a_value_or_a_filing_date() -> None:
+    payload = _company(
+        {
+            "Revenues": _usd(
+                {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-02-15", "form": "10-K"},
+                {"val": 100, "start": "2025-01-01", "end": "2025-12-31", "form": "10-K"},
+            )
+        }
+    )
+
+    assert sec.annual_figures(payload) == {"flows": [], "balances": [], "shares": []}
+
+
+def test_annual_figures_of_an_empty_payload_is_empty() -> None:
+    assert sec.annual_figures({}) == {"flows": [], "balances": [], "shares": []}
+
+
+def test_parse_sic_reads_the_code_as_an_integer() -> None:
+    assert sec.parse_sic({"sic": "3571", "sicDescription": "Electronic Computers"}) == 3571
+
+
+@pytest.mark.parametrize("payload", [{}, {"sic": ""}, {"sic": None}, {"sic": "n/a"}])
+def test_parse_sic_of_a_missing_or_malformed_code_is_none(payload: dict[str, object]) -> None:
+    assert sec.parse_sic(payload) is None

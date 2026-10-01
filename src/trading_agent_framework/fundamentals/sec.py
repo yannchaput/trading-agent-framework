@@ -49,6 +49,23 @@ _PRIORITY_COMPANY_FACT_TAGS = tuple(
 
 _FORM_PRIORITY = {"10-K": 5, "20-F": 5, "40-F": 5, "10-Q": 4, "8-K": 2}
 
+# The quality screen's annual figures (`annual_figures`). A fiscal year is identified by its period END
+# date: each 10-K repeats three years of figures, all tagged with the filing's own `fy`.
+MIN_FISCAL_YEAR_DAYS = 350
+MAX_FISCAL_YEAR_DAYS = 380
+_ANNUAL_FORMS = frozenset({"10-K", "10-K/A"})
+_SHARE_COUNT_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A"})
+
+ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
+    "revenue": INCOME_STATEMENT_TAGS["revenue"],
+    "operating_income": INCOME_STATEMENT_TAGS["operating_income"],
+    "operating_cash_flow": [
+        "NetCashProvidedByUsedInOperatingActivities",
+        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
+    ],
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
+}
+
 
 def parse_company_tickers(payload: dict[str, Any], symbol: str) -> str:
     """The zero-padded 10-digit CIK for `symbol`; raises `ValueError` if not found."""
@@ -269,3 +286,86 @@ def strip_html(raw: str) -> str:
     text = re.sub(r"\n\s+", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
+
+
+def _tag_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str]) -> list[dict[str, Any]]:
+    """One tag's facts in one unit, from `forms` only, that carry a value, a period end and a filing date."""
+    rows = (facts.get(tag) or {}).get("units", {}).get(unit, [])
+    return [
+        row
+        for row in rows
+        if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")
+    ]
+
+
+def _is_fiscal_year(row: dict[str, Any]) -> bool:
+    start, end = _parse_dt(row.get("start")), _parse_dt(row.get("end"))
+    return start is not None and end is not None and MIN_FISCAL_YEAR_DAYS <= (end - start).days <= MAX_FISCAL_YEAR_DAYS
+
+
+def _slim(row: dict[str, Any], *, with_start: bool = False) -> dict[str, Any]:
+    slim = {"start": row["start"]} if with_start else {}
+    return {**slim, "end": row["end"], "value": row["val"], "filed": row["filed"]}
+
+
+def _first_source_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Every filed version from the first source covering each period end, sorted by (end, filed).
+
+    A later source only fills period ends that no earlier source has, so two tags reporting the same
+    year never mix. Within the winning source every version is kept: a later 10-K restates earlier years,
+    and the as-of selection needs each version's own `filed` date.
+    """
+    owner: dict[str, int] = {}
+    kept: dict[tuple[str, str], dict[str, Any]] = {}
+    for index, rows in enumerate(sources):
+        for row in rows:
+            if owner.setdefault(row["end"], index) == index:
+                kept[(row["end"], row["filed"])] = row
+    return sorted(kept.values(), key=lambda row: (row["end"], row["filed"]))
+
+
+def _debt_sources(gaap: dict[str, Any]) -> list[list[dict[str, Any]]]:
+    """Total debt, in order of preference: the total tag, noncurrent + current, the combined tag."""
+    current = {(row["end"], row["filed"]): row["val"] for row in _tag_rows(gaap, "LongTermDebtCurrent", "USD", _ANNUAL_FORMS)}
+    summed = [
+        {"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]}
+        for row in _tag_rows(gaap, "LongTermDebtNoncurrent", "USD", _ANNUAL_FORMS)
+    ]
+    return [
+        [_slim(row) for row in _tag_rows(gaap, "LongTermDebt", "USD", _ANNUAL_FORMS)],
+        summed,
+        [_slim(row) for row in _tag_rows(gaap, "DebtLongtermAndShorttermCombinedAmount", "USD", _ANNUAL_FORMS)],
+    ]
+
+
+def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    """Reduce a company-facts payload (about 4 MB) to the rows the quality screen needs (a few KB).
+
+    `flows` and `balances` come from annual reports only. `shares` keeps both the cover-page count
+    (`dei`, listed first) and the weighted-average diluted count, from annual and quarterly reports:
+    a multi-class company has no usable cover-page count in this API.
+    """
+    root = payload.get("facts", {})
+    gaap, dei = root.get("us-gaap", {}), root.get("dei", {})
+
+    flows: list[dict[str, Any]] = []
+    for field, tags in ANNUAL_FLOW_TAGS.items():
+        sources = [[_slim(row, with_start=True) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS) if _is_fiscal_year(row)] for tag in tags]
+        flows.extend({"field": field, **row} for row in _first_source_per_period(sources))
+
+    cash_sources = [[_slim(row) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS)] for tag in BALANCE_SHEET_TAGS["cash"]]
+    balances: list[dict[str, Any]] = []
+    for field, sources in (("debt", _debt_sources(gaap)), ("cash", cash_sources)):
+        balances.extend({"field": field, **row} for row in _first_source_per_period(sources))
+
+    cover = [_slim(row) for row in _tag_rows(dei, "EntityCommonStockSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
+    weighted = [_slim(row) for row in _tag_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
+    shares = [*_first_source_per_period([cover]), *_first_source_per_period([weighted])]
+
+    return {"flows": flows, "balances": balances, "shares": shares}
+
+
+def parse_sic(submissions_payload: dict[str, Any]) -> int | None:
+    """The company's SIC industry code from a submissions payload, or `None` when absent or malformed."""
+    text = str(submissions_payload.get("sic") or "").strip()
+    return int(text) if text.isdigit() else None
