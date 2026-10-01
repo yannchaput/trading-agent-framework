@@ -616,7 +616,7 @@ def rolling_sharpe_chart(
     )
 
 
-def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> go.Figure:
+def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", indicators: dict[str, list[dict[str, Any]]] | None = None) -> go.Figure:
     """Build a trade activity chart with portfolio value curve and buy/sell markers.
 
     Args:
@@ -624,6 +624,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
             and ``trades`` (list of {time, side, symbol, qty, price, cost,
             portfolio_value}) from :func:`load_trades_curve`.
         title: Chart title.
+        indicators: Optional ``{plot_name: [series]}`` from :func:`load_indicator_lines`; each pane gets its own
+            sub-row under the portfolio chart (they live on other scales), sharing its time axis.
     """
     values = trades_data.get("values", [])
     trades = trades_data.get("trades", [])
@@ -634,7 +636,11 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    fig = go.Figure()
+    panes = list((indicators or {}).items())
+    fig = make_subplots(
+        rows=1 + len(panes), cols=1, shared_xaxes=True, vertical_spacing=0.05,
+        row_heights=[0.5, *[0.5 / len(panes)] * len(panes)] if panes else [1.0],
+    )
 
     # ── Portfolio value line ──
     if values:
@@ -648,7 +654,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
                 name="Portfolio Value",
                 line=dict(color="#0891b2", width=2),
                 hovertemplate="$%{y:,.0f}<extra>Portfolio Value</extra>",
-            )
+            ),
+            row=1, col=1,
         )
 
     # ── Buy markers (green ▲) ──
@@ -663,7 +670,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
                 marker=dict(symbol="triangle-up", size=10, color="#16a34a", line=dict(width=1, color="#15803d")),
                 hovertemplate=("<b>BUY</b> %{customdata[0]}<br>Qty: %{customdata[1]:.0f}<br>Price: $%{customdata[2]:,.2f}<br>Cost: $%{customdata[3]:,.2f}<br>Portfolio: $%{y:,.0f}<extra></extra>"),
                 customdata=[(b["symbol"], b["qty"], b["price"], b["cost"]) for b in buys],
-            )
+            ),
+            row=1, col=1,
         )
 
     # ── Sell markers (red ▼) ──
@@ -678,13 +686,31 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity") -> 
                 marker=dict(symbol="triangle-down", size=10, color="#dc2626", line=dict(width=1, color="#b91c1c")),
                 hovertemplate=("<b>SELL</b> %{customdata[0]}<br>Qty: %{customdata[1]:.0f}<br>Price: $%{customdata[2]:,.2f}<br>Cost: $%{customdata[3]:,.2f}<br>Portfolio: $%{y:,.0f}<extra></extra>"),
                 customdata=[(s["symbol"], s["qty"], s["price"], s["cost"]) for s in sells],
-            )
+            ),
+            row=1, col=1,
         )
 
+    # ── Indicator panes (strategy.add_line), one sub-row per plot_name ──
+    for row, (pane, series) in enumerate(panes, start=2):
+        for line in series:
+            fig.add_trace(
+                go.Scatter(
+                    x=line["times"],
+                    y=line["values"],
+                    mode="lines",
+                    name=line["name"],
+                    line=dict(color=line["color"], width=1.5, dash=line["dash"]),
+                    hovertemplate="%{y:,.2f}<extra>" + line["name"] + "</extra>",
+                ),
+                row=row, col=1,
+            )
+        fig.update_yaxes(title_text=pane, row=row, col=1)
+
+    fig.update_yaxes(title_text="Portfolio Value ($)", row=1, col=1)
+    fig.update_xaxes(title_text="Date", row=1 + len(panes), col=1)
     fig.update_layout(
         title=title,
-        xaxis_title="Date",
-        yaxis_title="Portfolio Value ($)",
+        height=450 + 200 * len(panes),
         template=CHART_TEMPLATE,
         hovermode="closest",
         margin=dict(l=40, r=20, t=40, b=40),

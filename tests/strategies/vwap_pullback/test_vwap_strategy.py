@@ -128,3 +128,45 @@ def test_a_backtest_waits_in_one_minute_slices_so_the_stop_follows_the_entry_bar
     assert trade.status is TradeStatus.CLOSED and trade.exit_reason == "stop"
     stop_fill = next(f for f in broker.ledger.fills if f.side.value == "sell")
     assert stop_fill.time == et(2026, 9, 1, 10, 3) and stop_fill.price == Decimal("99.30")  # the breaking bar, at the stop
+
+
+class _FakeIndicators:
+    def __init__(self, adx, rsi) -> None:
+        self._adx, self._rsi = adx, rsi
+
+    def adx(self, asset, timestep, **kwargs):
+        assert (asset, timestep, kwargs) == ("SPY", "minute", {"include_after_hours": False})
+        return self._adx
+
+    def rsi(self, asset, timestep, **kwargs):
+        return self._rsi
+
+
+def _charting(tmp_path: Path, adx, rsi, vix) -> tuple[VwapPullbackStrategy, list[tuple]]:
+    from trading_agent_framework.core.indicators import IndicatorRow
+
+    strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    lines: list[tuple] = []
+    strategy.add_line = lambda name, value, **kw: lines.append((name, value, kw["plot_name"]))
+    strategy._indicators = _FakeIndicators(None if adx is None else IndicatorRow({"ADX_14": adx}), rsi)
+    strategy._vix = type("V", (), {"previous_close": lambda self, day: vix})()
+    return strategy, lines
+
+
+def test_a_tick_charts_adx_rsi_and_the_previous_vix_close(tmp_path: Path) -> None:
+    strategy, lines = _charting(tmp_path, adx=22.0, rsi=61.5, vix=17.2)
+    strategy._chart_indicators(_session())
+    assert lines == [("ADX", 22.0, "ADX / RSI"), ("RSI", 61.5, "ADX / RSI"), ("VIX", 17.2, "VIX")]
+
+
+def test_a_value_that_is_not_ready_is_skipped_not_charted(tmp_path: Path) -> None:
+    strategy, lines = _charting(tmp_path, adx=None, rsi=None, vix=None)
+    strategy._chart_indicators(_session())
+    assert lines == []
+
+
+def test_nothing_is_charted_outside_backtesting(tmp_path: Path) -> None:
+    strategy, lines = _charting(tmp_path, adx=22.0, rsi=61.5, vix=17.2)
+    strategy.trading_mode = TradingMode.PAPER
+    strategy._chart_indicators(_session())
+    assert lines == []

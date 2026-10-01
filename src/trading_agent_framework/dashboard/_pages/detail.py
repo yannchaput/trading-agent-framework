@@ -21,6 +21,7 @@ from trading_agent_framework.dashboard.components.metric_cards import render_hea
 from trading_agent_framework.dashboard.reader import (
     load_agent_calls,
     load_cumulative_returns,
+    load_indicator_lines,
     load_intraday_exposure,
     load_parameters,
     load_portfolio_breakdown,
@@ -193,7 +194,7 @@ def page_detail():
         budget = s.budget if s else 10000.0
         trades_data = load_trades_curve(ref, budget)
         if trades_data and trades_data.get("trades"):
-            st.plotly_chart(trades_chart(trades_data), width="stretch")
+            st.plotly_chart(trades_chart(trades_data, indicators=load_indicator_lines(ref)), width="stretch")
             n_buys = sum(1 for t in trades_data["trades"] if t["side"] == "buy")
             n_sells = sum(1 for t in trades_data["trades"] if t["side"] == "sell")
             st.caption(f"{len(trades_data['trades'])} trades — {n_buys} buys, {n_sells} sells")

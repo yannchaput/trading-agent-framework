@@ -471,6 +471,47 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
     path = os.path.join(ref.path, "trades.parquet")
     if not os.path.isfile(path):
         return None
+_LINE_DASH = {"solid": "solid", "dashed": "dash", "dotted": "dot"}
+_LINE_COLORS = ["#f59e0b", "#a78bfa", "#22d3ee", "#f472b6", "#22c55e", "#60a5fa"]
+_DEFAULT_PANE = "default_plot"
+
+
+def load_indicator_lines(ref: RunRef) -> dict[str, list[dict[str, Any]]] | None:
+    """Load the lines a strategy charted with ``add_line`` from ``indicators.parquet``.
+
+    Returns ``{plot_name: [series]}``, a series being ``{name, color, dash, times, values}`` (time-sorted; a line
+    without a colour gets one from a fixed palette). The default pane is named "Indicators". None when the file is
+    missing, unreadable or empty.
+    """
+    path = os.path.join(ref.path, "indicators.parquet")
+    if not os.path.isfile(path):
+        return None
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return None
+    if df.empty or not {"datetime", "name", "value", "color", "style", "plot_name"} <= set(df.columns):
+        return None
+    df = df.dropna(subset=["value"]).copy()
+    df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
+    df = df.sort_values("datetime", kind="stable")
+    panes: dict[str, list[dict[str, Any]]] = {}
+    for (pane, name), group in df.groupby(["plot_name", "name"], sort=False):
+        series = panes.setdefault("Indicators" if pane == _DEFAULT_PANE else str(pane), [])
+        color = group["color"].dropna().iloc[0] if group["color"].notna().any() else None
+        style = str(group["style"].iloc[0])
+        series.append(
+            {
+                "name": str(name),
+                "color": color or _LINE_COLORS[len(series) % len(_LINE_COLORS)],
+                "dash": _LINE_DASH.get(style, "solid"),
+                "times": list(group["datetime"]),
+                "values": [float(v) for v in group["value"]],
+            }
+        )
+    return panes or None
+
+
     try:
         df = pd.read_parquet(path)
     except Exception:
