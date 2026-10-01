@@ -101,11 +101,12 @@ Each field tries its tags in order and uses the first one present for a given pe
 | capex | `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsToAcquireProductiveAssets` |
 | debt | `LongTermDebt`; else `LongTermDebtNoncurrent` + `LongTermDebtCurrent` (the current part counts as 0 when absent); else `DebtLongtermAndShorttermCombinedAmount` |
 | cash | existing `BALANCE_SHEET_TAGS["cash"]` |
-| shares | `dei:EntityCommonStockSharesOutstanding`; else `us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding` |
+| shares | `dei:EntityCommonStockSharesOutstanding` and `us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding`, both kept |
 
-`shares` reads the `dei` namespace first; the existing code reads only `us-gaap`. The fallback matters for
-multi-class companies, whose per-class cover-page counts are dimensioned facts that the company-facts API
-omits.
+`shares` is the one field that keeps every tag's rows instead of the first tag per period: the two counts
+have different dates, and a multi-class company's per-class cover-page counts are dimensioned facts that the
+company-facts API omits, so its only usable count is the weighted average. The cover-page count lives in the
+`dei` namespace; the existing code reads only `us-gaap`.
 
 ### 2.3 Fiscal years
 
@@ -136,12 +137,16 @@ leaves a few MB on disk. Later runs read the reduced files once per process and 
 
 ### 3.1 As-of selection
 
-For `as_of`, the screen uses, per field and period end, the latest version with `filed <= as_of`. The
-**window** is the 5 most recent fiscal years that have a revenue row filed on or before `as_of`. Balance
-figures are those whose `end` equals the latest fiscal year's end.
+A row is **known** on `as_of` when its `filed` date is strictly before `as_of`'s date. SEC gives a filing
+date without a time, and annual reports are often filed after the close, so a row filed today is treated as
+known from tomorrow. (The existing agent tools use `filed <= as_of`; the screen is stricter on purpose.)
 
-The **share count** is the entry with the latest `end` among those with `filed <= as_of`; `counted_on` is its
-`end` date.
+The screen uses, per field and period end, the latest known version. The **window** is the 5 most recent
+fiscal years that have a known revenue row. Balance figures are those whose `end` equals the latest fiscal
+year's end.
+
+The **share count** is the known entry with the latest `end`, the cover-page count winning a tie;
+`counted_on` is its `end` date.
 
 ### 3.2 Gates
 
@@ -149,16 +154,17 @@ Gates run in this order. The first one that fails is the recorded reason.
 
 | # | Reason | Rule | Parameter (default) |
 |---|---|---|---|
-| 1 | `no_data` | Status `absent`, or no flows at all as of the date. | |
+| 1 | `no_data` | No CIK, status `absent`, or no known flows as of the date. | |
 | 2 | `stale_filing` | Latest fiscal year ended more than N months before `as_of`. | `max_filing_age_months` (18) |
-| 3 | `insufficient_history` | Fewer than N consecutive fiscal years with revenue, operating income, operating cash flow and capex. Consecutive means each year's end is 350 to 380 days after the previous one. | `years` (5) |
+| 3 | `insufficient_history` | Fewer than N consecutive fiscal years with revenue (above zero), operating income, operating cash flow and capex. Consecutive means each year's end is 350 to 380 days after the previous one. | `years` (5) |
 | 4 | `operating_loss` | Operating income <= 0 in any year of the window. | |
 | 5 | `negative_fcf` | Free cash flow (operating cash flow minus capex) <= 0 in any year. | |
 | 6 | `shrinking_revenue` | Fewer than N of the yearly revenue changes are increases, or the latest year's revenue is below the first year's. | `min_growth_years` (3 of 4) |
 | 7 | `too_much_debt` | Net debt (debt minus cash) above a multiple of the latest year's operating income. Net debt <= 0 passes. | `max_net_debt_to_operating_income` (4.0) |
 | 8 | `excluded_sector` | SIC code inside an excluded range. A missing SIC code passes. | `excluded_sic_ranges` ((4900, 4999), (6000, 6799)) |
-| 9 | `no_price` | `price_of(symbol)` returns `None`, or there is no share count. | |
-| 10 | `no_split_data` | The split lookup failed (§4). | |
+| 9 | `duplicate_listing` | Another symbol of the same company (same CIK) is already accepted. The first one in input order that passes every gate wins. | |
+| 10 | `no_price` | `price_of(symbol)` returns `None` or a price <= 0, or raises a framework error, or there is no share count. | |
+| 11 | `no_split_data` | The split lookup failed (§4). | |
 
 Notes:
 
@@ -167,7 +173,9 @@ Notes:
 - **Sector.** The SIC code comes from SEC's submissions payload. It costs one request per company, so the gate
   runs after the numeric gates, only on their survivors, and the code is saved in the reduced file. The ranges
   exclude utilities (4900–4999) and finance, insurance and real estate (6000–6799).
-- **Price-dependent gates last.** Gates 1 to 8 need no price, so `price_of` is called only for their survivors.
+- **Duplicate listings.** The universe holds both GOOGL and GOOG; without this gate one company could take
+  two of the candidate slots.
+- **Price-dependent gates last.** Gates 1 to 9 need no price, so `price_of` is called only for their survivors.
 
 ### 3.3 Metrics and score
 
@@ -247,7 +255,7 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
   and leaks no information.
 - `SplitHistory.splits(symbol)` returns `[(date, ratio), ...]` from yfinance (`Ticker.splits`), imported
   lazily. Results are cached in `cache/splits.json` with a `fetched_at` per symbol and the freshness rule of
-  §2.4. It is called only for symbols that reach gate 10.
+  §2.4. It is called only for symbols that reach gate 11.
 - An empty history is a valid answer. A failed lookup rejects the symbol as `no_split_data`: a silently wrong
   valuation is the failure this module exists to prevent.
 - `yfinance` moves from the `backtesting-yahoo` extra to the core dependencies (the extra keeps its entry).
@@ -255,8 +263,9 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
 ## 5. Errors
 
 - **Per-symbol problems are rejections, never exceptions.**
-- **Real absences are cached.** No CIK for the ticker, or HTTP 404 on company facts: the reduced file is
-  written with `status: "absent"` and the symbol is not requested again until the file is stale.
+- **Real absences are cached.** HTTP 404 on company facts: the reduced file is written with
+  `status: "absent"` and the symbol is not requested again until the file is stale. A ticker with no CIK
+  needs no file: the ticker map is already cached by the client, so the lookup costs no request.
 - **Transport errors are not cached.** A network failure or SEC's throttle page (HTML with a 2xx status)
   leaves no file, so the next run retries. The symbol is rejected as `no_data` for this run.
 - **A hollow screen raises.** If more than `max_fetch_failure_ratio` (20%) of the symbols passed to `run`
@@ -291,7 +300,7 @@ The automated suite stays off the network and uses hand-written fixtures, not mo
   `absent`; a transport error is not cached; a stale file survives a failed refetch; a corrupt file is
   refetched; the SIC code is fetched once and saved.
 - **`tests/fundamentals/test_screen.py`**: `QualityScreen.run` with a fake store and fake split history:
-  `price_of` is called only for survivors of gates 1 to 8; the hollow-screen error at the threshold; the
+  `price_of` is called only for survivors of gates 1 to 9; a duplicate listing; the hollow-screen error at the threshold; the
   summary log line.
 - **`scripts/tests/smoke_quality_screen.py`** (manual, real SEC and yfinance): runs the screen on about 20
   symbols and prints the candidates and the rejections.
