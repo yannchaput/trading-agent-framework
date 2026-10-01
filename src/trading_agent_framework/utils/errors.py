@@ -55,3 +55,7 @@ class MacroDataError(TradingFrameworkError):
 
 class FundamentalsError(TradingFrameworkError):
     """Raised when a SEC EDGAR fundamentals lookup fails."""
+
+
+class FundamentalsNotFoundError(FundamentalsError):
+    """Raised when SEC has nothing for the request (unknown ticker, HTTP 404): a real absence, not a failed lookup."""

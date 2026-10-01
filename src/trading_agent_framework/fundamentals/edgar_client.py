@@ -16,12 +16,20 @@ from typing import Any
 import httpx
 
 from trading_agent_framework.fundamentals import sec
-from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError
+from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError, FundamentalsNotFoundError
 
 SEC_DATA_BASE_URL = "https://data.sec.gov"
 SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 
 _SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.=-]+")
+
+
+def _company_facts_url(cik: str) -> str:
+    return f"{SEC_DATA_BASE_URL}/api/xbrl/companyfacts/CIK{cik}.json"
+
+
+def _submissions_url(cik: str) -> str:
+    return f"{SEC_DATA_BASE_URL}/submissions/CIK{cik}.json"
 
 
 class SecEdgarClient:
@@ -67,6 +75,22 @@ class SecEdgarClient:
             time.sleep(self.min_request_interval_seconds - elapsed)
         self._last_request_at = time.monotonic()
 
+    def fetch_json(self, url: str) -> dict[str, Any]:
+        """One uncached request. HTTP 404 raises `FundamentalsNotFoundError`, any other failure `FundamentalsError`."""
+        self._rate_limit()
+        try:
+            response = self._client.get(url, headers=self._headers())
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                raise FundamentalsNotFoundError(f"Not found: {url}") from exc
+            raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError also covers json.JSONDecodeError: SEC's fair-access throttling
+            # sometimes serves an HTML block page with a 2xx status instead of JSON.
+            raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
+
     def get_json(self, url: str, cache_key: tuple[str, ...]) -> dict[str, Any]:
         cache_path = self._cache_path(*cache_key)
         if cache_path.exists():
@@ -77,15 +101,7 @@ class SecEdgarClient:
                 # treated as a cache miss so it self-heals on the next fetch, rather than
                 # permanently wedging the tool until someone deletes the file by hand.
                 pass
-        self._rate_limit()
-        try:
-            response = self._client.get(url, headers=self._headers())
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            # ValueError also covers json.JSONDecodeError: SEC's fair-access throttling
-            # sometimes serves an HTML block page with a 2xx status instead of JSON.
-            raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
+        payload = self.fetch_json(url)
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(payload), encoding="utf-8")
         return payload
@@ -110,15 +126,21 @@ class SecEdgarClient:
         try:
             return sec.parse_company_tickers(payload, symbol)
         except ValueError as exc:
-            raise FundamentalsError(str(exc)) from exc
+            raise FundamentalsNotFoundError(str(exc)) from exc
 
     def get_company_facts_payload(self, cik: str) -> dict[str, Any]:
-        url = f"{SEC_DATA_BASE_URL}/api/xbrl/companyfacts/CIK{cik}.json"
-        return self.get_json(url, ("companyfacts", f"CIK{cik}.json"))
+        return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"))
+
+    def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
+        """Uncached: the payload is about 4 MB, and the quality screen keeps only a reduced copy."""
+        return self.fetch_json(_company_facts_url(cik))
 
     def get_submissions_payload(self, cik: str) -> dict[str, Any]:
-        url = f"{SEC_DATA_BASE_URL}/submissions/CIK{cik}.json"
-        return self.get_json(url, ("submissions", f"CIK{cik}.json"))
+        return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"))
+
+    def fetch_submissions_payload(self, cik: str) -> dict[str, Any]:
+        """Uncached, for a caller that needs one field of it."""
+        return self.fetch_json(_submissions_url(cik))
 
     def get_filing_text(self, cik: str, accession_number: str, primary_document: str) -> str:
         url = sec.filing_url(cik, accession_number, primary_document)

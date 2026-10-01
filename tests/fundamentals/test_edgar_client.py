@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError
+from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError, FundamentalsNotFoundError
 
 _TICKERS = {"0": {"cik_str": 320193, "ticker": "AAPL"}}
 
@@ -162,3 +162,74 @@ def test_get_submissions_payload_hits_the_submissions_endpoint(tmp_path: Path) -
     client.get_submissions_payload("0000320193")
 
     assert seen_urls == ["https://data.sec.gov/submissions/CIK0000320193.json"]
+
+
+def test_fetch_json_makes_a_request_every_time_and_writes_nothing(tmp_path: Path) -> None:
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    client = _client(tmp_path, handler)
+
+    assert client.fetch_json("https://data.sec.gov/x.json") == {"ok": True}
+    assert client.fetch_json("https://data.sec.gov/x.json") == {"ok": True}
+    assert len(calls) == 2
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_fetch_json_raises_not_found_on_a_404(tmp_path: Path) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(404))
+
+    with pytest.raises(FundamentalsNotFoundError):
+        client.fetch_json("https://data.sec.gov/missing.json")
+
+
+def test_fetch_json_raises_a_plain_fundamentals_error_on_a_server_error(tmp_path: Path) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(500))
+
+    with pytest.raises(FundamentalsError) as raised:
+        client.fetch_json("https://data.sec.gov/x.json")
+    assert not isinstance(raised.value, FundamentalsNotFoundError)
+
+
+def test_fetch_json_raises_a_plain_fundamentals_error_on_a_throttle_page(tmp_path: Path) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(200, text="<html>Request Rate Threshold Exceeded</html>"))
+
+    with pytest.raises(FundamentalsError) as raised:
+        client.fetch_json("https://data.sec.gov/x.json")
+    assert not isinstance(raised.value, FundamentalsNotFoundError)
+
+
+def test_get_json_also_raises_not_found_on_a_404(tmp_path: Path) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(404))
+
+    with pytest.raises(FundamentalsNotFoundError):
+        client.get_json("https://data.sec.gov/missing.json", ("missing.json",))
+
+
+def test_ticker_to_cik_raises_not_found_for_an_unknown_symbol(tmp_path: Path) -> None:
+    client = _client(tmp_path, lambda request: httpx.Response(200, json=_TICKERS))
+
+    with pytest.raises(FundamentalsNotFoundError, match="ZZZZ"):
+        client.ticker_to_cik("ZZZZ")
+
+
+def test_fetch_payload_methods_hit_the_sec_endpoints_without_caching(tmp_path: Path) -> None:
+    seen_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json={})
+
+    client = _client(tmp_path, handler)
+
+    client.fetch_company_facts_payload("0000320193")
+    client.fetch_submissions_payload("0000320193")
+
+    assert seen_urls == [
+        "https://data.sec.gov/api/xbrl/companyfacts/CIK0000320193.json",
+        "https://data.sec.gov/submissions/CIK0000320193.json",
+    ]
+    assert list(tmp_path.iterdir()) == []
