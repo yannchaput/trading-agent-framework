@@ -159,6 +159,8 @@ class Scanner:
         # Setups already past WATCH stay tracked whatever their rank today (see `rank_stage2`).
         sticky = {symbol for symbol, setup in state.setups.items() if setup.state is not SetupState.WATCH}
         ranked = rank_stage2(snapshots, self._params, sticky)
+        # Kept for the desk: entries are tried best score first when triggers outnumber free slots.
+        state.scores = {candidate.symbol: candidate.composite for candidate in ranked if candidate.composite is not None}
         tracked = {candidate.symbol for candidate in ranked}
         # A WATCH setup that fell out of the ranking has nothing worth keeping: drop it (it restarts if it ranks again).
         for symbol in [s for s, setup in state.setups.items() if s not in tracked and setup.state is SetupState.WATCH]:

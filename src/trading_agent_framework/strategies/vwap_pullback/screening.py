@@ -49,7 +49,9 @@ class RankedCandidate:
     """A symbol tracked this tick, in composite-score order."""
 
     symbol: str
-    composite: float  # mean of z(ret), z(rs), z(rvol) across the symbols passing the floor: the tracking order
+    # Mean of z(ret), z(rs), z(rvol) across the symbols passing the floor: the tracking order, and the order
+    # entries are tried in. None for a sticky symbol outside the floor (it has no score this tick).
+    composite: float | None
 
 
 def daily_profile(symbol: str, daily: pd.DataFrame, bench_daily: pd.DataFrame | None, params: VwapPullbackParameters) -> DailyProfile | None:
@@ -116,8 +118,8 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     """The top `tracked_size` symbols passing the floor by composite z-score, then every `sticky` symbol not already in (by name).
 
     Floor: RVOL at least `rvol_min`, RS above 0, last close above VWAP. A symbol with no RVOL baseline
-    cannot pass it. A sticky symbol (a setup already past WATCH) stays tracked whatever its rank; it gets
-    a composite of 0.0 when it is not among the symbols passing the floor.
+    cannot pass it. A sticky symbol (a setup already past WATCH) stays tracked whatever its rank; it keeps
+    its composite when it passes the floor and gets `None` when it does not.
     """
     # Hard floor: unusual volume, outperforming the market, and holding above VWAP.
     passing = [s for s in snapshots if s.rvol is not None and s.rvol >= params.rvol_min and s.rs > 0 and s.last_close > s.vwap]
@@ -133,5 +135,5 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     # tracked even if its ranking fades, otherwise its pullback (the whole point) would never be seen.
     kept = {c.symbol for c in ranked}
     by_symbol = {c.symbol: c for c in candidates}
-    extras = [by_symbol.get(symbol, RankedCandidate(symbol=symbol, composite=0.0)) for symbol in sorted(set(sticky) - kept)]
+    extras = [by_symbol.get(symbol, RankedCandidate(symbol=symbol, composite=None)) for symbol in sorted(set(sticky) - kept)]
     return ranked + extras

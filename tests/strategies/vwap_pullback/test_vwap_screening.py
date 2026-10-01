@@ -77,7 +77,15 @@ def test_rank_stage2_applies_the_floor_and_keeps_the_top_n() -> None:
 def test_rank_stage2_keeps_sticky_symbols_even_when_they_fail_the_floor() -> None:
     ranked = rank_stage2([_snapshot("A"), _snapshot("HELD", rs=-0.01)], PARAMS, sticky={"HELD", "GONE"})
     assert [c.symbol for c in ranked] == ["A", "GONE", "HELD"]
-    assert ranked[2].composite == 0.0
+    assert ranked[0].composite == 0.0  # the only symbol passing the floor: no spread to rank on
+    assert ranked[1].composite is None and ranked[2].composite is None  # outside the floor: no score, not a mid-pack 0.0
+
+
+def test_rank_stage2_gives_a_sticky_symbol_inside_the_floor_its_real_score() -> None:
+    snapshots = [_snapshot("A", ret=0.05, rs=0.04, rvol=4.0), _snapshot("B", ret=0.01, rs=0.005, rvol=1.6)]
+    ranked = rank_stage2(snapshots, dataclasses.replace(PARAMS, tracked_size=1), sticky={"B"})
+    assert [c.symbol for c in ranked] == ["A", "B"]
+    assert ranked[1].composite == pytest.approx(-1.0)  # below A on all three measures
 
 
 def test_rank_stage2_excludes_missing_rvol() -> None:

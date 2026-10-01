@@ -79,6 +79,21 @@ def test_scan_builds_contexts_and_advances_setups(tmp_path: Path) -> None:
     assert broker.news.calls == []  # headlines are only fetched for pullback/triggered setups and open trades
 
 
+def test_scan_stores_this_ticks_stage2_scores(tmp_path: Path) -> None:
+    strategy, broker = _strategy(tmp_path, et(2026, 9, 2, 9, 50, 30))
+    rising = [(100 + 0.06 * i, 100 + 0.06 * (i + 1) + 0.01, 100 + 0.06 * i - 0.01, 100 + 0.06 * (i + 1), 300.0) for i in range(20)]
+    broker.timestep_frames = {
+        ("AAA", "minute"): minute_ohlc(et(2026, 9, 2, 9, 30), rising),
+        ("SPY", "minute"): minute_ohlc(et(2026, 9, 2, 9, 30), [(400, 400, 400, 400, 1000)] * 20),
+    }
+    broker.news = FakeNewsProvider()
+    state = _state(AAA=CandidateInfo(symbol="AAA", daily_atr=1.0, beta=1.0))
+    state.baselines["AAA"] = pd.Series([100.0 * (m + 1) for m in range(390)])
+    state.scores = {"OLD": 1.0}  # left from the previous tick
+    Scanner(strategy, PARAMS, ["AAA"]).scan(state)
+    assert state.scores == {"AAA": 0.0}  # rebuilt: one symbol passes the floor, so its composite is 0.0
+
+
 def test_refresh_headlines_fetches_active_setups_and_flags_new_ones(tmp_path: Path) -> None:
     strategy, broker = _strategy(tmp_path, et(2026, 9, 2, 10, 0))
     broker.news = FakeNewsProvider({"AAA": [{"headline": "AAA beats", "created_at": "2026-09-02T07:00:00-04:00", "source": "b"}]})

@@ -40,6 +40,7 @@ class SessionState:
     baselines: dict[str, pd.Series] = field(default_factory=dict)  # per-minute cumulative-volume baselines (RVOL)
     setups: dict[str, Setup] = field(default_factory=dict)  # tracked setups, advanced every tick
     contexts: dict[str, list[BarContext]] = field(default_factory=dict)  # today's completed 5-minute bars per candidate
+    scores: dict[str, float] = field(default_factory=dict)  # this tick's stage-2 composite per tracked symbol passing the floor (rebuilt by every scan)
     book: TradeBook = field(default_factory=TradeBook)  # this session's trades (pending, open, closed)
     headlines: dict[str, list[dict[str, str]]] = field(default_factory=dict)  # lean headlines per symbol
     headlines_fetched_at: dict[str, datetime] = field(default_factory=dict)  # throttles news fetches per symbol
