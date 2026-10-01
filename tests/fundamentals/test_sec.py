@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -335,3 +335,78 @@ def test_parse_sic_reads_the_code_as_an_integer() -> None:
 @pytest.mark.parametrize("payload", [{}, {"sic": ""}, {"sic": None}, {"sic": "n/a"}])
 def test_parse_sic_of_a_missing_or_malformed_code_is_none(payload: dict[str, object]) -> None:
     assert sec.parse_sic(payload) is None
+
+
+def test_annual_figures_keeps_versions_filed_under_a_different_tag() -> None:
+    # The company switched revenue tags: the 2025 filing restates FY2023 under the new tag.
+    payload = _company(
+        {
+            "Revenues": _usd(_annual(100, 2023, "2024-02-15")),
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(102, 2023, "2025-02-15")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["end"], row["filed"], row["value"]) for row in revenue] == [
+        ("2023-12-31", "2024-02-15", 100),
+        ("2023-12-31", "2025-02-15", 102),
+    ]
+
+
+def test_annual_figures_never_mixes_two_tags_within_one_filing() -> None:
+    payload = _company(
+        {
+            "Revenues": _usd(_annual(90, 2025, "2026-02-15")),
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    # RevenueFromContractWithCustomerExcludingAssessedTax comes before Revenues in the priority order.
+    assert [(row["end"], row["filed"], row["value"]) for row in revenue] == [("2025-12-31", "2026-02-15", 120)]
+
+
+def test_annual_figures_keeps_debt_versions_filed_under_a_different_tag() -> None:
+    payload = _company(
+        {
+            "LongTermDebtNoncurrent": _usd(_instant(70, "2024-12-31", "2025-02-15")),
+            "LongTermDebt": _usd(_instant(75, "2024-12-31", "2026-02-15")),
+        }
+    )
+
+    debt = _rows(sec.annual_figures(payload), "balances", "debt")
+
+    assert [(row["end"], row["filed"], row["value"]) for row in debt] == [
+        ("2024-12-31", "2025-02-15", 70),
+        ("2024-12-31", "2026-02-15", 75),
+    ]
+
+
+def test_annual_figures_prefers_total_debt_within_one_filing() -> None:
+    payload = _company(
+        {
+            "LongTermDebt": _usd(_instant(90, "2025-12-31", "2026-02-15")),
+            "LongTermDebtNoncurrent": _usd(_instant(70, "2025-12-31", "2026-02-15")),
+            "LongTermDebtCurrent": _usd(_instant(12, "2025-12-31", "2026-02-15")),
+        }
+    )
+
+    debt = _rows(sec.annual_figures(payload), "balances", "debt")
+
+    assert [(row["end"], row["filed"], row["value"]) for row in debt] == [("2025-12-31", "2026-02-15", 90)]
+
+
+@pytest.mark.parametrize(
+    ("days", "kept"),
+    [(349, False), (350, True), (364, True), (365, True), (366, True), (371, True), (380, True), (381, False)],
+)
+def test_annual_figures_fiscal_year_length_boundaries(days: int, kept: bool) -> None:
+    end = date(2025, 12, 31)
+    start = end - timedelta(days=days)
+    row = {"val": 100, "start": start.isoformat(), "end": end.isoformat(), "filed": "2026-02-15", "form": "10-K"}
+
+    revenue = _rows(sec.annual_figures(_company({"Revenues": _usd(row)})), "flows", "revenue")
+
+    assert bool(revenue) is kept

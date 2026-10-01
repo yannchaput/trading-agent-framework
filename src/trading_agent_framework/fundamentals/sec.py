@@ -309,18 +309,20 @@ def _slim(row: dict[str, Any], *, with_start: bool = False) -> dict[str, Any]:
 
 
 def _first_source_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
-    """Every filed version from the first source covering each period end, sorted by (end, filed).
+    """Every filed version of each period, sorted by (end, filed); within one filing the first source wins.
 
-    A later source only fills period ends that no earlier source has, so two tags reporting the same
-    year never mix. Within the winning source every version is kept: a later 10-K restates earlier years,
-    and the as-of selection needs each version's own `filed` date.
+    A later source only fills (period end, filing date) pairs that no earlier source has, so two tags
+    reporting the same year in the same filing never mix. Across filings every version is kept whichever
+    tag it came from: a later 10-K restates earlier years (possibly under another tag), and the as-of
+    selection needs each version's own `filed` date.
     """
-    owner: dict[str, int] = {}
+    owner: dict[tuple[str, str], int] = {}
     kept: dict[tuple[str, str], dict[str, Any]] = {}
     for index, rows in enumerate(sources):
         for row in rows:
-            if owner.setdefault(row["end"], index) == index:
-                kept[(row["end"], row["filed"])] = row
+            key = (row["end"], row["filed"])
+            if owner.setdefault(key, index) == index:
+                kept[key] = row
     return sorted(kept.values(), key=lambda row: (row["end"], row["filed"]))
 
 
