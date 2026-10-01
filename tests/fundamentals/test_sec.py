@@ -273,6 +273,88 @@ def test_annual_figures_falls_back_to_the_combined_debt_tag() -> None:
     assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [55]
 
 
+def test_annual_figures_reads_the_lease_inclusive_total_debt_tag() -> None:
+    # KO, MDLZ: the total tag; the noncurrent + current pair of the same filing is ignored.
+    payload = _company(
+        {
+            "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities": _usd(_instant(18_517, "2025-12-31", "2026-02-04")),
+            "LongTermDebtAndCapitalLeaseObligations": _usd(_instant(17_222, "2025-12-31", "2026-02-04")),
+            "LongTermDebtAndCapitalLeaseObligationsCurrent": _usd(_instant(1_295, "2025-12-31", "2026-02-04")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [18_517]
+
+
+def test_annual_figures_sums_the_lease_inclusive_noncurrent_and_current_pair() -> None:
+    # HLT: only the pair exists.
+    payload = _company(
+        {
+            "LongTermDebtAndCapitalLeaseObligations": _usd(_instant(12_338, "2025-12-31", "2026-02-11")),
+            "LongTermDebtAndCapitalLeaseObligationsCurrent": _usd(_instant(25, "2025-12-31", "2026-02-11")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [12_363]
+
+
+def test_annual_figures_counts_a_missing_current_part_of_the_lease_inclusive_pair_as_zero() -> None:
+    payload = _company({"LongTermDebtAndCapitalLeaseObligations": _usd(_instant(12_338, "2024-12-31", "2025-02-11"))})
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [12_338]
+
+
+def test_annual_figures_prefers_the_plain_noncurrent_pair_over_the_lease_inclusive_pair() -> None:
+    # QSR carries both pairs; only one may count, never a mix of the two.
+    payload = _company(
+        {
+            "LongTermDebtNoncurrent": _usd(_instant(13_250, "2025-12-31", "2026-02-20")),
+            "LongTermDebtCurrent": _usd(_instant(32, "2025-12-31", "2026-02-20")),
+            "LongTermDebtAndCapitalLeaseObligations": _usd(_instant(13_300, "2025-12-31", "2026-02-20")),
+            "LongTermDebtAndCapitalLeaseObligationsCurrent": _usd(_instant(68, "2025-12-31", "2026-02-20")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [13_282]
+
+
+def test_annual_figures_uses_the_new_debt_tag_for_a_later_year_and_the_old_one_for_earlier_years() -> None:
+    # KO's pattern: an older 10-K under LongTermDebt, the latest under the lease-inclusive total.
+    payload = _company(
+        {
+            "LongTermDebt": _usd(_instant(30, "2022-12-31", "2023-02-20")),
+            "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities": _usd(_instant(44, "2025-12-31", "2026-02-20")),
+        }
+    )
+
+    assert [(row["end"], row["value"]) for row in _rows(sec.annual_figures(payload), "balances", "debt")] == [("2022-12-31", 30), ("2025-12-31", 44)]
+
+
+def test_annual_figures_reads_utility_revenue_tags() -> None:
+    # NEE: no `Revenues` since 2012; the whole-company tag wins over the contract-only subset.
+    payload = _company(
+        {
+            "RegulatedAndUnregulatedOperatingRevenue": _usd(_annual(27_412, 2025, "2026-02-13")),
+            "RevenueFromContractWithCustomerIncludingAssessedTax": _usd(_annual(25_800, 2025, "2026-02-13"), _annual(24_000, 2024, "2025-02-14")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["end"], row["value"]) for row in revenue] == [("2024-12-31", 24_000), ("2025-12-31", 27_412)]
+
+
+def test_annual_figures_prefers_the_agent_tools_revenue_tags_over_the_utility_ones() -> None:
+    payload = _company(
+        {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
+            "RevenueFromContractWithCustomerIncludingAssessedTax": _usd(_annual(125, 2025, "2026-02-15")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "flows", "revenue")] == [120]
+
+
 def test_annual_figures_reads_cash_from_annual_reports_only() -> None:
     payload = _company(
         {

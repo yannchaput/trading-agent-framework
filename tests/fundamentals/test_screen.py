@@ -297,3 +297,12 @@ def test_build_quality_screen_builds_a_screen_under_the_project_cache(tmp_path: 
     assert isinstance(screen, QualityScreen)
     assert screen.params.top_n == 3
     assert (tmp_path / "cache" / "sec").is_dir()
+
+
+def test_a_company_whose_latest_debt_figure_is_missing_is_rejected_as_debt_unknown() -> None:
+    store = FakeStore({"AAA": healthy_figures(), "BBB": healthy_figures(debt_by_year={2022: 50}, cash=10)})
+
+    result = _run(store, ["AAA", "BBB"])
+
+    assert result.rejections == {"BBB": "debt_unknown"}
+    assert _symbols(result) == ["AAA"]

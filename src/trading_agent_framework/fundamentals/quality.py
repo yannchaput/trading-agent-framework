@@ -112,6 +112,8 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
 
     balances = _latest_versions(_known(figures.get("balances", []), cutoff))
     debt_row, cash_row = balances.get(("debt", latest_end)), balances.get(("cash", latest_end))
+    if debt_row is None and any(("debt", end) in balances for end in window[:-1]):
+        return "debt_unknown"  # a changed or missing tag for the latest year must not read as zero debt
     net_debt = (debt_row["value"] if debt_row else 0) - (cash_row["value"] if cash_row else 0)
     if net_debt > params.max_net_debt_to_operating_income * operating_incomes[-1]:
         return "too_much_debt"

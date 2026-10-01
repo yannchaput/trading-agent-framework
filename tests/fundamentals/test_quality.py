@@ -126,6 +126,36 @@ def test_a_missing_debt_figure_counts_as_zero_and_is_flagged() -> None:
     assert survivor.net_debt_to_operating_income == pytest.approx(-10 / 28)
 
 
+def test_a_missing_debt_figure_in_every_year_is_still_flagged_not_rejected() -> None:
+    survivor = _survivor(healthy_figures(debt_by_year={}, cash=10))
+
+    assert survivor.debt_reported is False
+
+
+def test_debt_reported_in_the_latest_year_is_unchanged_by_earlier_years() -> None:
+    survivor = _survivor(healthy_figures(debt_by_year={2023: 10, 2025: 50}, cash=10))
+
+    assert survivor.debt_reported is True
+    assert survivor.net_debt_to_operating_income == pytest.approx(40 / 28)
+
+
+def test_no_debt_in_the_latest_year_but_some_in_an_earlier_one_is_unknown() -> None:
+    assert _assess(healthy_figures(debt_by_year={2022: 50, 2023: 50}, cash=10)) == "debt_unknown"
+
+
+def test_debt_unknown_is_checked_just_before_too_much_debt() -> None:
+    # latest-year debt present and huge: too_much_debt; absent with an earlier year present: debt_unknown
+    assert _assess(healthy_figures(debt_by_year={2025: 900}, cash=10)) == "too_much_debt"
+    assert _assess(healthy_figures(debt_by_year={2021: 900}, cash=10)) == "debt_unknown"
+
+
+def test_debt_filed_after_the_date_does_not_make_an_earlier_year_count() -> None:
+    figures = healthy_figures(debt_by_year={2022: 50}, cash=10)
+    figures["balances"][0]["filed"] = "2026-07-01"
+
+    assert _survivor(figures).debt_reported is False
+
+
 def test_missing_cash_counts_as_zero() -> None:
     survivor = _survivor(healthy_figures(debt=50, cash=None))
 

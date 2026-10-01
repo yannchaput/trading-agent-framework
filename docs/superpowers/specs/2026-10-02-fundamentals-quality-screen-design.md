@@ -95,11 +95,11 @@ Each field tries its tags in order and uses the first one present for a given pe
 
 | Field | Tags |
 |---|---|
-| revenue | existing `INCOME_STATEMENT_TAGS["revenue"]` |
+| revenue | existing `INCOME_STATEMENT_TAGS["revenue"]`, then `RegulatedAndUnregulatedOperatingRevenue` and `RevenueFromContractWithCustomerIncludingAssessedTax` (utilities such as NEE) |
 | operating_income | `OperatingIncomeLoss` |
 | operating_cash_flow | `NetCashProvidedByUsedInOperatingActivities`, `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` |
 | capex | `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsToAcquireProductiveAssets` |
-| debt | `LongTermDebt`; else `LongTermDebtNoncurrent` + `LongTermDebtCurrent` (the current part counts as 0 when absent); else `DebtLongtermAndShorttermCombinedAmount` |
+| debt | within one filing the first that exists: `LongTermDebt`; `LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities`; `LongTermDebtNoncurrent` + `LongTermDebtCurrent`; `LongTermDebtAndCapitalLeaseObligations` + `LongTermDebtAndCapitalLeaseObligationsCurrent` (the current part counts as 0 when absent); `DebtLongtermAndShorttermCombinedAmount`. Commercial paper and short-term borrowings are not added (known limitation: filers disagree on whether the long-term tags include them) |
 | cash | existing `BALANCE_SHEET_TAGS["cash"]` |
 | shares | `dei:EntityCommonStockSharesOutstanding` and `us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding`, both kept |
 
@@ -160,22 +160,25 @@ Gates run in this order. The first one that fails is the recorded reason.
 | 4 | `operating_loss` | Operating income <= 0 in any year of the window. | |
 | 5 | `negative_fcf` | Free cash flow (operating cash flow minus capex) <= 0 in any year. | |
 | 6 | `shrinking_revenue` | Fewer than N of the yearly revenue changes are increases, or the latest year's revenue is below the first year's. | `min_growth_years` (3 of 4) |
-| 7 | `too_much_debt` | Net debt (debt minus cash) above a multiple of the latest year's operating income. Net debt <= 0 passes. | `max_net_debt_to_operating_income` (4.0) |
-| 8 | `excluded_sector` | SIC code inside an excluded range. A missing SIC code passes. | `excluded_sic_ranges` ((4900, 4999), (6000, 6799)) |
-| 9 | `duplicate_listing` | Another symbol of the same company (same CIK) is already accepted. The first one in input order that passes every gate wins. | |
-| 10 | `no_price` | `price_of(symbol)` returns `None` or a price <= 0, or raises a framework error, or there is no share count. | |
-| 11 | `no_split_data` | The split lookup failed (§4). | |
+| 7 | `debt_unknown` | The latest fiscal year has no debt figure while an earlier year of the window has one. | |
+| 8 | `too_much_debt` | Net debt (debt minus cash) above a multiple of the latest year's operating income. Net debt <= 0 passes. | `max_net_debt_to_operating_income` (4.0) |
+| 9 | `excluded_sector` | SIC code inside an excluded range. A missing SIC code passes. | `excluded_sic_ranges` ((4900, 4999), (6000, 6799)) |
+| 10 | `duplicate_listing` | Another symbol of the same company (same CIK) is already accepted. The first one in input order that passes every gate wins. | |
+| 11 | `no_price` | `price_of(symbol)` returns `None` or a price <= 0, or raises a framework error, or there is no share count. | |
+| 12 | `no_split_data` | The split lookup failed (§4). | |
 
 Notes:
 
-- **Missing debt.** A company with no debt tag is treated as debt-free and its candidate carries
-  `debt_reported=False`. Missing cash counts as 0.
+- **Missing debt.** A company with no debt figure in any year of its window is treated as debt-free and its
+  candidate carries `debt_reported=False`. Missing cash counts as 0. A company whose latest year has no debt
+  figure while an earlier year does is rejected as `debt_unknown`: a changed or missing debt tag for the
+  latest year must not read as zero debt.
 - **Sector.** The SIC code comes from SEC's submissions payload. It costs one request per company, so the gate
   runs after the numeric gates, only on their survivors, and the code is saved in the reduced file. The ranges
   exclude utilities (4900–4999) and finance, insurance and real estate (6000–6799).
 - **Duplicate listings.** The universe holds both GOOGL and GOOG; without this gate one company could take
   two of the candidate slots.
-- **Price-dependent gates last.** Gates 1 to 9 need no price, so `price_of` is called only for their survivors.
+- **Price-dependent gates last.** Gates 1 to 10 need no price, so `price_of` is called only for their survivors.
 
 ### 3.3 Metrics and score
 
@@ -255,7 +258,7 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
   and leaks no information.
 - `SplitHistory.splits(symbol)` returns `[(date, ratio), ...]` from yfinance (`Ticker.splits`), imported
   lazily. Results are cached in `cache/splits.json` with a `fetched_at` per symbol and the freshness rule of
-  §2.4. It is called only for symbols that reach gate 11.
+  §2.4. It is called only for symbols that reach gate 12.
 - An empty history is a valid answer. A failed lookup rejects the symbol as `no_split_data`: a silently wrong
   valuation is the failure this module exists to prevent.
 - `yfinance` moves from the `backtesting-yahoo` extra to the core dependencies (the extra keeps its entry).
@@ -300,7 +303,7 @@ The automated suite stays off the network and uses hand-written fixtures, not mo
   `absent`; a transport error is not cached; a stale file survives a failed refetch; a corrupt file is
   refetched; the SIC code is fetched once and saved.
 - **`tests/fundamentals/test_screen.py`**: `QualityScreen.run` with a fake store and fake split history:
-  `price_of` is called only for survivors of gates 1 to 9; a duplicate listing; the hollow-screen error at the threshold; the
+  `price_of` is called only for survivors of gates 1 to 10; a duplicate listing; the hollow-screen error at the threshold; the
   summary log line.
 - **`scripts/tests/smoke_quality_screen.py`** (manual, real SEC and yfinance): runs the screen on about 20
   symbols and prints the candidates and the rejections.
