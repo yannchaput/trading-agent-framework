@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import dataclasses
 from decimal import Decimal as D
 
 from tests.fakes import et
 
-from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
-from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeBook, TradeStatus, exit_review_due, trade_flags
+from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeBook, TradeStatus
 
-PARAMS = VwapPullbackParameters()
 T0 = et(2026, 9, 1, 10, 0)
 
 
@@ -31,11 +28,10 @@ def test_a_trade_lifecycle_records_pnl_and_closes() -> None:
     assert row["symbol"] == "AAA" and row["realised_pnl"] == "0.00" and "catalyst" not in row and "reason" not in row
 
 
-def test_unrealised_pnl_and_r() -> None:
+def test_unrealised_pnl() -> None:
     trade = _trade()
     trade.record_entry_fill(D(100), D("100.00"))
     assert trade.unrealised_pnl(D("101.50")) == D("150.00")
-    assert trade.unrealised_r(D("101.50")) == 1.5
 
 
 def test_book_indexes_trades_by_every_order_id_and_sums_session_pnl() -> None:
@@ -55,17 +51,20 @@ def test_book_indexes_trades_by_every_order_id_and_sums_session_pnl() -> None:
     assert book.session_pnl({}) == D("100.00")
 
 
-def test_exit_review_is_due_on_a_new_flag_a_new_headline_or_elapsed_time() -> None:
+def test_to_json_has_exactly_the_trade_log_fields() -> None:
     trade = _trade()
     trade.record_entry_fill(D(100), D("100.00"))
-    flags = trade_flags(trade, last_close=D("101.10"), vwap=100.5, ema=100.8)
-    assert flags == frozenset({"reached_1r"})
-    assert exit_review_due(trade, flags, now=T0, has_new_headline=False, params=PARAMS)
-    trade.review_flags, trade.last_review_at = flags, T0
-    assert not exit_review_due(trade, flags, now=et(2026, 9, 1, 10, 5), has_new_headline=False, params=PARAMS)
-    assert exit_review_due(trade, flags, now=et(2026, 9, 1, 10, 5), has_new_headline=True, params=PARAMS)
-    assert exit_review_due(trade, flags, now=et(2026, 9, 1, 10, 15), has_new_headline=False, params=PARAMS)
-    below = trade_flags(trade, last_close=D("100.40"), vwap=100.5, ema=100.8)
-    assert below == frozenset({"below_vwap", "below_ema"})
-    tp1 = dataclasses.replace(trade, tp1_done=True)
-    assert trade_flags(tp1, last_close=D("101.10"), vwap=100.5, ema=100.8) == frozenset()
+    trade.exit_reason = "stop"
+    trade.record_exit_fill(D(100), D("99.00"), et(2026, 9, 1, 11, 0))
+    assert trade.to_json() == {
+        "symbol": "AAA",
+        "entered_at": T0.isoformat(),
+        "closed_at": et(2026, 9, 1, 11, 0).isoformat(),
+        "entry_price": "100.00",
+        "filled_quantity": "100",
+        "stop_price": "99.00",
+        "r_per_share": "1.00",
+        "realised_pnl": "-100.00",
+        "realised_r": -1.0,
+        "exit_reason": "stop",
+    }

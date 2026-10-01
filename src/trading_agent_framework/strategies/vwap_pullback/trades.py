@@ -1,4 +1,4 @@
-"""Pure trade records (spec §5): one `Trade` per entry, the session's `TradeBook`, and the exit-review triggers.
+"""Pure trade records: one `Trade` per entry and the session's `TradeBook`.
 
 Accounting model (the desk relies on it everywhere):
 - `Trade.quantity` is the number of shares held *as the desk knows it*. It only changes when a fill is
@@ -14,11 +14,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
-
-from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 
 _CENT = Decimal("0.01")
 
@@ -43,20 +41,15 @@ class Trade:
     quantity: Decimal = Decimal(0)  # shares held now (as booked; see the module docstring)
     filled_quantity: Decimal = Decimal(0)  # shares bought in total
     entry_price: Decimal | None = None  # average entry fill price
-    stop_level: Decimal = Decimal(0)  # the working stop's level (initial stop, raised, or the trail's start)
-    stop_kind: str | None = None  # "stop" | "trail"
-    trail_price: Decimal | None = None  # trailing distance in dollars, when stop_kind == "trail"
+    stop_level: Decimal = Decimal(0)  # the working stop's level (the initial stop: nothing moves it)
     stop_order_id: str | None = None  # the working protective stop (None while it is being replaced)
     exit_order_ids: list[str] = field(default_factory=list)  # exit sells not booked yet
-    tp1_done: bool = False  # the partial profit was taken (only once per trade)
-    last_review_at: datetime | None = None  # last exit-agent review of this trade
-    review_flags: frozenset[str] = frozenset()  # `trade_flags` as they were at that review
     exit_reason: str | None = None
     realised_pnl: Decimal = Decimal(0)
     closed_at: datetime | None = None
 
     def __post_init__(self) -> None:
-        # The working stop starts at the initial stop; `stop_level` then moves as the exit agent tightens it.
+        # The working stop starts at the initial stop.
         if not self.stop_level:
             self.stop_level = self.stop_price
 
@@ -87,12 +80,6 @@ class Trade:
             return Decimal(0)
         return ((last_price - self.entry_price) * self.quantity).quantize(_CENT)
 
-    def unrealised_r(self, last_price: Decimal) -> float:
-        """Open profit per share in R (1.0 = one initial risk gained); what the exit agent reasons in."""
-        if self.entry_price is None or self.r_per_share <= 0:
-            return 0.0
-        return round(float((last_price - self.entry_price) / self.r_per_share), 2)
-
     def to_json(self) -> dict[str, object]:
         """One line of `trades.jsonl` (written when the trade closes); Decimals as strings to stay exact."""
         risked = self.r_per_share * self.filled_quantity
@@ -106,8 +93,6 @@ class Trade:
             "r_per_share": str(self.r_per_share),
             "realised_pnl": str(self.realised_pnl),
             "realised_r": round(float(self.realised_pnl / risked), 2) if risked > 0 else None,
-            "tp1_done": self.tp1_done,
-            "stop_kind": self.stop_kind,
             "exit_reason": self.exit_reason,
         }
 
@@ -156,27 +141,3 @@ class TradeBook:
             if price is not None:
                 total += trade.unrealised_pnl(price)
         return total
-
-
-def trade_flags(trade: Trade, *, last_close: Decimal, vwap: float | None, ema: float | None) -> frozenset[str]:
-    """The exit-review events that currently hold for `trade`: +1R reached (before TP1), close below VWAP, close below the EMA."""
-    flags: set[str] = set()
-    if trade.entry_price is not None and not trade.tp1_done and last_close >= trade.entry_price + trade.r_per_share:
-        flags.add("reached_1r")
-    if vwap is not None and last_close < Decimal(str(vwap)):
-        flags.add("below_vwap")
-    if ema is not None and last_close < Decimal(str(ema)):
-        flags.add("below_ema")
-    return frozenset(flags)
-
-
-def exit_review_due(trade: Trade, flags: frozenset[str], *, now: datetime, has_new_headline: bool, params: VwapPullbackParameters) -> bool:
-    """Whether the exit agent should look at `trade` now: a flag that was not there at the last review, a new headline, or enough time."""
-    if trade.status is not TradeStatus.OPEN:
-        return False
-    # Only a NEW flag triggers a review: a trade sitting below VWAP is not re-reviewed every 5 minutes
-    # for the same reason (that would call the LLM on every tick while holding).
-    if flags - trade.review_flags or has_new_headline:
-        return True
-    since = trade.last_review_at or trade.entered_at
-    return now - since >= timedelta(minutes=params.exit_review_minutes)

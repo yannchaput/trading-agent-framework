@@ -56,7 +56,7 @@ class Setup:
     triggered_at: datetime | None = None
     retracement: float = 0.0  # of the impulse leg (session open -> impulse high), at the last close
     max_retracement: float = 0.0  # the deepest `retracement` since the impulse high: the pullback's depth (it shrinks again on the bounce)
-    largest_red_body_atr: float = 0.0  # biggest down-bar body of the pullback, in daily ATRs (a health flag)
+    largest_red_body_atr: float = 0.0  # biggest down-bar body of the pullback, in daily ATRs (a pullback-quality measure)
     last_close: float | None = None
     last_vwap: float | None = None
     last_rs: float | None = None

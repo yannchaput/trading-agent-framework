@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal as D
 from pathlib import Path
 
@@ -219,16 +219,6 @@ def test_close_unknown_positions_leaves_foreign_positions_alone(tmp_path: Path) 
     assert rig.state.unknown_positions_checked
 
 
-def test_exit_review_due(tmp_path: Path) -> None:
-    rig = Rig(tmp_path)
-    rig.open_trade()
-    assert rig.desk.exit_review_due(rig.clock.now()) == []  # 100 is above VWAP 99.9 and the EMA, below +1R
-    rig.clock.advance(timedelta(minutes=15).total_seconds())
-    assert rig.desk.exit_review_due(rig.clock.now()) == ["AAA"]
-    rig.desk.mark_reviewed(rig.clock.now())
-    assert rig.desk.exit_review_due(rig.clock.now()) == []
-
-
 def test_a_partially_filled_stop_that_is_cancelled_reduces_the_trade_and_is_replaced(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
     rig.open_trade()
@@ -369,10 +359,7 @@ def test_free_slots_counts_a_partly_filled_full_exit_as_freed(tmp_path: Path) ->
 
 def test_flatten_sells_the_other_shares_when_a_tp1_sell_is_working_and_the_stop_cancel_is_late(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    rig.open_trade()
-    trade = rig.state.book.get("AAA")
-    rig.desk.take_partial_profit("AAA", 0.5)
-    tp1 = rig.strategy.get_order(trade.exit_order_ids[-1])
+    trade, tp1 = _after_partial_sell(rig)
     stop = rig.strategy.get_order(trade.stop_order_id)
     assert tp1.is_active() and tp1.quantity == D(124) and stop.quantity == D(125)
     rig.strategy.trading_mode = TradingMode.PAPER
@@ -410,13 +397,15 @@ def test_a_partly_filled_exit_sell_that_ends_cancelled_books_its_fill_and_the_re
     assert trade.quantity == D(149)
 
 
-def _after_tp1(rig: Rig):
+def _after_partial_sell(rig: Rig):
+    """A working market sell of 124 shares beside a stop resized to the other 125, built with the desk's own helpers."""
     rig.open_trade()
     trade = rig.state.book.get("AAA")
-    rig.desk.take_partial_profit("AAA", 0.5)
-    tp1 = rig.strategy.get_order(trade.exit_order_ids[-1])
-    assert tp1.quantity == D(124) and rig.strategy.get_order(trade.stop_order_id).quantity == D(125)
-    return trade, tp1
+    assert rig.desk._release_stop(trade) is None
+    sell = rig.desk._market_sell(trade, D(124), "partial sell")
+    assert sell is not None and rig.desk._submit_stop(trade, D(125))
+    assert sell.quantity == D(124) and rig.strategy.get_order(trade.stop_order_id).quantity == D(125)
+    return trade, sell
 
 
 def _spy_sells(rig: Rig) -> list[D]:
@@ -442,7 +431,7 @@ def test_a_zero_fill_cancelled_flatten_sell_is_sold_again(tmp_path: Path) -> Non
 
 def test_a_zero_fill_cancelled_tp1_sell_resizes_the_stop_to_every_share(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     rig.broker.cancel_order(tp1)
     rig.desk.on_order_canceled(tp1)
     stop = rig.strategy.get_order(trade.stop_order_id)
@@ -451,7 +440,7 @@ def test_a_zero_fill_cancelled_tp1_sell_resizes_the_stop_to_every_share(tmp_path
 
 def test_a_partly_filled_cancelled_tp1_sell_books_the_fill_and_resizes_the_stop(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     tp1.filled_quantity = D(100)
     tp1.avg_fill_price = D("101")
     rig.broker.cancel_order(tp1)
@@ -462,7 +451,7 @@ def test_a_partly_filled_cancelled_tp1_sell_books_the_fill_and_resizes_the_stop(
 
 def test_flattened_never_sells_the_shares_an_unconfirmed_stop_still_covers(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     rig.state.flattened = True
     attempts = _spy_sells(rig)
     rig.broker.cancel_order(tp1)
@@ -472,7 +461,7 @@ def test_flattened_never_sells_the_shares_an_unconfirmed_stop_still_covers(tmp_p
 
 def test_reconcile_settles_an_exit_sell_that_ended_in_error(tmp_path: Path) -> None:
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     rig.broker.cancel_order(tp1)  # the simulated broker drops it from its pending sells ...
     tp1.set_error("rejected")  # ... and it ends in ERROR with no hook reaching the desk
     rig.desk.reconcile(rig.clock.now())
@@ -496,7 +485,7 @@ def test_reconcile_leaves_alone_an_active_stop_that_is_partly_filled(tmp_path: P
 def test_flattened_sells_only_what_a_partly_filled_unconfirmed_stop_does_not_cover(tmp_path: Path) -> None:
     # Round 4 R4-1: stop 125 with 50 filled (cancel unconfirmed) and a zero-fill cancelled TP1 of 124: 249 held, the stop covers 125.
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     rig.strategy.get_order(trade.stop_order_id).filled_quantity = D(50)
     rig.state.flattened = True
     attempts = _spy_sells(rig)
@@ -508,7 +497,7 @@ def test_flattened_sells_only_what_a_partly_filled_unconfirmed_stop_does_not_cov
 def test_a_filled_but_unbooked_tp1_sell_still_counts_as_not_free(tmp_path: Path) -> None:
     # Round 4 R4-2: the TP1 sell filled at the broker; its hook has not reached the desk yet.
     rig = Rig(tmp_path)
-    trade, tp1 = _after_tp1(rig)
+    trade, tp1 = _after_partial_sell(rig)
     stop = rig.strategy.get_order(trade.stop_order_id)
     rig.advance(60)
     assert tp1.is_filled() and stop.is_active() and trade.quantity == D(249)
@@ -525,8 +514,9 @@ def test_free_slots_counts_a_filled_but_unbooked_full_exit_as_freed(tmp_path: Pa
     rig = Rig(tmp_path)
     rig.open_trade()
     before = rig.desk.free_slots()
-    rig.desk.exit_position("AAA", "downgrade")
     trade = rig.state.book.get("AAA")
+    assert rig.desk._release_stop(trade) is None
+    assert rig.desk._market_sell(trade, D(249), "flatten") is not None
     sell = rig.strategy.get_order(trade.exit_order_ids[-1])
     rig.advance(60)
     assert sell.is_filled() and trade.status is TradeStatus.OPEN  # its fill hook has not reached the desk yet

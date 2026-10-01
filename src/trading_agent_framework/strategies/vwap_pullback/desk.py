@@ -1,4 +1,4 @@
-"""Every order the vwap_pullback strategy places: entries, protective stops, exit hand-offs, the flatten.
+"""Every order the vwap_pullback strategy places: entries, protective stops, the flatten.
 
 The only module of the package that submits, cancels or modifies orders. The strategy reaches it through
 `enter_triggered` every tick and through its order hooks (`on_order_filled`/`on_order_canceled`).
@@ -19,26 +19,24 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timedelta
-from decimal import ROUND_DOWN, ROUND_FLOOR, ROUND_HALF_UP, Decimal
+from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.vwap_pullback import risk
-from trading_agent_framework.strategies.vwap_pullback.features import Levels, latest_levels
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.setups import SetupState, back_to_pullback, mark_done, mark_in_trade
-from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus, exit_review_due, trade_flags
+from trading_agent_framework.strategies.vwap_pullback.trades import Trade, TradeStatus
 from trading_agent_framework.utils.errors import BacktestError, BrokerError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
     from trading_agent_framework.strategies.vwap_pullback.session import SessionState
 
-# Returned (as {"status": STOPPED_OUT}) when an exit action finds the stop already filled: the trade is out,
-# nothing else was done. The exit prompt tells the agent what it means.
+# `_release_stop`'s answer when the stop has already filled: the trade is out, nothing else to do.
 STOPPED_OUT = "already_stopped_out"
 # Market-data / account failures a desk read may hit: live BrokerError, backtest BacktestError.
 _DATA_ERRORS = (BrokerError, BacktestError)
@@ -47,8 +45,7 @@ _DATA_ERRORS = (BrokerError, BacktestError)
 class Desk:
     """The order desk of one strategy run. Reads the session from `strategy.vars.session` on every call.
 
-    Sections: views (read-only, used by tools, prompts and the graph), entries, order events (hooks),
-    order helpers, exits (the exit agent's actions), session boundaries (flatten, restart).
+    Sections: views (read-only), entries, order events (hooks), order helpers, session boundaries (flatten, restart).
     """
 
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, *, trade_log: Callable[[], Path | None] = lambda: None) -> None:
@@ -71,19 +68,10 @@ class Desk:
 
     # --- views ---------------------------------------------------------------------
 
-    def levels(self, symbol: str) -> Levels | None:
-        """Latest 5-minute close, VWAP, EMA and bar ATR of `symbol` from the last scan; None without bars."""
-        return latest_levels(self.state.contexts.get(symbol, []), ema_length=self._params.ema_length, atr_length=self._params.atr_length)
-
     def last_close(self, symbol: str) -> Decimal | None:
-        """Latest 5-minute close as Decimal (no I/O: from the last scan)."""
-        levels = self.levels(symbol)
-        return None if levels is None else Decimal(str(levels.close))
-
-    def minutes_to_flatten(self, now: datetime) -> int:
-        """Minutes until the flatten (session close - `minutes_before_closing`; early closes included)."""
-        flatten_at = self.state.session.close - timedelta(minutes=self._strategy.minutes_before_closing)
-        return max(0, int((flatten_at - now).total_seconds() // 60))
+        """Latest 5-minute close as Decimal (no I/O: from the last scan); None without bars."""
+        contexts = self.state.contexts.get(symbol)
+        return Decimal(str(contexts[-1].close)) if contexts else None
 
     def session_pnl(self) -> Decimal:
         """Realised + open P&L of today's trades, open trades marked at their last 5-minute close."""
@@ -99,29 +87,6 @@ class Desk:
         book = self.state.book
         holding = [t for t in book.open_trades() if not (self._free_quantity(t) <= 0 and self._exit_pending(t))]
         return risk.free_slots(len(holding), len(book.pending()), self._params)
-
-    def _flags(self, trade: Trade) -> frozenset[str] | None:
-        """The trade's exit-review flags at the latest bar; None before any bar (nothing to judge yet)."""
-        levels = self.levels(trade.symbol)
-        if levels is None:
-            return None
-        return trade_flags(trade, last_close=Decimal(str(levels.close)), vwap=levels.vwap, ema=levels.ema)
-
-    def exit_review_due(self, now: datetime) -> list[str]:
-        """Symbols of the open trades the exit agent should review this tick (new flag, new headline, or time)."""
-        due = []
-        for trade in self.state.book.open_trades():
-            flags = self._flags(trade)
-            if flags is not None and exit_review_due(trade, flags, now=now, has_new_headline=trade.symbol in self.state.new_headline, params=self._params):
-                due.append(trade.symbol)
-        return due
-
-    def mark_reviewed(self, now: datetime) -> None:
-        """After an exit-agent run: every open trade was reviewed now, with the flags that hold now."""
-        for trade in self.state.book.open_trades():
-            trade.last_review_at = now
-            trade.review_flags = self._flags(trade) or frozenset()
-            self.state.new_headline.discard(trade.symbol)
 
     # --- entries -------------------------------------------------------------------
 
@@ -224,7 +189,7 @@ class Desk:
             return True  # unknown: refuse rather than double up
 
     def _pending_sell_proceeds(self) -> Decimal:
-        """What working market/limit sells should bring in (stops and trails only sell if triggered)."""
+        """What working market/limit sells should bring in (a stop only sells if triggered)."""
         total = Decimal(0)
         for order in self._strategy.broker.tracker.get_active_orders():
             if order.side is OrderSide.SELL and order.order_type in (OrderType.MARKET, OrderType.LIMIT) and order.quantity is not None:
@@ -238,9 +203,9 @@ class Desk:
     def on_order_filled(self, order: Order, price: Decimal, quantity: Decimal) -> None:
         """FILLED hook (executor thread): book the fill on its trade.
 
-        Entry fill -> the trade opens and gets its protective stop. Exit fill (stop, trail, partial, exit,
-        flatten sell) -> shares booked out, the order's id dropped from the unbooked list, the trade archived
-        when nothing is left. A buy of ours with no trade at all is sold at once (`_sell_orphan_fill`).
+        Entry fill -> the trade opens and gets its protective stop. Exit fill (stop or flatten sell) -> shares
+        booked out, the order's id dropped from the unbooked list, the trade archived when nothing is left. A buy
+        of ours with no trade at all is sold at once (`_sell_orphan_fill`).
         """
         state = getattr(self._strategy.vars, "session", None)
         trade = state.book.by_order_id(order.identifier) if state is not None else None
@@ -259,7 +224,7 @@ class Desk:
             trade.exit_order_ids.remove(order.identifier)  # booked: its shares have left trade.quantity, so it no longer counts as pending
         if order.identifier == trade.stop_order_id:
             trade.stop_order_id = None
-            trade.exit_reason = trade.exit_reason or ("trailing stop" if trade.stop_kind == "trail" else "stop")
+            trade.exit_reason = trade.exit_reason or "stop"
         if trade.status is TradeStatus.CLOSED:
             self._archive(trade)
 
@@ -352,7 +317,7 @@ class Desk:
             return
         trade.record_exit_fill(order.filled_quantity, order.avg_fill_price or trade.stop_level, self._strategy.get_datetime())
         if trade.status is TradeStatus.CLOSED:
-            trade.exit_reason = trade.exit_reason or ("trailing stop" if trade.stop_kind == "trail" else "stop")
+            trade.exit_reason = trade.exit_reason or "stop"
             self._archive(trade)
 
     def _settle_entry(self, trade: Trade, order: Order) -> None:
@@ -409,13 +374,6 @@ class Desk:
 
     # --- order helpers ---------------------------------------------------------------
 
-    def _open_trade(self, symbol: str) -> Trade | dict[str, Any]:
-        """The OPEN trade in `symbol`, or the `{"error": ...}` an exit tool returns as is."""
-        trade = self.state.book.get(symbol.strip().upper())
-        if trade is None or trade.status is not TradeStatus.OPEN:
-            return {"error": f"no open trade in {symbol.strip().upper()}"}
-        return trade
-
     def _free_quantity(self, trade: Trade) -> Decimal:
         """Shares held that no working exit sell is already selling: what a new stop or exit sell may cover.
 
@@ -431,13 +389,10 @@ class Desk:
         return max(Decimal(0), trade.quantity - pending)
 
     def _submit_stop(self, trade: Trade, quantity: Decimal) -> bool:
-        """Place the trade's stop (plain or trailing) for `quantity`: True when placed; False when it fell back to a market sell (or that failed too)."""
+        """Place the trade's protective stop for `quantity`: True when placed; False when it fell back to a market sell (or that failed too)."""
         if quantity <= 0:
             return False
-        if trade.stop_kind == "trail" and trade.trail_price is not None:
-            order = self._strategy.create_order(trade.symbol, quantity, "sell", trail_price=trade.trail_price)
-        else:
-            order = self._strategy.create_order(trade.symbol, quantity, "sell", stop_price=trade.stop_level)
+        order = self._strategy.create_order(trade.symbol, quantity, "sell", stop_price=trade.stop_level)
         try:
             submitted = self._strategy.submit_order(order)
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
@@ -445,7 +400,6 @@ class Desk:
             self._market_sell(trade, quantity, "protective stop failed")
             return False
         trade.stop_order_id = submitted.identifier
-        trade.stop_kind = trade.stop_kind or "stop"
         return True
 
     def _market_sell(self, trade: Trade, quantity: Decimal, reason: str) -> Order | None:
@@ -512,149 +466,6 @@ class Desk:
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(trade.to_json()) + "\n")
-
-    # --- exits (the exit agent's actions) --------------------------------------------------
-
-    # Every exit action follows the same hand-off: validate everything first (a refusal never touches the
-    # working stop), release the stop (cancel + wait), act, then put a stop back on whatever is still held.
-
-    def take_partial_profit(self, symbol: str, fraction: float) -> dict[str, Any]:
-        """The exit agent's TP1: sell `fraction` of the free shares once, then re-place the stop on the rest."""
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        low, high = self._params.tp1_fraction_band
-        if not low <= fraction <= high:
-            return {"error": f"fraction must be between {low} and {high}"}
-        if trade.tp1_done:
-            return {"error": "partial profit was already taken on this trade"}
-        if self._split(trade, fraction)[0] <= 0:
-            return {"error": f"a position of {self._free_quantity(trade)} free shares is too small to split"}
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        sold, remaining = self._split(trade, fraction)  # the release may have booked a partial stop fill
-        if sold <= 0:
-            return self._restored(trade, f"a position of {self._free_quantity(trade)} free shares is too small to split")
-        if self._market_sell(trade, sold, "partial profit") is None:
-            return self._restored(trade, "the sell failed")
-        trade.tp1_done = True
-        if not self._submit_stop(trade, remaining):
-            return {"error": (
-                f"the partial sell of {sold} was submitted but the stop for the remaining {remaining} could not be placed; "
-                "those shares were sold at market instead (or that failed too: check the position)"
-            )}
-        self._strategy.log_info(f"partial profit {trade.symbol}: sold {sold}, {remaining} left under the stop")
-        return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
-
-    def tighten_stop(self, symbol: str, stop_price: float) -> dict[str, Any]:
-        """The exit agent's `tighten_stop`: raise a plain stop in place (`modify_order`, so there is no unprotected gap)."""
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        if trade.stop_kind == "trail":
-            return {"error": "the stop is already a trailing stop; it ratchets up on its own"}
-        new_level = risk.to_price(stop_price, ROUND_DOWN)
-        if new_level <= trade.stop_level:
-            return {"error": f"a stop can only move up (current stop {trade.stop_level})"}
-        try:
-            last = self._strategy.get_last_price(trade.symbol)
-        except _DATA_ERRORS as exc:
-            return {"error": f"price unavailable: {exc}"}
-        if last is not None and new_level >= last:
-            return {"error": f"the stop must stay below the last price {last}"}
-        order = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id else None
-        if order is None or not order.is_active():
-            return {"error": "no working stop to raise"}
-        try:
-            replacement = self._strategy.modify_order(order, stop_price=new_level)
-        except Exception as exc:  # the broker's modify may raise its own error type (BacktestError, BrokerError)
-            return {"error": f"the stop could not be modified: {exc}"}
-        # Alpaca and the backtest broker replace the order under a new id (IBKR keeps it): always follow the returned one.
-        trade.stop_order_id = replacement.identifier
-        trade.stop_level = new_level
-        self._strategy.log_info(f"stop {trade.symbol} raised to {new_level}")
-        return {"status": "stop raised", "stop_price": float(new_level)}
-
-    def replace_stop_with_trailing(self, symbol: str, trail_atr: float) -> dict[str, Any]:
-        """The exit agent's `replace_stop_with_trailing`: swap the stop for a broker-side trailing stop.
-
-        The trail distance is `trail_atr` 5-minute ATRs, sent as a dollar `trail_price`. It is refused when
-        it would start below the current stop (that would loosen the protection).
-        """
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        low, high = self._params.trail_atr_band
-        if not low <= trail_atr <= high:
-            return {"error": f"trail_atr must be between {low} and {high}"}
-        levels = self.levels(trade.symbol)
-        if levels is None or levels.atr is None or not levels.atr > 0:
-            return {"error": "no 5-minute ATR yet for this symbol"}
-        trail = risk.to_price(trail_atr * levels.atr, ROUND_HALF_UP)
-        try:
-            last = self._strategy.get_last_price(trade.symbol)
-        except _DATA_ERRORS as exc:
-            return {"error": f"price unavailable: {exc}"}
-        if last is None or trail <= 0:
-            return {"error": "no price to start the trail from"}
-        starts_at = last - trail
-        if starts_at < trade.stop_level:
-            return {"error": f"a {trail_atr} ATR trail would start at {starts_at}, below the current stop {trade.stop_level}; use a tighter trail"}
-        if self._free_quantity(trade) <= 0:
-            return {"error": "nothing left to protect; an exit is already pending"}
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        # Set before submitting: `_submit_stop` reads stop_kind/trail_price to build a TRAIL order (and any
-        # later re-placement of the stop, e.g. after a partial exit, re-creates it as a trail).
-        trade.stop_kind, trade.trail_price, trade.stop_level = "trail", trail, starts_at
-        if not self._submit_stop(trade, self._free_quantity(trade)):
-            return {"error": "the trailing stop could not be placed; the free shares were sold at market instead (or that failed too: check the position)"}
-        self._strategy.log_info(f"stop {trade.symbol} replaced by a {trail} trailing stop")
-        return {"status": "trailing stop placed", "trail_price": float(trail), "starts_at": float(starts_at)}
-
-    def exit_position(self, symbol: str, reason: str) -> dict[str, Any]:
-        """The exit agent's `exit_position`: release the stop and market-sell every free share now."""
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        # Checked before releasing the stop: never cancel a stop the desk could not replace with a sell.
-        if self._free_quantity(trade) <= 0:
-            return {"error": "nothing left to sell; an exit is already pending"}
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        free = self._free_quantity(trade)
-        if free <= 0:  # the release booked a partial stop fill that left nothing
-            return {"error": "nothing left to sell; an exit is already pending"}
-        if self._market_sell(trade, free, reason) is None:
-            return self._restored(trade, "the sell failed")
-        trade.exit_reason = reason
-        self._strategy.log_info(f"exit {trade.symbol}: {reason}")
-        return {"status": "exit submitted", "quantity": int(free)}
-
-    def hold(self, symbol: str, reason: str) -> dict[str, Any]:
-        """The exit agent's `hold`: change nothing (the default for noise inside 1R); logged for the record."""
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        self._strategy.log_info(f"hold {trade.symbol}: {reason}")
-        return {"symbol": trade.symbol, "status": "holding"}
-
-    def _restored(self, trade: Trade, problem: str) -> dict[str, Any]:
-        """After a failed exit step released the stop: put the stop back on the free shares and say honestly whether that worked."""
-        if self._submit_stop(trade, self._free_quantity(trade)):
-            return {"error": f"{problem}; the stop was placed again"}
-        return {"error": f"{problem}, and the stop could not be placed again; the free shares were sold at market instead (or that failed too: check the position)"}
-
-    def _split(self, trade: Trade, fraction: float) -> tuple[Decimal, Decimal]:
-        """`(sold, remaining)` for selling `fraction` of the free shares; `sold` is 0 when they are too small to split."""
-        free = self._free_quantity(trade)
-        sold = (free * Decimal(str(fraction))).to_integral_value(rounding=ROUND_FLOOR)
-        if sold <= 0 or sold >= free:
-            return Decimal(0), free
-        return sold, free - sold
 
     # --- session boundaries --------------------------------------------------------------
 

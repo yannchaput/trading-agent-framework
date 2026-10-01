@@ -5,13 +5,10 @@ import pytest
 from tests.fakes import et, make_bars_frame, minute_ohlc
 
 from trading_agent_framework.strategies.vwap_pullback.features import (
-    bar_atr,
     beta,
     cumulative_volume_by_minute,
     daily_atr,
-    ema_last,
     intraday_contexts,
-    latest_levels,
     rvol_at,
     rvol_baseline,
     session_slice,
@@ -102,15 +99,3 @@ def test_zscores() -> None:
     assert zscores({"A": 1.0, "B": 1.0}) == {"A": 0.0, "B": 0.0}
     assert zscores({"A": 1.0, "B": 3.0}) == {"A": -1.0, "B": 1.0}
     assert zscores({"A": 5.0}) == {"A": 0.0}
-
-
-def test_ema_bar_atr_and_latest_levels() -> None:
-    assert ema_last([1.0, 1.0, 1.0], 9) == 1.0
-    assert ema_last([], 9) is None
-    contexts = intraday_contexts(
-        minute_ohlc(OPEN, _rising(10)), minute_ohlc(OPEN, []), session_open=OPEN, now=CLOSE, bar_stamp="open", beta=1.0, baseline=pd.Series(dtype=float)
-    )
-    assert bar_atr(contexts, 14) == pytest.approx(0.5)  # both 5-minute bars span 0.5
-    levels = latest_levels(contexts, ema_length=9, atr_length=14)
-    assert levels is not None and levels.close == pytest.approx(101.0)
-    assert latest_levels([], ema_length=9, atr_length=14) is None

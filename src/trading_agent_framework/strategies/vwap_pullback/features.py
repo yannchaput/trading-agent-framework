@@ -1,4 +1,4 @@
-"""Pure intraday features over minute bars (spec §2): session slicing, 5-minute contexts, VWAP, RVOL, RS, ATR, EMA.
+"""Pure intraday features over minute bars (spec §2): session slicing, 5-minute contexts, VWAP, RVOL, RS, ATR.
 
 float64 throughout: this is indicator maths on `Bars.df`, the codebase's float boundary. `bar_stamp` says how
 the source stamps a minute bar: "open" (live Alpaca `Bars`) or "close" (every `BacktestDataSource`).
@@ -29,7 +29,7 @@ _MINUTE = pd.Timedelta(minutes=1)
 class BarContext:
     """One completed intraday bar (5-minute by default) and the session state as of its close.
 
-    This is the only view of price the state machine and the agents get: session-level measures (VWAP,
+    This is the only view of price the state machine gets: session-level measures (VWAP,
     RS, RVOL, running high) are frozen at the bar's close, so replaying bars later gives the same answer.
     """
 
@@ -44,16 +44,6 @@ class BarContext:
     rvol: float | None  # cumulative volume over the baseline at this minute; None without a baseline
     session_open: float  # the session's first regular-hours open
     session_high: float  # the session's high up to this bar
-
-
-@dataclass(frozen=True, slots=True)
-class Levels:
-    """The latest completed bar's close and the levels the exit review watches."""
-
-    close: float
-    vwap: float
-    ema: float | None  # EMA of the 5-minute closes (None only without bars)
-    atr: float | None  # ATR of the 5-minute bars, the unit of the exit agent's trailing distance
 
 
 def minute_starts(index: pd.DatetimeIndex, bar_stamp: BarStamp) -> pd.DatetimeIndex:
@@ -216,21 +206,6 @@ def daily_atr(df: pd.DataFrame, length: int) -> float | None:
     return float(tr.iloc[-length:].mean())
 
 
-def bar_atr(contexts: Sequence[BarContext], length: int) -> float | None:
-    """Mean true range of the last `length` intraday bars (fewer early in the session); None without bars."""
-    if not contexts:
-        return None
-    frame = pd.DataFrame({"high": [c.high for c in contexts], "low": [c.low for c in contexts], "close": [c.close for c in contexts]})
-    return float(_true_range(frame["high"], frame["low"], frame["close"]).iloc[-length:].mean())
-
-
-def ema_last(values: Sequence[float], length: int) -> float | None:
-    """The last value of an exponential moving average with span `length`; None without values."""
-    if not values:
-        return None
-    return float(pd.Series(list(values), dtype=float).ewm(span=length, adjust=False).mean().iloc[-1])
-
-
 def beta(stock_closes: pd.Series, bench_closes: pd.Series, lookback: int) -> float:
     """Beta of daily returns over the last `lookback` returns; 1.0 when there is too little data to say."""
     # Inner join on dates: a day missing from either series (halt, holiday mismatch) is dropped from both.
@@ -257,10 +232,3 @@ def zscores(values: Mapping[str, float]) -> dict[str, float]:
         return dict.fromkeys(values, 0.0)
     return {str(key): float(value) for key, value in ((series - series.mean()) / std).items()}
 
-
-def latest_levels(contexts: Sequence[BarContext], *, ema_length: int, atr_length: int) -> Levels | None:
-    """The latest bar's close and VWAP, the EMA of the closes and the bar ATR; None without bars."""
-    if not contexts:
-        return None
-    last = contexts[-1]
-    return Levels(close=last.close, vwap=last.vwap, ema=ema_last([c.close for c in contexts], ema_length), atr=bar_atr(contexts, atr_length))

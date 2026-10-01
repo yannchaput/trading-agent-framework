@@ -26,14 +26,13 @@ class VwapPullbackParameters:
     dollar_volume_percentile: float = 0.60  # keep the top 60% by 20-day dollar volume (a percentile: IEX volume is a slice of the tape)
     stage1_size: int = 150  # survivors kept for the intraday scan
     beta_lookback_sessions: int = 60  # daily returns used for beta to SPY (feeds the beta-adjusted RS)
-    atr_length: int = 14  # ATR window, for daily ATR and the 5-minute bar ATR alike
+    atr_length: int = 14  # ATR window (daily bars)
 
     # --- stage 2 (intraday, every tick; `screening.rank_stage2`) ---
     rvol_baseline_sessions: int = 10  # prior sessions averaged into the per-minute RVOL baseline
     rvol_min: float = 1.5  # RVOL floor to be ranked at all (cumulative volume vs the baseline at the same minute)
     tracked_size: int = 30  # candidates tracked by the setup state machine each tick
-    bar_minutes: int = 5  # bar size the state machine and the agents reason on
-    ema_length: int = 9  # EMA over those bars, a trailing reference for the exit agent
+    bar_minutes: int = 5  # bar size the state machine reasons on
 
     # --- setup state machine (`setups.py`) ---
     impulse_move_atr: float = 0.8  # WATCH -> IMPULSE once session high - open >= this many ATRs
@@ -58,8 +57,6 @@ class VwapPullbackParameters:
     # --- exit reviews and headlines (`desk.Desk.exit_review_due`, `scanner.Scanner.refresh_headlines`) ---
     exit_review_minutes: int = 15  # an open trade is reviewed at least this often, event or not
     headlines_per_symbol: int = 3  # headlines attached to a setup or trade row
-    tp1_fraction_band: tuple[float, float] = (0.25, 0.5)  # share of the position take_partial_profit may sell
-    trail_atr_band: tuple[float, float] = (0.5, 2.0)  # trailing distance in 5-minute ATRs allowed to the exit agent
 
     # --- order handling (`desk.Desk`, strategy) ---
     cancel_wait_seconds: float = 10.0  # how long a stop hand-off waits for a cancel to be confirmed
