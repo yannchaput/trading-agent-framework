@@ -11,6 +11,7 @@ import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from itertools import pairwise
 from typing import Any
 
@@ -133,3 +134,95 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
         shares=share_row["value"] if share_row else None,
         counted_on=date.fromisoformat(share_row["end"]) if share_row else None,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Priced:
+    """A survivor of every gate, with its sector code and its split-restated market cap (above zero)."""
+
+    survivor: Survivor
+    sic: int | None
+    market_cap: Decimal
+
+
+@dataclass(frozen=True, slots=True)
+class Candidate:
+    symbol: str
+    rank: int
+    score: float
+    sic: int | None
+    market_cap: Decimal
+    fcf_yield: float
+    fcf_margin: float
+    operating_margin: float
+    operating_margin_stdev: float
+    revenue_growth: float
+    net_debt_to_operating_income: float
+    debt_reported: bool
+    fiscal_year_end: date
+    filed: date
+
+
+@dataclass(frozen=True, slots=True)
+class ScreenResult:
+    candidates: list[Candidate]
+    rejections: dict[str, str]  # symbol -> reason of the first failed gate
+
+
+def sector_excluded(sic: int | None, params: ScreenParams) -> bool:
+    """Whether the SIC code falls in an excluded range; a company with no code passes."""
+    return sic is not None and any(low <= sic <= high for low, high in params.excluded_sic_ranges)
+
+
+def _percentiles(values: Sequence[float]) -> list[float]:
+    """Each value's percentile rank in `values`: (rank - 1) / (n - 1), ties sharing their average rank."""
+    count = len(values)
+    if count == 1:
+        return [1.0]
+    order = sorted(range(count), key=values.__getitem__)
+    ranks = [0.0] * count
+    start = 0
+    while start < count:
+        stop = start
+        while stop + 1 < count and values[order[stop + 1]] == values[order[start]]:
+            stop += 1
+        average_rank = (start + stop) / 2 + 1
+        for position in range(start, stop + 1):
+            ranks[order[position]] = average_rank
+        start = stop + 1
+    return [(rank - 1) / (count - 1) for rank in ranks]
+
+
+def rank(priced: Sequence[Priced], params: ScreenParams) -> list[Candidate]:
+    """Score the priced survivors against each other and return the best `params.top_n`, best first."""
+    if not priced:
+        return []
+    yields = [float(Decimal(item.survivor.free_cash_flow) / item.market_cap) for item in priced]
+    yield_pct = _percentiles(yields)
+    margin_pct = _percentiles([item.survivor.fcf_margin for item in priced])
+    stdev_pct = _percentiles([item.survivor.operating_margin_stdev for item in priced])
+    yield_weight, margin_weight, stability_weight = params.weights
+    scored = [
+        (yield_weight * yield_pct[index] + margin_weight * margin_pct[index] + stability_weight * (1 - stdev_pct[index]), yields[index], item)
+        for index, item in enumerate(priced)
+    ]
+    scored.sort(key=lambda entry: (-entry[0], -entry[2].market_cap, entry[2].survivor.symbol))
+    return [
+        Candidate(
+            symbol=item.survivor.symbol,
+            rank=position,
+            score=score,
+            sic=item.sic,
+            market_cap=item.market_cap,
+            fcf_yield=fcf_yield,
+            fcf_margin=item.survivor.fcf_margin,
+            operating_margin=item.survivor.operating_margin,
+            operating_margin_stdev=item.survivor.operating_margin_stdev,
+            revenue_growth=item.survivor.revenue_growth,
+            net_debt_to_operating_income=item.survivor.net_debt_to_operating_income,
+            debt_reported=item.survivor.debt_reported,
+            fiscal_year_end=item.survivor.fiscal_year_end,
+            filed=item.survivor.filed,
+        )
+        for position, (score, fcf_yield, item) in enumerate(scored[: params.top_n], start=1)
+    ]

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
+from decimal import Decimal
 
 import pytest
 from tests.fundamentals.annual_fixtures import FLOW_FIELDS, healthy_figures
 
-from trading_agent_framework.fundamentals.quality import ScreenParams, Survivor, assess
+from trading_agent_framework.fundamentals.quality import Priced, ScreenParams, Survivor, assess, rank, sector_excluded
 
 AS_OF = datetime(2026, 6, 1, tzinfo=UTC)
 PARAMS = ScreenParams()
@@ -176,3 +177,90 @@ def test_a_company_with_no_share_count_still_survives_the_numeric_gates() -> Non
     survivor = _survivor(healthy_figures(shares=None))
 
     assert (survivor.shares, survivor.counted_on) == (None, None)
+
+
+def _priced(symbol: str, *, market_cap: str, fcf: int = 28, fcf_margin: float = 0.2, stdev: float = 0.01, sic: int | None = 3571) -> Priced:
+    survivor = Survivor(
+        symbol=symbol,
+        fiscal_year_end=date(2025, 12, 31),
+        filed=date(2026, 2, 15),
+        free_cash_flow=fcf,
+        fcf_margin=fcf_margin,
+        operating_margin=0.25,
+        operating_margin_stdev=stdev,
+        revenue_growth=0.08,
+        net_debt_to_operating_income=1.5,
+        debt_reported=True,
+        shares=1000,
+        counted_on=date(2026, 1, 31),
+    )
+    return Priced(survivor=survivor, sic=sic, market_cap=Decimal(market_cap))
+
+
+@pytest.mark.parametrize(("sic", "excluded"), [(6021, True), (6000, True), (6799, True), (4911, True), (6800, False), (4899, False), (3571, False), (None, False)])
+def test_sector_excluded_covers_utilities_and_finance_and_lets_an_unknown_code_pass(sic: int | None, excluded: bool) -> None:
+    assert sector_excluded(sic, PARAMS) is excluded
+
+
+def test_rank_scores_by_weighted_percentiles() -> None:
+    priced = [
+        _priced("AAA", market_cap="280", fcf_margin=0.2, stdev=0.00),  # yield 0.100: pct 1.0 | margin pct 0.5 | stdev pct 0.0
+        _priced("BBB", market_cap="560", fcf_margin=0.3, stdev=0.02),  # yield 0.050: pct 0.5 | margin pct 1.0 | stdev pct 1.0
+        _priced("CCC", market_cap="1120", fcf_margin=0.1, stdev=0.01),  # yield 0.025: pct 0.0 | margin pct 0.0 | stdev pct 0.5
+    ]
+
+    candidates = rank(priced, PARAMS)
+
+    assert [(c.symbol, c.rank) for c in candidates] == [("AAA", 1), ("BBB", 2), ("CCC", 3)]
+    assert [c.score for c in candidates] == pytest.approx([0.4 * 1.0 + 0.3 * 0.5 + 0.3 * 1.0, 0.4 * 0.5 + 0.3 * 1.0 + 0.3 * 0.0, 0.3 * 0.5])
+    assert [c.fcf_yield for c in candidates] == pytest.approx([0.1, 0.05, 0.025])
+
+
+def test_rank_carries_the_survivor_metrics_into_the_candidate() -> None:
+    (candidate,) = rank([_priced("AAA", market_cap="280", sic=5812)], PARAMS)
+
+    assert candidate.sic == 5812
+    assert candidate.market_cap == Decimal("280")
+    assert candidate.fcf_margin == 0.2
+    assert candidate.operating_margin == 0.25
+    assert candidate.operating_margin_stdev == 0.01
+    assert candidate.revenue_growth == 0.08
+    assert candidate.net_debt_to_operating_income == 1.5
+    assert candidate.debt_reported is True
+    assert candidate.fiscal_year_end == date(2025, 12, 31)
+    assert candidate.filed == date(2026, 2, 15)
+
+
+def test_a_single_survivor_gets_percentile_one_on_every_metric() -> None:
+    (candidate,) = rank([_priced("AAA", market_cap="280")], PARAMS)
+
+    assert candidate.score == pytest.approx(0.4 + 0.3 + 0.3 * (1 - 1.0))
+
+
+def test_tied_metrics_share_the_average_percentile() -> None:
+    # Same yield (28/280 and 56/560), same margin, same stdev: every percentile is 0.5 for both.
+    candidates = rank([_priced("AAA", market_cap="280", fcf=28), _priced("BBB", market_cap="560", fcf=56)], PARAMS)
+
+    assert [c.score for c in candidates] == pytest.approx([0.4 * 0.5 + 0.3 * 0.5 + 0.3 * 0.5] * 2)
+
+
+def test_equal_scores_are_ordered_by_market_cap_then_symbol() -> None:
+    priced = [
+        _priced("ZZZ", market_cap="280", fcf=28),
+        _priced("MMM", market_cap="560", fcf=56),
+        _priced("AAA", market_cap="280", fcf=28),
+    ]
+
+    assert [c.symbol for c in rank(priced, PARAMS)] == ["MMM", "AAA", "ZZZ"]
+
+
+def test_rank_returns_at_most_top_n() -> None:
+    priced = [_priced("AAA", market_cap="280"), _priced("BBB", market_cap="560"), _priced("CCC", market_cap="1120")]
+
+    candidates = rank(priced, ScreenParams(top_n=2))
+
+    assert [(c.symbol, c.rank) for c in candidates] == [("AAA", 1), ("BBB", 2)]
+
+
+def test_rank_of_nothing_is_empty() -> None:
+    assert rank([], PARAMS) == []
