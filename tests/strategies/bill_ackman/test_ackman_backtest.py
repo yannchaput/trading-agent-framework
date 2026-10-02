@@ -120,6 +120,7 @@ def _run(tmp_path: Path, manager: _Manager, screen: Any, settings: AckmanParams 
         settings=settings,
     )
     strategy._agents = cast(AgentManager, manager)
+    strategy.sleeptime = "1D"  # these tests count reviews session by session: independent of the strategy's production cadence
     Strategy.run_backtesting(strategy, start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=source, budget=Decimal(10000), benchmark="SPY")
     return strategy
 

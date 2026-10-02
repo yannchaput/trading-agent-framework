@@ -33,7 +33,7 @@ from trading_agent_framework.utils.errors import ConfigurationError, FatalStrate
 class BillAckmanStrategy(Strategy):
     """One review per session: screen, researcher, short seller, trader, rebalancer (see `ReviewPipeline`)."""
 
-    sleeptime = "1D"
+    sleeptime = "5D"  # one review every 5 trading sessions (`D` counts sessions): weekly
 
     parameters = {
         "backtesting_start": backtest_window(PredefinedWindow.BI_MONTH)[0],

@@ -7,7 +7,7 @@ cash), and quantities are floored (`fractional_qty`) so a cost never exceeds the
 
 Orders still open from an earlier review count: a pending buy counts toward the position and a pending sell is
 deducted, so a review never sends again what is already in flight. (A backtest fills an order on the next bar, so a
-daily review always finds the previous day's orders pending; in paper/live a market order is normally filled by then.)
+review that follows closely finds the previous orders still pending; in paper/live a market order is normally filled by then.)
 """
 
 from __future__ import annotations

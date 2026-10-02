@@ -1,6 +1,6 @@
 """What the strategy remembers between reviews, and the per-review log.
 
-`StateStore` keeps the fail counters, yesterday's ranking and verdicts, and the abandoned-review streak in one
+`StateStore` keeps the fail counters, the previous review's ranking and verdicts, and the abandoned-review streak in one
 small JSON file per mode, written atomically. A missing or corrupt file is an empty state: the strategy then
 simply starts its counters again. `ReviewLog` appends one JSON line per review to the run directory.
 Neither ever raises on an I/O problem: bookkeeping must not stop a review.
