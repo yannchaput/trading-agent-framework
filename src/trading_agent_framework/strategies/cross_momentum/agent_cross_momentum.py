@@ -449,8 +449,9 @@ class CrossMomentumStrategy(Strategy):
             self.log_info(f"Parking: {parking_symbol} target ${parking_target:,.0f} (current ${parking_value:,.0f})")
             excess = parking_value - parking_target
             if parking_value > parking_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
-                # A zero target sells the exact holding, so float flooring leaves no dust behind
-                sell_qty = float(parking_position.quantity) if parking_target == 0 else fractional_qty(excess / parking_price)
+                # A zero target sells the exact holding, so float flooring leaves no dust behind.
+                # Guard against a missing parking position so static analysis does not treat it as a known quantity.
+                sell_qty = float(parking_position.quantity) if parking_position is not None and parking_target == 0 else fractional_qty(excess / parking_price)
                 if sell_qty > 0:
                     self.log_info(f"Selling {sell_qty} {parking_symbol} @ ${parking_price:.2f} (parking above target)")
                     try:
