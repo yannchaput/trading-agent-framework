@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from trading_agent_framework.dashboard.components.charts import trades_chart
+from trading_agent_framework.dashboard.components.charts import REGIME_BAND_COLORS, trades_chart
 
 T0 = datetime(2026, 9, 1, 14, 0, tzinfo=UTC)
 TRADES = {
-    "values": [{"time": T0, "portfolio_value": 10000.0}],
+    "values": [{"time": T0, "portfolio_value": 10000.0}, {"time": T0 + timedelta(days=5), "portfolio_value": 10100.0}],
     "trades": [{"time": T0, "side": "buy", "symbol": "AAA", "qty": 1.0, "price": 10.0, "cost": 0.0, "portfolio_value": 10000.0}],
 }
 
@@ -15,15 +15,59 @@ def _line(name: str) -> dict:
     return {"name": name, "color": "#ffffff", "dash": "solid", "times": [T0], "values": [1.0]}
 
 
+def _regime(values: list[int]) -> dict:
+    times = [T0 + timedelta(days=i) for i in range(len(values))]
+    return {"Regime": [{"name": "Regime", "color": "#d1d4dc", "dash": "solid", "times": times, "values": [float(v) for v in values]}]}
+
+
 def test_without_indicators_the_chart_is_a_single_pane() -> None:
     fig = trades_chart(TRADES)
     assert {t.name for t in fig.data} == {"Portfolio Value", "Buy"}
     assert len(fig._grid_ref) == 1
+    assert not fig.layout.shapes
 
 
 def test_each_indicator_pane_gets_its_own_sub_row_under_the_portfolio_chart() -> None:
-    fig = trades_chart(TRADES, indicators={"VIX": [_line("VIX")], "ADX / RSI": [_line("ADX"), _line("RSI")]})
-    assert {t.name for t in fig.data} == {"Portfolio Value", "Buy", "VIX", "ADX", "RSI"}
+    fig = trades_chart(TRADES, indicators={"Breadth": [_line("Breadth")], "Averages": [_line("Fast"), _line("Slow")]})
+    assert {t.name for t in fig.data} == {"Portfolio Value", "Buy", "Breadth", "Fast", "Slow"}
     assert len(fig._grid_ref) == 3  # portfolio + two panes
     rows = {t.name: t.yaxis for t in fig.data}
-    assert rows["ADX"] == rows["RSI"] != rows["VIX"] != rows["Portfolio Value"]
+    assert rows["Fast"] == rows["Slow"] != rows["Breadth"] != rows["Portfolio Value"]
+    assert not fig.layout.shapes  # no regime, no bands
+
+
+def test_the_regime_row_sits_right_under_the_portfolio_chart_on_the_same_time_axis() -> None:
+    fig = trades_chart(TRADES, indicators={"Other": [_line("Other")], **_regime([1, 1, 0, -1])})
+    rows = {t.name: t.yaxis for t in fig.data}
+    assert (rows["Portfolio Value"], rows["Regime"], rows["Other"]) == ("y", "y2", "y3")
+    # plotly's shared_xaxes links every row to the bottom axis (x3): one match group, one time scale
+    assert fig.layout.xaxis.matches == fig.layout.xaxis2.matches == "x3" and fig.layout.xaxis3.matches is None
+    assert tuple(fig.layout.yaxis2.range) == (-1.3, 1.3)
+    assert tuple(fig.layout.yaxis2.tickvals) == (-1, 0, 1)
+    assert tuple(fig.layout.yaxis2.ticktext) == ("Bearish", "Neutral", "Bullish")
+    regime = next(t for t in fig.data if t.name == "Regime")
+    assert regime.line.shape == "hv" and list(regime.y) == [1, 1, 0, -1]
+    portfolio, regime_row = fig.layout.yaxis.domain, fig.layout.yaxis2.domain
+    assert (regime_row[1] - regime_row[0]) < (portfolio[1] - portfolio[0])
+
+
+def test_each_regime_run_is_shaded_on_both_rows() -> None:
+    fig = trades_chart(TRADES, indicators=_regime([1, 1, 0, -1]))  # three runs: bullish, neutral, bearish
+    on_portfolio = [s for s in fig.layout.shapes if s.xref == "x"]
+    on_regime = [s for s in fig.layout.shapes if s.xref == "x2"]
+    expected = [REGIME_BAND_COLORS[1], REGIME_BAND_COLORS[0], REGIME_BAND_COLORS[-1]]
+    assert [s.fillcolor for s in on_portfolio] == expected
+    assert [s.fillcolor for s in on_regime] == expected
+    assert all(s.opacity < 0.2 for s in on_portfolio) and all(s.opacity > s2.opacity for s, s2 in zip(on_regime, on_portfolio, strict=True))
+    # a run ends where the next one starts; the last one runs to the end of the chart (the last portfolio value)
+    assert [(s.x0, s.x1) for s in on_portfolio] == [
+        (T0, T0 + timedelta(days=2)),
+        (T0 + timedelta(days=2), T0 + timedelta(days=3)),
+        (T0 + timedelta(days=3), T0 + timedelta(days=5)),
+    ]
+
+
+def test_a_single_regime_point_makes_one_band_per_row() -> None:
+    fig = trades_chart(TRADES, indicators=_regime([-1]))
+    assert len(fig.layout.shapes) == 2
+    assert {s.fillcolor for s in fig.layout.shapes} == {REGIME_BAND_COLORS[-1]}

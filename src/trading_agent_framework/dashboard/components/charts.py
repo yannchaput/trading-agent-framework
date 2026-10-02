@@ -26,6 +26,12 @@ CHART_TEMPLATE.layout.yaxis.gridcolor = GRID_COLOR
 DIVERGING_SCALE = [[0.0, "#ef4444"], [0.5, "#1f2430"], [1.0, "#22c55e"]]
 # One colour per series/model, readable on the dark background.
 MODEL_COLORS = ["#22d3ee", "#f59e0b", "#a78bfa", "#22c55e", "#f472b6", "#60a5fa"]
+# The market regime line every strategy charts (`core.regime.REGIME_LINE`): its own row on the Trades chart.
+REGIME_PANE = "Regime"
+REGIME_AXIS_LABELS = {1: "Bullish", 0: "Neutral", -1: "Bearish"}
+REGIME_BAND_COLORS = {1: "#16a34a", 0: "#6b7280", -1: "#dc2626"}
+_REGIME_LINE_COLOR = "#d1d4dc"
+_REGIME_BAND_OPACITY = {1: 0.10, 2: 0.30}  # by row: faint behind the portfolio, stronger on the regime row
 
 
 def equity_curve_chart(
@@ -616,6 +622,18 @@ def rolling_sharpe_chart(
     )
 
 
+def _regime_runs(times: Sequence[Any], values: Sequence[float], end: Any) -> list[tuple[Any, Any, int]]:
+    """`(start, end, regime)` for each run of equal consecutive values; the last run ends at `end`."""
+    runs: list[list[Any]] = []
+    for time, value in zip(times, (int(round(v)) for v in values), strict=True):
+        if runs and runs[-1][2] == value:
+            continue
+        if runs:
+            runs[-1][1] = time
+        runs.append([time, end, value])
+    return [(start, stop, value) for start, stop, value in runs]
+
+
 def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", indicators: dict[str, list[dict[str, Any]]] | None = None) -> go.Figure:
     """Build a trade activity chart with portfolio value curve and buy/sell markers.
 
@@ -625,7 +643,9 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
             portfolio_value}) from :func:`load_trades_curve`.
         title: Chart title.
         indicators: Optional ``{plot_name: [series]}`` from :func:`load_indicator_lines`; each pane gets its own
-            sub-row under the portfolio chart (they live on other scales), sharing its time axis.
+            sub-row under the portfolio chart (they live on other scales), sharing its time axis. The
+            ``"Regime"`` pane (market regime, -1/0/1) is drawn right under the portfolio chart as a step line,
+            with one colored band per regime run on both rows.
     """
     values = trades_data.get("values", [])
     trades = trades_data.get("trades", [])
@@ -636,11 +656,15 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    panes = list((indicators or {}).items())
-    fig = make_subplots(
-        rows=1 + len(panes), cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.5, *[0.5 / len(panes)] * len(panes)] if panes else [1.0],
-    )
+    indicator_panes = dict(indicators or {})
+    regime_series = indicator_panes.pop(REGIME_PANE, None)
+    regime = regime_series[0] if regime_series else None
+    panes = list(indicator_panes.items())
+    row_heights = [1.0]
+    if regime is not None or panes:
+        row_heights = [0.5, *([0.12] if regime is not None else []), *([0.5 / len(panes)] * len(panes) if panes else [])]
+    first_pane_row = 3 if regime is not None else 2
+    fig = make_subplots(rows=len(row_heights), cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
 
     # ── Portfolio value line ──
     if values:
@@ -690,8 +714,36 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
             row=1, col=1,
         )
 
+    # ── Market regime: a step line on its own row, and one band per run on both rows ──
+    if regime is not None:
+        regime_values = [int(round(v)) for v in regime["values"]]
+        fig.add_trace(
+            go.Scatter(
+                x=regime["times"],
+                y=regime_values,
+                mode="lines",
+                name=REGIME_PANE,
+                line=dict(color=_REGIME_LINE_COLOR, width=1.5, shape="hv"),
+                text=[REGIME_AXIS_LABELS.get(v, str(v)) for v in regime_values],
+                hovertemplate="%{text}<extra>Regime</extra>",
+                showlegend=False,
+            ),
+            row=2, col=1,
+        )
+        chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
+        for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end):
+            for row, opacity in _REGIME_BAND_OPACITY.items():
+                fig.add_vrect(
+                    x0=start, x1=stop, fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
+                    opacity=opacity, line_width=0, layer="below", row=row, col=1,
+                )
+        fig.update_yaxes(
+            range=[-1.3, 1.3], tickvals=[-1, 0, 1], ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
+            title_text=REGIME_PANE, row=2, col=1,
+        )
+
     # ── Indicator panes (strategy.add_line), one sub-row per plot_name ──
-    for row, (pane, series) in enumerate(panes, start=2):
+    for row, (pane, series) in enumerate(panes, start=first_pane_row):
         for line in series:
             fig.add_trace(
                 go.Scatter(
@@ -707,10 +759,10 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
         fig.update_yaxes(title_text=pane, row=row, col=1)
 
     fig.update_yaxes(title_text="Portfolio Value ($)", row=1, col=1)
-    fig.update_xaxes(title_text="Date", row=1 + len(panes), col=1)
+    fig.update_xaxes(title_text="Date", row=len(row_heights), col=1)
     fig.update_layout(
         title=title,
-        height=450 + 200 * len(panes),
+        height=450 + 200 * len(panes) + (140 if regime is not None else 0),
         template=CHART_TEMPLATE,
         hovermode="closest",
         margin=dict(l=40, r=20, t=40, b=40),

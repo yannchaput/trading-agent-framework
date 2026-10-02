@@ -563,17 +563,19 @@ def test_load_indicator_lines_groups_series_by_pane_and_drops_nothing_else(tmp_p
 
     run_dir = _run_dir(tmp_path)
     ledger = Ledger()
-    for minutes, rsi in ((5, "55"), (0, "50")):  # recorded out of order on purpose
-        ledger.record_line(IndicatorLine(NOW + timedelta(minutes=minutes), "RSI", Decimal(rsi), "#a78bfa", "dashed", "ADX / RSI"))
-    ledger.record_line(IndicatorLine(NOW, "ADX", Decimal("22"), "#f59e0b", "solid", "ADX / RSI"))
+    for minutes, value in ((5, "55"), (0, "50")):  # recorded out of order on purpose
+        ledger.record_line(IndicatorLine(NOW + timedelta(minutes=minutes), "Fast", Decimal(value), "#a78bfa", "dashed", "Averages"))
+    ledger.record_line(IndicatorLine(NOW, "Slow", Decimal("22"), "#f59e0b", "solid", "Averages"))
+    ledger.record_line(IndicatorLine(NOW, "Regime", Decimal("-1"), "#d1d4dc", "solid", "Regime"))
     ledger.record_line(IndicatorLine(NOW, "SMA", Decimal("9"), None, "solid", "default_plot"))
     report.write_indicators(run_dir, ledger)
 
     panes = load_indicator_lines(_ref(run_dir))
 
-    assert panes is not None and list(panes) == ["ADX / RSI", "Indicators"]
-    rsi = next(line for line in panes["ADX / RSI"] if line["name"] == "RSI")
-    assert rsi["values"] == [50.0, 55.0] and rsi["dash"] == "dash" and rsi["color"] == "#a78bfa"
+    assert panes is not None and list(panes) == ["Averages", "Regime", "Indicators"]
+    fast = next(line for line in panes["Averages"] if line["name"] == "Fast")
+    assert fast["values"] == [50.0, 55.0] and fast["dash"] == "dash" and fast["color"] == "#a78bfa"
+    assert panes["Regime"][0]["values"] == [-1.0]  # the regime line reaches the chart as its own pane
     assert panes["Indicators"][0]["color"]  # a line without a colour gets a palette one
 
 
