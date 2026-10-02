@@ -190,6 +190,10 @@ rescaled: a weight the trader chose is the weight targeted. A review with no sur
 The only module that places orders. It follows the proven shape of `cross_momentum.rebalance` and the two `CLAUDE.md`
 rules for cash accounts, without importing from that strategy.
 
+0. **Open orders count.** A pending buy counts toward its position and a pending sell is deducted (the tracker's
+   active orders, remaining quantity), and a sell never exceeds what is held and not already being sold. A review
+   therefore never sends again what is already in flight. This matters in a backtest, which fills an order on the next
+   bar: the daily review always finds the previous day's orders still pending.
 1. **Current weights** come from positions times last price over portfolio value; a price lookup that fails values the
    position at 0 and logs a warning rather than aborting after sells are submitted.
 2. **Sells first.** Forced exits and every held stock not in the targets, in full. A held target stock above its target
@@ -215,8 +219,9 @@ rules for cash accounts, without importing from that strategy.
   `{"version": 1, "last_review": "YYYY-MM-DD", "fail_counts": {...}, "last_ranking": [...], "last_verdicts": {...},
   "abandoned_streak": 0}`. It is written atomically after each completed review (temporary file in the same directory,
   then replace). A corrupt or missing file is an empty state with a logged warning.
-- **Backtests start clean**: `run_backtesting` deletes the state file first, so one run cannot leak into the next
-  (same rule as `cross_momentum`'s history file and the agent memory). Paper and live state is never wiped, so the
+- **Backtests start clean**: `initialize` deletes the state file when the mode is backtesting (so every entry point
+  into a backtest is covered), so one run cannot leak into the next (same rule as `cross_momentum`'s history file and
+  the agent memory). Paper and live state is never wiped, so the
   counters survive a restart.
 - **Review log**: `reviews.jsonl` in this run's directory (`logs/<strategy>/<mode>/<run_id>/`, as `vwap_pullback` writes
   `trades.jsonl`; no log when there is no run id). One line per review: date; run id; the candidates (symbol, rank,
@@ -337,7 +342,8 @@ The exact wording is part of the plan, and is reviewed there.
 
 ## 12. Fact sheet (`fact_sheet.py`, pure)
 
-One dict per company, rounded and token-lean (about 8 lines when printed): `symbol`, `sic`, `market_cap`, `fcf_yield`,
+One dict per company, rounded and token-lean (about 8 lines when printed): `symbol`, `sic`, `market_cap_usd_bn`
+(billions of dollars, so the unit is in the name), `fcf_yield`,
 `fcf_margin_5y`, `operating_margin`, `operating_margin_stdev`, `revenue_cagr_5y`, `net_debt_to_operating_income`
 (with `debt_reported` when false), `fiscal_year_end`, `filed`, `price`, `price_return_12m`. The first nine come from the
 screen's `Candidate`; the last two come from the strategy (`get_last_price` and `get_historical_prices`, both clock-gated
@@ -353,8 +359,11 @@ All off the network, with hand-written fakes.
   exactly 2).
 - **Submit tools**: each valid and invalid case of §3, the first-valid-is-final rule, and symbol normalisation. A test
   also asserts the tool functions' real annotations are readable (the `from __future__` rule).
-- **Rebalancer** against `BacktestBroker`: sells before buys; the SHV remainder; the band (a 4-point drift does not trade,
-  a 6-point drift does); a forced exit; an order rejected for cash; a failed price lookup; a minimum-size skip.
+- **Rebalancer** against `FakeBroker` (exact quantities): sells before buys; the SHV remainder; the band (a drift of
+  exactly the band does not trade, one beyond it does); a forced exit; an order rejected for cash and the resync from the
+  broker's buying power; a failed price lookup; a minimum-size skip; open orders (a second review sends nothing that is
+  in flight, a partly filled order counts only its unfilled part, a sell never exceeds what is not already being sold).
+  The real `BacktestBroker` is exercised by the end-to-end test below.
 - **Pipeline** with fake agent handles that call the real submit tools: the happy path; an invalid submission corrected
   in the same run; a missing submission fixed by the forced retry; a missing submission after the retry abandons the
   day with the book untouched; a screen outage abandons the day; 3 abandoned days abort a backtest; a holding failing on
@@ -403,4 +412,7 @@ All off the network, with hand-written fakes.
 - **A dedicated account is assumed**: positions the strategy did not open would be reviewed and may be sold.
 - **Hysteresis is per holding, not per idea**: a new candidate that fails once is simply not bought, and may be proposed
   again the next day.
+- **A backtest fills an order on the next bar**, so a stock bought on day D is a holding (and reviewed as one) only from
+  day D+2. A pending buy for a stock that is no longer in the target is not cancelled; it fills and is reviewed
+  as a holding the next day. In paper and live a market order is normally filled before the next review.
 - **No dashboard view** of the reviews yet, and no orchestrator to decide about the strategy from outside.
