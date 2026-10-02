@@ -269,6 +269,9 @@ to the trader too. It is **not** extracted here: the trader's context carries cu
 - **Screen failures**: a `FundamentalsError` from either screen run (a hollow screen: SEC or Yahoo down) abandons the
   review the same way. A `ConfigurationError` (missing `SEC_EDGAR_USER_AGENT`) is raised from `initialize` as a
   `FatalStrategyError`: the strategy refuses to start rather than fail daily.
+- **Broker and backtest failures**: a `BrokerError` or `BacktestError` anywhere in a review (the screen aside) also
+  abandons it, at stage `broker`, or `execution` once the rebalancer has started (the orders already sent are written
+  to that `reviews.jsonl` line), so a persistent data failure trips `max_consecutive_abandoned` in a backtest.
 - **An `AgentError` from a run** counts as no submission for that stage (the retry applies once).
 - **Agent hand-off is the only LLM output the strategy trusts.** Free text from an agent, including its final message,
   is logged and otherwise ignored.

@@ -25,7 +25,7 @@ from trading_agent_framework.strategies.bill_ackman.rebalancer import Rebalancer
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
 from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, FundamentalsError, TradingFrameworkError
+from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FundamentalsError, TradingFrameworkError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -82,6 +82,7 @@ class ReviewPipeline:
         self._log = review_log
         self._rebalancer = rebalancer
         self._universe = list(universe)
+        self._stage = "setup"  # "setup" until the rebalancer starts, then "execution": what a broker failure is attributed to
 
     # --- one review --------------------------------------------------------------------------------
 
@@ -89,15 +90,24 @@ class ReviewPipeline:
         state = self._state.load()
         now = self._strategy.clock.now().astimezone(MARKET_TZ)
         record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
+        self._stage = "setup"
+        extra: dict[str, Any] = {}
         try:
             self._review(now, state, record)
         except ReviewAbandoned as exc:
-            streak = state.abandoned_streak + 1
-            self._strategy.log_error(f"review abandoned at the {exc.stage} stage (streak {streak}): {exc}")
-            self._state.save(replace(state, abandoned_streak=streak))
-            self._log.append({**record, "abandoned": True, "stage": exc.stage, "error": str(exc), "abandoned_streak": streak})
-            return ReviewOutcome(completed=False, abandoned_streak=streak)
-        return ReviewOutcome(completed=True, abandoned_streak=0)
+            stage, error = exc.stage, exc
+        except (BrokerError, BacktestError) as exc:
+            # A broker or data failure anywhere in the review (ConfigurationError is not one: it propagates).
+            stage, error = ("execution" if self._stage == "execution" else "broker"), exc
+            if stage == "execution":
+                extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
+        else:
+            return ReviewOutcome(completed=True, abandoned_streak=0)
+        streak = state.abandoned_streak + 1
+        self._strategy.log_error(f"review abandoned at the {stage} stage (streak {streak}): {error}")
+        self._state.save(replace(state, abandoned_streak=streak))
+        self._log.append({**record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
+        return ReviewOutcome(completed=False, abandoned_streak=streak)
 
     def _review(self, now: datetime, state: ReviewState, record: dict[str, Any]) -> None:
         params = self._params
@@ -205,6 +215,7 @@ class ReviewPipeline:
 
         # 9. Targets and execution.
         target = target_portfolio({position.symbol: position.weight for position in positions}, cash_buffer=params.cash_buffer)
+        self._stage = "execution"
         orders = self._rebalancer.rebalance(target, outcome.forced_exits)
 
         # 10. Remember and log.
@@ -241,6 +252,7 @@ class ReviewPipeline:
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
         for _ in range(2):
+            self._recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool)
                 self._strategy.log_info(f"[{agent_name}] {result.output}")

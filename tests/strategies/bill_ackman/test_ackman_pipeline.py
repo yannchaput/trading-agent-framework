@@ -24,7 +24,7 @@ from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewOutcom
 from trading_agent_framework.strategies.bill_ackman.rebalancer import Rebalancer
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
 from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore
-from trading_agent_framework.utils.errors import AgentError, BrokerError, ConfigurationError, FundamentalsError
+from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, ConfigurationError, FundamentalsError
 
 Step = Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]
 
@@ -536,3 +536,66 @@ def test_the_counters_survive_a_restart(tmp_path: Path) -> None:
 
     assert next_day.log_lines()[0]["forced_exits"] == ["HHH"]
     assert next_day.trader.calls == []
+
+
+# --- a broker or backtest failure inside a review ----------------------------------------------------------------
+
+
+def _account_fails_on_call(h: Harness, monkeypatch: pytest.MonkeyPatch, number: int, error: Exception) -> None:
+    """Make the `number`-th `get_account` call raise `error` (call 1 is current_weights, 2 the top of rebalance, 3 the post-sells read)."""
+    original = h.broker.get_account
+    calls = {"count": 0}
+
+    def get_account() -> AccountBalances:
+        calls["count"] += 1
+        if calls["count"] == number:
+            raise error
+        return original()
+
+    monkeypatch.setattr(h.broker, "get_account", get_account)
+
+
+@pytest.mark.parametrize("error", [BrokerError("down"), BacktestError("data gone")])
+def test_a_broker_failure_before_the_rebalance_abandons_the_review(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA")]))
+    _account_fails_on_call(h, monkeypatch, 1, error)
+
+    outcome = h.run()
+
+    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert h.orders == []
+    assert h.store.load().abandoned_streak == 1
+    (line,) = h.log_lines()
+    assert line["abandoned"] is True and line["stage"] == "broker" and line["abandoned_streak"] == 1
+    assert str(error) in line["error"] and "orders" not in line
+
+
+def test_a_failure_after_a_sell_went_out_abandons_the_review_and_logs_the_orders_already_sent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    before = ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=1)
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA")], holdings=[_candidate("HHH")]), held={"HHH": 100}, state=before)
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="survive")]
+    h.trader.steps = [holds(AAA=0.3)]  # HHH is dropped: the rebalancer sells it, then sizes the buys
+    _account_fails_on_call(h, monkeypatch, 3, BacktestError("data gone"))
+
+    outcome = h.run()
+
+    assert outcome == ReviewOutcome(completed=False, abandoned_streak=2)
+    assert h.orders == [("HHH", "sell", 100.0)]
+    assert h.store.load() == ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=2)  # the counters are not saved
+    (line,) = h.log_lines()
+    assert line["abandoned"] is True and line["stage"] == "execution" and line["abandoned_streak"] == 2
+    assert line["orders"] == [{"symbol": "HHH", "side": "sell", "quantity": 100.0}]
+    assert "data gone" in line["error"]
+
+
+def test_an_agent_error_on_the_retry_is_not_reported_with_the_first_attempts_tool_error(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA")]))
+    h.researcher.steps = [lambda tools, ctx: tools["submit_ranking"]([{"symbol": "ZZZ", "reason": "x"}]), crashes("llm down")]
+
+    outcome = h.run()
+
+    assert not outcome.completed
+    error = h.log_lines()[0]["error"]
+    assert "llm down" in error and "not one of the candidates" not in error
+    assert "not one of the candidates" in h.researcher.calls[1]["task"]  # the retry prompt still quotes it

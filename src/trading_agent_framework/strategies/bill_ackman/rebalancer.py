@@ -37,6 +37,7 @@ class Rebalancer:
     def __init__(self, strategy: Strategy, params: AckmanParams) -> None:
         self._strategy = strategy
         self._params = params
+        self.placed: list[PlacedOrder] = []  # the orders accepted by the current/last `rebalance`, readable if it raises half way
 
     # --- what is held ----------------------------------------------------------------------------
 
@@ -83,6 +84,7 @@ class Rebalancer:
     def rebalance(self, target: TargetPortfolio, forced_exits: Collection[str] = ()) -> list[PlacedOrder]:
         """Trade the book toward `target`; returns the orders that were accepted, in submission order."""
         strategy, params = self._strategy, self._params
+        self.placed = []
         account = strategy.broker.get_account()
         portfolio_value = float(account.portfolio_value)
         if portfolio_value <= 0:
@@ -97,7 +99,6 @@ class Rebalancer:
         band = params.rebalance_band * portfolio_value
         min_trade = params.min_trade_pct * portfolio_value
         reserve = params.cash_buffer * portfolio_value
-        placed: list[PlacedOrder] = []
         refusals: list[Exception] = []  # the last refused order's error, read by the buy loop
 
         def sellable(symbol: str) -> float:
@@ -116,7 +117,7 @@ class Rebalancer:
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
                 return False
             strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why})")
-            placed.append(PlacedOrder(symbol, side, quantity))
+            self.placed.append(PlacedOrder(symbol, side, quantity))
             return True
 
         # 1. Sells: forced exits and dropped stocks in full, stocks above their band trimmed.
@@ -195,4 +196,4 @@ class Rebalancer:
             quantity = fractional_qty(min(parking_target - parking_value, available) / parking_price)
             if quantity * parking_price >= min_trade:
                 submit(parking, "buy", quantity, "parking")
-        return placed
+        return list(self.placed)
