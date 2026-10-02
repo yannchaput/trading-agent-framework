@@ -657,9 +657,11 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
         return fig
 
     indicator_panes = dict(indicators or {})
-    regime_series = indicator_panes.pop(REGIME_PANE, None)
-    regime = regime_series[0] if regime_series else None
-    panes = list(indicator_panes.items())
+    regime_series = indicator_panes.pop(REGIME_PANE, [])
+    regime = next((line for line in regime_series if line["name"] == REGIME_PANE), None)
+    other_regime_lines = [line for line in regime_series if line is not regime]
+    # Any other series in the "Regime" pane is drawn like a generic pane, never dropped.
+    panes = [*([(REGIME_PANE, other_regime_lines)] if other_regime_lines else []), *indicator_panes.items()]
     row_heights = [1.0]
     if regime is not None or panes:
         row_heights = [0.5, *([0.12] if regime is not None else []), *([0.5 / len(panes)] * len(panes) if panes else [])]

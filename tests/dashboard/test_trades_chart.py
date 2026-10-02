@@ -52,6 +52,16 @@ def test_the_regime_row_sits_right_under_the_portfolio_chart_on_the_same_time_ax
     assert (regime_row[1] - regime_row[0]) < (portfolio[1] - portfolio[0])
 
 
+def test_the_regime_series_is_picked_by_name_and_another_series_in_that_pane_is_still_drawn() -> None:
+    regime_series = _regime([1, 1, 0, -1])["Regime"][0]
+    fig = trades_chart(TRADES, indicators={"Regime": [_line("Fast"), regime_series]})
+    regime = next(t for t in fig.data if t.name == "Regime")
+    assert regime.line.shape == "hv" and list(regime.y) == [1, 1, 0, -1] and regime.yaxis == "y2"
+    fast = next(t for t in fig.data if t.name == "Fast")  # not dropped: drawn as a generic pane would
+    assert fast.line.shape != "hv" and fast.yaxis == "y3"
+    assert len(fig.layout.shapes) == 2 * 3  # the bands come from the regime series (3 runs, 2 rows), not from "Fast"
+
+
 def test_each_regime_run_is_shaded_on_both_rows() -> None:
     fig = trades_chart(TRADES, indicators=_regime([1, 1, 0, -1]))  # three runs: bullish, neutral, bearish
     on_portfolio = [s for s in fig.layout.shapes if s.xref == "x"]
