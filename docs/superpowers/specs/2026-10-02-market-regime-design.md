@@ -50,8 +50,9 @@ float boundary: it consumes `Bars.df`, the existing float64 seam).
   - **Trend:** `+1` if close > SMA(slow) and SMA(fast) > SMA(slow); `-1` if close
     < SMA(slow) and SMA(fast) < SMA(slow); else `0`.
   - **Volatility cap:** vol is the annualized (`sqrt(252)`) standard deviation of
-    daily log returns over `vol_window`. If the latest vol is at or above its own
-    `vol_percentile` over the trailing `vol_lookback` days, a `+1` is capped to
+    daily log returns over `vol_window`. If the latest vol is strictly above its own
+    `vol_percentile` over the trailing `vol_lookback` days (the latest value
+    included, float noise ignored), a `+1` is capped to
     `0`. `0` and `-1` are unchanged: vol can cool a bullish read, never create a
     bearish one.
   - No hysteresis in this version (YAGNI); add it only if the series flips too
