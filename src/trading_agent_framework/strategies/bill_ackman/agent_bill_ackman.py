@@ -36,8 +36,8 @@ class BillAckmanStrategy(Strategy):
     sleeptime = "5D"  # one review every 5 trading sessions (`D` counts sessions): weekly
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.BI_MONTH)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.BI_MONTH)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         # a year of daily bars before the first simulated day, so price_return_12m (TRADING_DAYS_PER_YEAR + 1 closes) exists from day one
         "warmup_trading_days": 260,
@@ -114,7 +114,7 @@ class BillAckmanStrategy(Strategy):
     # --- backtesting ------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any):
-        """Backtest over the class `parameters` window (`PredefinedWindow.BI_MONTH`) on Yahoo daily bars."""
+        """Backtest over the class `parameters` window on Yahoo daily bars."""
         symbols = list(dict.fromkeys([*self.universe, self.settings.parking_symbol, self.parameters["benchmark_symbol"]]))
         defaults: dict[str, Any] = dict(
             start=self.parameters["backtesting_start"],
