@@ -103,7 +103,7 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 def _run(tmp_path: Path, manager: _Manager, screen: FakeScreen) -> BillAckmanStrategy:
     source = FakeBacktestDataSource()
     source.set_sessions(SESSIONS)
-    for symbol, closes in {"AAA": [49.0, 49.5, 50.0, 50.0, 50.0, 51.0, 52.0, 52.0], "SHV": [100.0] * 8, "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0]}.items():
+    for symbol, closes in {"AAA": [49.0, 49.5, 50.0, 50.5, 51.5, 51.0, 52.0, 52.0], "SHV": [100.0] * 8, "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0]}.items():
         source.set_bars(Asset(symbol), _bars(closes))
     strategy = BillAckmanStrategy(
         FakeBroker(FakeClock(et(2026, 9, 14, 9, 0)), strategy_name="bill_ackman"),
@@ -132,7 +132,9 @@ def test_a_backtest_reviews_every_session_and_buys_the_trader_s_choice(tmp_path:
     assert [line["date"] for line in lines] == [session.open.date().isoformat() for session in SESSIONS]
     assert not any(line["abandoned"] for line in lines)
     assert {order["symbol"] for order in lines[0]["orders"]} == {"AAA", "SHV"}  # 30% AAA, the rest but the 2% buffer parked
-    # A backtest fills an order on the next bar, so the second review finds the first one's orders still open and sends nothing.
+    # Nothing is re-sent on the second day (a backtest fills an order on the next bar, so day one's orders are still open).
+    # The open-order accounting itself is pinned by the rebalancer's FakeBroker tests (test_ackman_rebalancer.py), where cash
+    # cannot mask it; here BacktestBroker's buying power also nets the pending buys.
     assert lines[1]["orders"] == []
     assert all(manager.handles[name].runs == len(SESSIONS) for name in ("researcher", "short_seller", "trader"))
     assert list(tmp_path.rglob("metrics.json"))  # the run completed and wrote its report
@@ -145,7 +147,8 @@ def test_the_screen_is_asked_with_a_market_local_as_of_and_gets_no_look_ahead_pr
 
     assert all(as_of.tzinfo is not None and as_of.utcoffset() == timedelta(hours=-4) for as_of in screen.as_ofs)
     assert all(price is not None for price in screen.prices)
-    assert screen.prices[0] == Decimal("50.0")  # the first session's price is the last close at or before that moment (the day before)
+    # each session's price is the last close at or before that moment: the previous day's close, never the day's own or a later one
+    assert screen.prices[:3] == [Decimal("50.0"), Decimal("50.5"), Decimal("51.5")]
     # from the second session on the screen is asked twice a day: the universe, then the holdings
     assert len(screen.as_ofs) > len(SESSIONS)
 
