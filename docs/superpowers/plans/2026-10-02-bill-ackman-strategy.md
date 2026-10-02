@@ -1739,6 +1739,7 @@ def test_the_weight_and_total_boundaries_are_inclusive() -> None:
         ([_position("AAA", True)], "must be a number"),
         ([_position("AAA", float("nan"))], "finite"),
         ([_position("AAA", float("inf"))], "finite"),
+        ([_position("AAA", 10**400)], "must be a number"),
         ([{"symbol": "AAA", "weight": 0.2}], "no reason"),
         ("AAA", "list of objects"),
     ],
@@ -1845,6 +1846,25 @@ def test_each_stage_validates_with_the_recorders_parameters() -> None:
     result = submit_tools(recorder)["submit_portfolio"]([_position("AAA", 0.25)])
 
     assert "between 0.05 and 0.2" in result["error"]
+
+
+def test_an_overflowing_integer_is_refused_with_a_correctable_error() -> None:
+    recorder = _recorder()
+    recorder.expect_portfolio(["AAA"])
+    tools = submit_tools(recorder)
+
+    result = tools["submit_portfolio"]([{"symbol": "AAA", "weight": 10**400, "reason": "x"}])
+
+    assert "error" in result
+    assert "must be a number" in result["error"]
+    assert not recorder.submitted
+    assert recorder.last_error is not None
+
+    # The model can correct it in the same run
+    corrected = tools["submit_portfolio"]([_position("AAA", 0.3)])
+
+    assert corrected == {"status": "recorded"}
+    assert recorder.submitted
 
 
 def test_the_tools_are_named_after_their_keys_and_have_one_line_docstrings() -> None:
@@ -1970,7 +1990,7 @@ def _weight(item: Mapping[str, Any], symbol: str) -> float:
         raise HandoffError(f"the weight for {symbol} must be a number")
     try:
         weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise HandoffError(f"the weight for {symbol} must be a number, a fraction of portfolio value such as 0.25") from None
     if not math.isfinite(weight):
         raise HandoffError(f"the weight for {symbol} must be a finite number")
@@ -2153,7 +2173,7 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
 - [ ] **Step 4: Run the tests and lint**
 
 Run: `uv run ruff check src tests && uv run pytest tests/strategies/bill_ackman/test_ackman_handoff.py -q`
-Expected: `57 passed`, no lint errors. (The last three tests build a real LangChain `StructuredTool` from each submit tool: they prove the agent layer can read the schema.)
+Expected: `59 passed`, no lint errors. (The last three tests build a real LangChain `StructuredTool` from each submit tool: they prove the agent layer can read the schema.)
 
 - [ ] **Step 5: Commit**
 
@@ -4453,7 +4473,7 @@ Check: `git diff --stat README.md` shows one file changed; `uv run agent 2>&1 | 
 - [ ] **Step 7: Run the whole suite, then commit**
 
 Run: `uv run pytest -q 2>&1 | tail -1`
-Expected: `2153 passed`.
+Expected: `2155 passed`.
 
 ```bash
 git add src/trading_agent_framework/strategies/bill_ackman/agent_bill_ackman.py src/trading_agent_framework/strategies/bill_ackman/__init__.py src/trading_agent_framework/main.py README.md tests/strategies/bill_ackman/test_ackman_strategy.py tests/test_main.py
@@ -4725,7 +4745,7 @@ git status --short
 git log --oneline main..HEAD
 ```
 
-Expected: `All checks passed!`; `2156 passed`; `  - bill_ackman`; `git status --short` shows only unrelated files (for example `TODO.md`) and nothing under `cache/`, `data/` or `logs/`; one commit per task since the spec.
+Expected: `All checks passed!`; `2158 passed`; `  - bill_ackman`; `git status --short` shows only unrelated files (for example `TODO.md`) and nothing under `cache/`, `data/` or `logs/`; one commit per task since the spec.
 
 - [ ] **Step 5: Commit**
 
