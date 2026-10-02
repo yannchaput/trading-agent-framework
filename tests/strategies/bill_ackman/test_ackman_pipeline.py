@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -11,7 +12,7 @@ from typing import Any
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -74,12 +75,13 @@ class FakeAgent:
         self.steps: list[Step] = []
         self.calls: list[dict[str, Any]] = []
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
+        self.tool_calls: list[ToolCallRecord] = []
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool})
         if self.steps:
             self.steps.pop(0)(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=[])
+        return AgentRunResult(output="done", tool_calls=list(self.tool_calls))
 
 
 def ranks(*symbols: str) -> Step:
@@ -599,3 +601,19 @@ def test_an_agent_error_on_the_retry_is_not_reported_with_the_first_attempts_too
     error = h.log_lines()[0]["error"]
     assert "llm down" in error and "not one of the candidates" not in error
     assert "not one of the candidates" in h.researcher.calls[1]["task"]  # the retry prompt still quotes it
+
+
+def test_every_agent_tool_call_is_logged_at_debug_level(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA", 1), _candidate("BBB", 2)]))
+    h.researcher.steps = [ranks("AAA", "BBB")]
+    h.short_seller.steps = [judges(AAA="survive", BBB="fail")]
+    h.short_seller.tool_calls = [ToolCallRecord(name="search_news", args={"symbols": ["AAA"]}, result='{"articles": []}')]
+    h.trader.steps = [holds(AAA=0.3)]
+
+    with caplog.at_level(logging.DEBUG):
+        h.run()
+
+    lines = [record for record in caplog.records if "search_news" in record.getMessage()]
+    assert len(lines) == 1
+    assert lines[0].levelno == logging.DEBUG
+    assert "short_seller" in lines[0].getMessage() and "'AAA'" in lines[0].getMessage()

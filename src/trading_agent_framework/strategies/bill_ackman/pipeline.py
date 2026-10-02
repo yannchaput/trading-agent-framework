@@ -262,6 +262,8 @@ class ReviewPipeline:
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool)
                 self._strategy.log_info(f"[{agent_name}] {result.output}")
+                for i, tool_call in enumerate(result.tool_calls):
+                    self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentError as exc:
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
