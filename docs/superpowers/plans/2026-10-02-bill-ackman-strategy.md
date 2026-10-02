@@ -4604,7 +4604,7 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 def _run(tmp_path: Path, manager: _Manager, screen: FakeScreen) -> BillAckmanStrategy:
     source = FakeBacktestDataSource()
     source.set_sessions(SESSIONS)
-    for symbol, closes in {"AAA": [49.0, 49.5, 50.0, 50.0, 50.0, 51.0, 52.0, 52.0], "SHV": [100.0] * 8, "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0]}.items():
+    for symbol, closes in {"AAA": [49.0, 49.5, 50.0, 50.5, 51.5, 51.0, 52.0, 52.0], "SHV": [100.0] * 8, "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0]}.items():
         source.set_bars(Asset(symbol), _bars(closes))
     strategy = BillAckmanStrategy(
         FakeBroker(FakeClock(et(2026, 9, 14, 9, 0)), strategy_name="bill_ackman"),
@@ -4633,7 +4633,9 @@ def test_a_backtest_reviews_every_session_and_buys_the_trader_s_choice(tmp_path:
     assert [line["date"] for line in lines] == [session.open.date().isoformat() for session in SESSIONS]
     assert not any(line["abandoned"] for line in lines)
     assert {order["symbol"] for order in lines[0]["orders"]} == {"AAA", "SHV"}  # 30% AAA, the rest but the 2% buffer parked
-    # A backtest fills an order on the next bar, so the second review finds the first one's orders still open and sends nothing.
+    # Nothing is re-sent on the second day (a backtest fills an order on the next bar, so day one's orders are still open).
+    # The open-order accounting itself is pinned by the rebalancer's FakeBroker tests (test_ackman_rebalancer.py), where cash
+    # cannot mask it; here BacktestBroker's buying power also nets the pending buys.
     assert lines[1]["orders"] == []
     assert all(manager.handles[name].runs == len(SESSIONS) for name in ("researcher", "short_seller", "trader"))
     assert list(tmp_path.rglob("metrics.json"))  # the run completed and wrote its report
@@ -4646,7 +4648,8 @@ def test_the_screen_is_asked_with_a_market_local_as_of_and_gets_no_look_ahead_pr
 
     assert all(as_of.tzinfo is not None and as_of.utcoffset() == timedelta(hours=-4) for as_of in screen.as_ofs)
     assert all(price is not None for price in screen.prices)
-    assert screen.prices[0] == Decimal("50.0")  # the first session's price is the last close at or before that moment (the day before)
+    # each session's price is the last close at or before that moment: the previous day's close, never the day's own or a later one
+    assert screen.prices[:3] == [Decimal("50.0"), Decimal("50.5"), Decimal("51.5")]
     # from the second session on the screen is asked twice a day: the universe, then the holdings
     assert len(screen.as_ofs) > len(SESSIONS)
 
@@ -4699,7 +4702,7 @@ i = index_of("- `strategies/` -- concrete strategies.")
 lines[i] += (
     " `bill_ackman/` (`BillAckmanStrategy`, registered as `\"bill_ackman\"`): a daily researcher → short seller → trader pipeline over the fundamentals quality screen. "
     "`screen/` is the screen (`build_quality_screen(project_root).run(symbols, as_of=, price_of=, top_n=)`: `quality.py` pure gates and score, `annual_figures.py` pure SEC reduction, `annual_store.py` and `splits.py` I/O, `screen.py` wiring). "
-    "`ReviewPipeline` runs one review: screen → researcher → short seller → hysteresis → trader → `Rebalancer`. The agents hand structured results to each other through three submit tools (`handoff.py`: `submit_ranking`, `submit_verdicts`, `submit_portfolio`, validated by `HandoffRecorder`) and have NO order tool; `Rebalancer` is the only order code (sells first, buys, then SHV); `StateStore` keeps the fail counters in `data/bill_ackman_state_<mode>.json`; `ReviewLog` appends one line per review to `reviews.jsonl` in the run directory. "
+    "`ReviewPipeline` runs one review: screen → researcher → short seller → hysteresis → trader → `Rebalancer`. The agents hand structured results to each other through three submit tools (`handoff.py`: `submit_ranking`, `submit_verdicts`, `submit_portfolio`, validated by `HandoffRecorder`) and have NO order tool; `Rebalancer` is the only order code (sells first, buys, then SHV); `StateStore` keeps the fail counters, the last ranking and verdicts and the abandoned streak in `data/bill_ackman_state_<mode>.json`; `ReviewLog` appends one line per review to `reviews.jsonl` in the run directory. "
     "Pure: `fact_sheet`, `hysteresis`, `portfolio`, the validators in `handoff`."
 )
 
@@ -4708,7 +4711,7 @@ i = index_of("- `fundamentals/` --")
 lines[i] = (
     "- `fundamentals/` -- SEC EDGAR client, trimmed and ported from lumibot's `SECFundamentals`: `sec.py` (**pure**: tag maps, as-of candidate filtering, statement-period matching, filings parsing, URL building, HTML stripping, `parse_dt`) "
     "and `edgar_client.py` (`SecEdgarClient`, the only module allowed to import `httpx` for SEC access -- cached to `<project_root>/cache/sec/`, rate-limited, requires `SEC_EDGAR_USER_AGENT`; `fetch_json` is its uncached path and HTTP 404 raises `FundamentalsNotFoundError`; "
-    "the cached payload getters take optional `as_of`/`max_age_days`, so a payload older than 30 days by the strategy clock is fetched again -- a backtest never refetches an existing file, live refreshes monthly), plus `freshness.py` (`is_stale`, the cache-age rule). "
+    "the cached payload getters take optional `as_of`/`max_age_days`, so a payload older than max_age_days by the strategy clock is fetched again (the drill-down tools pass 30) -- a backtest never refetches an existing file, live refreshes monthly), plus `freshness.py` (`is_stale`, the cache-age rule). "
     "The quality screen built on it lives in `strategies/bill_ackman/screen/`."
 )
 
@@ -4722,7 +4725,7 @@ lines[i] = lines[i].replace("the row shape in `sec.py` change", "the row shape i
 # 4. The gotchas of the Ackman strategy, right after it.
 new_gotchas = [
     "- **The Ackman agents never trade, and only their submit tools are trusted.** No agent gets an order, account, indicator or memory tool (`BillAckmanStrategy.initialize` builds each agent's tool list explicitly: researcher = SEC fundamentals + market data + `submit_ranking`, short seller = those + news + `submit_verdicts` instead, trader = `submit_portfolio` only). Each submit tool validates against what the pipeline armed the `HandoffRecorder` with for that stage and returns `{\"error\": ...}` on a violation, so the model can correct itself in the same run; the first valid submission is final. Free text from an agent (including its last message) is logged and ignored. `handoff.py` has no `from __future__ import annotations` (the agent layer reads real annotations).",
-    "- **An abandoned Ackman review changes nothing.** `ReviewPipeline._run_stage` runs an agent, then once more with `force_tool=<its submit tool>` and a prompt quoting the last tool error; a stage with no valid submission after that (or a `FundamentalsError` from the screen) abandons the review: nothing is traded, no counter moves, `abandoned_streak` goes up and the reason is written to `reviews.jsonl`. A backtest raises `FatalStrategyError` at `max_consecutive_abandoned` (3) abandoned reviews in a row; paper and live log and carry on. A `ConfigurationError` from an agent (no model configured) is NOT an abandoned review: it propagates, and `initialize` turns a missing `SEC_EDGAR_USER_AGENT` into `FatalStrategyError` so the strategy refuses to start.",
+    "- **An abandoned Ackman review changes nothing.** `ReviewPipeline._run_stage` runs an agent, then once more with `force_tool=<its submit tool>` and a prompt quoting the last tool error; a stage with no valid submission after that (or a `FundamentalsError` from the screen) abandons the review: nothing is traded, no counter moves, `abandoned_streak` goes up and the reason is written to `reviews.jsonl`. A backtest raises `FatalStrategyError` at `max_consecutive_abandoned` (3) abandoned reviews in a row; paper and live log and carry on. A `ConfigurationError` (no model configured, missing `SEC_EDGAR_USER_AGENT`) is raised while `initialize` builds the screen and the agents and becomes `FatalStrategyError`: the strategy refuses to start and the error never reaches the abandonment logic; a `ConfigurationError` raised by an agent run during a review (not expected in practice) propagates and leaves the state untouched.",
     "- **Ackman hysteresis and open orders.** A holding's `fail` verdict raises its counter, `survive` resets it, and at `forced_exit_fails` (2) consecutive fails code sells it whatever the trader submits (it is not in the trader's allowed set; its counter is kept so a failed sell is forced again). A holding the screen rejects on a quality gate gets the verdict `fail` from code and never reaches the short seller; a data rejection (`no_data`, `no_price`, `no_split_data`, `duplicate_listing`) still does, with a reduced fact sheet. `Rebalancer` counts open orders (a pending buy counts toward the position, a pending sell is deducted and a sell never exceeds what is not already being sold): a backtest fills an order on the next bar, so the daily review always meets yesterday's orders pending. `initialize` wipes the state file in backtesting mode only; paper/live counters survive restarts.",
 ]
 i = index_of("- **The quality screen's as-of rule is stricter than the fundamentals tools'.**")
