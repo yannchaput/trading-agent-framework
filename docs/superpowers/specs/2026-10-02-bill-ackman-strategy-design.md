@@ -195,12 +195,15 @@ rules for cash accounts, without importing from that strategy.
    therefore never sends again what is already in flight. This matters in a backtest, which fills an order on the next
    bar: the daily review always finds the previous day's orders still pending.
 1. **Current weights** come from positions times last price over portfolio value; a price lookup that fails values the
-   position at 0 and logs a warning rather than aborting after sells are submitted.
+   position at 0 and logs a warning rather than aborting after sells are submitted. The weights count open orders (held
+   plus pending buys minus pending sells; a stock whose effective quantity is not positive is omitted), so the day after
+   a full sell is submitted the trader no longer sees the stock at its old weight.
 2. **Sells first.** Forced exits and every held stock not in the targets, in full. A held target stock above its target
    by more than `rebalance_band` (5 points of portfolio value): the excess. SHV above its target by more than the band:
    the excess, and also whatever is needed to fund the buys.
 3. **Buys.** Each target stock below its target by more than the band, up to the cash available, which is the **smaller
-   of `buying_power` and cash plus the estimated proceeds of the sells submitted in this run, minus the cash buffer**
+   of `buying_power` (read again after this run's sells) and cash plus the estimated proceeds of the sells submitted in
+   this run plus the net credit of earlier reviews' open orders, minus the cash buffer**
    (never `buying_power` alone: on a margin account it exceeds cash; never `min(cash, buying_power)`: raw cash ignores
    the sell credit).
 4. **SHV last.** The money the stock buys leave goes to SHV, up to its target, if it is below target by more than the

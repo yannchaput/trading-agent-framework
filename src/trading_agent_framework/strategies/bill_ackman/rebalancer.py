@@ -47,16 +47,21 @@ class Rebalancer:
         return sorted(position.asset.symbol for position in self._strategy.get_positions() if position.quantity > 0 and position.asset.symbol != parking)
 
     def current_weights(self) -> dict[str, float]:
-        """Each held stock's share of portfolio value, rounded to 4 decimals; empty if the portfolio value is not positive."""
+        """Each stock's share of portfolio value counting open orders (held + pending buys - pending sells), rounded to 4 decimals.
+
+        A stock whose effective quantity is not positive is omitted; empty if the portfolio value is not positive.
+        """
         portfolio_value = float(self._strategy.broker.get_account().portfolio_value)
         if portfolio_value <= 0:
             return {}
         parking = self._params.parking_symbol
+        held = {position.asset.symbol: float(position.quantity) for position in self._strategy.get_positions() if position.quantity > 0}
+        incoming, outgoing = self._in_flight()
         weights = {}
-        for position in self._strategy.get_positions():
-            symbol = position.asset.symbol
-            if position.quantity > 0 and symbol != parking:
-                weights[symbol] = round(float(position.quantity) * self._price(symbol) / portfolio_value, 4)
+        for symbol in dict.fromkeys([*held, *incoming, *outgoing]):
+            quantity = held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0)
+            if quantity > 0 and symbol != parking:
+                weights[symbol] = round(quantity * self._price(symbol) / portfolio_value, 4)
         return dict(sorted(weights.items()))
 
     def _price(self, symbol: str) -> float:

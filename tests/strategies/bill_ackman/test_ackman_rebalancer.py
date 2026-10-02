@@ -228,6 +228,16 @@ def test_current_weights_are_each_stocks_share_of_portfolio_value(tmp_path: Path
     assert rebalancer.current_weights() == {"A": 0.5, "B": 0.025}
 
 
+def test_current_weights_count_open_orders(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100, "B": 10, "SHV": 10}, prices={"A": 50, "B": 25, "C": 20, "SHV": 100}, cash=0)
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("A"), side=OrderSide.SELL, quantity=Decimal(100)))  # A is being sold in full
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("C"), side=OrderSide.BUY, quantity=Decimal(50)))  # C is being bought
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("SHV"), side=OrderSide.BUY, quantity=Decimal(5)))  # parking is never a weight
+
+    assert rebalancer.current_weights() == {"B": 0.025, "C": 0.1}
+    assert rebalancer.holdings() == ["A", "B"]  # holdings stay the filled positions
+
+
 # --- orders still open from an earlier review -----------------------------------------------------------
 
 
