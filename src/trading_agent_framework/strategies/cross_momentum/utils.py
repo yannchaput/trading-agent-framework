@@ -15,6 +15,8 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power  # noqa: F401  (moved to utils/helpers.py; re-exported)
+
 if TYPE_CHECKING:
     from .risk_diagnostics import PortfolioRiskDiagnostics
 
@@ -539,51 +541,6 @@ def save_equity_history(
             tmp_path.unlink(missing_ok=True)
         except OSError:
             pass
-
-
-def fractional_qty(value: float, decimals: int = 6) -> float:
-    """Floor a quantity to the specified number of decimal places.
-
-    Using floor (not round) guarantees the computed quantity never exceeds
-    the dollar budget — a quantity that rounds up could produce a cost
-    greater than available cash.
-
-    Args:
-        value: Raw quantity computed as dollar_amount / share_price.
-        decimals: Number of decimal places to keep. Default 6 (Alpaca
-            supports 9; 6 provides a safe margin).
-
-    Returns:
-        Floored quantity as a float.
-    """
-    factor = 10**decimals
-    return math.floor(value * factor) / factor
-
-
-def parse_insufficient_buying_power(error: Exception) -> float | None:
-    """Extract the broker's real buying_power from a rejected Alpaca order error.
-
-    Alpaca's APIError.__str__ returns the raw JSON error body, e.g.
-    '{"buying_power":"132.45","code":40310000,"message":"insufficient buying power"}'.
-    Returns None for any error that isn't this specific rejection shape, so a
-    caller can safely try this against any broker exception.
-
-    Args:
-        error: The exception raised by strategy.submit_order().
-
-    Returns:
-        The broker-reported real buying power as a float, or None.
-    """
-    try:
-        payload = json.loads(str(error))
-    except (json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(payload, dict) or payload.get("message") != "insufficient buying power":
-        return None
-    try:
-        return float(payload["buying_power"])
-    except (KeyError, TypeError, ValueError):
-        return None
 
 
 def load_cross_momentum_universe() -> list[str]:
