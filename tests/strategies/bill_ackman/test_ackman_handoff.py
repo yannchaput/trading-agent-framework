@@ -157,6 +157,7 @@ def test_the_weight_and_total_boundaries_are_inclusive() -> None:
         ([_position("AAA", True)], "must be a number"),
         ([_position("AAA", float("nan"))], "finite"),
         ([_position("AAA", float("inf"))], "finite"),
+        ([_position("AAA", 10**400)], "must be a number"),
         ([{"symbol": "AAA", "weight": 0.2}], "no reason"),
         ("AAA", "list of objects"),
     ],
@@ -263,6 +264,25 @@ def test_each_stage_validates_with_the_recorders_parameters() -> None:
     result = submit_tools(recorder)["submit_portfolio"]([_position("AAA", 0.25)])
 
     assert "between 0.05 and 0.2" in result["error"]
+
+
+def test_an_overflowing_integer_is_refused_with_a_correctable_error() -> None:
+    recorder = _recorder()
+    recorder.expect_portfolio(["AAA"])
+    tools = submit_tools(recorder)
+
+    result = tools["submit_portfolio"]([{"symbol": "AAA", "weight": 10**400, "reason": "x"}])
+
+    assert "error" in result
+    assert "must be a number" in result["error"]
+    assert not recorder.submitted
+    assert recorder.last_error is not None
+
+    # The model can correct it in the same run
+    corrected = tools["submit_portfolio"]([_position("AAA", 0.3)])
+
+    assert corrected == {"status": "recorded"}
+    assert recorder.submitted
 
 
 def test_the_tools_are_named_after_their_keys_and_have_one_line_docstrings() -> None:

@@ -85,7 +85,7 @@ def _weight(item: Mapping[str, Any], symbol: str) -> float:
         raise HandoffError(f"the weight for {symbol} must be a number")
     try:
         weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise HandoffError(f"the weight for {symbol} must be a number, a fraction of portfolio value such as 0.25") from None
     if not math.isfinite(weight):
         raise HandoffError(f"the weight for {symbol} must be a finite number")
