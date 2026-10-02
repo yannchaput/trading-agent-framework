@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
+import tempfile
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from trading_agent_framework.utils.errors import FundamentalsError
 from trading_agent_framework.utils.log import ColorLogger
@@ -41,12 +43,17 @@ def split_rows(history: Any) -> list[Split]:
     """The splits in a yfinance `Ticker.history(actions=True)` frame, oldest first.
 
     yfinance reports a failed download as an empty frame, which must not be read as "never split":
-    an empty frame raises `FundamentalsError`.
+    an empty frame raises `FundamentalsError`. A row whose ratio is not a finite number above zero
+    (a NaN, which `!= 0` would let through, or a bad negative) is not a split and is ignored.
     """
     if history.empty or "Stock Splits" not in history.columns:
         raise FundamentalsError("split lookup returned no history")
     column = history["Stock Splits"]
-    return [(stamp.date(), float(ratio)) for stamp, ratio in column[column != 0].items()]
+    return [(stamp.date(), float(ratio)) for stamp, ratio in column[column != 0].items() if _usable_ratio(ratio)]
+
+
+def _usable_ratio(ratio: object) -> bool:
+    return isinstance(ratio, int | float) and not isinstance(ratio, bool) and math.isfinite(ratio) and ratio > 0
 
 
 def _fetch_from_yahoo(symbol: str) -> list[Split]:
@@ -62,6 +69,31 @@ def _fetch_from_yahoo(symbol: str) -> list[Split]:
         raise FundamentalsError(f"{exc} for {symbol}") from exc
 
 
+class _Entry(NamedTuple):
+    fetched_at: datetime
+    splits: list[Split]
+
+
+def _decode_entry(raw: object) -> _Entry | None:
+    """A cache entry as an `_Entry`, or `None` when it is malformed in any way (a cache miss)."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("fetched_at"), str) or not isinstance(raw.get("splits"), list):
+        return None
+    try:
+        fetched_at = datetime.fromisoformat(raw["fetched_at"])
+        splits = [_decode_split(row) for row in raw["splits"]]
+    except (ValueError, TypeError):
+        return None
+    if fetched_at.tzinfo is None or None in splits:
+        return None
+    return _Entry(fetched_at, [split for split in splits if split is not None])
+
+
+def _decode_split(row: object) -> Split | None:
+    if not isinstance(row, list | tuple) or len(row) != 2 or not isinstance(row[0], str) or not _usable_ratio(row[1]):
+        return None
+    return date.fromisoformat(row[0]), float(row[1])
+
+
 class SplitHistory:
     """Split history per symbol, fetched lazily and cached in one JSON file.
 
@@ -69,6 +101,8 @@ class SplitHistory:
     of today's split-adjusted prices, which is a wall-clock fact. An entry is therefore stale when it
     was fetched more than `max_age_days` before `wall_clock()` (a timezone-aware callable, UTC by
     default), whatever date a backtest is simulating.
+
+    The cache file is validated once, on load: a malformed entry is a cache miss, never an exception.
     """
 
     def __init__(
@@ -81,7 +115,7 @@ class SplitHistory:
         self._cache_file = cache_file
         self._fetch = fetch or _fetch_from_yahoo
         self._wall_clock = wall_clock or (lambda: datetime.now(UTC))
-        self._entries: dict[str, dict[str, Any]] | None = None
+        self._entries: dict[str, _Entry] | None = None
 
     def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
         """`symbol`'s splits, oldest first (empty when it never split).
@@ -91,34 +125,45 @@ class SplitHistory:
         """
         entries = self._load()
         entry = entries.get(symbol)
-        if entry is not None and datetime.fromisoformat(entry["fetched_at"]) >= self._wall_clock() - timedelta(days=max_age_days):
-            return _decode(entry)
+        now = self._wall_clock()
+        if entry is not None and entry.fetched_at >= now - timedelta(days=max_age_days):
+            return list(entry.splits)
         try:
             fetched = sorted(self._fetch(symbol))
         except FundamentalsError as exc:
             if entry is None:
                 raise
-            logger.log_warning(f"split history for {symbol} could not be refreshed, using the copy fetched {entry['fetched_at']}: {exc}")
-            return _decode(entry)
-        entries[symbol] = {"fetched_at": self._wall_clock().isoformat(), "splits": [[split_date.isoformat(), ratio] for split_date, ratio in fetched]}
+            logger.log_warning(f"split history for {symbol} could not be refreshed, using the copy fetched {entry.fetched_at.isoformat()}: {exc}")
+            return list(entry.splits)
+        entries[symbol] = _Entry(now, fetched)
         self._save(entries)
         return fetched
 
-    def _load(self) -> dict[str, dict[str, Any]]:
+    def _load(self) -> dict[str, _Entry]:
         if self._entries is None:
             try:
                 loaded = json.loads(self._cache_file.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 loaded = {}  # no file yet, or one truncated by an interrupted write
-            self._entries = loaded if isinstance(loaded, dict) else {}
+            decoded = {symbol: _decode_entry(raw) for symbol, raw in loaded.items()} if isinstance(loaded, dict) else {}
+            self._entries = {symbol: entry for symbol, entry in decoded.items() if entry is not None}
         return self._entries
 
-    def _save(self, entries: dict[str, dict[str, Any]]) -> None:
-        self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self._cache_file.with_suffix(".tmp")
-        temporary.write_text(json.dumps(entries), encoding="utf-8")
-        os.replace(temporary, self._cache_file)
-
-
-def _decode(entry: dict[str, Any]) -> list[Split]:
-    return [(date.fromisoformat(split_date), float(ratio)) for split_date, ratio in entry["splits"]]
+    def _save(self, entries: dict[str, _Entry]) -> None:
+        """Try to persist `entries` (already held in memory); a failed write only costs a refetch next process."""
+        payload = {
+            symbol: {"fetched_at": entry.fetched_at.isoformat(), "splits": [[split_date.isoformat(), ratio] for split_date, ratio in entry.splits]}
+            for symbol, entry in entries.items()
+        }
+        temporary: str | None = None
+        try:
+            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
+            # A unique name per write: parallel runs sharing the cache must not share a temp file.
+            descriptor, temporary = tempfile.mkstemp(dir=self._cache_file.parent, prefix="splits.", suffix=".tmp")
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle)
+            os.replace(temporary, self._cache_file)
+        except OSError as exc:
+            logger.log_warning(f"split history could not be saved to {self._cache_file}: {exc}")
+            if temporary is not None:
+                Path(temporary).unlink(missing_ok=True)

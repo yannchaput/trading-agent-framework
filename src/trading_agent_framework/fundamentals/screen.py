@@ -97,8 +97,12 @@ class QualityScreen:
                 rejections[symbol] = "no_split_data"
                 logger.log_debug(f"{symbol}: {exc}")
                 continue
+            market_cap = restate_shares(outcome.shares, outcome.counted_on, splits) * price
+            if not market_cap.is_finite() or market_cap <= 0:  # a corrupt split ratio (0, negative, NaN, inf)
+                rejections[symbol] = "no_split_data"
+                continue
             accepted_ciks.add(cik)  # only now: a first listing with no price must not block the second
-            priced.append(Priced(survivor=outcome, sic=sic, market_cap=restate_shares(outcome.shares, outcome.counted_on, splits) * price))
+            priced.append(Priced(survivor=outcome, sic=sic, market_cap=market_cap))
 
         if unique and transport_failures / len(unique) > params.max_fetch_failure_ratio:
             raise FundamentalsError(f"quality screen aborted: {transport_failures} of {len(unique)} symbols could not be fetched from SEC")
@@ -110,13 +114,20 @@ class QualityScreen:
 
 
 def _price(price_of: Callable[[str], Decimal | None], symbol: str) -> Decimal | None:
-    """`price_of(symbol)` when it is a usable price; a failed or non-positive quote is no price."""
+    """`price_of(symbol)` as a `Decimal` when it is a usable price; a failed, non-numeric or non-positive quote is no price.
+
+    A float or int price (a caller's lookup may return one) is converted through `str`, so `10.5` is
+    exactly 10.5, not the nearest binary fraction.
+    """
     try:
         price = price_of(symbol)
     except TradingFrameworkError as exc:
         logger.log_debug(f"{symbol}: no price: {exc}")
         return None
-    return price if price is not None and price > 0 else None
+    if isinstance(price, bool) or not isinstance(price, int | float | Decimal):
+        return None
+    price = price if isinstance(price, Decimal) else Decimal(str(price))
+    return price if price.is_finite() and price > 0 else None
 
 
 def build_quality_screen(project_root: Path, *, params: ScreenParams | None = None) -> QualityScreen:

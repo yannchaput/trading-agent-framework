@@ -191,7 +191,7 @@ Gates run in this order. The first one that fails is the recorded reason.
 | 9 | `excluded_sector` | SIC code inside an excluded range. A missing SIC code passes. | `excluded_sic_ranges` ((4900, 4999), (6000, 6799)) |
 | 10 | `duplicate_listing` | Another symbol of the same company (same CIK) is already accepted. The first one in input order that passes every gate wins. | |
 | 11 | `no_price` | `price_of(symbol)` returns `None` or a price <= 0, or raises a framework error, or there is no share count. | |
-| 12 | `no_split_data` | The split lookup failed (§4). | |
+| 12 | `no_split_data` | The split lookup failed (§4), or the restated market cap is not finite and above zero (a corrupt split ratio). | |
 
 Notes:
 
@@ -289,6 +289,9 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
   last trade). A frozen older price snapshot, adjusted only up to some earlier date, overstates the market
   cap of a name that split since (the restated count includes the newer split, the price does not), which
   demotes that name in the ranking rather than promoting it.
+- A malformed cache entry (bad or naive `fetched_at`, bad split list, a ratio that is not finite and above
+  zero) is a cache miss, validated once on load; a failed cache write logs a warning and the fetched value
+  stays in memory. A Yahoo row whose ratio is not finite and above zero is not a split and is ignored.
 - An empty history is a valid answer. A failed lookup rejects the symbol as `no_split_data`: a silently wrong
   valuation is the failure this module exists to prevent.
 - `yfinance` moves from the `backtesting-yahoo` extra to the core dependencies (the extra keeps its entry).

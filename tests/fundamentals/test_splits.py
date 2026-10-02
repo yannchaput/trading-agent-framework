@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import logging
+import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -187,3 +189,126 @@ def test_a_corrupt_cache_file_is_treated_as_empty(tmp_path: Path) -> None:
 
     assert _splits(_history(cache_file, fetch)) == FOUR_FOR_ONE
     assert fetch.calls == ["AAPL"]
+
+
+def _write_cache(cache_file: Path, entry: object) -> None:
+    cache_file.write_text(json.dumps({"AAPL": entry}), encoding="utf-8")
+
+
+GOOD_ENTRY = {"fetched_at": FETCHED.isoformat(), "splits": [["2020-08-31", 4.0]]}
+
+
+def test_a_well_formed_cache_entry_is_served_without_a_fetch(tmp_path: Path) -> None:
+    cache_file = tmp_path / "splits.json"
+    _write_cache(cache_file, GOOD_ENTRY)
+    fetch = FakeFetch([])
+
+    assert _splits(_history(cache_file, fetch)) == FOUR_FOR_ONE
+    assert fetch.calls == []
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        "not a dict",
+        None,
+        [],
+        {"splits": [["2020-08-31", 4.0]]},
+        {**GOOD_ENTRY, "fetched_at": "yesterday"},
+        {**GOOD_ENTRY, "fetched_at": "2026-10-02T00:00:00"},
+        {**GOOD_ENTRY, "fetched_at": 20261002},
+        {"fetched_at": FETCHED.isoformat()},
+        {**GOOD_ENTRY, "splits": "none"},
+        {**GOOD_ENTRY, "splits": [["not-a-date", 4.0]]},
+        {**GOOD_ENTRY, "splits": [[20200831, 4.0]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", "four"]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", None]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", 0]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", -2.0]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", float("nan")]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31", float("inf")]]},
+        {**GOOD_ENTRY, "splits": [["2020-08-31"]]},
+        {**GOOD_ENTRY, "splits": ["2020-08-31"]},
+    ],
+    ids=[
+        "string", "null", "list", "no-fetched-at", "bad-fetched-at", "naive-fetched-at", "int-fetched-at", "no-splits", "splits-not-a-list",
+        "bad-date", "int-date", "text-ratio", "null-ratio", "zero-ratio", "negative-ratio", "nan-ratio", "inf-ratio", "short-row", "row-not-a-pair",
+    ],
+)
+def test_a_malformed_cache_entry_is_a_cache_miss_never_a_raw_exception(tmp_path: Path, entry: object) -> None:
+    cache_file = tmp_path / "splits.json"
+    _write_cache(cache_file, entry)
+    fetch = FakeFetch(FOUR_FOR_ONE)
+
+    assert _splits(_history(cache_file, fetch)) == FOUR_FOR_ONE
+    assert fetch.calls == ["AAPL"]
+
+
+def test_a_malformed_entry_does_not_poison_the_others(tmp_path: Path) -> None:
+    cache_file = tmp_path / "splits.json"
+    cache_file.write_text(json.dumps({"AAPL": "junk", "MSFT": {**GOOD_ENTRY, "splits": []}}), encoding="utf-8")
+    fetch = FakeFetch(FOUR_FOR_ONE)
+    history = _history(cache_file, fetch)
+
+    assert history.splits("MSFT", max_age_days=30) == []
+    assert fetch.calls == []
+
+
+@pytest.mark.parametrize("ratio", [float("nan"), float("inf"), float("-inf"), 0.0, -2.0])
+def test_split_rows_ignores_a_row_whose_ratio_is_not_finite_and_positive(ratio: float) -> None:
+    index = pd.to_datetime(["2020-08-28", "2020-08-31", "2020-09-01"]).tz_localize("America/New_York")
+    frame = pd.DataFrame({"Close": [1.0, 2.0, 3.0], "Stock Splits": [ratio, 4.0, 0.0]}, index=index)
+
+    assert split_rows(frame) == [(date(2020, 8, 31), 4.0)]
+
+
+def test_a_save_uses_a_unique_temp_file_and_leaves_no_temp_behind(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache_file = tmp_path / "cache" / "splits.json"
+    replaced: list[str] = []
+    real_replace = os.replace
+
+    def spy(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        replaced.append(os.fspath(source))
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", spy)
+    history = _history(cache_file, FakeFetch(FOUR_FOR_ONE))
+
+    history.splits("AAPL", max_age_days=30)
+    history.splits("MSFT", max_age_days=30)
+
+    assert len(set(replaced)) == 2  # a fresh name per write, not a fixed splits.tmp
+    assert all(Path(name).name.startswith("splits.") and name.endswith(".tmp") for name in replaced)
+    assert all(not Path(name).exists() for name in replaced)
+    assert list(cache_file.parent.glob("*.tmp")) == []
+
+
+def test_a_failed_save_warns_and_still_serves_the_fetched_value(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    cache_file = tmp_path / "cache" / "splits.json"
+
+    def broken(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(os, "replace", broken)
+    fetch = FakeFetch(FOUR_FOR_ONE)
+    history = _history(cache_file, fetch)
+
+    with caplog.at_level(logging.WARNING):
+        assert _splits(history) == FOUR_FOR_ONE
+        assert _splits(history) == FOUR_FOR_ONE  # kept in memory: no second fetch
+
+    assert fetch.calls == ["AAPL"]
+    assert "disk full" in caplog.text
+    assert list(cache_file.parent.glob("*.tmp")) == []
+    assert not cache_file.exists()
+
+
+def test_an_unwritable_cache_directory_never_escapes(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a file where the cache directory should be", encoding="utf-8")
+    history = _history(blocker / "splits.json", FakeFetch(FOUR_FOR_ONE))
+
+    with caplog.at_level(logging.WARNING):
+        assert _splits(history) == FOUR_FOR_ONE
+
+    assert "could not be saved" in caplog.text

@@ -348,3 +348,28 @@ def test_a_split_between_the_period_end_and_the_filing_is_applied_to_a_cover_pag
     splits = FakeSplits({"AAA": [(date(2026, 4, 25), 2.0)]})  # after the cover date: not in the count
 
     assert _run(FakeStore({"AAA": figures}), ["AAA"], splits=splits).candidates[0].market_cap == Decimal("20000")
+
+
+@pytest.mark.parametrize("ratio", [0.0, -2.0, float("nan"), float("inf")])
+def test_a_split_ratio_that_gives_no_usable_market_cap_is_no_split_data(ratio: float) -> None:
+    splits = FakeSplits({"AAA": [(date(2026, 3, 2), ratio)]})
+
+    result = _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], splits=splits)
+
+    assert result.candidates == []
+    assert result.rejections == {"AAA": "no_split_data"}
+
+
+@pytest.mark.parametrize("price", [10.5, 10])
+def test_a_float_or_int_price_becomes_a_decimal(price: float) -> None:
+    result = _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], price_of=lambda symbol: price)  # ty: ignore[invalid-argument-type]
+
+    assert result.candidates[0].market_cap == Decimal(1000) * Decimal(str(price))
+    assert isinstance(result.candidates[0].market_cap, Decimal)
+
+
+@pytest.mark.parametrize("price", [float("nan"), float("inf"), Decimal("NaN"), Decimal("Infinity"), "10", True])
+def test_a_price_that_is_not_a_finite_number_is_no_price(price: object) -> None:
+    result = _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], price_of=lambda symbol: price)  # ty: ignore[invalid-argument-type]
+
+    assert result.rejections == {"AAA": "no_price"}
