@@ -4767,3 +4767,12 @@ This needs the local LLM and the network, so it is for the user to run, and the 
 2. Make sure `data/universe/us_stock_universe.json` exists (`uv run batch-universe`).
 3. `uv run python scripts/tests/smoke_quality_screen.py` first: it fills `cache/sec/annual/` for a few symbols and proves SEC and Yahoo are reachable.
 4. `uv run agent bill_ackman backtesting`. The first run downloads about 5 GB of SEC data once (10 to 20 minutes) before the first review; each simulated day then costs three agent runs (plus up to three forced retries), so the default two-month window takes hours on a local 27B model. Read `reviews.jsonl` in the run directory (`logs/bill_ackman/backtesting/<run>/`) to see each day's ranking, verdicts, forced exits, targets and orders.
+
+## Post-review amendments
+
+The final whole-branch review led to one fix wave after Task 12 (commits `16d9a0f`..`92977b0`). The spec carries the amended rules; this plan's code blocks show the pre-wave code for these points:
+
+- `Rebalancer` sizes buys from `min(buying power re-read after the sells, cash + this run's proceeds + earlier in-flight credit) - reserve`, and exposes `placed` (spec §5).
+- `warmup_trading_days` is 260 so the 12-month return exists from the first simulated day (spec §10).
+- `ReviewPipeline.run()` abandons a review on a `BrokerError`/`BacktestError` (stage `broker`, or `execution` with the orders already sent logged) (spec §9); a retry no longer reports the first attempt's tool error.
+- `Rebalancer.current_weights()` counts open orders (spec §5.1).
