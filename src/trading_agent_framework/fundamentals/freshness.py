@@ -5,8 +5,8 @@ caller's clock, so the rule covers every mode: in a backtest `as_of` is simulate
 fetched today is fresh for every past date; in paper/live `as_of` is now, and records refresh every
 `max_age_days`. `fetched_at` is real time, but it is only ever compared with `as_of`, never with data.
 
-Only the annual store uses this rule. Split history is judged by the wall clock instead
-(`splits.SplitHistory`), because it must match the basis of today's split-adjusted prices.
+The rule is used by the annual store and by `SecEdgarClient`'s cached payload getters; split history is judged
+by the wall clock instead (`splits.SplitHistory`), because it must match the basis of today's split-adjusted prices.
 """
 
 from __future__ import annotations
