@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from time import perf_counter
 
 from trading_agent_framework.dashboard.components.charts import REGIME_BAND_COLORS, trades_chart
 
@@ -71,3 +72,16 @@ def test_a_single_regime_point_makes_one_band_per_row() -> None:
     fig = trades_chart(TRADES, indicators=_regime([-1]))
     assert len(fig.layout.shapes) == 2
     assert {s.fillcolor for s in fig.layout.shapes} == {REGIME_BAND_COLORS[-1]}
+
+
+def test_a_regime_with_many_runs_builds_quickly() -> None:
+    runs = 300
+    start = perf_counter()
+    fig = trades_chart(TRADES, indicators=_regime([1 if i % 2 == 0 else -1 for i in range(runs)]))
+    assert perf_counter() - start < 2.0  # per-run add_vrect was quadratic: ~4x per doubling
+    assert len(fig.layout.shapes) == 2 * runs
+
+
+def test_a_regime_only_chart_matches_its_upper_axis_to_the_bottom_one() -> None:
+    fig = trades_chart(TRADES, indicators=_regime([1, 0]))
+    assert fig.layout.xaxis.matches == "x2" and fig.layout.xaxis2.matches is None

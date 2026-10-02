@@ -731,12 +731,17 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
             row=2, col=1,
         )
         chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
-        for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end):
-            for row, opacity in _REGIME_BAND_OPACITY.items():
-                fig.add_vrect(
-                    x0=start, x1=stop, fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
-                    opacity=opacity, line_width=0, layer="below", row=row, col=1,
+        # One update_layout for all bands: add_vrect re-processes the growing shapes tuple on every call (quadratic).
+        fig.update_layout(
+            shapes=[
+                dict(
+                    type="rect", xref=f"x{row if row > 1 else ''}", yref=f"y{row if row > 1 else ''} domain", x0=start, x1=stop, y0=0, y1=1,
+                    fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]), opacity=opacity, line_width=0, layer="below",
                 )
+                for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end)
+                for row, opacity in _REGIME_BAND_OPACITY.items()
+            ]
+        )
         fig.update_yaxes(
             range=[-1.3, 1.3], tickvals=[-1, 0, 1], ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
             title_text=REGIME_PANE, row=2, col=1,
