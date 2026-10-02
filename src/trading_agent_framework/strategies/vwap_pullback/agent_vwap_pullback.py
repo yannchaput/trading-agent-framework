@@ -10,18 +10,16 @@ See docs/superpowers/specs/2026-10-01-vwap-pullback-pure-code-design.md.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, timedelta
+from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.agents.tools.vix import VixSeries
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
-from trading_agent_framework.core.indicators import IndicatorRow
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
@@ -66,8 +64,6 @@ class VwapPullbackStrategy(Strategy):
         self.settings = settings or VwapPullbackParameters()
         self.desk: Desk | None = None
         self.scanner: Scanner | None = None
-        self._vix: VixSeries | None = None  # backtest chart only, loaded on the first tick that needs it
-        self._vix_failed = False
 
     # --- lifecycle -------------------------------------------------------------------
 
@@ -108,7 +104,6 @@ class VwapPullbackStrategy(Strategy):
         self.desk.reconcile(self.get_datetime())
         self.scanner.scan(state)
         self.desk.enter_triggered()
-        self._chart_indicators(state)
 
     def before_market_closes(self) -> None:
         """15:50 (`minutes_before_closing`): sell everything this strategy holds; the strategy is strictly intraday."""
@@ -139,46 +134,6 @@ class VwapPullbackStrategy(Strategy):
         return self.vars.session
 
     # --- backtesting ---------------------------------------------------------------------
-
-    def _chart_indicators(self, state: SessionState) -> None:
-        """Backtests only: chart the market regime on the dashboard's Trades chart (`add_line`), never trading on it.
-
-        ADX(14) and RSI(14) of the benchmark's regular-session minute bars share one pane, the VIX (previous
-        session's close) has its own. A missing value is skipped: a chart extra must never break a tick.
-        """
-        if not self.is_backtesting:
-            return
-        benchmark = self.parameters["benchmark_symbol"]
-        try:
-            adx = self.indicators.adx(benchmark, "minute", include_after_hours=False)
-            rsi = self.indicators.rsi(benchmark, "minute", include_after_hours=False)
-        except (BrokerError, BacktestError) as exc:
-            self.log_warning(f"chart indicators skipped this tick: {exc}")
-        else:
-            # adx is a row (ADX/DMP/DMN columns), rsi a plain number; None while there are too few bars
-            adx_value = adx["ADX_14"] if isinstance(adx, IndicatorRow) else None
-            if adx_value is not None:
-                self.add_line("ADX", adx_value, color="#f59e0b", plot_name="ADX / RSI")
-            if isinstance(rsi, float):
-                self.add_line("RSI", rsi, color="#a78bfa", plot_name="ADX / RSI")
-        vix = self._vix_previous_close(state.day)
-        if vix is not None:
-            self.add_line("VIX", vix, color="#ef4444", plot_name="VIX")
-
-    def _vix_previous_close(self, day: date) -> float | None:
-        """The VIX close before `day`; the Yahoo download happens once, and a failure disables the line for the run."""
-        if self._vix_failed:
-            return None
-        if self._vix is None:
-            vix = VixSeries()
-            try:
-                vix.load(self.parameters["backtesting_start"].date(), self.parameters["backtesting_end"].date())
-            except Exception as exc:  # yfinance raises many things; the VIX line is optional
-                self.log_warning(f"VIX line disabled for this run: {exc}")
-                self._vix_failed = True
-                return None
-            self._vix = vix
-        return self._vix.previous_close(day)
 
     def _trade_log_path(self) -> Path | None:
         """`trades.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
