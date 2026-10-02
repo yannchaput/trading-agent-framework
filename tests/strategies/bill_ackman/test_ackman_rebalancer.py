@@ -272,3 +272,43 @@ def test_a_sell_never_exceeds_what_is_held_and_not_already_being_sold(tmp_path: 
     placed = rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
 
     assert placed[0] == PlacedOrder("A", "sell", 40.0)
+
+
+# --- sizing counts the sells, never a stale buying power ------------------------------------------------
+
+
+def test_an_earlier_pending_sell_funds_todays_buy(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("A"), side=OrderSide.SELL, quantity=Decimal(100)))
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    # credit 5,000 -> available 5,200 - 200 reserve = 5,000: B takes 3,500, the other 1,500 is parked
+    assert placed == [PlacedOrder("B", "buy", 140.0), PlacedOrder("SHV", "buy", 15.0)]
+
+
+def test_an_earlier_pending_buy_is_debited_from_todays_cash(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=5000)
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("A"), side=OrderSide.BUY, quantity=Decimal(40)))
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    # cash 5,000 - 2,000 already committed = 3,000; less the 200 reserve = 2,800 -> 112 shares of B, nothing left to park
+    assert placed == [PlacedOrder("B", "buy", 112.0)]
+
+
+def test_this_runs_sell_credit_is_not_lost_to_a_stale_buying_power(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    reads = {"count": 0}
+
+    def get_account() -> AccountBalances:
+        # The backtest projection: buying power only credits the sell once it has been submitted.
+        reads["count"] += 1
+        return AccountBalances(cash=Decimal(200), portfolio_value=Decimal(10_000), buying_power=Decimal(200 if reads["count"] == 1 else 5200))
+
+    monkeypatch.setattr(broker, "get_account", get_account)
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    assert placed[0] == PlacedOrder("A", "sell", 100.0)
+    assert PlacedOrder("B", "buy", 140.0) in placed

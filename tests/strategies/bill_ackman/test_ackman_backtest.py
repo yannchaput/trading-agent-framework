@@ -20,6 +20,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
 
 PRIOR = weekday_sessions(date(2026, 9, 9), 3)  # history before the window: the screen needs a last price on the first simulated day
@@ -100,10 +101,15 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "TestApp test@example.com")
 
 
-def _run(tmp_path: Path, manager: _Manager, screen: FakeScreen) -> BillAckmanStrategy:
+def _run(tmp_path: Path, manager: _Manager, screen: Any, settings: AckmanParams | None = None) -> BillAckmanStrategy:
     source = FakeBacktestDataSource()
     source.set_sessions(SESSIONS)
-    for symbol, closes in {"AAA": [49.0, 49.5, 50.0, 50.5, 51.5, 51.0, 52.0, 52.0], "SHV": [100.0] * 8, "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0]}.items():
+    for symbol, closes in {
+        "AAA": [49.0, 49.5, 50.0, 50.5, 51.5, 51.0, 52.0, 52.0],
+        "BBB": [24.0, 24.5, 25.0, 25.0, 25.5, 26.0, 26.5, 27.0],
+        "SHV": [100.0] * 8,
+        "SPY": [398.0, 399.0, 400.0, 401.0, 402.0, 403.0, 404.0, 405.0],
+    }.items():
         source.set_bars(Asset(symbol), _bars(closes))
     strategy = BillAckmanStrategy(
         FakeBroker(FakeClock(et(2026, 9, 14, 9, 0)), strategy_name="bill_ackman"),
@@ -111,6 +117,7 @@ def _run(tmp_path: Path, manager: _Manager, screen: FakeScreen) -> BillAckmanStr
         universe=["AAA", "BBB"],
         project_root=tmp_path,
         screen=screen,
+        settings=settings,
     )
     strategy._agents = cast(AgentManager, manager)
     Strategy.run_backtesting(strategy, start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=source, budget=Decimal(10000), benchmark="SPY")
@@ -169,3 +176,41 @@ def test_a_dead_llm_aborts_a_real_backtest_instead_of_writing_a_flat_report(tmp_
     assert manager.handles["researcher"].runs == 6  # three abandoned reviews, each with its one forced retry
     assert list(tmp_path.rglob("metrics.json")) == []
     assert [line["abandoned"] for line in _review_lines(tmp_path)] == [True, True, True]
+
+
+class RotatingScreen:
+    """AAA is the one candidate for the first three sessions, BBB afterwards; both are described when held."""
+
+    def __init__(self) -> None:
+        self.universe_calls = 0
+
+    def run(self, symbols, *, as_of, price_of, top_n=None) -> ScreenResult:  # noqa: ANN001
+        if top_n is None:
+            self.universe_calls += 1
+            current = "AAA" if self.universe_calls <= 3 else "BBB"
+            price_of(current)
+            return ScreenResult(candidates=[_candidate(current)], rejections={})
+        return ScreenResult(candidates=[_candidate(s) for s in symbols], rejections={})
+
+
+def test_a_rotation_sells_the_old_stock_and_buys_the_new_one_in_the_same_review(tmp_path: Path) -> None:
+    manager = _Manager()
+
+    def trade_ranked(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
+        # the first allowed entry the researcher ranked: AAA drops out of the target once it stops being a candidate
+        chosen = next(entry["symbol"] for entry in context["allowed"] if entry["research_rank"] is not None)
+        tools["submit_portfolio"]([{"symbol": chosen, "weight": 0.9, "reason": "best idea"}])
+
+    manager.scripts["trader"] = trade_ranked
+
+    # One stock at 90% (the default cap is 35%): the SHV left over (8%) is far too small to pay for the switch,
+    # so BBB can only be bought in full with the proceeds of the AAA sell submitted in the same review.
+    _run(tmp_path, manager, RotatingScreen(), settings=AckmanParams(max_weight=0.9))
+
+    lines = _review_lines(tmp_path)
+    assert not any(line["abandoned"] for line in lines)
+    rotation = next(line for line in lines if "BBB" in line["targets"])
+    orders = {(order["symbol"], order["side"]): order["quantity"] for order in rotation["orders"]}
+    assert ("AAA", "sell") in orders
+    assert ("BBB", "buy") in orders
+    assert orders[("BBB", "buy")] * 26.0 > 8000  # the 9,000 target at the day's 26.0 price, not what a little SHV could fund

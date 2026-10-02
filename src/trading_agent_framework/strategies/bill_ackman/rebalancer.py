@@ -136,7 +136,8 @@ class Rebalancer:
                 proceeds += quantity * price
 
         # What the buys need, and what is available for them: the smaller of buying power and cash plus the
-        # estimated proceeds of the sells just submitted, less the cash buffer.
+        # estimated proceeds of the sells just submitted (and the net credit of earlier reviews' open orders), less the
+        # cash buffer.
         plan: list[tuple[str, float]] = []
         for symbol, weight in targets.items():
             difference = weight * portfolio_value - value_of(symbol)
@@ -145,7 +146,13 @@ class Rebalancer:
                     strategy.log_warning(f"No price for {symbol}: not buying it this review")
                     continue
                 plan.append((symbol, difference))
-        available = min(float(account.buying_power), float(account.cash) + proceeds) - reserve
+        earlier_credit = sum(quantity * prices.get(symbol, 0.0) for symbol, quantity in outgoing.items()) - sum(
+            quantity * prices.get(symbol, 0.0) for symbol, quantity in incoming.items()
+        )
+        cash_term = float(account.cash) + proceeds + earlier_credit
+        # A second buying power read, after the sells: BacktestBroker's projection credits them once submitted.
+        buying_power_now = float(strategy.broker.get_account().buying_power)
+        available = min(buying_power_now, cash_term) - reserve
 
         # The parking instrument gives back what it holds above its target, and funds the buys.
         parking_price = prices[parking]
