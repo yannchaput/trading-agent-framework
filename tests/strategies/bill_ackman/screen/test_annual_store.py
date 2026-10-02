@@ -9,9 +9,9 @@ from pathlib import Path
 import httpx
 import pytest
 
-from trading_agent_framework.fundamentals import annual_store
-from trading_agent_framework.fundamentals.annual_store import AnnualFiguresStore
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
+from trading_agent_framework.strategies.bill_ackman.screen import annual_store
+from trading_agent_framework.strategies.bill_ackman.screen.annual_store import AnnualFiguresStore
 from trading_agent_framework.utils.errors import FundamentalsError
 
 TICKERS = {"0": {"cik_str": 320193, "ticker": "AAPL"}}

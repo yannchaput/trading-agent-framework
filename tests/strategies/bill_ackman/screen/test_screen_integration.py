@@ -14,10 +14,10 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from trading_agent_framework.fundamentals import QualityScreen, ScreenParams
-from trading_agent_framework.fundamentals.annual_store import AnnualFiguresStore
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.fundamentals.splits import Split, SplitHistory
+from trading_agent_framework.strategies.bill_ackman.screen import QualityScreen, ScreenParams
+from trading_agent_framework.strategies.bill_ackman.screen.annual_store import AnnualFiguresStore
+from trading_agent_framework.strategies.bill_ackman.screen.splits import Split, SplitHistory
 
 NEW_YORK = ZoneInfo("America/New_York")
 M = 1_000_000

@@ -4,9 +4,9 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 import pytest
-from tests.fundamentals.annual_fixtures import FLOW_FIELDS, healthy_figures
+from tests.strategies.bill_ackman.screen.annual_fixtures import FLOW_FIELDS, healthy_figures
 
-from trading_agent_framework.fundamentals.quality import Priced, ScreenParams, Survivor, assess, rank, sector_excluded
+from trading_agent_framework.strategies.bill_ackman.screen.quality import Priced, ScreenParams, Survivor, assess, rank, sector_excluded
 
 AS_OF = datetime(2026, 6, 1, tzinfo=UTC)
 PARAMS = ScreenParams()

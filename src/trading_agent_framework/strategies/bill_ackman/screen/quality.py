@@ -1,8 +1,8 @@
 """Pure quality screen: which companies were simple, predictable, cash-generative, lightly indebted and
 reasonably priced on a date, from annual SEC figures known on that date.
 
-No I/O, no clock, no state (same rules as `sec.py`). `assess` applies the numeric gates to one company's
-reduced annual figures (`sec.annual_figures`); `rank` scores the companies that were also priced.
+No I/O, no clock, no state (same rules as `annual_figures.py`). `assess` applies the numeric gates to one company's
+reduced annual figures (`annual_figures.annual_figures`); `rank` scores the companies that were also priced.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from decimal import Decimal
 from itertools import pairwise
 from typing import Any
 
-from trading_agent_framework.fundamentals.sec import MAX_FISCAL_YEAR_DAYS, MIN_FISCAL_YEAR_DAYS
+from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import MAX_FISCAL_YEAR_DAYS, MIN_FISCAL_YEAR_DAYS
 
 _DAYS_PER_MONTH = 30.4375
 _REQUIRED_FLOWS = ("revenue", "operating_income", "operating_cash_flow", "capex")

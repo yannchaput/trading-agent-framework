@@ -11,7 +11,7 @@ import pandas as pd
 import pytest
 
 from trading_agent_framework.fundamentals.freshness import is_stale
-from trading_agent_framework.fundamentals.splits import Split, SplitHistory, restate_shares, split_rows
+from trading_agent_framework.strategies.bill_ackman.screen.splits import Split, SplitHistory, restate_shares, split_rows
 from trading_agent_framework.utils.errors import FundamentalsError
 
 FETCHED = datetime(2026, 10, 2, tzinfo=UTC)

@@ -16,10 +16,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Protocol
 
-from trading_agent_framework.fundamentals.annual_store import AnnualFiguresStore
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.fundamentals.quality import Priced, ScreenParams, ScreenResult, assess, rank, sector_excluded
-from trading_agent_framework.fundamentals.splits import Split, SplitHistory, restate_shares
+from trading_agent_framework.strategies.bill_ackman.screen.annual_store import AnnualFiguresStore
+from trading_agent_framework.strategies.bill_ackman.screen.quality import Priced, ScreenParams, ScreenResult, assess, rank, sector_excluded
+from trading_agent_framework.strategies.bill_ackman.screen.splits import Split, SplitHistory, restate_shares
 from trading_agent_framework.utils.errors import FundamentalsError, TradingFrameworkError
 from trading_agent_framework.utils.log import ColorLogger
 

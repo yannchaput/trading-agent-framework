@@ -1,7 +1,7 @@
 """`AnnualFiguresStore`: each company's reduced annual SEC figures, fetched lazily and cached on disk.
 
 The I/O side of the quality screen. A company-facts payload is about 4 MB; the store fetches it
-uncached, keeps only `sec.annual_figures(...)` of it (a few KB) in `<cache_dir>/CIK<cik>.json`, and
+uncached, keeps only `annual_figures(...)` of it (a few KB) in `<cache_dir>/CIK<cik>.json`, and
 holds every record it has read in memory for the life of the process.
 """
 
@@ -16,16 +16,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.fundamentals import sec
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
 from trading_agent_framework.fundamentals.freshness import is_stale
+from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import annual_figures, parse_sic
 from trading_agent_framework.utils.errors import FundamentalsError, FundamentalsNotFoundError
 from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "AnnualFiguresStore")
 
 # The version of the reduced record. It MUST be bumped whenever the tag lists or the row shape in
-# `sec.py` (`annual_figures`) change: a record fetched today is fresh for every past date in a
+# `annual_figures.py` change: a record fetched today is fresh for every past date in a
 # backtest (see `freshness.is_stale`), so without a bump an old cache would hide a tag fix for as long
 # as the file exists. A record with a missing or different `schema` is a cache miss.
 SCHEMA_VERSION = 2
@@ -83,7 +83,7 @@ class AnnualFiguresStore:
             return None
         if "sic" not in record:
             try:
-                code = sec.parse_sic(self._client.fetch_submissions_payload(record["cik"]))
+                code = parse_sic(self._client.fetch_submissions_payload(record["cik"]))
             except FundamentalsNotFoundError:
                 code = None
             self._write({**record, "sic": code})
@@ -99,7 +99,7 @@ class AnnualFiguresStore:
             return record
         base = {"cik": cik, "schema": SCHEMA_VERSION, "fetched_at": self._wall_clock().isoformat()}
         try:
-            fresh = {**base, "status": "ok", **sec.annual_figures(self._client.fetch_company_facts_payload(cik))}
+            fresh = {**base, "status": "ok", **annual_figures(self._client.fetch_company_facts_payload(cik))}
         except FundamentalsNotFoundError:
             fresh = {**base, "status": "absent", **_empty_figures()}
             if record is not None and record["status"] == "ok":

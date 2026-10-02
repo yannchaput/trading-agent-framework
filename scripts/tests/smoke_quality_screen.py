@@ -33,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 from dotenv import load_dotenv
 
-from trading_agent_framework.fundamentals import ScreenParams, build_quality_screen
+from trading_agent_framework.strategies.bill_ackman.screen import ScreenParams, build_quality_screen
 from trading_agent_framework.utils.errors import TradingFrameworkError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]

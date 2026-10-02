@@ -8,10 +8,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
-from tests.fundamentals.annual_fixtures import healthy_figures
+from tests.strategies.bill_ackman.screen.annual_fixtures import healthy_figures
 
-from trading_agent_framework.fundamentals import Candidate, QualityScreen, ScreenParams, ScreenResult, build_quality_screen
-from trading_agent_framework.fundamentals.splits import Split
+from trading_agent_framework.strategies.bill_ackman.screen import Candidate, QualityScreen, ScreenParams, ScreenResult, build_quality_screen
+from trading_agent_framework.strategies.bill_ackman.screen.splits import Split
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FundamentalsError
 
 AS_OF = datetime(2026, 6, 1, tzinfo=UTC)

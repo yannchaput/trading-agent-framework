@@ -3,6 +3,11 @@
 Date: 2026-10-02 · Branch: `feature/fundamentals-quality-screen` · First of two specs for the Bill Ackman
 portfolio strategy (the second covers the three-agent strategy that consumes this screen)
 
+> **Note (moved):** the screen described here now lives in `src/trading_agent_framework/strategies/bill_ackman/screen/`
+> (`quality.py`, `screen.py`, `splits.py`, `annual_store.py`, and `annual_figures.py`, which holds the annual-figures
+> reduction that used to be in `fundamentals/sec.py`). `fundamentals/` keeps the SEC client and the generic SEC
+> translation. See `docs/superpowers/specs/2026-10-02-bill-ackman-strategy-design.md` §1.1.
+
 ## Problem
 
 The Bill Ackman strategy (lumibot's
