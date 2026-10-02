@@ -70,6 +70,25 @@ minute bars stay inside 09:30-16:00, and the indicators return values. It also p
 no fake can show: what Alpaca does with an unknown symbol, and how many minute bars the
 include_after_hours=False filter keeps.
 
+## Smoke quality screen
+Manual run of the fundamentals quality screen (`strategies/bill_ackman/screen/`) against real SEC EDGAR and Yahoo data.
+
+NOT part of the automated test suite: the suite never touches the network. Run it by hand:
+
+    uv run python scripts/tests/smoke_quality_screen.py
+
+`SEC_EDGAR_USER_AGENT` ("<app name> <contact email>") comes from env/.env.alpaca.integration-tests, as in the
+other smoke scripts, or from the environment. Without it the script prints `SKIP:` and exits 0, so
+`run_smoke_tests.sh` reports it as skipped. The script is read-only. The first run downloads one SEC company-facts
+payload per symbol (about 4 MB each; a full 1,200-symbol universe is about 5 GB and 10 to 20 minutes) and writes
+reduced copies under cache/sec/annual/; a second run the same day makes no SEC request and finishes in seconds.
+It fails only on things that must always hold: every symbol is either a candidate or rejected with a reason,
+an unknown ticker is `no_data`, a bank is rejected, the two Alphabet listings never both become candidates,
+at least three symbols are candidates, the known-indebted names (KO, MDLZ, HLT) that are candidates have a
+reported debt figure, the utility NEE is never a candidate, and the equipment lessor URI, if a candidate, shows
+a plausible operating margin. If it ever fails on the debt check, a debt tag is probably missing from
+`screen/annual_figures.py` (bump `annual_store.SCHEMA_VERSION` after fixing it).
+
 ## Tools
 
 ### Smoke Fundamentals

@@ -11,6 +11,7 @@ import logging
 import os
 from collections import Counter
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -48,13 +49,15 @@ class QualityScreen:
         self._splits = splits
         self.params = params or ScreenParams()
 
-    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None]) -> ScreenResult:
+    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None) -> ScreenResult:
         """Rank the companies among `symbols` that pass every gate on `as_of`, best first.
 
         `as_of` is expected in market-local time (New York): the screen uses `as_of.date()`, and a
         filing counts as known only when filed strictly before that date, so a UTC `as_of` late in the
         New York evening reads one day ahead and would see filings the market has not yet seen.
         `price_of` is called only for companies that passed every gate before the price gate.
+        `top_n`, when given, replaces `params.top_n` for this call only (the holdings of a strategy are screened
+        with `top_n=len(holdings)` so none is cut); a negative value raises `ValueError`.
         Raises `FundamentalsError` when more than `params.max_fetch_failure_ratio` of the symbols
         could not be fetched from SEC, or when that share of the symbols that reached the SIC gate (or
         the split gate) failed their lookup -- the SIC and split rules need at least
@@ -63,7 +66,7 @@ class QualityScreen:
         """
         if as_of.tzinfo is None:
             raise ValueError("as_of must be timezone-aware")
-        params = self.params
+        params = self.params if top_n is None else replace(self.params, top_n=top_n)
         max_age_days = params.max_age_days
         unique = list(dict.fromkeys(symbols))
         rejections: dict[str, str] = {}

@@ -6,7 +6,8 @@ NOT part of the automated test suite: the suite never touches the network. Run i
     uv run python scripts/tests/smoke_quality_screen.py
 
 `SEC_EDGAR_USER_AGENT` comes from env/.env.alpaca.integration-tests, as in the other smoke scripts
-(or from the environment).
+(or from the environment); without it the script prints `SKIP:` and exits 0, so the aggregate runner
+`scripts/tests/run_smoke_tests.sh` reports it as skipped.
 The script is read-only. The first run downloads one SEC company-facts payload per symbol (about
 4 MB each) and writes reduced copies under cache/sec/annual/; a second run the same day makes no
 SEC request and finishes in a few seconds. It fails only on things that must always hold: every
@@ -78,8 +79,9 @@ def main() -> int:
         print(f"{ENV_FILE} not found; SEC_EDGAR_USER_AGENT must then come from the environment.")
     load_dotenv(ENV_FILE)
     if not os.environ.get("SEC_EDGAR_USER_AGENT"):
-        print(f"FAILED: SEC_EDGAR_USER_AGENT is not set (define it in {ENV_FILE} or in the environment)")
-        return 1
+        # `run_smoke_tests.sh` reports a script whose output has a `SKIP:` line as skipped, not failed.
+        print(f"SKIP: SEC_EDGAR_USER_AGENT is not set (define it in {ENV_FILE} or in the environment)")
+        return 0
     try:
         screen = build_quality_screen(PROJECT_ROOT, params=ScreenParams(top_n=len(SYMBOLS)))
         started = time.perf_counter()

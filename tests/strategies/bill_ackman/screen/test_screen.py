@@ -262,6 +262,33 @@ def test_top_n_limits_the_candidates() -> None:
     assert len(result.candidates) == 2
 
 
+def test_a_top_n_argument_overrides_the_params_for_that_call_only() -> None:
+    names = ["AAA", "BBB", "CCC"]
+    screen = QualityScreen(FakeStore({name: healthy_figures() for name in names}), FakeSplits(), params=ScreenParams(top_n=2))
+
+    limited = screen.run(names, as_of=AS_OF, price_of=Prices(), top_n=1)
+    default = screen.run(names, as_of=AS_OF, price_of=Prices())
+
+    assert len(limited.candidates) == 1
+    assert len(default.candidates) == 2  # the override did not stick
+
+
+def test_a_top_n_of_zero_returns_no_candidates_but_still_reports_rejections() -> None:
+    screen = QualityScreen(FakeStore({"AAA": healthy_figures()}), FakeSplits())
+
+    result = screen.run(["AAA", "GONE"], as_of=AS_OF, price_of=Prices(), top_n=0)
+
+    assert result.candidates == []
+    assert result.rejections == {"GONE": "no_data"}
+
+
+def test_a_negative_top_n_argument_is_refused() -> None:
+    screen = QualityScreen(FakeStore({"AAA": healthy_figures()}), FakeSplits())
+
+    with pytest.raises(ValueError, match="top_n"):
+        screen.run(["AAA"], as_of=AS_OF, price_of=Prices(), top_n=-1)
+
+
 def test_each_run_logs_one_summary_line(caplog: pytest.LogCaptureFixture) -> None:
     store = FakeStore({"AAA": healthy_figures(), "LOSS": healthy_figures(operating_income=(20, 22, -1, 26, 28))})
 
