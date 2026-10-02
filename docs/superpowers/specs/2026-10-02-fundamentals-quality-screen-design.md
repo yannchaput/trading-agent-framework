@@ -209,6 +209,10 @@ Notes:
   candidate carries `debt_reported=False`. Missing cash counts as 0. A company whose latest year has no debt
   figure while an earlier year does is rejected as `debt_unknown`: a changed or missing debt tag for the
   latest year must not read as zero debt.
+- **Order of the first gates.** With no known revenue row at all, `assess` returns `insufficient_history`
+  before `stale_filing`: there is no fiscal year to judge staleness by. (No known flows of any kind is still
+  `no_data`.) The implausible-figures case (operating income or free cash flow above revenue) is reported as
+  `insufficient_history` too, ahead of the loss gates.
 - **Sector.** The SIC code comes from SEC's submissions payload. It costs one request per company, so the gate
   runs after the numeric gates, only on their survivors, and the code is saved in the reduced file. The ranges
   exclude utilities (4900–4999) and finance, insurance and real estate (6000–6799).

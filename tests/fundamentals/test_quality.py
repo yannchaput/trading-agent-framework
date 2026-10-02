@@ -162,8 +162,9 @@ def test_no_debt_in_the_latest_year_but_some_in_an_earlier_one_is_unknown() -> N
     assert _assess(healthy_figures(debt_by_year={2022: 50, 2023: 50}, cash=10)) == "debt_unknown"
 
 
-def test_debt_unknown_is_checked_just_before_too_much_debt() -> None:
-    # latest-year debt present and huge: too_much_debt; absent with an earlier year present: debt_unknown
+def test_a_missing_latest_year_debt_is_reported_as_debt_unknown_instead_of_being_read_as_zero_debt() -> None:
+    # The same large debt figure: present in the latest year it is too_much_debt; present only in an
+    # earlier year, the latest year's missing figure is not read as "no debt".
     assert _assess(healthy_figures(debt_by_year={2025: 900}, cash=10)) == "too_much_debt"
     assert _assess(healthy_figures(debt_by_year={2021: 900}, cash=10)) == "debt_unknown"
 
@@ -341,3 +342,39 @@ def test_rank_returns_at_most_top_n() -> None:
 
 def test_rank_of_nothing_is_empty() -> None:
     assert rank([], PARAMS) == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"years": 1},
+        {"years": 0},
+        {"min_growth_years": -1},
+        {"min_growth_years": 5},  # more than years - 1
+        {"max_filing_age_months": 0},
+        {"max_filing_age_months": -3},
+        {"max_net_debt_to_operating_income": float("nan")},
+        {"max_net_debt_to_operating_income": float("inf")},
+        {"top_n": -1},
+        {"weights": (0.4, 0.3)},
+        {"weights": (0.4, 0.3, 0.2, 0.1)},
+        {"weights": (0.4, -0.1, 0.3)},
+        {"weights": (0.4, float("nan"), 0.3)},
+        {"weights": (0.4, float("inf"), 0.3)},
+        {"max_age_days": -1},
+        {"split_max_age_days": -1},
+        {"max_fetch_failure_ratio": -0.1},
+        {"max_fetch_failure_ratio": 1.1},
+        {"max_fetch_failure_ratio": float("nan")},
+        {"hollow_min_sample": 0},
+    ],
+)
+def test_invalid_screen_params_are_refused(kwargs: dict[str, object]) -> None:
+    with pytest.raises(ValueError, match=next(iter(kwargs))):
+        ScreenParams(**kwargs)  # ty: ignore[invalid-argument-type]
+
+
+def test_boundary_screen_params_are_accepted() -> None:
+    ScreenParams(years=2, min_growth_years=1, top_n=0, max_age_days=0, split_max_age_days=0, max_fetch_failure_ratio=0.0, hollow_min_sample=1)
+    ScreenParams(min_growth_years=0, max_fetch_failure_ratio=1.0, weights=(0.0, 0.0, 1.0))
+    ScreenParams(years=5, min_growth_years=4)

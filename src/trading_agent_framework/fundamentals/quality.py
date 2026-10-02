@@ -7,6 +7,7 @@ reduced annual figures (`sec.annual_figures`); `rank` scores the companies that 
 
 from __future__ import annotations
 
+import math
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -34,6 +35,23 @@ class ScreenParams:
     split_max_age_days: int = 1  # split history, by the wall clock (it must match today's adjusted prices)
     max_fetch_failure_ratio: float = 0.2
     hollow_min_sample: int = 5  # symbols that must reach the SIC or split gate before its failure ratio can abort a screen
+
+    def __post_init__(self) -> None:
+        problems = {
+            "years": self.years < 2,
+            "min_growth_years": not 0 <= self.min_growth_years <= self.years - 1,
+            "max_filing_age_months": self.max_filing_age_months <= 0,
+            "max_net_debt_to_operating_income": not math.isfinite(self.max_net_debt_to_operating_income),
+            "top_n": self.top_n < 0,
+            "weights": len(self.weights) != 3 or any(not math.isfinite(weight) or weight < 0 for weight in self.weights),
+            "max_age_days": self.max_age_days < 0,
+            "split_max_age_days": self.split_max_age_days < 0,
+            "max_fetch_failure_ratio": not 0 <= self.max_fetch_failure_ratio <= 1,  # also false for NaN
+            "hollow_min_sample": self.hollow_min_sample < 1,
+        }
+        invalid = [name for name, bad in problems.items() if bad]
+        if invalid:
+            raise ValueError(f"invalid ScreenParams: {', '.join(f'{name}={getattr(self, name)!r}' for name in invalid)}")
 
 
 @dataclass(frozen=True, slots=True)
