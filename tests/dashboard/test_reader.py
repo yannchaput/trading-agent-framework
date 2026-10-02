@@ -190,11 +190,11 @@ def test_save_regime_writes_the_leaf_field_and_preserves_other_keys(tmp_path: Pa
     report.write_settings(run_dir, _settings_payload())
     save_decision(_ref(run_dir), "study")
 
-    save_regime(_ref(run_dir), "All-Weather")
+    save_regime(_ref(run_dir), ["Bullish", "All-Weather"])
 
     settings = load_settings(_ref(run_dir))
     assert settings is not None
-    assert settings.dashboard_regime == "All-Weather"
+    assert settings.dashboard_regime == ["Bullish", "All-Weather"]
     assert settings.dashboard_decision == "study"  # the sibling picker is untouched
     assert settings.budget == 10000.0
 
@@ -203,12 +203,12 @@ def test_save_regime_overwrites_and_clears(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload())
 
-    save_regime(_ref(run_dir), "Bullish")
-    save_regime(_ref(run_dir), "Bearish")
-    assert load_settings(_ref(run_dir)).dashboard_regime == "Bearish"
+    save_regime(_ref(run_dir), ["Bullish"])
+    save_regime(_ref(run_dir), ["Bearish", "Neutral"])
+    assert load_settings(_ref(run_dir)).dashboard_regime == ["Bearish", "Neutral"]
 
-    save_regime(_ref(run_dir), "")
-    assert load_settings(_ref(run_dir)).dashboard_regime == ""
+    save_regime(_ref(run_dir), [])
+    assert load_settings(_ref(run_dir)).dashboard_regime == []
 
 
 NOW = datetime(2026, 1, 5, 21, tzinfo=UTC)

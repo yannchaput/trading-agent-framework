@@ -45,7 +45,7 @@ def save_description(ref: RunRef, description: str) -> None:
         json.dump({"description": description}, f, indent=2)
 
 
-def _save_settings_leaf(ref: RunRef, key: str, value: str) -> None:
+def _save_settings_leaf(ref: RunRef, key: str, value: str | list[str]) -> None:
     """Set one top-level settings.json key, preserving every other key already there."""
     path = os.path.join(ref.path, "settings.json")
     try:
@@ -65,11 +65,12 @@ def save_decision(ref: RunRef, decision: str) -> None:
     _save_settings_leaf(ref, "dashboard_decision", decision)
 
 
-def save_regime(ref: RunRef, regime: str) -> None:
-    """Write the dashboard regime ("Bearish"/"Neutral"/"Bullish"/"All-Weather", or "" to clear)
-    into settings.json's `dashboard_regime` leaf field, preserving every other key already there.
+def save_regime(ref: RunRef, regimes: list[str]) -> None:
+    """Write the dashboard regimes (any subset of "Bearish"/"Neutral"/"Bullish"/"All-Weather",
+    or [] to clear) into settings.json's `dashboard_regime` leaf field, preserving every other
+    key already there.
     """
-    _save_settings_leaf(ref, "dashboard_regime", regime)
+    _save_settings_leaf(ref, "dashboard_regime", list(regimes))
 
 
 def get_benchmark_symbol(ref: RunRef) -> str:

@@ -35,7 +35,8 @@ DECISION_OPTIONS = ["discarded", "study", "validated"]
 DECISION_COLORS = ["darkred", "darkorange", "limegreen"]
 REGIME_OPTIONS = ["Bearish", "Neutral", "Bullish", "All-Weather"]
 REGIME_COLORS = ["darkred", "gray", "limegreen", "dodgerblue"]
-# Editable single-choice columns, rendered as MultiselectColumns (see render_scorecard_table).
+# Editable colored-tag columns, rendered as MultiselectColumns (see render_scorecard_table):
+# Decision holds at most one value, Regime any number.
 PICKER_COLUMNS = ("Decision", "Regime")
 
 
@@ -47,9 +48,9 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
     one widget, so this uses st.data_editor throughout: "Select" replaces row-click selection,
     and "Decision"/"Regime" are editable ``MultiselectColumn`` (colored dropdown), used only for
     their per-option coloring -- ``st.column_config.SelectboxColumn`` has no color support.
-    Streamlit lets a cell hold more than one tag; the caller enforces the actual
-    one-value-per-cell rule by collapsing extra selections and re-rendering under a fresh
-    ``key`` (Streamlit disallows rewriting a data_editor's own session-state value directly).
+    Regime keeps every tag selected; Decision allows only one value per cell, so the caller
+    collapses extra Decision selections and re-renders under a fresh ``key`` (Streamlit
+    disallows rewriting a data_editor's own session-state value directly).
 
     Returns a tuple of ``(selected_indices, edited_df)`` where ``selected_indices`` is the list
     of zero-based row indices with ``Select`` checked and ``edited_df`` is the edited DataFrame
@@ -61,9 +62,10 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
 
     df = pd.DataFrame(runs_data)
     df.insert(0, "Select", False)
-    # MultiselectColumn cells are lists; a run's decision/regime is a single value or unset ("").
-    for column in PICKER_COLUMNS:
-        df[column] = df[column].apply(lambda v: [v] if v else [])
+    # MultiselectColumn cells are lists: a run's decision is a single value or unset (""), its
+    # regime is already a list of any number of values.
+    df["Decision"] = df["Decision"].apply(lambda v: [v] if v else [])
+    df["Regime"] = df["Regime"].apply(list)
 
     # Remove hidden columns before passing to the Arrow serializer
     # (st.data_editor cannot serialize arbitrary Python objects like RunRef).

@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 @dataclass
@@ -63,10 +63,18 @@ class Settings(BaseModel):
     fees: dict[str, Any] = Field(default_factory=dict)
     # Dashboard-only leaf field: "", "discarded", "study", or "validated"; see reader.save_decision.
     dashboard_decision: str = ""
-    # Dashboard-only leaf field: "", "Bearish", "Neutral", "Bullish", or "All-Weather"; see reader.save_regime.
-    dashboard_regime: str = ""
+    # Dashboard-only leaf field: any subset of "Bearish", "Neutral", "Bullish", "All-Weather"; see
+    # reader.save_regime. Older runs stored a single string ("" when unset).
+    dashboard_regime: list[str] = Field(default_factory=list)
 
     model_config = {"extra": "allow"}
+
+    @field_validator("dashboard_regime", mode="before")
+    @classmethod
+    def _regime_as_list(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return []
+        return [value] if isinstance(value, str) else value
 
 
 class MetricSet(BaseModel):

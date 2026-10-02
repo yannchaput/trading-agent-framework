@@ -33,8 +33,13 @@ def test_settings_dashboard_decision_defaults_to_unset() -> None:
 
 
 def test_settings_dashboard_regime_defaults_to_unset_and_parses() -> None:
-    assert Settings.model_validate({}).dashboard_regime == ""
-    assert Settings.model_validate({"dashboard_regime": "Neutral"}).dashboard_regime == "Neutral"
+    assert Settings.model_validate({}).dashboard_regime == []
+    assert Settings.model_validate({"dashboard_regime": ["Neutral", "Bullish"]}).dashboard_regime == ["Neutral", "Bullish"]
+
+
+def test_settings_dashboard_regime_accepts_the_legacy_single_string() -> None:
+    assert Settings.model_validate({"dashboard_regime": "Neutral"}).dashboard_regime == ["Neutral"]
+    assert Settings.model_validate({"dashboard_regime": ""}).dashboard_regime == []
 
 
 def test_settings_parses_dashboard_decision_and_agents() -> None:
