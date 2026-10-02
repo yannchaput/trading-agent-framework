@@ -569,12 +569,14 @@ class Strategy:
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
             warmup_trading_days: extra trading days of history to make available before
                 `start` so a strategy's indicators aren't starved near `backtesting_start`.
-                Raised to at least `regime_params.min_bars` (273 by default), which the
-                market regime needs from the first session. Computed once, here, via
-                `backtesting.warmup.warmup_calendar_days`, and used both to construct
-                a `data_source` class/callable and to widen `run_backtest`'s own eager
-                preload call -- an explicit `data_source` instance is used as given
-                and is not widened by this method.
+                Computed once, here, via `backtesting.warmup.warmup_calendar_days`, and used both
+                to construct a `data_source` class/callable and to widen `run_backtest`'s own eager
+                preload call -- an explicit `data_source` instance is used as given and is not
+                widened by this method. The market regime needs `regime_params.min_bars` daily
+                benchmark bars before the first session: with `timestep="day"` the warmup is raised
+                to at least `min_bars + REGIME_WARMUP_SLACK` (283 by default). For any other
+                timestep it is NOT raised (that would widen every minute download); instead the
+                benchmark's daily frame alone is preloaded over that regime window.
             news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
                 Alpaca provider built lazily from `AlpacaCredentials.for_news()` (`ALPACA_NEWS_*`); the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
@@ -593,9 +595,13 @@ class Strategy:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
         resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
-        # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session; without
-        # them the eager benchmark load caches a frame too short for it (see `_refresh_regime`).
-        resolved_warmup = max(warmup_trading_days, self.regime_params.min_bars + REGIME_WARMUP_SLACK)
+        # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session.
+        # Daily runs: the benchmark's daily frame is the strategy's own, so the warmup itself is raised (the
+        # eager benchmark load would otherwise cache a frame too short for `_refresh_regime`). Other timesteps:
+        # raising it would widen every minute download, so the warmup stays as asked and only the benchmark's
+        # daily frame is preloaded over the regime window below.
+        regime_warmup = self.regime_params.min_bars + REGIME_WARMUP_SLACK
+        resolved_warmup = max(warmup_trading_days, regime_warmup) if timestep == "day" else warmup_trading_days
         warmup_start = resolved_start - timedelta(days=warmup_calendar_days(resolved_warmup))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)
@@ -603,6 +609,9 @@ class Strategy:
             resolved_source = data_source
         else:
             resolved_source = data_source(warmup_start, resolved_end)
+        if timestep != "day":
+            regime_start = resolved_start - timedelta(days=warmup_calendar_days(regime_warmup))
+            resolved_source.load([Asset(self.benchmark_symbol)], regime_start, resolved_end, "day")
         return run_backtest(
             self,
             start=resolved_start,

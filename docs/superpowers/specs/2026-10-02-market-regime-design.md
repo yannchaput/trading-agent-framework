@@ -28,7 +28,7 @@ Success criteria:
 | Regime rule | Trend + volatility on the benchmark's daily bars. No VIX or other feed. |
 | Cadence | Once per session, whatever the `sleeptime` (intraday, `1D`, `5D`...). |
 | Dashboard form | Step line row (y fixed to -1/0/1) plus faint colored bands behind the portfolio chart. |
-| Warmup | `run_backtesting` widens the warmup automatically to what the regime needs. |
+| Warmup | `run_backtesting` raises a daily run's warmup to `min_bars + 10`; a minute run preloads only the benchmark's daily frame over that window. |
 | Where it runs | The framework (executor + `Strategy`), not each strategy. |
 
 ## Design
@@ -93,15 +93,30 @@ unchanged.
 
 ### 4. Backtest warmup (`Strategy.run_backtesting`)
 
-`warmup_trading_days` is raised to at least `regime_params.min_bars` before the
-data source is built and before `run_backtest` loads the benchmark. Without it,
-the default warmup of 0 leaves no regime for the first ~270 sessions. The
-widening is one `max(...)`, in the same place that already computes
-`warmup_start`. Documented in the method's docstring. It only widens the eager
-data load's start bound, never the simulated `[start, end]` window, as with the
-existing parameter.
+The regime needs `regime_params.min_bars` daily benchmark bars before the first
+session. The rule depends on the timestep:
 
-Cost: every backtest loads about 273 more trading days of benchmark history.
+- **`timestep="day"`**: `warmup_trading_days` is raised to at least
+  `min_bars + REGIME_WARMUP_SLACK` (273 + 10 = 283), before the data source is
+  built and before `run_backtest` loads the benchmark. The slack exists because
+  `warmup_calendar_days`' fixed 15-day holiday buffer under-covers a 13-month
+  span (about 10-11 NYSE holidays): with exactly 273, some start dates got only
+  270-272 sessions and no regime for their first sessions. The daily frame of the
+  benchmark is the strategy's own, so widening the single eager load is enough.
+- **Any other timestep (minute)**: the warmup is NOT raised, so no minute
+  download is widened. Instead, once the data source is resolved (an instance,
+  or built from a class/callable with the caller's own window) and before
+  `run_backtest`, `Strategy.run_backtesting` calls
+  `source.load([Asset(self.benchmark_symbol)], regime_start, end, "day")` once,
+  with `regime_start = start - warmup_calendar_days(min_bars + slack)`. The runner's
+  own benchmark argument is unchanged.
+
+Either way only the eager data load's start bound moves, never the simulated
+`[start, end]` window. Documented in the method's docstring.
+
+Cost: daily runs load about 283 more trading days of benchmark history (and of
+any `preload_assets`); minute runs load one extra daily frame of the benchmark
+over the same span and nothing else.
 
 ### 5. vwap_pullback cleanup
 
@@ -176,6 +191,6 @@ Cost: every backtest loads about 273 more trading days of benchmark history.
 - **Thresholds are untuned.** 50/200 SMAs and an 80th-percentile vol cap are
   conventional defaults, not fitted. They are class-level parameters so they can
   change without touching the pure code.
-- **Warmup cost** on every backtest (about 273 extra benchmark sessions). Accepted.
+- **Warmup cost** on every backtest: about 283 extra benchmark daily sessions (for minute runs, one extra daily frame of the benchmark only). Accepted.
 - **Alpaca IEX history depth** in paper/live: 273 daily bars is a single
   `get_bars` call, well inside the 200 requests/minute budget, once per session.

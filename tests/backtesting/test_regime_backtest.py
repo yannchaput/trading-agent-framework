@@ -83,7 +83,7 @@ def _strategy(tmp_path: Path, start: datetime) -> Strategy:
 
 
 @pytest.mark.parametrize(("requested", "expected"), [(0, 283), (10, 283), (400, 400)])
-def test_run_backtesting_widens_the_warmup_to_the_regime_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, expected: int) -> None:
+def test_a_daily_run_widens_the_warmup_to_the_regime_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, expected: int) -> None:
     captured: dict[str, object] = {}
     windows: list[tuple[datetime, datetime]] = []
     monkeypatch.setattr("trading_agent_framework.backtesting.runner.run_backtest", lambda strategy, **kwargs: captured.update(kwargs))
@@ -92,13 +92,43 @@ def test_run_backtesting_widens_the_warmup_to_the_regime_history(tmp_path: Path,
     source = FakeBacktestDataSource()
 
     _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, fees=FEES, warmup_trading_days=requested,
+        start=start, end=end, fees=FEES, warmup_trading_days=requested, timestep="day",
         data_source=lambda window_start, window_end: windows.append((window_start, window_end)) or source,
     )
 
     assert captured["warmup_trading_days"] == expected
+    assert captured["timestep"] == "day"
     assert captured["data_source"] is source
     assert windows == [(start - timedelta(days=warmup_calendar_days(expected)), end)]
+    assert source.load_calls == []  # run_backtest's own eager load covers the benchmark's daily frame
+
+
+@pytest.mark.parametrize("requested", [0, 10, 400])
+@pytest.mark.parametrize("as_instance", [False, True])
+def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_regime_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, as_instance: bool
+) -> None:
+    captured: dict[str, object] = {}
+    windows: list[tuple[datetime, datetime]] = []
+    monkeypatch.setattr("trading_agent_framework.backtesting.runner.run_backtest", lambda strategy, **kwargs: captured.update(kwargs))
+    start = datetime(2026, 1, 5, 8, 30, tzinfo=ET)
+    end = datetime(2026, 1, 9, tzinfo=ET)
+    source = FakeBacktestDataSource()
+    data_source = source if as_instance else (lambda window_start, window_end: windows.append((window_start, window_end)) or source)
+
+    # The runner's benchmark argument stays as given; the regime reads `strategy.benchmark_symbol` (SPY).
+    _strategy(tmp_path, start).run_backtesting(
+        start=start, end=end, fees=FEES, warmup_trading_days=requested, timestep="minute", benchmark="QQQ", data_source=data_source,
+    )
+
+    assert captured["warmup_trading_days"] == requested  # not raised for the regime
+    assert captured["benchmark"] == "QQQ"
+    assert captured["data_source"] is source
+    if not as_instance:
+        assert windows == [(start - timedelta(days=warmup_calendar_days(requested)), end)]  # constructor window not widened
+    assert source.load_calls == [(SPY,)]
+    assert source.load_timesteps == ["day"]
+    assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(273 + REGIME_WARMUP_SLACK)), end)]
 
 
 def test_a_daily_backtest_has_a_regime_from_its_first_session_and_never_looks_ahead(tmp_path: Path) -> None:
