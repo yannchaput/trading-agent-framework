@@ -233,6 +233,7 @@ __marimo__/
 /logs/
 
 # Strategy specific data files (data/<strategy>/<mode>/cross_momentum_ptf_history_*.json)
+data/
 data/cross_momentum_ptf_history_*.json
 data/cross_momentum_breadth_*.json*
 data/universe/us_stock_universe*.json

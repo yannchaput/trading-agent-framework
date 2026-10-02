@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION=0.1.1
+VERSION=0.1.2
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 WHEEL="$PROJECT_DIR/dist/trading_agent_framework-$VERSION-py3-none-any.whl"

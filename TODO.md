@@ -8,9 +8,8 @@
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * ~~Create a batch to run all the smoke tests altogether~~
 * ~~Add cash available during backtesting~~
-* Integrate VIX indicator
 * Update pyproject.toml to make dashboard an "extra" dependency
-* Add a backtesting dates builder: smoke_test vs short_test vs long_test
+* Add a gloabl factory/builder for strategy in main.py
 
 ## BUGS
 * Review `uv check` errors and fix or silent them
