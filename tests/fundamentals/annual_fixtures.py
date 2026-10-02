@@ -40,5 +40,5 @@ def healthy_figures(
     balances = [{"field": "debt", "end": f"{year}-12-31", "value": value, "filed": f"{year + 1}-02-15"} for year, value in debts.items()]
     if cash is not None:
         balances.append({"field": "cash", "end": f"{last}-12-31", "value": cash, "filed": f"{last + 1}-02-15"})
-    share_rows = [] if shares is None else [{"end": f"{last + 1}-01-31", "value": shares, "filed": f"{last + 1}-02-15"}]
+    share_rows = [] if shares is None else [{"end": f"{last + 1}-01-31", "value": shares, "filed": f"{last + 1}-02-15", "kind": "cover"}]
     return {"cik": "0000000001", "fetched_at": "2026-10-02T00:00:00+00:00", "status": "ok", "flows": flows, "balances": balances, "shares": share_rows}

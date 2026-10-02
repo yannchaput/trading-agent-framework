@@ -316,3 +316,35 @@ def test_the_split_lookup_gets_the_split_max_age_not_the_annual_one() -> None:
     _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], splits=splits, params=ScreenParams(max_age_days=30, split_max_age_days=3))
 
     assert splits.max_ages == [3]
+
+
+def _weighted_only(count: int, *, end: str, filed: str) -> dict[str, object]:
+    figures = healthy_figures()
+    figures["shares"] = [{"end": end, "value": count, "filed": filed, "kind": "weighted"}]
+    return figures
+
+
+def test_a_split_between_the_quarter_end_and_the_filing_is_not_applied_to_a_weighted_count() -> None:
+    # The 10-Q for the quarter ended 2026-03-31 was filed 2026-05-01; a 2-for-1 on 2026-04-15 is already
+    # in its weighted-average count (ASC 260), so applying it again would double the market cap.
+    splits = FakeSplits({"AAA": [(date(2026, 4, 15), 2.0)]})
+
+    result = _run(FakeStore({"AAA": _weighted_only(1000, end="2026-03-31", filed="2026-05-01")}), ["AAA"], splits=splits)
+
+    assert result.candidates[0].market_cap == Decimal("10000")
+
+
+def test_a_split_after_the_filing_is_applied_to_a_weighted_count() -> None:
+    splits = FakeSplits({"AAA": [(date(2026, 5, 20), 2.0)]})
+
+    result = _run(FakeStore({"AAA": _weighted_only(1000, end="2026-03-31", filed="2026-05-01")}), ["AAA"], splits=splits)
+
+    assert result.candidates[0].market_cap == Decimal("20000")
+
+
+def test_a_split_between_the_period_end_and_the_filing_is_applied_to_a_cover_page_count() -> None:
+    figures = healthy_figures()
+    figures["shares"] = [{"end": "2026-04-20", "value": 1000, "filed": "2026-05-01", "kind": "cover"}]
+    splits = FakeSplits({"AAA": [(date(2026, 4, 25), 2.0)]})  # after the cover date: not in the count
+
+    assert _run(FakeStore({"AAA": figures}), ["AAA"], splits=splits).candidates[0].market_cap == Decimal("20000")

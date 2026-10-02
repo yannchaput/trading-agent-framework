@@ -75,14 +75,16 @@ as `MemoryStore` takes `now`.
   "sic": 3571,
   "flows": [{"field": "revenue", "start": "2024-09-29", "end": "2025-09-27", "value": 416161000000, "filed": "2025-10-31"}],
   "balances": [{"field": "debt", "end": "2025-09-27", "value": 90678000000, "filed": "2025-10-31"}],
-  "shares": [{"end": "2026-07-17", "value": 14594180000, "filed": "2026-07-31"}]
+  "shares": [{"end": "2026-07-17", "value": 14594180000, "filed": "2026-07-31", "kind": "cover"}]
 }
 ```
 
 - **`flows`**: revenue, operating income, operating cash flow, capex. Only facts from a 10-K or 10-K/A whose
   period lasts 350 to 380 days.
 - **`balances`**: debt and cash. Only facts from a 10-K or 10-K/A.
-- **`shares`**: share counts from 10-K and 10-Q filings.
+- **`shares`**: share counts from 10-K and 10-Q filings. Each row is tagged `"kind": "cover"` (the `dei`
+  cover-page count) or `"kind": "weighted"` (the `us-gaap` weighted-average diluted count); cover rows come
+  first.
 - Every version of a figure is kept (a later 10-K restates earlier years), each with its own `filed` date, so
   the as-of selection in §3.1 can be exact.
 - `sic` is absent until the sector gate first asks for it (§3.2).
@@ -165,8 +167,12 @@ The screen uses, per field and period end, the latest known version. The **windo
 fiscal years that have a known revenue row. Balance figures are those whose `end` equals the latest fiscal
 year's end.
 
-The **share count** is the known entry with the latest `end`, the cover-page count winning a tie;
-`counted_on` is its `end` date.
+The **share count** is the known entry with the latest `end`, then the latest `filed`, the cover-page count
+winning a full tie. `counted_on` is the day the count is true on, which is what §4 restates from: the row's
+`end` for a cover-page count, its `filed` date for a weighted-average count. ASC 260 restates a weighted
+average for splits that happen after the period end but before the report is issued, so the count already
+reflects every split up to its filing date; applying a split dated between `end` and `filed` would count it
+twice.
 
 ### 3.2 Gates
 

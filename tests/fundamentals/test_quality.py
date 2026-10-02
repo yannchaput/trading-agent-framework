@@ -183,9 +183,9 @@ def test_a_restatement_filed_after_the_date_is_ignored() -> None:
 def test_the_share_count_is_the_latest_one_known_on_the_date() -> None:
     figures = healthy_figures()
     figures["shares"] = [
-        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15"},
-        {"end": "2026-04-30", "value": 1100, "filed": "2026-05-10"},
-        {"end": "2026-07-31", "value": 1200, "filed": "2026-08-10"},
+        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15", "kind": "cover"},
+        {"end": "2026-04-30", "value": 1100, "filed": "2026-05-10", "kind": "cover"},
+        {"end": "2026-07-31", "value": 1200, "filed": "2026-08-10", "kind": "cover"},
     ]
 
     survivor = _survivor(figures)
@@ -196,11 +196,39 @@ def test_the_share_count_is_the_latest_one_known_on_the_date() -> None:
 def test_the_cover_page_count_wins_a_tie_on_the_period_end() -> None:
     figures = healthy_figures()
     figures["shares"] = [
-        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15"},  # cover page: listed first by annual_figures
-        {"end": "2026-01-31", "value": 990, "filed": "2026-02-15"},
+        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15", "kind": "cover"},
+        {"end": "2026-01-31", "value": 990, "filed": "2026-02-15", "kind": "weighted"},
     ]
 
     assert _survivor(figures).shares == 1000
+
+
+def test_the_cover_page_count_wins_a_full_tie_whatever_the_list_order() -> None:
+    figures = healthy_figures()
+    figures["shares"] = [
+        {"end": "2026-01-31", "value": 990, "filed": "2026-02-15", "kind": "weighted"},
+        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15", "kind": "cover"},
+    ]
+
+    assert _survivor(figures).shares == 1000
+
+
+def test_a_cover_page_count_is_counted_on_its_period_end() -> None:
+    figures = healthy_figures()
+    figures["shares"] = [{"end": "2026-04-20", "value": 1005, "filed": "2026-05-01", "kind": "cover"}]
+
+    assert _survivor(figures).counted_on == date(2026, 4, 20)
+
+
+def test_a_weighted_average_count_is_counted_on_its_filing_date() -> None:
+    # ASC 260 restates a weighted-average count for splits between the period end and issuance, so
+    # the count already reflects every split up to the day it was filed.
+    figures = healthy_figures()
+    figures["shares"] = [{"end": "2026-03-31", "value": 1010, "filed": "2026-05-01", "kind": "weighted"}]
+
+    survivor = _survivor(figures)
+
+    assert (survivor.shares, survivor.counted_on) == (1010, date(2026, 5, 1))
 
 
 def test_a_company_with_no_share_count_still_survives_the_numeric_gates() -> None:

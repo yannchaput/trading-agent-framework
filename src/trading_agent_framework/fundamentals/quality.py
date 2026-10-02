@@ -70,6 +70,16 @@ def _consecutive(year_ends: Sequence[date]) -> bool:
     return all(MIN_FISCAL_YEAR_DAYS <= (later - earlier).days <= MAX_FISCAL_YEAR_DAYS for earlier, later in pairwise(year_ends))
 
 
+def _counted_on(share_row: Mapping[str, Any]) -> date:
+    """The day a share count is true on, for restating it across later splits.
+
+    A cover-page count is as of its period `end`. A weighted-average count is restated by ASC 260 for
+    splits that happen after the period end but before the report is issued, so it is true as of its
+    `filed` date: applying a split dated between `end` and `filed` would count it twice.
+    """
+    return date.fromisoformat(share_row["filed"] if share_row["kind"] == "weighted" else share_row["end"])
+
+
 def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, params: ScreenParams) -> Survivor | str:
     """Apply the numeric gates to one company; the rejection reason is the first gate that fails."""
     if figures is None or figures.get("status") == "absent":
@@ -121,8 +131,8 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
 
     margins = [income / revenue for income, revenue in zip(operating_incomes, revenues, strict=True)]
     share_rows = _known(figures.get("shares", []), cutoff)
-    # `max` keeps the first of equal keys, and `annual_figures` lists cover-page counts first.
-    share_row = max(share_rows, key=lambda row: (row["end"], row["filed"])) if share_rows else None
+    # The latest period end wins, then the latest filing, then the cover-page count over a weighted one.
+    share_row = max(share_rows, key=lambda row: (row["end"], row["filed"], row["kind"] == "cover")) if share_rows else None
     return Survivor(
         symbol=symbol,
         fiscal_year_end=latest_end,
@@ -135,7 +145,7 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
         net_debt_to_operating_income=net_debt / operating_incomes[-1],
         debt_reported=debt_row is not None,
         shares=share_row["value"] if share_row else None,
-        counted_on=date.fromisoformat(share_row["end"]) if share_row else None,
+        counted_on=_counted_on(share_row) if share_row else None,
     )
 
 

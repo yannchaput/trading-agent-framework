@@ -362,8 +362,8 @@ def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Reduce a company-facts payload (about 4 MB) to the rows the quality screen needs (a few KB).
 
     `flows` and `balances` come from annual reports only. `shares` keeps both the cover-page count
-    (`dei`, listed first) and the weighted-average diluted count, from annual and quarterly reports:
-    a multi-class company has no usable cover-page count in this API.
+    (`dei`, `"kind": "cover"`, listed first) and the weighted-average diluted count (`"kind": "weighted"`),
+    from annual and quarterly reports: a multi-class company has no usable cover-page count in this API.
     """
     root = payload.get("facts", {})
     gaap, dei = root.get("us-gaap", {}), root.get("dei", {})
@@ -380,7 +380,10 @@ def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
     cover = [_slim(row) for row in _tag_rows(dei, "EntityCommonStockSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
     weighted = [_slim(row) for row in _tag_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
-    shares = [*_first_source_per_period([cover]), *_first_source_per_period([weighted])]
+    shares = [
+        *({**row, "kind": "cover"} for row in _first_source_per_period([cover])),
+        *({**row, "kind": "weighted"} for row in _first_source_per_period([weighted])),
+    ]
 
     return {"flows": flows, "balances": balances, "shares": shares}
 

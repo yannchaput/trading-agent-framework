@@ -387,9 +387,9 @@ def test_annual_figures_keeps_both_share_counts_cover_page_first() -> None:
     shares = sec.annual_figures(payload)["shares"]
 
     assert shares == [
-        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15"},
-        {"end": "2026-04-20", "value": 1005, "filed": "2026-05-01"},
-        {"end": "2026-03-31", "value": 1010, "filed": "2026-05-01"},
+        {"end": "2026-01-31", "value": 1000, "filed": "2026-02-15", "kind": "cover"},
+        {"end": "2026-04-20", "value": 1005, "filed": "2026-05-01", "kind": "cover"},
+        {"end": "2026-03-31", "value": 1010, "filed": "2026-05-01", "kind": "weighted"},
     ]
 
 
