@@ -14,6 +14,7 @@ from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
+from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
@@ -44,7 +45,16 @@ def _build_vwap_pullback(broker: Broker, mode: TradingMode) -> Strategy | None:
     return VwapPullbackStrategy(broker=broker, mode=mode, universe=universe)
 
 
+def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
+    universe = load_cross_momentum_universe()
+    if not universe:
+        Console().print("Universe file not found — run `uv run batch-universe` before executing this strategy.", style="bold red")
+        return None
+    return BillAckmanStrategy(broker=broker, mode=mode, universe=universe)
+
+
 AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
+    "bill_ackman": _build_bill_ackman,
     "cross_momentum": _build_cross_momentum,
     "news_binary": _build_news_binary,
     "vwap_pullback_continuation": _build_vwap_pullback,

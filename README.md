@@ -72,7 +72,7 @@ Groups never fall back to each other; with one Alpaca key pair, repeat it in eac
 
 `FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
 
-`SEC_EDGAR_USER_AGENT` is needed only if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
+`SEC_EDGAR_USER_AGENT` is needed if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings) or uses the fundamentals quality screen (`bill_ackman`). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
 
 ## 📈 Interactive Brokers (IBKR)
 
@@ -259,6 +259,21 @@ to analyze the parquet file.
 
 Run `uv run batch-universe` to retrieve an extended list of US shares and filter them based on market cap, vol, etc.
 The strategy will rely on those symbols as input.
+
+#### 📈 `bill_ackman` — Bill Ackman portfolio (researcher, short seller, trader)
+| Field | Value |
+|---|---|
+| **File** | `strategies/bill_ackman/agent_bill_ackman.py` |
+| **Model** | from `LLM_MODEL` in the env file (one model for the three agents) |
+| **Agents** | `researcher`, `short_seller`, `trader` |
+| **Tools** | researcher: SEC fundamentals + market data; short seller: SEC fundamentals + news + market data; trader: none. Each agent ends with one submit tool (`submit_ranking`, `submit_verdicts`, `submit_portfolio`); none can place an order |
+| **Asset universe** | the `cross_momentum` universe file, cut to 15 candidates by the quality screen every day, plus SHV |
+| **Agent frequency** | once per session |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.bill_ackman.<mode>`: `LLM_*`, `SEC_EDGAR_USER_AGENT`, `ALPACA_NEWS_*` (the short seller's news tool), plus the broker keys in paper/live |
+
+A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ackman example. Each day code screens the universe for simple, cash-generative, lightly indebted, reasonably priced companies (`strategies/bill_ackman/screen/`), the researcher ranks the best 5, the short seller attacks them and every stock already held, and the trader picks the weights. Code applies a hysteresis (a holding that fails the attack on 2 consecutive days is sold), validates every agent output, and places all orders; money not allocated to stocks is parked in SHV. Run `uv run agent bill_ackman backtesting` (default window `PredefinedWindow.BI_MONTH`); each run writes `reviews.jsonl` (one line per daily review) next to its report. The first run downloads about 5 GB of SEC data once.
 
 #### 📈 `opening_range_breakout` — Agent based opening range breakout strategy (ORB)
 | Field | Value |

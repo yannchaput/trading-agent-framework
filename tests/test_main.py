@@ -5,11 +5,12 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework import main as main_module
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 
 def test_registry_lists_the_strategies() -> None:
-    assert set(main_module.AGENT_STRATEGIES) == {"cross_momentum", "news_binary", "vwap_pullback_continuation"}
+    assert set(main_module.AGENT_STRATEGIES) == {"bill_ackman", "cross_momentum", "news_binary", "vwap_pullback_continuation"}
 
 
 def test_news_binary_builder_returns_the_strategy() -> None:
@@ -19,6 +20,24 @@ def test_news_binary_builder_returns_the_strategy() -> None:
 
     assert isinstance(strategy, NewsBinaryStrategy)
     assert strategy.is_backtesting
+
+
+def test_bill_ackman_builder_returns_the_strategy_with_the_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module, "load_cross_momentum_universe", lambda: ["AAA", "BBB"])
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman")
+
+    strategy = main_module._build_bill_ackman(broker, TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, BillAckmanStrategy)
+    assert strategy.universe == ["AAA", "BBB"]
+    assert strategy.is_backtesting
+
+
+def test_bill_ackman_builder_returns_none_without_a_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module, "load_cross_momentum_universe", lambda: [])
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman")
+
+    assert main_module._build_bill_ackman(broker, TradingMode.BACKTESTING) is None
 
 
 def test_cross_momentum_builder_returns_none_without_a_universe(monkeypatch: pytest.MonkeyPatch) -> None:
