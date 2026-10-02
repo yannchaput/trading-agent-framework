@@ -434,6 +434,18 @@ def test_annual_figures_keeps_both_share_counts_cover_page_first() -> None:
     ]
 
 
+@pytest.mark.parametrize("three_month_first", [True, False])
+def test_annual_figures_keeps_the_three_month_weighted_count_when_a_quarterly_filing_also_reports_year_to_date(three_month_first: bool) -> None:
+    # A 10-Q carries the 3-month and the year-to-date weighted average under one (end, filed); the
+    # 3-month one is closest to the filing, and the payload's row order must not decide.
+    quarter = {"val": 940, "start": "2025-07-01", "end": "2025-09-30", "filed": "2025-11-05", "form": "10-Q"}
+    year_to_date = {"val": 930, "start": "2025-01-01", "end": "2025-09-30", "filed": "2025-11-05", "form": "10-Q"}
+    rows = [quarter, year_to_date] if three_month_first else [year_to_date, quarter]
+    payload = _company(gaap={"WeightedAverageNumberOfDilutedSharesOutstanding": _share_units(*rows)})
+
+    assert sec.annual_figures(payload)["shares"] == [{"end": "2025-09-30", "value": 940, "filed": "2025-11-05", "kind": "weighted"}]
+
+
 def test_annual_figures_skips_rows_without_a_value_or_a_filing_date() -> None:
     payload = _company(
         {

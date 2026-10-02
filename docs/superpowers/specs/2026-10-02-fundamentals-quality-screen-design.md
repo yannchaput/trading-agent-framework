@@ -84,7 +84,8 @@ as `MemoryStore` takes `now`.
 - **`balances`**: debt and cash. Only facts from a 10-K or 10-K/A.
 - **`shares`**: share counts from 10-K and 10-Q filings. Each row is tagged `"kind": "cover"` (the `dei`
   cover-page count) or `"kind": "weighted"` (the `us-gaap` weighted-average diluted count); cover rows come
-  first.
+  first. A 10-Q reports a 3-month and a year-to-date weighted count under one (period end, filing): the
+  shortest period is kept, whatever the payload's row order.
 - Every version of a figure is kept (a later 10-K restates earlier years), each with its own `filed` date, so
   the as-of selection in §3.1 can be exact.
 - `sic` is absent until the sector gate first asks for it (§3.2).
@@ -256,8 +257,11 @@ class ScreenParams:
     excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))
     weights: tuple[float, float, float] = (0.4, 0.3, 0.3)   # fcf_yield, fcf_margin, margin stability
     top_n: int = 15
-    max_age_days: int = 30
+    max_age_days: int = 30                  # annual SEC figures, by as_of (§2.4)
+    split_max_age_days: int = 1             # split history, by the wall clock (§2.4)
     max_fetch_failure_ratio: float = 0.2
+    hollow_min_sample: int = 5              # symbols at the SIC/split gate before its failure ratio applies (§5)
+    # __post_init__ raises ValueError for out-of-range values (years < 2, a ratio outside [0, 1], ...)
 
 @dataclass(frozen=True, slots=True)
 class Candidate:

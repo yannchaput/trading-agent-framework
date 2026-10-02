@@ -398,7 +398,10 @@ def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
         balances.extend({"field": field, **row} for row in _first_source_per_period(sources))
 
     cover = [_slim(row) for row in _tag_rows(dei, "EntityCommonStockSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
-    weighted = [_slim(row) for row in _tag_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
+    # A 10-Q reports a 3-month and a year-to-date count under one (end, filed), and `_first_source_per_period`
+    # keeps the last row of a source: order by start so the shortest period (the latest start) is last.
+    weighted_facts = sorted(_tag_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS), key=lambda row: row.get("start") or "")
+    weighted = [_slim(row) for row in weighted_facts]
     shares = [
         *({**row, "kind": "cover"} for row in _first_source_per_period([cover])),
         *({**row, "kind": "weighted"} for row in _first_source_per_period([weighted])),
