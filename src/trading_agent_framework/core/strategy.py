@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 
 Number = Decimal | int | float | str
 
+# Extra trading days on top of `regime_params.min_bars` for the regime's backtest warmup: `warmup_calendar_days`'
+# fixed holiday buffer under-covers a 13-month span (about 10-11 NYSE holidays), so some start dates would get
+# 270-272 sessions and no regime for their first sessions.
+REGIME_WARMUP_SLACK = 10
+
 _FINAL_STATUSES = frozenset(OrderStatus) - ACTIVE_ORDER_STATUSES
 
 
@@ -590,7 +595,7 @@ class Strategy:
         resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
         # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session; without
         # them the eager benchmark load caches a frame too short for it (see `_refresh_regime`).
-        resolved_warmup = max(warmup_trading_days, self.regime_params.min_bars)
+        resolved_warmup = max(warmup_trading_days, self.regime_params.min_bars + REGIME_WARMUP_SLACK)
         warmup_start = resolved_start - timedelta(days=warmup_calendar_days(resolved_warmup))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)

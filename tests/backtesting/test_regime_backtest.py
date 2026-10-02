@@ -16,7 +16,7 @@ from tests.fakes import FakeBroker, FakeClock
 from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import BrokerKind
-from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.core.strategy import REGIME_WARMUP_SLACK, Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MarketSession
 
@@ -39,6 +39,38 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
     return sessions
 
 
+# NYSE full-day closures 2024-2026 (Jan 9 2025: the national day of mourning for President Carter).
+NYSE_HOLIDAYS = frozenset(
+    date(*ymd)
+    for ymd in [
+        (2024, 1, 1), (2024, 1, 15), (2024, 2, 19), (2024, 3, 29), (2024, 5, 27), (2024, 6, 19), (2024, 7, 4), (2024, 9, 2), (2024, 11, 28), (2024, 12, 25),
+        (2025, 1, 1), (2025, 1, 9), (2025, 1, 20), (2025, 2, 17), (2025, 4, 18), (2025, 5, 26), (2025, 6, 19), (2025, 7, 4), (2025, 9, 1), (2025, 11, 27), (2025, 12, 25),
+        (2026, 1, 1), (2026, 1, 19), (2026, 2, 16), (2026, 4, 3), (2026, 5, 25), (2026, 6, 19), (2026, 7, 3), (2026, 9, 7), (2026, 11, 26), (2026, 12, 25),
+    ]
+)
+
+
+def _sessions_between(first: date, stop: date) -> int:
+    """Real NYSE sessions in `[first, stop)`: weekdays that are not a full-day holiday."""
+    days = (first + timedelta(days=offset) for offset in range((stop - first).days))
+    return sum(1 for day in days if day.weekday() < 5 and day not in NYSE_HOLIDAYS)
+
+
+def test_the_regime_warmup_covers_min_bars_sessions_for_every_2025_start_date() -> None:
+    """`warmup_calendar_days`' fixed holiday buffer under-covers a 13-month span: without the slack, 2025-07-07 got 270."""
+    min_bars = Strategy.regime_params.min_bars
+    window = warmup_calendar_days(min_bars + REGIME_WARMUP_SLACK)
+    starts = [date(2025, 1, 1) + timedelta(days=offset) for offset in range(365)]
+    short = {
+        start: count
+        for start in starts
+        if start.weekday() < 5 and start not in NYSE_HOLIDAYS and (count := _sessions_between(start - timedelta(days=window), start)) < min_bars
+    }
+    assert short == {}
+    # The unslacked window does fall short somewhere (the reviewer's 2025-07-07 included), so the test has teeth.
+    assert _sessions_between(date(2025, 7, 7) - timedelta(days=warmup_calendar_days(min_bars)), date(2025, 7, 7)) < min_bars
+
+
 def _bars(sessions: list[MarketSession], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(
         {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
@@ -50,7 +82,7 @@ def _strategy(tmp_path: Path, start: datetime) -> Strategy:
     return IdleStrategy(FakeBroker(FakeClock(start), "idle"), project_root=tmp_path)
 
 
-@pytest.mark.parametrize(("requested", "expected"), [(0, 273), (10, 273), (400, 400)])
+@pytest.mark.parametrize(("requested", "expected"), [(0, 283), (10, 283), (400, 400)])
 def test_run_backtesting_widens_the_warmup_to_the_regime_history(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, expected: int) -> None:
     captured: dict[str, object] = {}
     windows: list[tuple[datetime, datetime]] = []
@@ -83,7 +115,7 @@ def test_a_daily_backtest_has_a_regime_from_its_first_session_and_never_looks_ah
         start=start, end=end, budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day", fees=FEES,
     )
 
-    assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(273)), end)]
+    assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(273 + REGIME_WARMUP_SLACK)), end)]
     lines = pd.read_parquet(result.run_dir / "indicators.parquet")
     regime = lines[lines["name"] == "Regime"].sort_values("datetime")
     assert [float(value) for value in regime["value"]] == [1.0, 1.0, 1.0]
