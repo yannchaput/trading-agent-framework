@@ -11,6 +11,7 @@ import math
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import pairwise
 
 REGIME_LINE = "Regime"  # the `add_line` name and pane; the dashboard's `charts.REGIME_PANE` must match
 REGIME_LABELS = {1: "bullish", 0: "neutral", -1: "bearish"}
@@ -87,7 +88,7 @@ def classify_regime(closes: Sequence[float], params: RegimeParameters = RegimePa
 
 def _volatility(closes: Sequence[float], params: RegimeParameters) -> tuple[float, float]:
     """The latest annualized realized volatility, and its `vol_percentile` over the last `vol_lookback` values."""
-    returns = [math.log(current / previous) for previous, current in zip(closes, closes[1:], strict=False)]  # noqa: B905 -- deliberate: sequences are guaranteed same length
+    returns = [math.log(current / previous) for previous, current in pairwise(closes)]
     annualize = math.sqrt(_TRADING_DAYS_PER_YEAR)
     vols = [statistics.stdev(returns[end - params.vol_window : end]) * annualize for end in range(params.vol_window, len(returns) + 1)]
     return vols[-1], _percentile(vols[-params.vol_lookback :], params.vol_percentile)
