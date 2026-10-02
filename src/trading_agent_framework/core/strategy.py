@@ -23,6 +23,7 @@ from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
+from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, classify_regime
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.enums import (
@@ -37,7 +38,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError, OrderValidationError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, ConfigurationError, LLMStatsError, OrderValidationError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -94,6 +95,10 @@ class Strategy:
     # Off here for paper/live (opt in with `agent_telemetry = True`); `run_backtesting(agent_telemetry=True)` turns it on per run.
     agent_telemetry: bool = False
 
+    # Market regime (1 bullish, 0 neutral, -1 bearish), estimated once per session from `benchmark_symbol`'s daily
+    # bars (`core/regime.py`). Information only: logged, and charted in backtests. Override to change the windows.
+    regime_params: RegimeParameters = RegimeParameters()
+
     def __init__(
         self,
         broker: Broker,
@@ -121,6 +126,9 @@ class Strategy:
         self._agents: AgentManager | None = None
         # Name of the run directory (`<ts>_<mode>`), set by the runners; tags every llm_stats row.
         self.run_id: str | None = None
+        # Latest market regime; None until `_refresh_regime` could compute one (the executor calls it every session).
+        self.regime: int | None = None
+        self._regime_history_warned = False
         self.executor = StrategyExecutor(self)
 
     @property
@@ -295,6 +303,32 @@ class Strategy:
                 plot_name=plot_name,
             )
         )
+
+    def _refresh_regime(self) -> None:
+        """Estimate the market regime from the benchmark's daily bars; the executor calls this once per session.
+
+        Information only: a log line, and an `add_line` point in backtests. Any failure keeps the previous
+        value, because a regime estimate must never cost a session.
+        """
+        params = self.regime_params
+        try:
+            bars = self.get_historical_prices(self.benchmark_symbol, params.min_bars, "day")
+            reading = None if bars is None else classify_regime(bars.df["close"].tolist(), params)
+        except (BrokerError, BacktestError, ValueError) as exc:
+            self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")
+            return
+        if reading is None:
+            if not self._regime_history_warned:
+                self._regime_history_warned = True
+                self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily bars of {self.benchmark_symbol}")
+            return
+        self.regime = reading.regime
+        self.log_info(
+            f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): {self.benchmark_symbol} close {reading.close:.2f}, "
+            f"SMA{params.sma_fast} {reading.sma_fast:.2f}, SMA{params.sma_slow} {reading.sma_slow:.2f}, "
+            f"vol {reading.vol:.1%} vs cap {reading.vol_threshold:.1%}{' (stressed)' if reading.stressed else ''}"
+        )
+        self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
     def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
         """Wait until `order` is filled, canceled, expired or rejected; False on timeout/stop.
