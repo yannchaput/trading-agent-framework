@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -233,3 +236,111 @@ def test_fetch_payload_methods_hit_the_sec_endpoints_without_caching(tmp_path: P
         "https://data.sec.gov/submissions/CIK0000320193.json",
     ]
     assert list(tmp_path.iterdir()) == []
+
+
+# --- freshness of the cached payloads (as_of / max_age_days) ---------------------------------------
+
+_FACTS_FILE = ("companyfacts", "CIK0000320193.json")
+
+
+def _age_file(path: Path, *, days: float) -> None:
+    """Make `path` look like it was written `days` ago (its modification time is what the client reads)."""
+    then = (datetime.now(UTC) - timedelta(days=days)).timestamp()
+    os.utime(path, (then, then))
+
+
+def _seed_facts(tmp_path: Path, payload: dict[str, object], *, age_days: float) -> Path:
+    path = tmp_path.joinpath(*_FACTS_FILE)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    _age_file(path, days=age_days)
+    return path
+
+
+def test_a_fresh_cached_payload_is_served_without_a_request(tmp_path: Path) -> None:
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=5)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC), max_age_days=30)
+
+    assert payload == {"v": "cached"}
+    assert calls == []
+
+
+def test_a_stale_cached_payload_is_refetched_and_rewritten(tmp_path: Path) -> None:
+    calls = []
+    path = _seed_facts(tmp_path, {"v": "cached"}, age_days=40)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC), max_age_days=30)
+
+    assert payload == {"v": "new"}
+    assert len(calls) == 1
+    assert json.loads(path.read_text(encoding="utf-8")) == {"v": "new"}
+
+
+def test_a_file_written_today_is_fresh_for_every_past_as_of(tmp_path: Path) -> None:
+    # A backtest asks with a simulated, past `as_of`: the file's own date is today, so it never refetches.
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=0)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime(2024, 1, 2, tzinfo=UTC), max_age_days=30)
+
+    assert payload == {"v": "cached"}
+    assert calls == []
+
+
+def test_a_stale_payload_survives_a_failed_refresh_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=40)
+    client = _client(tmp_path, lambda request: httpx.Response(500))
+
+    with caplog.at_level(logging.WARNING):
+        payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC), max_age_days=30)
+
+    assert payload == {"v": "cached"}
+    assert "could not be refreshed" in caplog.text
+
+
+def test_without_as_of_and_max_age_an_old_cached_payload_is_still_served(tmp_path: Path) -> None:
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=400)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    assert client.get_company_facts_payload("0000320193") == {"v": "cached"}
+    assert calls == []
+
+
+def test_a_naive_as_of_is_refused_when_a_cached_file_exists(tmp_path: Path) -> None:
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=1)
+    client = _client(tmp_path, lambda request: httpx.Response(200, json={"v": "new"}))
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        client.get_company_facts_payload("0000320193", as_of=datetime(2026, 9, 14), max_age_days=30)
+
+
+def test_a_corrupt_cached_file_is_refetched_even_with_freshness_arguments(tmp_path: Path) -> None:
+    calls = []
+    path = _seed_facts(tmp_path, {}, age_days=1)
+    path.write_text("{not json", encoding="utf-8")
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC), max_age_days=30)
+
+    assert payload == {"v": "new"}
+    assert len(calls) == 1
+
+
+def test_the_submissions_payload_takes_the_same_freshness_arguments(tmp_path: Path) -> None:
+    calls = []
+    path = tmp_path / "submissions" / "CIK0000320193.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"filings": "old"}), encoding="utf-8")
+    _age_file(path, days=40)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"filings": "new"}))
+
+    payload = client.get_submissions_payload("0000320193", as_of=datetime.now(UTC), max_age_days=30)
+
+    assert payload == {"filings": "new"}
+    assert len(calls) == 1

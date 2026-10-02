@@ -15,16 +15,19 @@ class _FakeEdgarClient:
         self.submissions: dict[str, object] = {"filings": {"recent": {}}}
         self.filing_text = "<p>Annual report text</p>"
         self.raises: FundamentalsError | None = None
+        self.freshness_args: list[tuple[str, object, object]] = []  # (endpoint, as_of, max_age_days) of every payload read
 
     def ticker_to_cik(self, symbol: str) -> str:
         if self.raises is not None:
             raise self.raises
         return _CIK
 
-    def get_company_facts_payload(self, cik: str) -> dict[str, object]:
+    def get_company_facts_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+        self.freshness_args.append(("companyfacts", as_of, max_age_days))
         return self.company_facts
 
-    def get_submissions_payload(self, cik: str) -> dict[str, object]:
+    def get_submissions_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+        self.freshness_args.append(("submissions", as_of, max_age_days))
         return self.submissions
 
     def get_filing_text(self, cik: str, accession_number: str, primary_document: str) -> str:
@@ -147,3 +150,30 @@ def test_get_filing_document_unknown_accession_number_returns_error() -> None:
     result = tools["get_filing_document"]("AAPL", "does-not-exist")  # type: ignore
 
     assert "error" in result
+
+
+def test_every_payload_read_passes_the_strategy_clock_and_a_thirty_day_freshness_to_the_client() -> None:
+    client = _FakeEdgarClient()
+    client.submissions = {
+        "filings": {
+            "recent": {
+                "form": ["10-K"],
+                "accessionNumber": ["0000320193-26-000001"],
+                "filingDate": ["2026-01-02"],
+                "reportDate": ["2025-12-31"],
+                "acceptanceDateTime": ["2026-01-02T10:00:00.000Z"],
+                "primaryDocument": ["a.htm"],
+            }
+        }
+    }
+    tools = _tools(client)
+    now = et(2026, 9, 14, 10)
+
+    tools["get_company_facts"]("AAPL")  # type: ignore
+    tools["get_income_statement"]("AAPL")  # type: ignore
+    tools["get_balance_sheet"]("AAPL")  # type: ignore
+    tools["get_filings"]("AAPL")  # type: ignore
+    tools["get_filing_document"]("AAPL", "0000320193-26-000001")  # type: ignore
+
+    assert [endpoint for endpoint, _, _ in client.freshness_args] == ["companyfacts", "companyfacts", "companyfacts", "submissions", "submissions"]
+    assert all(as_of == now and max_age_days == 30 for _, as_of, max_age_days in client.freshness_args)

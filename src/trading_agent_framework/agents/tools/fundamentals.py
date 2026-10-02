@@ -13,6 +13,8 @@ if TYPE_CHECKING:
 
 MIN_FILINGS_LIMIT = 1
 MAX_FILINGS_LIMIT = 25
+# A cached SEC payload older than this (by the strategy clock, so a backtest never refetches) is fetched again.
+MAX_PAYLOAD_AGE_DAYS = 30
 
 
 def _default_client(strategy: "Strategy") -> SecEdgarClient:  # noqa: UP037
@@ -32,7 +34,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            payload = edgar.get_company_facts_payload(cik)
+            payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         values = sec.statement_values(payload, tag_map, as_of=as_of)
@@ -43,7 +45,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            payload = edgar.get_company_facts_payload(cik)
+            payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         compact = sec.compact_company_facts(payload, as_of=as_of, max_facts=max_facts)
@@ -63,7 +65,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            submissions = edgar.get_submissions_payload(cik)
+            submissions = edgar.get_submissions_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         rows = sec.parse_filings(submissions, cik=cik, as_of=as_of, form=form, limit=clamped_limit)
@@ -75,7 +77,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            submissions = edgar.get_submissions_payload(cik)
+            submissions = edgar.get_submissions_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
             rows = sec.parse_filings(submissions, cik=cik, as_of=as_of, limit=1000)
             match = next((row for row in rows if row["accession_number"] == accession_number), None)
             if match is None:

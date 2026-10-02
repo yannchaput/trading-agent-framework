@@ -8,15 +8,21 @@ The only module allowed to import `httpx` for SEC access. Wraps every network fa
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
 
 from trading_agent_framework.fundamentals import sec
+from trading_agent_framework.fundamentals.freshness import is_stale
 from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError, FundamentalsNotFoundError
+from trading_agent_framework.utils.log import ColorLogger
+
+logger = ColorLogger(logging.getLogger(__name__), "SecEdgarClient")
 
 SEC_DATA_BASE_URL = "https://data.sec.gov"
 SEC_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -91,20 +97,51 @@ class SecEdgarClient:
             # sometimes serves an HTML block page with a 2xx status instead of JSON.
             raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
 
-    def get_json(self, url: str, cache_key: tuple[str, ...]) -> dict[str, Any]:
+    def get_json(
+        self, url: str, cache_key: tuple[str, ...], *, as_of: datetime | None = None, max_age_days: int | None = None
+    ) -> dict[str, Any]:
+        """The payload at `url`, cached to disk.
+
+        Without `as_of` and `max_age_days` a cached file is served forever (the original behaviour). With both,
+        a cached file whose modification time is more than `max_age_days` before `as_of` is stale and is
+        fetched again (`freshness.is_stale`, the screen's rule): in a backtest `as_of` is simulated, and a file
+        written today is fresh for every past date; live refreshes monthly. A stale file that cannot be
+        refreshed is served with a warning rather than failing the caller.
+        """
         cache_path = self._cache_path(*cache_key)
-        if cache_path.exists():
-            try:
-                return json.loads(cache_path.read_text(encoding="utf-8"))
-            except ValueError:
-                # A corrupt/truncated cache entry (e.g. from an interrupted write) is
-                # treated as a cache miss so it self-heals on the next fetch, rather than
-                # permanently wedging the tool until someone deletes the file by hand.
-                pass
-        payload = self.fetch_json(url)
+        cached = self._read_cached_json(cache_path)
+        if cached is not None and not self._cache_is_stale(cache_path, as_of, max_age_days):
+            return cached
+        try:
+            payload = self.fetch_json(url)
+        except FundamentalsError as exc:
+            if cached is None:
+                raise
+            logger.log_warning(f"{url} could not be refreshed, using the cached copy: {exc}")
+            return cached
         cache_path.parent.mkdir(parents=True, exist_ok=True)
         cache_path.write_text(json.dumps(payload), encoding="utf-8")
         return payload
+
+    @staticmethod
+    def _read_cached_json(cache_path: Path) -> dict[str, Any] | None:
+        if not cache_path.exists():
+            return None
+        try:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except ValueError:
+            # A corrupt/truncated cache entry (e.g. from an interrupted write) is
+            # treated as a cache miss so it self-heals on the next fetch, rather than
+            # permanently wedging the tool until someone deletes the file by hand.
+            return None
+
+    @staticmethod
+    def _cache_is_stale(cache_path: Path, as_of: datetime | None, max_age_days: int | None) -> bool:
+        if as_of is None or max_age_days is None:
+            return False
+        if as_of.tzinfo is None:
+            raise ValueError("as_of must be timezone-aware")
+        return is_stale(datetime.fromtimestamp(cache_path.stat().st_mtime, tz=UTC), as_of, max_age_days)
 
     def get_text(self, url: str, cache_key: tuple[str, ...]) -> str:
         cache_path = self._cache_path(*cache_key)
@@ -128,15 +165,15 @@ class SecEdgarClient:
         except ValueError as exc:
             raise FundamentalsNotFoundError(str(exc)) from exc
 
-    def get_company_facts_payload(self, cik: str) -> dict[str, Any]:
-        return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"))
+    def get_company_facts_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
+        return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
         """Uncached: the payload is about 4 MB, and the quality screen keeps only a reduced copy."""
         return self.fetch_json(_company_facts_url(cik))
 
-    def get_submissions_payload(self, cik: str) -> dict[str, Any]:
-        return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"))
+    def get_submissions_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
+        return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def fetch_submissions_payload(self, cik: str) -> dict[str, Any]:
         """Uncached, for a caller that needs one field of it."""
