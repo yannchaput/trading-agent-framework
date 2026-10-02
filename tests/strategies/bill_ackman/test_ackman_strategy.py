@@ -13,6 +13,7 @@ from trading_agent_framework.backtesting.time_window import PredefinedWindow, ba
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.bill_ackman.fact_sheet import TRADING_DAYS_PER_YEAR
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewOutcome
 from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore, state_path
@@ -74,7 +75,7 @@ def test_the_defaults_use_the_bi_month_window_and_the_spec_budget() -> None:
     parameters = BillAckmanStrategy.parameters
 
     assert (parameters["backtesting_start"], parameters["backtesting_end"]) == backtest_window(PredefinedWindow.BI_MONTH)
-    assert (parameters["benchmark_symbol"], parameters["budget"], parameters["warmup_trading_days"]) == ("SPY", 100000, 10)
+    assert (parameters["benchmark_symbol"], parameters["budget"], parameters["warmup_trading_days"]) == ("SPY", 100000, 260)
 
 
 def test_initialize_creates_the_three_agents_with_their_own_tools(tmp_path: Path) -> None:
@@ -207,6 +208,10 @@ def test_run_backtesting_passes_the_window_the_daily_yahoo_source_and_the_preloa
     start, end = backtest_window(PredefinedWindow.BI_MONTH)
     assert (seen["start"], seen["end"]) == (start, end)
     assert seen["data_source"] is YahooBacktestData
-    assert seen["timestep"] == "day" and seen["benchmark"] == "SPY" and seen["warmup_trading_days"] == 10
+    assert seen["timestep"] == "day" and seen["benchmark"] == "SPY" and seen["warmup_trading_days"] == 260
     assert seen["budget"] == Decimal("100000") and seen["agent_telemetry"] is True
     assert [asset.symbol for asset in seen["preload_assets"]] == ["AAA", "BBB", "CCC", "SHV", "SPY"]
+
+
+def test_the_warmup_covers_a_year_of_daily_bars_so_the_12_month_return_exists_from_day_one() -> None:
+    assert BillAckmanStrategy.parameters["warmup_trading_days"] > TRADING_DAYS_PER_YEAR

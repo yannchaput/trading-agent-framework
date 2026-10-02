@@ -39,7 +39,8 @@ class BillAckmanStrategy(Strategy):
         "backtesting_start": backtest_window(PredefinedWindow.BI_MONTH)[0],
         "backtesting_end": backtest_window(PredefinedWindow.BI_MONTH)[1],
         "benchmark_symbol": "SPY",
-        "warmup_trading_days": 10,  # the screen needs a last price on the first simulated day
+        # a year of daily bars before the first simulated day, so price_return_12m (TRADING_DAYS_PER_YEAR + 1 closes) exists from day one
+        "warmup_trading_days": 260,
         "budget": 100000,
     }
 

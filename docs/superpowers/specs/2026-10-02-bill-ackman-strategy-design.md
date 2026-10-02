@@ -294,7 +294,8 @@ to the trader too. It is **not** extracted here: the trader's context carries cu
 `AckmanParams.__post_init__` validates the ranges (positive counts, `0 < min_weight <= max_weight <= 1`,
 `min_weight >= rebalance_band`, `0 <= cash_buffer < 1`, `forced_exit_fails >= 1`).
 
-Strategy `parameters` for runs: `benchmark_symbol "SPY"`, `budget 100000`, `warmup_trading_days 10`, and
+Strategy `parameters` for runs: `benchmark_symbol "SPY"`, `budget 100000`, `warmup_trading_days 260` (a year of daily bars before the first simulated day, so the
+12-month return in the fact sheets exists from day one; 10 left it None for every symbol), and
 `backtesting_start`/`backtesting_end` taken from the window factory, as `vwap_pullback` does:
 `backtest_window(PredefinedWindow.BI_MONTH)[0]` and `[1]` (`backtesting/time_window.py`; today 2026-07-28 to
 2026-09-23, about 41 sessions, so the default moves whenever the factory's dates are updated). The factory's bounds are
