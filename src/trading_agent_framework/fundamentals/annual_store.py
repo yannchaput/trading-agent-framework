@@ -24,6 +24,12 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "AnnualFiguresStore")
 
+# The version of the reduced record. It MUST be bumped whenever the tag lists or the row shape in
+# `sec.py` (`annual_figures`) change: a record fetched today is fresh for every past date in a
+# backtest (see `freshness.is_stale`), so without a bump an old cache would hide a tag fix for as long
+# as the file exists. A record with a missing or different `schema` is a cache miss.
+SCHEMA_VERSION = 2
+
 _STATUSES = frozenset({"ok", "absent"})
 _FIGURE_KEYS = ("flows", "balances", "shares")
 
@@ -91,7 +97,7 @@ class AnnualFiguresStore:
         if record is not None and not is_stale(_fetched_at(record), as_of, max_age_days):
             self._records[cik] = record
             return record
-        base = {"cik": cik, "fetched_at": self._wall_clock().isoformat()}
+        base = {"cik": cik, "schema": SCHEMA_VERSION, "fetched_at": self._wall_clock().isoformat()}
         try:
             fresh = {**base, "status": "ok", **sec.annual_figures(self._client.fetch_company_facts_payload(cik))}
         except FundamentalsNotFoundError:
@@ -121,6 +127,8 @@ class AnnualFiguresStore:
             return None
         if record.get("status") not in _STATUSES or record.get("cik") != cik:
             return None
+        if record.get("schema") != SCHEMA_VERSION:
+            return None  # written by older tag lists or another row shape
         if _parse_fetched_at(record.get("fetched_at")) is None:
             return None
         if not all(isinstance(record.get(key), list) for key in _FIGURE_KEYS):

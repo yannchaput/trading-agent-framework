@@ -70,6 +70,7 @@ def test_the_first_call_fetches_and_writes_the_reduced_record_only(tmp_path: Pat
     assert record["status"] == "ok"
     assert record["cik"] == "0000320193"
     assert record["fetched_at"] == FETCHED.isoformat()
+    assert record["schema"] == annual_store.SCHEMA_VERSION
     assert [row["value"] for row in record["flows"]] == [100]  # ty: ignore[not-iterable]
     assert json.loads(_record_file(tmp_path).read_text(encoding="utf-8")) == record
     assert not (tmp_path / "sec" / "companyfacts").exists()  # the 4 MB raw payload is not kept
@@ -229,7 +230,7 @@ def test_the_sic_of_an_absent_company_is_none_without_a_request(tmp_path: Path) 
 
 
 def _valid_record() -> dict[str, object]:
-    return {"cik": "0000320193", "fetched_at": FETCHED.isoformat(), "status": "ok", "flows": [], "balances": [], "shares": []}
+    return {"cik": "0000320193", "schema": annual_store.SCHEMA_VERSION, "fetched_at": FETCHED.isoformat(), "status": "ok", "flows": [], "balances": [], "shares": []}
 
 
 def _without(key: str) -> dict[str, object]:
@@ -250,8 +251,15 @@ def _without(key: str) -> dict[str, object]:
         {**_valid_record(), "status": "weird"},
         {**_valid_record(), "cik": "0000000001"},
         _without("cik"),
+        _without("schema"),
+        {**_valid_record(), "schema": 0},
+        {**_valid_record(), "schema": annual_store.SCHEMA_VERSION + 1},
+        {**_valid_record(), "schema": str(annual_store.SCHEMA_VERSION)},
     ],
-    ids=["no-fetched-at", "unparseable-fetched-at", "naive-fetched-at", "non-string-fetched-at", "no-flows", "flows-not-a-list", "bad-status", "other-cik", "no-cik"],
+    ids=[
+        "no-fetched-at", "unparseable-fetched-at", "naive-fetched-at", "non-string-fetched-at", "no-flows", "flows-not-a-list", "bad-status", "other-cik", "no-cik",
+        "no-schema", "schema-0", "newer-schema", "schema-as-string",
+    ],
 )
 def test_a_record_file_of_the_wrong_shape_is_a_cache_miss(tmp_path: Path, record: dict[str, object]) -> None:
     sec = FakeSec()
@@ -377,3 +385,30 @@ def test_a_stale_company_that_turns_404_becomes_absent_with_a_warning(tmp_path: 
 
     assert "0000320193" in caplog.text
     assert json.loads(_record_file(tmp_path).read_text(encoding="utf-8"))["status"] == "absent"
+
+
+def test_a_current_schema_record_file_is_served_without_a_request(tmp_path: Path) -> None:
+    sec = FakeSec()
+    _record_file(tmp_path).parent.mkdir(parents=True)
+    _record_file(tmp_path).write_text(json.dumps(_valid_record()), encoding="utf-8")
+
+    assert _figures(_store(tmp_path, sec)) is not None
+    assert sec.count("/companyfacts/") == 0
+
+
+def test_an_absent_record_carries_the_schema_version_too(tmp_path: Path) -> None:
+    sec = FakeSec()
+    sec.facts_status = 404
+
+    _figures(_store(tmp_path, sec))
+
+    assert json.loads(_record_file(tmp_path).read_text(encoding="utf-8"))["schema"] == annual_store.SCHEMA_VERSION
+
+
+def test_an_old_schema_absent_record_is_asked_again(tmp_path: Path) -> None:
+    sec = FakeSec()
+    _record_file(tmp_path).parent.mkdir(parents=True)
+    _record_file(tmp_path).write_text(json.dumps({**_valid_record(), "status": "absent", "schema": 0}), encoding="utf-8")
+
+    assert _figures(_store(tmp_path, sec)) is not None
+    assert sec.count("/companyfacts/") == 1

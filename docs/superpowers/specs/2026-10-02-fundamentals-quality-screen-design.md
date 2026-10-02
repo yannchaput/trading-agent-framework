@@ -69,6 +69,7 @@ as `MemoryStore` takes `now`.
 ```json
 {
   "cik": "0000320193",
+  "schema": 2,
   "fetched_at": "2026-10-02T14:03:11+00:00",
   "status": "ok",
   "sic": 3571,
@@ -86,6 +87,9 @@ as `MemoryStore` takes `now`.
   the as-of selection in §3.1 can be exact.
 - `sic` is absent until the sector gate first asks for it (§3.2).
 - `status` is `"ok"` or `"absent"` (§5).
+- `schema` is `annual_store.SCHEMA_VERSION`. It must be bumped whenever the tag lists or the row shape in
+  `sec.py` change: a record fetched today is fresh for every past date in a backtest (§2.4), so without a bump
+  an old cache would hide a tag fix. A record with a missing or different `schema` is a cache miss (§5).
 
 A reduced file is a few KB. The raw payload (about 4 MB) is never written by the store.
 
@@ -297,7 +301,9 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
 - **Configuration.** A missing `SEC_EDGAR_USER_AGENT` raises `ConfigurationError` when the client is built,
   as today.
 - **A corrupt reduced file** is treated as a cache miss and refetched, as `SecEdgarClient.get_json` already
-  does for its own cache.
+  does for its own cache. So is a file of the wrong shape (bad or naive `fetched_at`, wrong CIK, missing
+  lists) and one whose `schema` is missing or not the current `SCHEMA_VERSION` (§2.1): a tag-list fix reaches
+  every cache by a version bump.
 - **Logging.** Each run logs one summary line: symbols in, candidates out, and the count per rejection reason.
 
 `edgar_client.py` needs to tell a 404 from a transport error. `FundamentalsError` gains a subclass
