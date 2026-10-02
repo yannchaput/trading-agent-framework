@@ -75,6 +75,25 @@ def test_a_year_without_positive_revenue_is_insufficient_and_never_divides_by_ze
     assert _assess(healthy_figures(revenue=(100, 110, revenue, 130, 140))) == "insufficient_history"
 
 
+def test_operating_income_above_revenue_in_any_year_is_implausible_figures() -> None:
+    # A partial revenue tag or a tagging error: the margins would be nonsense.
+    assert _assess(healthy_figures(operating_income=(20, 22, 130, 26, 28))) == "insufficient_history"
+
+
+def test_free_cash_flow_above_revenue_in_any_year_is_implausible_figures() -> None:
+    assert _assess(healthy_figures(operating_cash_flow=(25, 27, 29, 31, 150))) == "insufficient_history"
+
+
+def test_operating_income_equal_to_revenue_is_not_implausible() -> None:
+    assert isinstance(_assess(healthy_figures(operating_income=(20, 22, 120, 26, 28))), Survivor)
+
+
+def test_implausible_figures_are_reported_before_a_loss_gate() -> None:
+    figures = healthy_figures(operating_income=(20, -4, 130, 26, 28))
+
+    assert _assess(figures) == "insufficient_history"
+
+
 def test_an_operating_loss_in_any_year_is_rejected() -> None:
     assert _assess(healthy_figures(operating_income=(20, 22, -1, 26, 28))) == "operating_loss"
 

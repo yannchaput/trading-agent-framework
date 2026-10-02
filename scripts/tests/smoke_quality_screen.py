@@ -13,7 +13,9 @@ SEC request and finishes in a few seconds. It fails only on things that must alw
 symbol is either a candidate or rejected with a reason, an unknown ticker is `no_data`, a bank is
 rejected, the two Alphabet listings never both become candidates, at least three symbols are
 candidates, the known-indebted names (KO, MDLZ, HLT) that are candidates have a reported debt figure
-(a missing debt tag must not read as net cash), and the utility NEE is never a candidate. (The bank's
+(a missing debt tag must not read as net cash), the utility NEE is never a candidate, and the
+equipment lessor URI, if it is a candidate, shows a plausible operating margin (read from its partial
+ASC 606 revenue tag it would be several hundred percent). (The bank's
 reason is printed, not asserted: the numeric gates run before the sector gate, and a bank usually
 fails those first.)
 """
@@ -41,10 +43,12 @@ UNKNOWN_SYMBOL = "ZZZZZZ"
 BANK_SYMBOL = "JPM"
 INDEBTED_SYMBOLS = ("KO", "MDLZ", "HLT")
 UTILITY_SYMBOL = "NEE"
+PARTIAL_REVENUE_SYMBOL = "URI"  # tags only equipment sales under the ASC 606 revenue tag; `Revenues` is the total
+MAX_PLAUSIBLE_OPERATING_MARGIN = 0.6
 MIN_CANDIDATES = 3
 SYMBOLS = [
     "GOOGL", "GOOG", "CMG", "HLT", "QSR", "UBER", "CP", "LOW", "MDLZ", "BKNG", "MSFT",
-    "AAPL", "NVDA", "COST", "KO", "V", "NEE", "TSM", BANK_SYMBOL, UNKNOWN_SYMBOL,
+    "AAPL", "NVDA", "COST", "KO", "V", "NEE", "TSM", PARTIAL_REVENUE_SYMBOL, BANK_SYMBOL, UNKNOWN_SYMBOL,
 ]  # fmt: skip
 
 
@@ -109,6 +113,8 @@ def main() -> int:
         unreported = [c.symbol for c in result.candidates if c.symbol in INDEBTED_SYMBOLS and not c.debt_reported]
         _check(not unreported, f"{unreported} are known to carry debt but became candidates with no debt figure")
         _check(UTILITY_SYMBOL not in candidates, f"{UTILITY_SYMBOL} (a utility) became a candidate")
+        partial = [c for c in result.candidates if c.symbol == PARTIAL_REVENUE_SYMBOL and c.operating_margin > MAX_PLAUSIBLE_OPERATING_MARGIN]
+        _check(not partial, f"{PARTIAL_REVENUE_SYMBOL} shows an operating margin above {MAX_PLAUSIBLE_OPERATING_MARGIN:.0%}: revenue read from a partial tag")
     except SmokeTestFailure as exc:
         print(f"\nFAILED: {exc}")
         return 1

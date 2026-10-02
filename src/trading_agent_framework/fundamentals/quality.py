@@ -114,6 +114,9 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
         operating_incomes.append(operating_income)
         free_cash_flows.append(operating_cash_flow - capex)
 
+    # Implausible figures (a partial revenue tag, a tagging error): not a judgement on the company.
+    if any(income > revenue or fcf > revenue for income, fcf, revenue in zip(operating_incomes, free_cash_flows, revenues, strict=True)):
+        return "insufficient_history"
     if any(value <= 0 for value in operating_incomes):
         return "operating_loss"
     if any(value <= 0 for value in free_cash_flows):

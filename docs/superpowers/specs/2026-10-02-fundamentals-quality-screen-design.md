@@ -97,17 +97,27 @@ A reduced file is a few KB. The raw payload (about 4 MB) is never written by the
 
 ### 2.2 Tags
 
-Each field tries its tags in order and uses the first one present for a given period.
+Each field tries its tags in order and uses the first one present for a given period and filing, except revenue (below).
 
 | Field | Tags |
 |---|---|
-| revenue | existing `INCOME_STATEMENT_TAGS["revenue"]`, then `RegulatedAndUnregulatedOperatingRevenue` and `RevenueFromContractWithCustomerIncludingAssessedTax` (utilities such as NEE) |
+| revenue | the LARGEST value within one filing among `RevenueFromContractWithCustomerExcludingAssessedTax`, `Revenues`, `SalesRevenueNet`, `RegulatedAndUnregulatedOperatingRevenue` (utilities such as NEE) and `RevenueFromContractWithCustomerIncludingAssessedTax`; see below |
 | operating_income | `OperatingIncomeLoss` |
 | operating_cash_flow | `NetCashProvidedByUsedInOperatingActivities`, `NetCashProvidedByUsedInOperatingActivitiesContinuingOperations` |
 | capex | `PaymentsToAcquirePropertyPlantAndEquipment`, `PaymentsToAcquireProductiveAssets` |
 | debt | within one filing the first that exists: `LongTermDebt`; `LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities`; `LongTermDebtNoncurrent` + `LongTermDebtCurrent`; `LongTermDebtAndCapitalLeaseObligations` + `LongTermDebtAndCapitalLeaseObligationsCurrent` (the current part counts as 0 when absent); `DebtLongtermAndShorttermCombinedAmount`. Commercial paper and short-term borrowings are not added (known limitation: filers disagree on whether the long-term tags include them) |
 | cash | existing `BALANCE_SHEET_TAGS["cash"]` |
 | shares | `dei:EntityCommonStockSharesOutstanding` and `us-gaap:WeightedAverageNumberOfDilutedSharesOutstanding`, both kept |
+
+**Revenue takes the largest value, not the first tag.** A filer can tag only part of its top line with the
+ASC 606 tag: URI (equipment rentals sit outside it) reports `RevenueFromContractWithCustomerExcludingAssessedTax`
+= 3.7 B and `Revenues` = 16.1 B for FY2025 in one filing, so the first-tag rule gave margins four times too
+high. Checked on real payloads (URI and the 19 other smoke symbols, every filing and year): the tags differ
+for URI (15 of 17 filing-years with two tags), COST (`SalesRevenueNet`, net sales without memberships, below
+`Revenues`) and NEE (the contract tag below `RegulatedAndUnregulatedOperatingRevenue`), and in every one of
+those the larger value is the total; everywhere else only one tag exists or the tags agree, so those
+symbols are unchanged. Within one (period end, filing) the largest value wins, so two tags never blend;
+across filings every version is still kept. The agent tools' `INCOME_STATEMENT_TAGS` are untouched.
 
 `shares` is the one field that keeps every tag's rows instead of the first tag per period: the two counts
 have different dates, and a multi-class company's per-class cover-page counts are dimensioned facts that the
@@ -182,7 +192,7 @@ Gates run in this order. The first one that fails is the recorded reason.
 |---|---|---|---|
 | 1 | `no_data` | No CIK, status `absent`, or no known flows as of the date. | |
 | 2 | `stale_filing` | Latest fiscal year ended more than N months before `as_of`. | `max_filing_age_months` (18) |
-| 3 | `insufficient_history` | Fewer than N consecutive fiscal years with revenue (above zero), operating income, operating cash flow and capex. Consecutive means each year's end is 350 to 380 days after the previous one. | `years` (5) |
+| 3 | `insufficient_history` | Fewer than N consecutive fiscal years with revenue (above zero), operating income, operating cash flow and capex. Consecutive means each year's end is 350 to 380 days after the previous one. Also: implausible figures, i.e. operating income or free cash flow above revenue in any window year (a partial revenue tag or a tagging error), checked before the loss gates. | `years` (5) |
 | 4 | `operating_loss` | Operating income <= 0 in any year of the window. | |
 | 5 | `negative_fcf` | Free cash flow (operating cash flow minus capex) <= 0 in any year. | |
 | 6 | `shrinking_revenue` | Fewer than N of the yearly revenue changes are increases, or the latest year's revenue is below the first year's. | `min_growth_years` (3 of 4) |

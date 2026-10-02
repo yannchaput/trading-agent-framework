@@ -57,8 +57,10 @@ _ANNUAL_FORMS = frozenset({"10-K", "10-K/A"})
 _SHARE_COUNT_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A"})
 
 ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
-    # Utilities (NEE) report whole-company revenue under these two instead; the first tag covering a
-    # period in a filing wins, so the agent tools' tags keep their priority.
+    # Revenue is the one field where the filing's LARGEST value among these tags wins (see
+    # `_largest_per_period`): a filer may tag only part of its top line with the ASC 606 tag (URI's
+    # equipment rentals) while `Revenues` is the total, and utilities (NEE) report the whole company
+    # under the last two. Every other field takes the first tag present.
     "revenue": [
         *INCOME_STATEMENT_TAGS["revenue"],
         "RegulatedAndUnregulatedOperatingRevenue",
@@ -332,6 +334,22 @@ def _first_source_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[s
     return sorted(kept.values(), key=lambda row: (row["end"], row["filed"]))
 
 
+def _largest_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """Like `_first_source_per_period`, but within one filing the largest value wins, whichever source it is.
+
+    For revenue: several tags can cover one fiscal year in one filing, and a partial tag (an ASC 606
+    subset, net sales without memberships) is smaller than the total. Where the tags agree, or only one
+    exists, the result is the same as taking the first.
+    """
+    kept: dict[tuple[str, str], dict[str, Any]] = {}
+    for rows in sources:
+        for row in rows:
+            key = (row["end"], row["filed"])
+            if key not in kept or row["value"] > kept[key]["value"]:
+                kept[key] = row
+    return sorted(kept.values(), key=lambda row: (row["end"], row["filed"]))
+
+
 def _summed(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str) -> list[dict[str, Any]]:
     """Noncurrent + current debt per filing; the current part counts as 0 when the filing lacks it."""
     current = {(row["end"], row["filed"]): row["val"] for row in _tag_rows(gaap, current_tag, "USD", _ANNUAL_FORMS)}
@@ -371,7 +389,8 @@ def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     flows: list[dict[str, Any]] = []
     for field, tags in ANNUAL_FLOW_TAGS.items():
         sources = [[_slim(row, with_start=True) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS) if _is_fiscal_year(row)] for tag in tags]
-        flows.extend({"field": field, **row} for row in _first_source_per_period(sources))
+        pick = _largest_per_period if field == "revenue" else _first_source_per_period
+        flows.extend({"field": field, **row} for row in pick(sources))
 
     cash_sources = [[_slim(row) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS)] for tag in BALANCE_SHEET_TAGS["cash"]]
     balances: list[dict[str, Any]] = []

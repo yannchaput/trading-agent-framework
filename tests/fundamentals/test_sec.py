@@ -215,17 +215,58 @@ def test_annual_figures_drops_quarters_and_filings_that_are_not_annual_reports()
     assert [(row["filed"], row["value"]) for row in revenue] == [("2026-03-01", 120)]
 
 
-def test_annual_figures_uses_the_first_tag_that_covers_each_period() -> None:
+def test_annual_figures_takes_the_largest_whole_company_revenue_tag_per_period() -> None:
+    # A filer may tag only part of its top line with the ASC 606 tag (URI: equipment rentals are
+    # outside it): within one filing the largest value among the revenue tags is the total.
     payload = _company(
         {
-            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
-            "Revenues": _usd(_annual(90, 2024, "2025-02-15"), _annual(125, 2025, "2026-02-15")),
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(3695, 2025, "2026-01-28"), _annual(3588, 2024, "2026-01-28")),
+            "Revenues": _usd(_annual(16099, 2025, "2026-01-28"), _annual(15345, 2024, "2026-01-28")),
         }
     )
 
     revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
 
-    assert [(row["end"], row["value"]) for row in revenue] == [("2024-12-31", 90), ("2025-12-31", 120)]
+    assert [(row["end"], row["value"]) for row in revenue] == [("2024-12-31", 15345), ("2025-12-31", 16099)]
+
+
+def test_annual_figures_takes_the_largest_revenue_tag_whichever_one_it_is() -> None:
+    payload = _company(
+        {
+            "Revenues": _usd(_annual(90, 2025, "2026-02-15")),
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
+            "SalesRevenueNet": _usd(_annual(130, 2025, "2026-02-15")),
+        }
+    )
+
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "flows", "revenue")] == [130]
+
+
+def test_annual_figures_leaves_revenue_unchanged_where_the_tags_agree_or_only_one_exists() -> None:
+    payload = _company(
+        {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(12039, 2025, "2026-02-11"), _annual(11174, 2024, "2026-02-11")),
+            "Revenues": _usd(_annual(12039, 2025, "2026-02-11")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["end"], row["filed"], row["value"]) for row in revenue] == [("2024-12-31", "2026-02-11", 11174), ("2025-12-31", "2026-02-11", 12039)]
+
+
+def test_annual_figures_picks_the_largest_revenue_tag_filing_by_filing() -> None:
+    # The earlier filing only knew the part tag; the later one adds the total for the same year.
+    payload = _company(
+        {
+            "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(3500, 2024, "2025-01-29"), _annual(3588, 2024, "2026-01-28")),
+            "Revenues": _usd(_annual(15345, 2024, "2026-01-28")),
+        }
+    )
+
+    revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
+
+    assert [(row["filed"], row["value"]) for row in revenue] == [("2025-01-29", 3500), ("2026-01-28", 15345)]
 
 
 def test_annual_figures_reads_the_four_flow_fields_with_their_fallback_tags() -> None:
@@ -344,7 +385,7 @@ def test_annual_figures_reads_utility_revenue_tags() -> None:
     assert [(row["end"], row["value"]) for row in revenue] == [("2024-12-31", 24_000), ("2025-12-31", 27_412)]
 
 
-def test_annual_figures_prefers_the_agent_tools_revenue_tags_over_the_utility_ones() -> None:
+def test_annual_figures_takes_the_larger_of_the_contract_and_the_tax_inclusive_revenue_tags() -> None:
     payload = _company(
         {
             "RevenueFromContractWithCustomerExcludingAssessedTax": _usd(_annual(120, 2025, "2026-02-15")),
@@ -352,7 +393,7 @@ def test_annual_figures_prefers_the_agent_tools_revenue_tags_over_the_utility_on
         }
     )
 
-    assert [row["value"] for row in _rows(sec.annual_figures(payload), "flows", "revenue")] == [120]
+    assert [row["value"] for row in _rows(sec.annual_figures(payload), "flows", "revenue")] == [125]
 
 
 def test_annual_figures_reads_cash_from_annual_reports_only() -> None:
@@ -436,7 +477,7 @@ def test_annual_figures_keeps_versions_filed_under_a_different_tag() -> None:
     ]
 
 
-def test_annual_figures_never_mixes_two_tags_within_one_filing() -> None:
+def test_annual_figures_never_mixes_two_tags_within_one_filing_row() -> None:
     payload = _company(
         {
             "Revenues": _usd(_annual(90, 2025, "2026-02-15")),
@@ -446,7 +487,7 @@ def test_annual_figures_never_mixes_two_tags_within_one_filing() -> None:
 
     revenue = _rows(sec.annual_figures(payload), "flows", "revenue")
 
-    # RevenueFromContractWithCustomerExcludingAssessedTax comes before Revenues in the priority order.
+    # One value per (period end, filing): the larger tag's, never a blend.
     assert [(row["end"], row["filed"], row["value"]) for row in revenue] == [("2025-12-31", "2026-02-15", 120)]
 
 
