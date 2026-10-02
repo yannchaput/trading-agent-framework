@@ -30,6 +30,7 @@
 
 ### Dashboard
 * ~~Add a column for the broker~~
+* REplace VIX, ADX etc with a "regime" indicator: 1 =bullish, neutral =0, bearish = -1
 
 ### Cross sectional momentum
 * ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
