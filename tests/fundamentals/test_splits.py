@@ -31,12 +31,22 @@ class FakeFetch:
         return list(self.splits)
 
 
-def _history(cache_file: Path, fetch: FakeFetch) -> SplitHistory:
-    return SplitHistory(cache_file, fetch=fetch, wall_clock=lambda: FETCHED)
+class Clock:
+    """A settable wall clock: split freshness is judged by it, never by a screen date."""
+
+    def __init__(self, now: datetime = FETCHED) -> None:
+        self.now = now
+
+    def __call__(self) -> datetime:
+        return self.now
 
 
-def _splits(history: SplitHistory, as_of: datetime = FETCHED) -> list[Split]:
-    return history.splits("AAPL", as_of=as_of, max_age_days=30)
+def _history(cache_file: Path, fetch: FakeFetch, clock: Clock | None = None) -> SplitHistory:
+    return SplitHistory(cache_file, fetch=fetch, wall_clock=clock or Clock())
+
+
+def _splits(history: SplitHistory, max_age_days: int = 30) -> list[Split]:
+    return history.splits("AAPL", max_age_days=max_age_days)
 
 
 def test_is_stale_only_when_fetched_more_than_max_age_before_as_of() -> None:
@@ -105,22 +115,40 @@ def test_split_history_caches_an_empty_history(tmp_path: Path) -> None:
     assert fetch.calls == ["AAPL"]
 
 
-def test_split_history_is_not_refetched_for_a_past_date(tmp_path: Path) -> None:
+def test_split_history_ignores_the_screen_date_and_judges_freshness_by_the_wall_clock(tmp_path: Path) -> None:
+    # Split history must match today's split-adjusted prices, a wall-clock fact: an entry fetched
+    # 2026-10-01 is stale on 2027-03-01 whatever date a backtest is simulating.
     fetch = FakeFetch(FOUR_FOR_ONE)
-    history = _history(tmp_path / "splits.json", fetch)
+    clock = Clock(datetime(2026, 10, 1, tzinfo=UTC))
+    history = _history(tmp_path / "splits.json", fetch, clock)
+    _splits(history, max_age_days=1)
 
-    _splits(history)
-    _splits(history, as_of=datetime(2021, 1, 4, tzinfo=UTC))
+    clock.now = datetime(2027, 3, 1, tzinfo=UTC)
+    _splits(history, max_age_days=1)
+
+    assert fetch.calls == ["AAPL", "AAPL"]
+
+
+def test_split_history_serves_an_entry_fetched_within_max_age_by_the_wall_clock(tmp_path: Path) -> None:
+    fetch = FakeFetch(FOUR_FOR_ONE)
+    clock = Clock(datetime(2026, 10, 1, 12, tzinfo=UTC))
+    history = _history(tmp_path / "splits.json", fetch, clock)
+    _splits(history, max_age_days=1)
+
+    clock.now = datetime(2026, 10, 2, 11, tzinfo=UTC)  # 23 hours later
+    _splits(history, max_age_days=1)
 
     assert fetch.calls == ["AAPL"]
 
 
 def test_split_history_refetches_a_stale_entry(tmp_path: Path) -> None:
     fetch = FakeFetch(FOUR_FOR_ONE)
-    history = _history(tmp_path / "splits.json", fetch)
+    clock = Clock()
+    history = _history(tmp_path / "splits.json", fetch, clock)
 
     _splits(history)
-    _splits(history, as_of=datetime(2026, 11, 15, tzinfo=UTC))
+    clock.now = datetime(2026, 11, 15, tzinfo=UTC)
+    _splits(history)
 
     assert fetch.calls == ["AAPL", "AAPL"]
 
@@ -139,12 +167,14 @@ def test_a_failed_lookup_with_no_cached_copy_raises_and_caches_nothing(tmp_path:
 
 def test_a_failed_refresh_keeps_the_stale_copy_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     fetch = FakeFetch(FOUR_FOR_ONE)
-    history = _history(tmp_path / "splits.json", fetch)
+    clock = Clock()
+    history = _history(tmp_path / "splits.json", fetch, clock)
     _splits(history)
     fetch.error = FundamentalsError("yahoo is down")
+    clock.now = datetime(2026, 11, 15, tzinfo=UTC)
 
     with caplog.at_level(logging.WARNING):
-        splits = _splits(history, as_of=datetime(2026, 11, 15, tzinfo=UTC))
+        splits = _splits(history)
 
     assert splits == FOUR_FOR_ONE
     assert "yahoo is down" in caplog.text

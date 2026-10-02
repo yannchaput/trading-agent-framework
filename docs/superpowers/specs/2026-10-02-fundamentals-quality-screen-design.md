@@ -115,7 +115,10 @@ years of figures, all tagged with the filing's own `fy` (verified on Apple's pay
 
 ### 2.4 Freshness
 
-`fetched_at` is stamped from an injected `wall_clock` callable (the real fetch time). A file is stale when
+Two rules, one per kind of data.
+
+**The annual store (SEC figures) uses the `as_of` rule.** `fetched_at` is stamped from an injected
+`wall_clock` callable (the real fetch time). A file is stale when
 
 ```
 fetched_at < as_of - params.max_age_days        (default 30)
@@ -123,10 +126,23 @@ fetched_at < as_of - params.max_age_days        (default 30)
 
 `as_of` is the caller's clock, so one rule covers every mode: in a backtest `as_of` is simulated and a file
 fetched today is fresh for every past date; in paper/live the file is refetched monthly. No wall-clock value
-is compared against data, and the data cutoff itself is always `as_of`.
+is compared against data, and the data cutoff itself is always `as_of`. This is right because the figures are
+point-in-time: every version of a figure carries its own `filed` date, so one fetch answers every past date.
 
-A stale file is refetched on the next `run`. If that refetch fails on a transport error, the stale file is
-used and a warning is logged.
+**Split history uses the wall clock, not `as_of`.** Split history is not point-in-time data: it must match
+the basis of today's split-adjusted prices, a wall-clock fact. An entry is stale when
+
+```
+fetched_at < wall_clock() - params.split_max_age_days        (default 1)
+```
+
+with `wall_clock` the injected timezone-aware callable (UTC `now` by default). Judging it by `as_of` would let
+a backtest keep a pre-split entry forever, while the prices fetched today are already adjusted for the newer
+split: the restated market cap would miss that split and the name would rank first. The cost is one extra
+Yahoo split fetch per survivor per day, including in backtests.
+
+For both, a stale entry is refetched on the next `run`. If that refetch fails on a transport error, the stale
+entry is used and a warning is logged.
 
 ### 2.5 Cost
 
@@ -256,9 +272,13 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
   after `counted_on`. Splits dated on or before `counted_on` are ignored. Splits after `as_of` are applied
   too, on purpose: the price being multiplied is already adjusted for them, so this undoes a price adjustment
   and leaks no information.
-- `SplitHistory.splits(symbol)` returns `[(date, ratio), ...]` from yfinance (`Ticker.splits`), imported
-  lazily. Results are cached in `cache/splits.json` with a `fetched_at` per symbol and the freshness rule of
-  §2.4. It is called only for symbols that reach gate 12.
+- `SplitHistory.splits(symbol, max_age_days=...)` returns `[(date, ratio), ...]` from yfinance, imported
+  lazily. Results are cached in `cache/splits.json` with a `fetched_at` per symbol and the wall-clock freshness
+  rule of §2.4 (never `as_of`). It is called only for symbols that reach gate 12.
+- **Documented limit:** `price_of` must return a price adjusted up to today (Alpaca/Yahoo adjusted bars, the
+  last trade). A frozen older price snapshot, adjusted only up to some earlier date, overstates the market
+  cap of a name that split since (the restated count includes the newer split, the price does not), which
+  demotes that name in the ranking rather than promoting it.
 - An empty history is a valid answer. A failed lookup rejects the symbol as `no_split_data`: a silently wrong
   valuation is the failure this module exists to prevent.
 - `yfinance` moves from the `backtesting-yahoo` extra to the core dependencies (the extra keeps its entry).

@@ -11,12 +11,11 @@ import json
 import logging
 import os
 from collections.abc import Callable, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.fundamentals.freshness import is_stale
 from trading_agent_framework.utils.errors import FundamentalsError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -64,7 +63,13 @@ def _fetch_from_yahoo(symbol: str) -> list[Split]:
 
 
 class SplitHistory:
-    """Split history per symbol, fetched lazily and cached in one JSON file."""
+    """Split history per symbol, fetched lazily and cached in one JSON file.
+
+    Unlike the annual SEC figures, split history is not point-in-time data: it must match the basis
+    of today's split-adjusted prices, which is a wall-clock fact. An entry is therefore stale when it
+    was fetched more than `max_age_days` before `wall_clock()` (a timezone-aware callable, UTC by
+    default), whatever date a backtest is simulating.
+    """
 
     def __init__(
         self,
@@ -78,7 +83,7 @@ class SplitHistory:
         self._wall_clock = wall_clock or (lambda: datetime.now(UTC))
         self._entries: dict[str, dict[str, Any]] | None = None
 
-    def splits(self, symbol: str, *, as_of: datetime, max_age_days: int) -> list[Split]:
+    def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
         """`symbol`'s splits, oldest first (empty when it never split).
 
         Raises `FundamentalsError` when the lookup fails and there is no cached copy. A stale copy
@@ -86,7 +91,7 @@ class SplitHistory:
         """
         entries = self._load()
         entry = entries.get(symbol)
-        if entry is not None and not is_stale(datetime.fromisoformat(entry["fetched_at"]), as_of, max_age_days):
+        if entry is not None and datetime.fromisoformat(entry["fetched_at"]) >= self._wall_clock() - timedelta(days=max_age_days):
             return _decode(entry)
         try:
             fetched = sorted(self._fetch(symbol))

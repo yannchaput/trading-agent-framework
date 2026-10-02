@@ -1,9 +1,12 @@
-"""The one freshness rule of the quality screen's on-disk caches (annual figures, split history).
+"""The freshness rule of the quality screen's annual-figures cache.
 
-A cached entry is stale when it was fetched more than `max_age_days` before `as_of`. `as_of` is the
-caller's clock, so the same rule covers every mode: in a backtest `as_of` is simulated, and an entry
-fetched today is fresh for every past date; in paper/live `as_of` is now, and entries refresh every
+A cached record is stale when it was fetched more than `max_age_days` before `as_of`. `as_of` is the
+caller's clock, so the rule covers every mode: in a backtest `as_of` is simulated, and a record
+fetched today is fresh for every past date; in paper/live `as_of` is now, and records refresh every
 `max_age_days`. `fetched_at` is real time, but it is only ever compared with `as_of`, never with data.
+
+Only the annual store uses this rule. Split history is judged by the wall clock instead
+(`splits.SplitHistory`), because it must match the basis of today's split-adjusted prices.
 """
 
 from __future__ import annotations

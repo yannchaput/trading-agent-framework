@@ -39,7 +39,7 @@ class FiguresSource(Protocol):
 class SplitSource(Protocol):
     """What the screen needs from `SplitHistory`."""
 
-    def splits(self, symbol: str, *, as_of: datetime, max_age_days: int) -> list[Split]: ...
+    def splits(self, symbol: str, *, max_age_days: int) -> list[Split]: ...
 
 
 class QualityScreen:
@@ -92,7 +92,7 @@ class QualityScreen:
                 rejections[symbol] = "no_price"
                 continue
             try:
-                splits = self._splits.splits(symbol, as_of=as_of, max_age_days=max_age_days)
+                splits = self._splits.splits(symbol, max_age_days=params.split_max_age_days)
             except FundamentalsError as exc:
                 rejections[symbol] = "no_split_data"
                 logger.log_debug(f"{symbol}: {exc}")

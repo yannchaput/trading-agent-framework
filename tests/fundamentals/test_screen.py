@@ -54,9 +54,11 @@ class FakeSplits:
         self._splits = splits or {}
         self.failing = failing
         self.calls: list[str] = []
+        self.max_ages: list[int] = []
 
-    def splits(self, symbol: str, *, as_of: datetime, max_age_days: int) -> list[Split]:
+    def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
         self.calls.append(symbol)
+        self.max_ages.append(max_age_days)
         if symbol in self.failing:
             raise FundamentalsError(f"yahoo is down for {symbol}")
         return self._splits.get(symbol, [])
@@ -306,3 +308,11 @@ def test_a_company_whose_latest_debt_figure_is_missing_is_rejected_as_debt_unkno
 
     assert result.rejections == {"BBB": "debt_unknown"}
     assert _symbols(result) == ["AAA"]
+
+
+def test_the_split_lookup_gets_the_split_max_age_not_the_annual_one() -> None:
+    splits = FakeSplits()
+
+    _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], splits=splits, params=ScreenParams(max_age_days=30, split_max_age_days=3))
+
+    assert splits.max_ages == [3]

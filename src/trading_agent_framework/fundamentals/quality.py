@@ -30,7 +30,8 @@ class ScreenParams:
     excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))  # utilities; finance, insurance, real estate
     weights: tuple[float, float, float] = (0.4, 0.3, 0.3)  # fcf_yield, fcf_margin, operating-margin stability
     top_n: int = 15
-    max_age_days: int = 30
+    max_age_days: int = 30  # annual SEC figures, by as_of
+    split_max_age_days: int = 1  # split history, by the wall clock (it must match today's adjusted prices)
     max_fetch_failure_ratio: float = 0.2
 
 
