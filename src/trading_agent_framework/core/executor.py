@@ -1,8 +1,9 @@
 """Single-threaded driver of a `Strategy`'s lifecycle.
 
 `StrategyExecutor.run()` walks the market calendar one session at a time:
-before_market_opens -> before_starting_trading -> on_trading_iteration every
-`sleeptime` -> before_market_closes -> after_market_closes. Every wait goes
+market regime refresh -> before_market_opens -> before_starting_trading ->
+on_trading_iteration every `sleeptime` -> before_market_closes ->
+after_market_closes. Every wait goes
 through the strategy's `MarketClock`, so a simulated clock can later drive the
 very same loop for backtesting. Order events are dispatched on the executor
 thread while it waits.
@@ -155,6 +156,7 @@ class StrategyExecutor:
         self.wait_until(session.open - timedelta(minutes=strategy.minutes_before_opening))
         if self._stop.is_set():
             return
+        self._refresh_regime()
         if started_before_open:
             self._call_hook(strategy.before_market_opens)
             self.wait_until(session.open)
@@ -226,6 +228,14 @@ class StrategyExecutor:
             return f"{self.strategy.get_portfolio_value():.2f}"
         except Exception as exc:  # BrokerError live, BacktestError in a backtest: either way the tick must still run
             return f"unavailable ({exc})"
+
+    def _refresh_regime(self) -> None:
+        """Once per session, also on a mid-session start. A framework step, not a strategy hook: a failure is
+        logged and the session carries on, without `on_bot_crash`."""
+        try:
+            self.strategy._refresh_regime()
+        except Exception:
+            logger.exception("Market regime refresh failed for strategy %s", self.strategy.name)
 
     def _call_hook(self, hook: Callable[[], None]) -> None:
         try:

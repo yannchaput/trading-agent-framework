@@ -223,9 +223,9 @@ def test_run_backtesting_widens_default_yahoo_source_for_warmup(tmp_path: Path, 
     start = sessions[0].open
     end = sessions[-1].close
 
-    strategy.run_backtesting(start=start, end=end, warmup_trading_days=10, benchmark="SPY")
+    strategy.run_backtesting(start=start, end=end, warmup_trading_days=400, benchmark="SPY")
 
-    assert captured["start"] == start - timedelta(days=warmup_calendar_days(10))
+    assert captured["start"] == start - timedelta(days=warmup_calendar_days(400))
     assert captured["end"] == end
 
 
@@ -241,10 +241,10 @@ def test_run_backtesting_forwards_warmup_trading_days_with_explicit_data_source(
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(
         start=sessions[0].open, end=sessions[-1].close,
-        data_source=source, benchmark="SPY", warmup_trading_days=10,
+        data_source=source, benchmark="SPY", warmup_trading_days=400,
     )
 
-    assert result.settings["warmup_trading_days"] == 10
+    assert result.settings["warmup_trading_days"] == 400
 
 
 def test_core_package_reexports() -> None:

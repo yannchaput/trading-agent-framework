@@ -419,3 +419,38 @@ def test_an_unreadable_portfolio_value_is_logged_as_such_and_the_iteration_still
 
     assert len(strategy.times("on_trading_iteration")) == 4
     assert "portfolio value: unavailable (account API down)" in caplog.text
+
+
+# --- market regime refresh -------------------------------------------------------------
+
+
+class RegimeRecorder(Recorder):
+    """Records the framework's regime refresh like a hook, to check where it sits in the session."""
+
+    def _refresh_regime(self) -> None:
+        self._record("refresh_regime")
+
+
+def test_the_regime_is_refreshed_once_per_session_before_before_market_opens() -> None:
+    strategy = _run(RegimeRecorder, sessions=2)
+    assert strategy.times("refresh_regime") == [et(2026, 9, 14, 8, 30), et(2026, 9, 15, 8, 30)]
+    assert strategy.hooks()[:3] == ["initialize", "refresh_regime", "before_market_opens"]
+
+
+def test_a_mid_session_start_still_refreshes_the_regime() -> None:
+    strategy = _run(RegimeRecorder, start=et(2026, 9, 14, 10, 15))
+    assert "before_market_opens" not in strategy.hooks()
+    assert strategy.times("refresh_regime") == [et(2026, 9, 14, 10, 15)]
+    assert strategy.hooks()[:3] == ["initialize", "refresh_regime", "before_starting_trading"]
+
+
+def test_a_failing_regime_refresh_never_costs_the_session(caplog: pytest.LogCaptureFixture) -> None:
+    class Broken(Recorder):
+        def _refresh_regime(self) -> None:
+            raise RuntimeError("regime maths exploded")
+
+    with caplog.at_level(logging.ERROR):
+        strategy = _run(Broken)
+    assert strategy.errors == []  # not a strategy hook: on_bot_crash is not called
+    assert len(strategy.times("on_trading_iteration")) == 4
+    assert "Market regime refresh failed" in caplog.text

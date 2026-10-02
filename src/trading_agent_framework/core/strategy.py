@@ -563,8 +563,9 @@ class Strategy:
             slippage: per-trade slippage (default 0)
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
             warmup_trading_days: extra trading days of history to make available before
-                `start` (default 0, i.e. no widening) so a strategy's indicators aren't
-                starved near `backtesting_start`. Computed once, here, via
+                `start` so a strategy's indicators aren't starved near `backtesting_start`.
+                Raised to at least `regime_params.min_bars` (273 by default), which the
+                market regime needs from the first session. Computed once, here, via
                 `backtesting.warmup.warmup_calendar_days`, and used both to construct
                 a `data_source` class/callable and to widen `run_backtest`'s own eager
                 preload call -- an explicit `data_source` instance is used as given
@@ -587,7 +588,10 @@ class Strategy:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
         resolved_budget = _to_decimal(budget) if budget is not None else self.budget
         resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
-        warmup_start = resolved_start - timedelta(days=warmup_calendar_days(warmup_trading_days))
+        # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session; without
+        # them the eager benchmark load caches a frame too short for it (see `_refresh_regime`).
+        resolved_warmup = max(warmup_trading_days, self.regime_params.min_bars)
+        warmup_start = resolved_start - timedelta(days=warmup_calendar_days(resolved_warmup))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)
         elif isinstance(data_source, _BacktestDataSource):
@@ -606,7 +610,7 @@ class Strategy:
             fees=resolved_fees,
             slippage=_to_decimal(slippage),
             risk_free_rate=risk_free_rate,
-            warmup_trading_days=warmup_trading_days,
+            warmup_trading_days=resolved_warmup,
             news_source=news_source,
             agent_telemetry=agent_telemetry,
         )
