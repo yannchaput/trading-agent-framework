@@ -28,21 +28,27 @@ def test_without_indicators_the_chart_is_a_single_pane() -> None:
     assert not fig.layout.shapes
 
 
-def test_each_indicator_pane_gets_its_own_sub_row_under_the_portfolio_chart() -> None:
-    fig = trades_chart(TRADES, indicators={"Breadth": [_line("Breadth")], "Averages": [_line("Fast"), _line("Slow")]})
-    assert {t.name for t in fig.data} == {"Portfolio Value", "Buy", "Breadth", "Fast", "Slow"}
-    assert len(fig._grid_ref) == 3  # portfolio + two panes
-    rows = {t.name: t.yaxis for t in fig.data}
-    assert rows["Fast"] == rows["Slow"] != rows["Breadth"] != rows["Portfolio Value"]
-    assert not fig.layout.shapes  # no regime, no bands
+def test_indicator_lines_other_than_the_regime_are_never_drawn() -> None:
+    # Runs recorded before the regime existed still hold ADX / RSI / VIX panes in indicators.parquet.
+    legacy = {"ADX / RSI": [_line("ADX"), _line("RSI")], "VIX": [_line("VIX")], "Indicators": [_line("SMA")]}
+    fig = trades_chart(TRADES, indicators=legacy)
+    assert {t.name for t in fig.data} == {"Portfolio Value", "Buy"}
+    assert len(fig._grid_ref) == 1 and not fig.layout.shapes  # no regime logged: the single portfolio pane
+
+
+def test_a_legacy_run_shows_only_the_regime_row_when_the_regime_was_logged() -> None:
+    legacy = {"ADX / RSI": [_line("ADX"), _line("RSI")], "VIX": [_line("VIX")]}
+    fig = trades_chart(TRADES, indicators={**legacy, **_regime([1, 0])})
+    assert {t.name for t in fig.data} == {"Portfolio Value", "Buy", "Regime"}
+    assert len(fig._grid_ref) == 2  # portfolio + regime, nothing else
 
 
 def test_the_regime_row_sits_right_under_the_portfolio_chart_on_the_same_time_axis() -> None:
-    fig = trades_chart(TRADES, indicators={"Other": [_line("Other")], **_regime([1, 1, 0, -1])})
+    fig = trades_chart(TRADES, indicators=_regime([1, 1, 0, -1]))
     rows = {t.name: t.yaxis for t in fig.data}
-    assert (rows["Portfolio Value"], rows["Regime"], rows["Other"]) == ("y", "y2", "y3")
-    # plotly's shared_xaxes links every row to the bottom axis (x3): one match group, one time scale
-    assert fig.layout.xaxis.matches == fig.layout.xaxis2.matches == "x3" and fig.layout.xaxis3.matches is None
+    assert (rows["Portfolio Value"], rows["Regime"]) == ("y", "y2")
+    # plotly's shared_xaxes links every upper row to the bottom axis (x2): one time scale
+    assert fig.layout.xaxis.matches == "x2" and fig.layout.xaxis2.matches is None
     assert tuple(fig.layout.yaxis2.range) == (-1.3, 1.3)
     assert tuple(fig.layout.yaxis2.tickvals) == (-1, 0, 1)
     assert tuple(fig.layout.yaxis2.ticktext) == ("Bearish", "Neutral", "Bullish")
@@ -52,14 +58,13 @@ def test_the_regime_row_sits_right_under_the_portfolio_chart_on_the_same_time_ax
     assert (regime_row[1] - regime_row[0]) < (portfolio[1] - portfolio[0])
 
 
-def test_the_regime_series_is_picked_by_name_and_another_series_in_that_pane_is_still_drawn() -> None:
+def test_the_regime_series_is_picked_by_name_and_another_series_in_that_pane_is_ignored() -> None:
     regime_series = _regime([1, 1, 0, -1])["Regime"][0]
     fig = trades_chart(TRADES, indicators={"Regime": [_line("Fast"), regime_series]})
     regime = next(t for t in fig.data if t.name == "Regime")
     assert regime.line.shape == "hv" and list(regime.y) == [1, 1, 0, -1] and regime.yaxis == "y2"
-    fast = next(t for t in fig.data if t.name == "Fast")  # not dropped: drawn as a generic pane would
-    assert fast.line.shape != "hv" and fast.yaxis == "y3"
-    assert len(fig.layout.shapes) == 2 * 3  # the bands come from the regime series (3 runs, 2 rows), not from "Fast"
+    assert "Fast" not in {t.name for t in fig.data}
+    assert len(fig.layout.shapes) == 2 * 3  # the bands come from the regime series: 3 runs, 2 rows
 
 
 def test_each_regime_run_is_shaded_on_both_rows() -> None:

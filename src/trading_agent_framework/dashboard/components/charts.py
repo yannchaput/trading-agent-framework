@@ -642,10 +642,10 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
             and ``trades`` (list of {time, side, symbol, qty, price, cost,
             portfolio_value}) from :func:`load_trades_curve`.
         title: Chart title.
-        indicators: Optional ``{plot_name: [series]}`` from :func:`load_indicator_lines`; each pane gets its own
-            sub-row under the portfolio chart (they live on other scales), sharing its time axis. The
-            ``"Regime"`` pane (market regime, -1/0/1) is drawn right under the portfolio chart as a step line,
-            with one colored band per regime run on both rows.
+        indicators: Optional ``{plot_name: [series]}`` from :func:`load_indicator_lines`. Only the ``"Regime"``
+            series (market regime, -1/0/1) is drawn: right under the portfolio chart, sharing its time axis, as a
+            step line with one colored band per regime run on both rows. Every other line in the file is ignored,
+            so runs recorded before the regime existed (ADX / RSI / VIX panes) show no curve of theirs.
     """
     values = trades_data.get("values", [])
     trades = trades_data.get("trades", [])
@@ -656,16 +656,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    indicator_panes = dict(indicators or {})
-    regime_series = indicator_panes.pop(REGIME_PANE, [])
-    regime = next((line for line in regime_series if line["name"] == REGIME_PANE), None)
-    other_regime_lines = [line for line in regime_series if line is not regime]
-    # Any other series in the "Regime" pane is drawn like a generic pane, never dropped.
-    panes = [*([(REGIME_PANE, other_regime_lines)] if other_regime_lines else []), *indicator_panes.items()]
-    row_heights = [1.0]
-    if regime is not None or panes:
-        row_heights = [0.5, *([0.12] if regime is not None else []), *([0.5 / len(panes)] * len(panes) if panes else [])]
-    first_pane_row = 3 if regime is not None else 2
+    regime = next((line for line in (indicators or {}).get(REGIME_PANE, []) if line["name"] == REGIME_PANE), None)
+    row_heights = [0.85, 0.15] if regime is not None else [1.0]
     fig = make_subplots(rows=len(row_heights), cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
 
     # ── Portfolio value line ──
@@ -749,27 +741,11 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
             title_text=REGIME_PANE, row=2, col=1,
         )
 
-    # ── Indicator panes (strategy.add_line), one sub-row per plot_name ──
-    for row, (pane, series) in enumerate(panes, start=first_pane_row):
-        for line in series:
-            fig.add_trace(
-                go.Scatter(
-                    x=line["times"],
-                    y=line["values"],
-                    mode="lines",
-                    name=line["name"],
-                    line=dict(color=line["color"], width=1.5, dash=line["dash"]),
-                    hovertemplate="%{y:,.2f}<extra>" + line["name"] + "</extra>",
-                ),
-                row=row, col=1,
-            )
-        fig.update_yaxes(title_text=pane, row=row, col=1)
-
     fig.update_yaxes(title_text="Portfolio Value ($)", row=1, col=1)
     fig.update_xaxes(title_text="Date", row=len(row_heights), col=1)
     fig.update_layout(
         title=title,
-        height=450 + 200 * len(panes) + (140 if regime is not None else 0),
+        height=450 + (140 if regime is not None else 0),
         template=CHART_TEMPLATE,
         hovermode="closest",
         margin=dict(l=40, r=20, t=40, b=40),
