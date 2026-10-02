@@ -200,10 +200,10 @@ class VwapPullbackStrategy(Strategy):
         start = self.parameters["backtesting_start"] - timedelta(days=warmup_calendar_days(self.parameters["warmup_trading_days"]))
         self.broker.preload_bars(assets, start, self.parameters["backtesting_end"], timestep)
 
-    def run_backtesting(self):
+    def run_backtesting(self, **overrides: Any):
         """Backtest over the class `parameters` window on Alpaca minute bars (only the benchmark preloaded)."""
         # class parameters: the same window the data source is built with, so preload_bars matches it
-        return super().run_backtesting(
+        defaults: dict[str, Any] = dict(
             data_source=AlpacaBacktestData,  # minute bars with enough history (Yahoo keeps ~30 days of minutes)
             timestep="minute",
             start=self.parameters["backtesting_start"],
@@ -213,3 +213,4 @@ class VwapPullbackStrategy(Strategy):
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=False,  # no agent runs: nothing to record
         )
+        return super().run_backtesting(**{**defaults, **overrides})

@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.agents.tools import PrebuiltTools
@@ -321,10 +322,10 @@ class NewsBinaryStrategy(Strategy):
         count = self.vars.iteration_count
         return count == 1 or count % self.vars.strategy_parameters["backtest_every_n_iterations"] == 0
 
-    def run_backtesting(self):
+    def run_backtesting(self, **overrides: Any):
         # use class strategy parameters as the strategy constructor is not run yet
         symbols = [*self.strategy_parameters["symbols"], self.strategy_parameters["defensive_symbol"]]
-        return super().run_backtesting(
+        defaults: dict[str, Any] = dict(
             data_source=AlpacaBacktestData,  # Use alpaca broker for intraday quotes (> 6 year history)
             timestep="minute",
             start=self.parameters["backtesting_start"],
@@ -335,3 +336,4 @@ class NewsBinaryStrategy(Strategy):
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
+        return super().run_backtesting(**{**defaults, **overrides})

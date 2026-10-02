@@ -25,7 +25,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -647,7 +647,7 @@ class CrossMomentumStrategy(Strategy):
         symbols = list(dict.fromkeys([*self.vars.universe, self.parameters["parking"]["symbol"]]))
         return [Asset(symbol=symbol) for symbol in symbols]
 
-    def run_backtesting(self):
+    def run_backtesting(self, **overrides: Any):
         """Run the strategy in backtesting mode."""
         if self.vars.history_file_path.exists():
             self.log_info(f"Deleting previous equity history file for a clean backtest: {self.vars.history_file_path}")
@@ -665,7 +665,7 @@ class CrossMomentumStrategy(Strategy):
         # yfinance's shared session/crumb handling and trip Yahoo's rate limiting,
         # which surfaces as the backtest stalling partway through the universe
         # instead of a clean error.
-        return super().run_backtesting(
+        defaults: dict[str, Any] = dict(
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             budget=self.parameters["budget"],
@@ -674,3 +674,4 @@ class CrossMomentumStrategy(Strategy):
             benchmark=self.parameters["benchmark_symbol"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
         )
+        return super().run_backtesting(**{**defaults, **overrides})

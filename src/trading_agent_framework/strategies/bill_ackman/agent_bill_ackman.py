@@ -41,7 +41,7 @@ class BillAckmanStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # a year of daily bars before the first simulated day, so price_return_12m (TRADING_DAYS_PER_YEAR + 1 closes) exists from day one
         "warmup_trading_days": 260,
-        "budget": 100000,
+        "budget": 10000,
     }
 
     def __init__(
@@ -113,17 +113,18 @@ class BillAckmanStrategy(Strategy):
 
     # --- backtesting ------------------------------------------------------------------------------------
 
-    def run_backtesting(self):
+    def run_backtesting(self, **overrides: Any):
         """Backtest over the class `parameters` window (`PredefinedWindow.BI_MONTH`) on Yahoo daily bars."""
         symbols = list(dict.fromkeys([*self.universe, self.settings.parking_symbol, self.parameters["benchmark_symbol"]]))
-        return super().run_backtesting(
-            data_source=YahooBacktestData,  # years of daily history
-            timestep="day",
+        defaults: dict[str, Any] = dict(
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
+            budget=Decimal(str(self.parameters["budget"])),
+            data_source=YahooBacktestData,  # years of daily history
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],  # the screen's daily price lookups hit the cache
             benchmark=self.parameters["benchmark_symbol"],
-            budget=Decimal(str(self.parameters["budget"])),
+            timestep="day",
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
+        return super().run_backtesting(**{**defaults, **overrides})

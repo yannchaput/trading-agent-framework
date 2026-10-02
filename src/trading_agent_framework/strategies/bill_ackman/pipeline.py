@@ -45,6 +45,12 @@ class AgentLike(Protocol):
     def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult: ...
 
 
+class AgentLookup(Protocol):
+    """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
+
+    def __getitem__(self, name: str, /) -> AgentLike: ...
+
+
 class ReviewAbandoned(Exception):
     """A stage could not produce what the review needs; the review ends with nothing traded."""
 
@@ -66,7 +72,7 @@ class ReviewPipeline:
         strategy: Strategy,
         params: AckmanParams,
         screen: ScreenLike,
-        agents: Mapping[str, AgentLike],
+        agents: AgentLookup,
         recorder: HandoffRecorder,
         state: StateStore,
         review_log: ReviewLog,
