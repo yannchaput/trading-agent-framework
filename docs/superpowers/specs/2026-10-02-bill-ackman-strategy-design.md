@@ -48,7 +48,7 @@ Success:
 | Stability | Code hysteresis (2 consecutive fails force an exit) plus yesterday's ranking in the context; no memory tools |
 | Review set | The researcher's top 5 plus every current holding |
 | Short book | Unallocated money is parked in SHV, by code |
-| Backtest cost | Short default window (about 2 months), the full daily review with no shortcuts |
+| Backtest cost | Short default window (`PredefinedWindow.BI_MONTH`, about 2 months), the full daily review with no shortcuts |
 | Screen location | The screen moves to `strategies/bill_ackman/screen/`; the SEC client stays in `fundamentals/` |
 
 ## Non-goals
@@ -290,8 +290,10 @@ to the trader too. It is **not** extracted here: the trader's context carries cu
 `min_weight >= rebalance_band`, `0 <= cash_buffer < 1`, `forced_exit_fails >= 1`).
 
 Strategy `parameters` for runs: `benchmark_symbol "SPY"`, `budget 100000`, `warmup_trading_days 10`, and
-`backtesting_start` 2026-07-01 and `backtesting_end` 2026-08-31 (about 43 sessions, both bounds timezone-aware in
-`MARKET_TZ` and inclusive by calendar date, as for the other strategies). `run_backtesting` passes:
+`backtesting_start`/`backtesting_end` taken from the window factory, as `vwap_pullback` does:
+`backtest_window(PredefinedWindow.BI_MONTH)[0]` and `[1]` (`backtesting/time_window.py`; today 2026-07-28 to
+2026-09-23, about 41 sessions, so the default moves whenever the factory's dates are updated). The factory's bounds are
+already timezone-aware in `MARKET_TZ`. `run_backtesting` passes:
 
 - `data_source=YahooBacktestData`, `timestep "day"`, `sleeptime "1D"`;
 - `preload_assets` = the universe, SHV and SPY, so the screen's daily price lookups hit the cache (as `cross_momentum`
