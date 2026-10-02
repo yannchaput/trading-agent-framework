@@ -304,9 +304,18 @@ as reported on its date. Without correction, a 2-for-1 split after the count hal
   needs no file: the ticker map is already cached by the client, so the lookup costs no request.
 - **Transport errors are not cached.** A network failure or SEC's throttle page (HTML with a 2xx status)
   leaves no file, so the next run retries. The symbol is rejected as `no_data` for this run.
-- **A hollow screen raises.** If more than `max_fetch_failure_ratio` (20%) of the symbols passed to `run`
-  failed on transport errors, `run` raises `FundamentalsError` instead of returning a ranking built on what
-  happened to download.
+- **A hollow screen raises.** Three rules, each raising `FundamentalsError` that names the gate and the counts:
+  1. *SEC figures:* more than `max_fetch_failure_ratio` (20%) of the symbols passed to `run` failed on
+     transport errors (no minimum sample).
+  2. *SIC lookup:* more than that share of the symbols that reached the sector gate (those that passed the
+     numeric gates) failed their SIC lookup.
+  3. *Split lookup:* more than that share of the symbols that reached the split gate failed their lookup
+     (no cached copy: `splits()` raised), e.g. Yahoo down.
+
+  Rules 2 and 3 apply only when at least `ScreenParams.hollow_min_sample` (5) symbols reached the gate, so a
+  handful of dotted tickers (BRK.B) cannot abort a small screen. A symbol whose SIC lookup failed is still
+  rejected `no_data`, but counts in rule 2 only, not in rule 1. Without rules 2 and 3 a Yahoo outage would
+  return an empty ranking dressed as a result.
 - **Configuration.** A missing `SEC_EDGAR_USER_AGENT` raises `ConfigurationError` when the client is built,
   as today.
 - **A corrupt reduced file** is treated as a cache miss and refetched, as `SecEdgarClient.get_json` already

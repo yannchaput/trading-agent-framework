@@ -56,7 +56,10 @@ class QualityScreen:
         New York evening reads one day ahead and would see filings the market has not yet seen.
         `price_of` is called only for companies that passed every gate before the price gate.
         Raises `FundamentalsError` when more than `params.max_fetch_failure_ratio` of the symbols
-        could not be fetched: a ranking of what happened to download is worse than none.
+        could not be fetched from SEC, or when that share of the symbols that reached the SIC gate (or
+        the split gate) failed their lookup -- the SIC and split rules need at least
+        `params.hollow_min_sample` symbols at the gate, so a few dotted tickers cannot abort a small
+        screen: a ranking of what happened to download is worse than none.
         """
         if as_of.tzinfo is None:
             raise ValueError("as_of must be timezone-aware")
@@ -66,17 +69,25 @@ class QualityScreen:
         rejections: dict[str, str] = {}
         priced: list[Priced] = []
         accepted_ciks: set[str | None] = set()
-        transport_failures = 0
+        figures_failures = sic_failures = split_failures = 0
+        sic_reached = split_reached = 0
 
         for symbol in unique:
             try:
                 outcome = assess(symbol, self._store.figures(symbol, as_of=as_of, max_age_days=max_age_days), as_of=as_of, params=params)
-                if isinstance(outcome, str):
-                    rejections[symbol] = outcome
-                    continue
+            except FundamentalsError as exc:
+                figures_failures += 1
+                rejections[symbol] = "no_data"
+                logger.log_debug(f"{symbol}: {exc}")
+                continue
+            if isinstance(outcome, str):
+                rejections[symbol] = outcome
+                continue
+            sic_reached += 1
+            try:
                 sic = self._store.sic(symbol, as_of=as_of, max_age_days=max_age_days)
             except FundamentalsError as exc:
-                transport_failures += 1
+                sic_failures += 1  # counted in the SIC ratio only, not as a figures failure
                 rejections[symbol] = "no_data"
                 logger.log_debug(f"{symbol}: {exc}")
                 continue
@@ -91,9 +102,11 @@ class QualityScreen:
             if price is None or not outcome.shares or outcome.counted_on is None:
                 rejections[symbol] = "no_price"
                 continue
+            split_reached += 1
             try:
                 splits = self._splits.splits(symbol, max_age_days=params.split_max_age_days)
             except FundamentalsError as exc:
+                split_failures += 1
                 rejections[symbol] = "no_split_data"
                 logger.log_debug(f"{symbol}: {exc}")
                 continue
@@ -104,8 +117,11 @@ class QualityScreen:
             accepted_ciks.add(cik)  # only now: a first listing with no price must not block the second
             priced.append(Priced(survivor=outcome, sic=sic, market_cap=market_cap))
 
-        if unique and transport_failures / len(unique) > params.max_fetch_failure_ratio:
-            raise FundamentalsError(f"quality screen aborted: {transport_failures} of {len(unique)} symbols could not be fetched from SEC")
+        if unique and figures_failures / len(unique) > params.max_fetch_failure_ratio:
+            raise FundamentalsError(f"quality screen aborted: {figures_failures} of {len(unique)} symbols could not be fetched from SEC")
+        for gate, failures, reached in (("SIC lookup", sic_failures, sic_reached), ("split lookup", split_failures, split_reached)):
+            if reached >= params.hollow_min_sample and failures / reached > params.max_fetch_failure_ratio:
+                raise FundamentalsError(f"quality screen aborted: the {gate} failed for {failures} of {reached} symbols that reached that gate")
 
         candidates = rank(priced, params)
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(Counter(rejections.values()).items())) or "none"

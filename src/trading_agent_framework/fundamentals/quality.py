@@ -33,6 +33,7 @@ class ScreenParams:
     max_age_days: int = 30  # annual SEC figures, by as_of
     split_max_age_days: int = 1  # split history, by the wall clock (it must match today's adjusted prices)
     max_fetch_failure_ratio: float = 0.2
+    hollow_min_sample: int = 5  # symbols that must reach the SIC or split gate before its failure ratio can abort a screen
 
 
 @dataclass(frozen=True, slots=True)

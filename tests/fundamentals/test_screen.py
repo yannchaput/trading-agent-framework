@@ -211,7 +211,7 @@ def test_a_transport_failure_rejects_the_symbol_as_no_data() -> None:
     assert len(result.candidates) == 4
 
 
-def test_a_failed_sic_lookup_counts_as_a_transport_failure() -> None:
+def test_a_failed_sic_lookup_rejects_the_symbol_as_no_data() -> None:
     names = ["AAA", "BBB", "CCC", "DDD", "EEE"]
     store = FakeStore({name: healthy_figures() for name in names}, sic_failing={"EEE"})
 
@@ -373,3 +373,78 @@ def test_a_price_that_is_not_a_finite_number_is_no_price(price: object) -> None:
     result = _run(FakeStore({"AAA": healthy_figures()}), ["AAA"], price_of=lambda symbol: price)  # ty: ignore[invalid-argument-type]
 
     assert result.rejections == {"AAA": "no_price"}
+
+
+SIX = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
+
+
+def test_a_screen_whose_split_lookups_all_failed_raises_and_names_the_gate() -> None:
+    store = FakeStore({name: healthy_figures() for name in SIX}, ciks={name: name for name in SIX})
+
+    with pytest.raises(FundamentalsError, match=r"split.*6 of 6"):
+        _run(store, SIX, splits=FakeSplits(failing=set(SIX)))
+
+
+def test_one_failed_split_lookup_among_six_survivors_does_not_raise() -> None:
+    store = FakeStore({name: healthy_figures() for name in SIX})
+
+    result = _run(store, SIX, splits=FakeSplits(failing={"FFF"}))
+
+    assert result.rejections == {"FFF": "no_split_data"}
+    assert len(result.candidates) == 5
+
+
+def test_two_failed_split_lookups_among_three_survivors_are_below_the_minimum_sample() -> None:
+    names = ["AAA", "BBB", "CCC"]
+    store = FakeStore({name: healthy_figures() for name in names})
+
+    result = _run(store, names, splits=FakeSplits(failing={"BBB", "CCC"}))
+
+    assert result.rejections == {"BBB": "no_split_data", "CCC": "no_split_data"}
+    assert _symbols(result) == ["AAA"]
+
+
+def test_split_failures_count_only_the_symbols_that_reached_the_split_gate() -> None:
+    # 6 symbols, but only 3 are priced: 2 failed lookups of 3 reached is under the sample minimum.
+    store = FakeStore({name: healthy_figures() for name in SIX})
+    prices = Prices({"DDD": None, "EEE": None, "FFF": None})
+
+    result = _run(store, SIX, splits=FakeSplits(failing={"AAA", "BBB"}), price_of=prices)
+
+    assert result.rejections["AAA"] == result.rejections["BBB"] == "no_split_data"
+
+
+def test_a_screen_whose_sic_lookups_all_failed_raises_and_names_the_gate() -> None:
+    store = FakeStore({name: healthy_figures() for name in SIX}, sic_failing=set(SIX))
+
+    with pytest.raises(FundamentalsError, match=r"SIC.*6 of 6"):
+        _run(store, SIX)
+
+
+def test_a_failed_sic_lookup_is_counted_in_the_sic_ratio_only_not_in_the_figures_ratio() -> None:
+    # 8 symbols: 5 survive the numeric gates (one of them fails its SIC lookup), 1 fails its figures
+    # fetch, 2 have no record. SIC 1 of 5 and figures 1 of 8 are both within 20%; had the SIC failure
+    # also counted as a figures failure it would be 2 of 8 and the screen would abort.
+    survivors = ["AAA", "BBB", "CCC", "DDD", "EEE"]
+    store = FakeStore({name: healthy_figures() for name in survivors} | {"NONE1": None, "NONE2": None}, failing={"FAIL"}, sic_failing={"EEE"})
+
+    result = _run(store, [*survivors, "FAIL", "NONE1", "NONE2"])
+
+    assert result.rejections["EEE"] == "no_data"
+    assert len(result.candidates) == 4
+
+
+def test_the_sic_ratio_needs_the_minimum_sample() -> None:
+    names = ["AAA", "BBB", "CCC"]
+
+    result = _run(FakeStore({name: healthy_figures() for name in names}, sic_failing={"BBB", "CCC"}), names)
+
+    assert result.rejections == {"BBB": "no_data", "CCC": "no_data"}
+
+
+def test_the_minimum_sample_is_a_screen_parameter() -> None:
+    names = ["AAA", "BBB", "CCC"]
+    store = FakeStore({name: healthy_figures() for name in names}, sic_failing={"BBB", "CCC"})
+
+    with pytest.raises(FundamentalsError, match="SIC"):
+        _run(store, names, params=ScreenParams(hollow_min_sample=3))
