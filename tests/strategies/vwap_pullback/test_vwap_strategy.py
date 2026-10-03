@@ -4,11 +4,16 @@ import subprocess
 import sys
 from datetime import date, timedelta
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et, make_session
 
+from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
+from trading_agent_framework.backtesting.data.chunked import YearChunkedData
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 from trading_agent_framework.strategies.vwap_pullback.session import SessionState
 from trading_agent_framework.strategies.vwap_pullback.setups import Setup, SetupState
@@ -140,3 +145,13 @@ def test_a_backtest_tick_charts_no_indicator_of_its_own(tmp_path: Path) -> None:
     strategy.on_trading_iteration()
     assert steps == ["reconcile", "scan", "enter"]
     assert lines == []
+
+
+def test_run_backtesting_reads_minute_bars_year_by_year(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
+    _strategy(tmp_path).run_backtesting()
+    source = captured["data_source"]
+    assert isinstance(source, partial)
+    assert source.func is YearChunkedData and source.keywords == {"inner": AlpacaBacktestData}
+    assert captured["timestep"] == "minute"

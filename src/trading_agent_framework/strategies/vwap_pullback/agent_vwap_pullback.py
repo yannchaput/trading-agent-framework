@@ -12,10 +12,12 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
+from trading_agent_framework.backtesting.data.chunked import YearChunkedData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
@@ -159,7 +161,9 @@ class VwapPullbackStrategy(Strategy):
         """Backtest over the class `parameters` window on Alpaca minute bars (only the benchmark preloaded)."""
         # class parameters: the same window the data source is built with, so preload_bars matches it
         defaults: dict[str, Any] = dict(
-            data_source=AlpacaBacktestData,  # minute bars with enough history (Yahoo keeps ~30 days of minutes)
+            # Alpaca: minute bars with enough history (Yahoo keeps ~30 days of minutes), one year at a time
+            # (a 5Y window of minutes for 150 symbols in one fetch was OOM-killed at 58 GB)
+            data_source=partial(YearChunkedData, inner=AlpacaBacktestData),
             timestep="minute",
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
