@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
@@ -8,7 +9,7 @@ from langchain_core.messages import AIMessage, ToolCall
 from tests.fakes import FakeToolCallingChatModel
 
 from trading_agent_framework.agents.config import LLMCredentials
-from trading_agent_framework.agents.manager import AgentHandle, AgentManager, _tool_budget_message
+from trading_agent_framework.agents.manager import AgentHandle, AgentManager, _tool_budget_message, _ToolBudget
 
 
 def _manager() -> AgentManager:
@@ -53,13 +54,26 @@ def test_calls_past_the_budget_are_refused_and_never_run() -> None:
     assert json.loads(refused.result) == {"error": "tool budget of 2 calls spent; lookup was not run. Finish now: call submit."}
 
 
-def test_several_calls_in_one_turn_count_one_by_one() -> None:
+def test_several_calls_in_one_turn_count_one_by_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    # LangGraph runs one turn's tool calls on pool threads, so which two of A/B/C get the budget is
+    # thread-order dependent: assert the count, not the names. Reading `used` is slowed down so that,
+    # without the lock around check-and-increment, all three calls read 0 before any increments it.
+    def slow_read(self: _ToolBudget) -> int:
+        value = self._used
+        time.sleep(0.05)
+        return value
+
+    def write(self: _ToolBudget, value: int) -> None:
+        self._used = value
+
+    monkeypatch.setattr(_ToolBudget, "used", property(slow_read, write), raising=False)
     seen: list[str] = []
     handle = _agent(seen, _calls(("lookup", {"symbol": "A"}), ("lookup", {"symbol": "B"}), ("lookup", {"symbol": "C"})), AIMessage(content="done"))
 
     result = handle.run("go", tool_budget=2)
 
-    assert sorted(seen) == ["A", "B"]
+    assert len(seen) == 2
+    assert set(seen) <= {"A", "B", "C"}
     assert sum("tool budget of 2 calls spent" in call.result for call in result.tool_calls) == 1
 
 
