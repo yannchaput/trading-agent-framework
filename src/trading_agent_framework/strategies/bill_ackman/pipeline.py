@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, price_return, unavailable_fact_sheet
 from trading_agent_framework.strategies.bill_ackman.handoff import FAIL, HandoffRecorder, Idea, PortfolioPosition, Verdict
-from trading_agent_framework.strategies.bill_ackman.hysteresis import apply_verdicts
+from trading_agent_framework.strategies.bill_ackman.hysteresis import advance_cooldowns, apply_verdicts
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.portfolio import target_portfolio
 from trading_agent_framework.strategies.bill_ackman.prompts import SHORT_SELLER_TASK, TRADER_TASK, researcher_task, retry_prompt
@@ -128,7 +128,8 @@ class ReviewPipeline:
         except FundamentalsError as exc:
             raise ReviewAbandoned("screen", str(exc)) from exc
         weights = self._rebalancer.current_weights()
-        candidates = universe_result.candidates
+        cooling = set(state.cooldowns)  # recent forced exits: kept out of the candidates and the allowed set
+        candidates = [candidate for candidate in universe_result.candidates if candidate.symbol not in cooling]
         sheets = self._fact_sheets(candidates, holdings, holdings_result)
         record.update(candidates=[{"symbol": c.symbol, "rank": c.rank, "score": round(c.score, 4)} for c in candidates], holdings=holdings)
 
@@ -188,10 +189,13 @@ class ReviewPipeline:
             forced_exit_fails=params.forced_exit_fails,
         )
 
+        allowed = [symbol for symbol in outcome.allowed if symbol not in cooling]
+        required = [symbol for symbol in outcome.pending if symbol in allowed]  # first fails: kept until a second one
+
         # 8. Trader.
         positions: list[PortfolioPosition] = []
-        if outcome.allowed:
-            self._recorder.expect_portfolio(outcome.allowed)
+        if allowed:
+            self._recorder.expect_portfolio(allowed, required=required)
             context = {
                 "current_datetime": now.isoformat(),
                 "allowed": [
@@ -205,8 +209,9 @@ class ReviewPipeline:
                         "current_weight": weights.get(symbol, 0.0),
                         "fact_sheet": sheets[symbol],
                     }
-                    for symbol in outcome.allowed
+                    for symbol in allowed
                 ],
+                "required": required,
                 "forced_exits": outcome.forced_exits,
                 "constraints": {
                     "max_positions": params.max_positions,
@@ -225,6 +230,7 @@ class ReviewPipeline:
         orders = self._rebalancer.rebalance(target, outcome.forced_exits)
 
         # 10. Remember and log.
+        cooldowns = advance_cooldowns(state.cooldowns, forced_exits=outcome.forced_exits, reviews=params.reentry_cooldown_reviews)
         self._state.save(
             ReviewState(
                 last_review=now.date().isoformat(),
@@ -235,7 +241,7 @@ class ReviewPipeline:
                     for symbol, verdict in verdicts.items()
                 },
                 abandoned_streak=0,
-                cooldowns=dict(state.cooldowns),
+                cooldowns=cooldowns,
             )
         )
         self._log.append(
@@ -247,7 +253,9 @@ class ReviewPipeline:
                 "fail_counts_before": state.fail_counts,
                 "fail_counts_after": outcome.fail_counts,
                 "forced_exits": outcome.forced_exits,
-                "allowed": outcome.allowed,
+                "allowed": allowed,
+                "required": required,
+                "cooldowns": cooldowns,
                 "portfolio": [asdict(position) for position in positions],
                 "targets": {**target.weights, params.parking_symbol: target.parking_weight},
                 "orders": [asdict(order) for order in orders],

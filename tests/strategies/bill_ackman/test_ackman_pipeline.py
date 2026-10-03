@@ -351,6 +351,58 @@ def test_the_holdings_are_screened_without_truncation(tmp_path: Path) -> None:
     assert screen.calls == [(["AAA", "BBB", "CCC"], None), (["HHH"], 1)]
 
 
+def test_a_pending_fail_the_trader_drops_is_refused_and_the_holding_is_kept(tmp_path: Path) -> None:
+    screen = FakeScreen([_candidate("AAA", 1)], holdings=[_candidate("HHH")])
+    h = _harness(tmp_path, screen, held={"HHH": 100})
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="fail")]
+    h.trader.steps = [holds(AAA=0.3), holds(AAA=0.3, HHH=0.2)]
+
+    h.run()
+
+    assert h.trader.calls[0]["context"]["required"] == ["HHH"]
+    assert h.trader.calls[1]["force_tool"] == "submit_portfolio"
+    assert "HHH failed once and is kept until a second consecutive fail" in h.trader.calls[1]["task"]
+    assert ("HHH", "sell", 60.0) in h.orders  # shrunk from 50% to 20%, not sold out
+    (line,) = h.log_lines()
+    assert line["required"] == ["HHH"]
+
+
+def test_a_forced_exit_starts_its_cooldown(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([], holdings=[_candidate("HHH")]), held={"HHH": 100}, state=ReviewState(fail_counts={"HHH": 1}))
+    h.short_seller.steps = [judges(HHH="fail")]
+
+    h.run()
+
+    assert ("HHH", "sell", 100.0) in h.orders
+    assert h.store.load().cooldowns == {"HHH": 4}
+    assert h.log_lines()[0]["cooldowns"] == {"HHH": 4}
+
+
+def test_a_symbol_cooling_down_is_hidden_from_the_researcher_and_its_cooldown_counts_down(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA", 1), _candidate("BBB", 2)]), state=ReviewState(cooldowns={"BBB": 2}))
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive")]
+    h.trader.steps = [holds(AAA=0.3)]
+
+    h.run()
+
+    assert [sheet["symbol"] for sheet in h.researcher.calls[0]["context"]["candidates"]] == ["AAA"]
+    assert h.store.load().cooldowns == {"BBB": 1}
+    (line,) = h.log_lines()
+    assert [c["symbol"] for c in line["candidates"]] == ["AAA"]
+
+
+def test_an_abandoned_review_leaves_the_cooldowns_alone(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([_candidate("AAA")]), state=ReviewState(cooldowns={"BBB": 2}))
+    h.researcher.steps = [does_nothing, does_nothing]
+
+    outcome = h.run()
+
+    assert outcome.completed is False
+    assert h.store.load().cooldowns == {"BBB": 2}
+
+
 # --- failures ----------------------------------------------------------------------------------------
 
 
