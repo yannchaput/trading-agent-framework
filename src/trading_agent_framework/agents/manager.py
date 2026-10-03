@@ -139,6 +139,7 @@ class AgentManager:
         self._telemetry_now: Callable[[], datetime] | None = None
         self._telemetry_store: LLMStatsStore | None = None
         self._calls: list[CallRecord] = []
+        self._temperatures: dict[str, float | None] = {}
 
     def enable_telemetry(self, *, now: Callable[[], datetime], store: LLMStatsStore | None = None) -> None:
         """Record every model call of the agents created from now on (tokens, latency, requested tool calls).
@@ -152,8 +153,11 @@ class AgentManager:
         self._telemetry_store = store
 
     def telemetry_summary(self) -> dict[str, dict[str, Any]]:
-        """Per-agent totals of the calls recorded so far (empty when telemetry is off or nothing ran)."""
-        return summarize(self._calls)
+        """Per-agent totals of the calls recorded so far, each with the agent's sampling `temperature` (empty when telemetry is off or nothing ran)."""
+        summary = summarize(self._calls)
+        for agent, totals in summary.items():
+            totals["temperature"] = self._temperatures.get(agent)
+        return summary
 
     def _tool_call_repair_middleware(self, *, glm_format: bool = False) -> Any:
         """Middleware for every agent: repairs a pseudo tool call caught by `_parse_pseudo_tool_call`.
@@ -255,6 +259,7 @@ class AgentManager:
         model: str | BaseChatModel | None = None,
         tools: Sequence[Callable[..., Any] | BaseTool] | None = None,
         timeout_seconds: float | None = None,
+        temperature: float | None = None,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
 
@@ -263,11 +268,16 @@ class AgentManager:
         framework-imposed default would silently break that use case. It only applies when
         `model` is a string resolved through `LLMCredentials`; a pre-built `BaseChatModel`
         instance passed as `model` configures its own timeout and ignores this parameter.
+
+        `temperature` defaults to `None` -- nothing is sent, so the server's own default applies (vLLM: the
+        model's `generation_config.json`). Like `timeout_seconds`, it only applies when `model` is a string;
+        a pre-built `BaseChatModel` keeps its own sampling settings. The telemetry summary records the
+        temperature the chat model actually has.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
 
-        chat_model = self._resolve_model(model, timeout_seconds)
+        chat_model = self._resolve_model(model, timeout_seconds, temperature)
         try:
             from langchain.agents import create_agent
 
@@ -281,9 +291,10 @@ class AgentManager:
 
         handle = AgentHandle(name, agent)
         self._agents[name] = handle
+        self._temperatures[name] = getattr(chat_model, "temperature", None)
         return handle
 
-    def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None) -> Any:
+    def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None, temperature: float | None = None) -> Any:
         if model is not None and not isinstance(model, str):
             return model  # already a chat-model instance -- used as-is, LLMCredentials and timeout_seconds untouched
 
@@ -298,11 +309,13 @@ class AgentManager:
         if not model_id:
             raise ConfigurationError("No model id given and LLM_MODEL is not set; pass model=... explicitly or set LLM_MODEL in the strategy's env file")
         try:
+            sampling = {} if temperature is None else {"temperature": temperature}
             return ChatOpenAI(
                 model=model_id,
                 base_url=credentials.base_url,
                 api_key=SecretStr(credentials.api_key),
                 timeout=timeout_seconds,
+                **sampling,
             )
         except Exception as exc:
             raise AgentError(f"could not build chat model {model_id!r}: {exc}") from exc
