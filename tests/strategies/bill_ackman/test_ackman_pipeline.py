@@ -192,7 +192,10 @@ def test_a_review_runs_the_three_agents_in_order_and_places_the_orders(tmp_path:
     assert len(h.orders) == 2
     state = h.store.load()
     assert (state.last_review, state.last_ranking, state.abandoned_streak) == ("2026-09-14", ["AAA", "BBB"], 0)
-    assert state.last_verdicts == {"AAA": "survive", "BBB": "fail"}
+    assert state.last_verdicts == {
+        "AAA": {"verdict": "survive", "reason": "survive reason", "concern": None, "date": "2026-09-14"},
+        "BBB": {"verdict": "fail", "reason": "fail reason", "concern": "debt", "date": "2026-09-14"},
+    }
 
 
 def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> None:

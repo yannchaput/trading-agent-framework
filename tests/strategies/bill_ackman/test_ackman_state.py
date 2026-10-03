@@ -16,8 +16,12 @@ def _state() -> ReviewState:
         last_review="2026-09-14",
         fail_counts={"HLT": 1},
         last_ranking=["AAA", "BBB"],
-        last_verdicts={"AAA": "survive", "HLT": "fail"},
+        last_verdicts={
+            "AAA": {"verdict": "survive", "reason": "cash rich", "concern": None, "date": "2026-09-14"},
+            "HLT": {"verdict": "fail", "reason": "debt doubled", "concern": "debt", "date": "2026-09-14"},
+        },
         abandoned_streak=2,
+        cooldowns={"OLD": 3},
     )
 
 
@@ -33,7 +37,7 @@ def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
 def test_the_empty_state_has_no_history() -> None:
     state = ReviewState()
 
-    assert (state.last_review, state.fail_counts, state.last_ranking, state.last_verdicts, state.abandoned_streak) == (None, {}, [], {}, 0)
+    assert (state.last_review, state.fail_counts, state.last_ranking, state.last_verdicts, state.abandoned_streak, state.cooldowns) == (None, {}, [], {}, 0, {})
 
 
 def test_a_state_round_trips(tmp_path: Path) -> None:
@@ -58,16 +62,22 @@ def test_saving_leaves_no_temporary_file(tmp_path: Path) -> None:
     [
         "{not json",
         "[]",
-        json.dumps({"version": 2}),
-        json.dumps({"version": 1, "last_review": 5}),
-        json.dumps({"version": 1, "fail_counts": {"HLT": "one"}}),
-        json.dumps({"version": 1, "fail_counts": {"HLT": 0}}),
-        json.dumps({"version": 1, "fail_counts": []}),
-        json.dumps({"version": 1, "last_ranking": "AAA"}),
-        json.dumps({"version": 1, "last_ranking": [1, 2]}),
-        json.dumps({"version": 1, "last_verdicts": {"AAA": "maybe"}}),
-        json.dumps({"version": 1, "abandoned_streak": -1}),
-        json.dumps({"version": 1, "abandoned_streak": True}),
+        json.dumps({"version": 3}),
+        json.dumps({"version": 2, "last_review": 5}),
+        json.dumps({"version": 2, "fail_counts": {"HLT": "one"}}),
+        json.dumps({"version": 2, "fail_counts": {"HLT": 0}}),
+        json.dumps({"version": 2, "fail_counts": []}),
+        json.dumps({"version": 2, "last_ranking": "AAA"}),
+        json.dumps({"version": 2, "last_ranking": [1, 2]}),
+        json.dumps({"version": 2, "last_verdicts": {"AAA": "survive"}}),  # the version-1 shape
+        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "maybe", "reason": "x", "concern": None, "date": "2026-09-14"}}}),
+        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": "x", "concern": None}}}),  # no date
+        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": 1, "concern": None, "date": "2026-09-14"}}}),
+        json.dumps({"version": 2, "cooldowns": {"OLD": 0}}),
+        json.dumps({"version": 2, "cooldowns": {"OLD": True}}),
+        json.dumps({"version": 2, "cooldowns": []}),
+        json.dumps({"version": 2, "abandoned_streak": -1}),
+        json.dumps({"version": 2, "abandoned_streak": True}),
     ],
 )
 def test_a_corrupt_or_wrong_shaped_file_is_an_empty_state_with_a_warning(tmp_path: Path, content: str, caplog: pytest.LogCaptureFixture) -> None:
@@ -134,3 +144,13 @@ def test_a_review_log_that_cannot_be_written_is_logged_and_never_raises(tmp_path
         ReviewLog(blocker / "reviews.jsonl").append({"date": "2026-09-14"})
 
     assert "could not be written" in caplog.text
+
+
+def test_a_file_written_by_the_previous_version_is_an_empty_state_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 1, "last_review": "2026-09-07", "fail_counts": {"HLT": 1}, "last_ranking": [], "last_verdicts": {"HLT": "fail"}, "abandoned_streak": 0}))
+
+    with caplog.at_level(logging.WARNING):
+        assert StateStore(path).load() == ReviewState()
+
+    assert "not a valid state" in caplog.text

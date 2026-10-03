@@ -1,6 +1,7 @@
 """What the strategy remembers between reviews, and the per-review log.
 
-`StateStore` keeps the fail counters, the previous review's ranking and verdicts, and the abandoned-review streak in one
+`StateStore` keeps the fail counters, the re-entry cooldowns, the previous review's ranking and verdicts (with their
+reasons), and the abandoned-review streak in one
 small JSON file per mode, written atomically. A missing or corrupt file is an empty state: the strategy then
 simply starts its counters again. `ReviewLog` appends one JSON line per review to the run directory.
 Neither ever raises on an I/O problem: bookkeeping must not stop a review.
@@ -21,7 +22,7 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "BillAckmanState")
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 def state_path(project_root: Path, mode: TradingMode) -> Path:
@@ -34,24 +35,43 @@ class ReviewState:
     last_review: str | None = None  # ISO date of the last completed review
     fail_counts: dict[str, int] = field(default_factory=dict)  # holding -> consecutive fails (always >= 1)
     last_ranking: list[str] = field(default_factory=list)
-    last_verdicts: dict[str, str] = field(default_factory=dict)  # symbol -> "survive" | "fail"
+    last_verdicts: dict[str, dict[str, Any]] = field(default_factory=dict)  # symbol -> {verdict, reason, concern, date}
     abandoned_streak: int = 0  # abandoned reviews in a row
+    cooldowns: dict[str, int] = field(default_factory=dict)  # symbol -> completed reviews it stays out (always >= 1)
+
+
+_VERDICT_KEYS = {"verdict", "reason", "concern", "date"}
+
+
+def _valid_counts(value: Any) -> bool:
+    return isinstance(value, dict) and all(isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 1 for k, v in value.items())
+
+
+def _valid_verdict(value: Any) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == _VERDICT_KEYS
+        and value["verdict"] in ("survive", "fail")
+        and isinstance(value["reason"], str)
+        and (value["concern"] is None or isinstance(value["concern"], str))
+        and isinstance(value["date"], str)
+    )
 
 
 def _valid(raw: Any) -> bool:
     if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return False
     last_review = raw.get("last_review")
-    fail_counts, ranking, verdicts = raw.get("fail_counts", {}), raw.get("last_ranking", []), raw.get("last_verdicts", {})
+    ranking, verdicts = raw.get("last_ranking", []), raw.get("last_verdicts", {})
     streak = raw.get("abandoned_streak", 0)
     return (
         (last_review is None or isinstance(last_review, str))
-        and isinstance(fail_counts, dict)
-        and all(isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and v >= 1 for k, v in fail_counts.items())
+        and _valid_counts(raw.get("fail_counts", {}))
+        and _valid_counts(raw.get("cooldowns", {}))
         and isinstance(ranking, list)
         and all(isinstance(symbol, str) for symbol in ranking)
         and isinstance(verdicts, dict)
-        and all(isinstance(k, str) and v in ("survive", "fail") for k, v in verdicts.items())
+        and all(isinstance(k, str) and _valid_verdict(v) for k, v in verdicts.items())
         and isinstance(streak, int)
         and not isinstance(streak, bool)
         and streak >= 0
@@ -78,8 +98,9 @@ class StateStore:
             last_review=raw.get("last_review"),
             fail_counts=dict(raw.get("fail_counts", {})),
             last_ranking=list(raw.get("last_ranking", [])),
-            last_verdicts=dict(raw.get("last_verdicts", {})),
+            last_verdicts={symbol: dict(record) for symbol, record in raw.get("last_verdicts", {}).items()},
             abandoned_streak=raw.get("abandoned_streak", 0),
+            cooldowns=dict(raw.get("cooldowns", {})),
         )
 
     def save(self, state: ReviewState) -> None:

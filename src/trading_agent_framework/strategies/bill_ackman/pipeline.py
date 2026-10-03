@@ -230,8 +230,12 @@ class ReviewPipeline:
                 last_review=now.date().isoformat(),
                 fail_counts=outcome.fail_counts,
                 last_ranking=ranked,
-                last_verdicts={symbol: verdict.verdict for symbol, verdict in verdicts.items()},
+                last_verdicts={
+                    symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "concern": verdict.concern, "date": now.date().isoformat()}
+                    for symbol, verdict in verdicts.items()
+                },
                 abandoned_streak=0,
+                cooldowns=dict(state.cooldowns),
             )
         )
         self._log.append(
