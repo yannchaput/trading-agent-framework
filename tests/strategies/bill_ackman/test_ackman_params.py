@@ -14,10 +14,11 @@ def test_the_defaults_are_the_spec_values() -> None:
 
     assert params.screen == ScreenParams()
     assert params.screen.top_n == 15
-    assert (params.research_top_n, params.max_positions) == (5, 5)
+    assert (params.research_top_n, params.max_positions) == (8, 5)
     assert (params.max_weight, params.min_weight, params.cash_buffer) == (0.35, 0.05, 0.02)
     assert (params.forced_exit_fails, params.rebalance_band, params.min_trade_pct) == (2, 0.05, 0.005)
     assert (params.parking_symbol, params.max_consecutive_abandoned, params.reason_max_chars) == ("SHV", 3, 300)
+    assert (params.reentry_cooldown_reviews, params.agent_temperature) == (4, 0.3)
 
 
 def test_the_largest_total_weight_is_one_minus_the_cash_buffer() -> None:
@@ -53,6 +54,10 @@ def test_the_params_are_frozen() -> None:
         {"max_weight": math.nan},
         {"cash_buffer": math.inf},
         {"max_positions": 30, "min_weight": 0.05},  # 30 x 5% cannot fit in 98%
+        {"reentry_cooldown_reviews": -1},
+        {"agent_temperature": -0.1},
+        {"agent_temperature": 2.01},
+        {"agent_temperature": math.nan},
     ],
 )
 def test_an_out_of_range_value_is_refused(overrides: dict[str, object]) -> None:
@@ -62,3 +67,9 @@ def test_an_out_of_range_value_is_refused(overrides: dict[str, object]) -> None:
 
 def test_boundary_values_are_accepted() -> None:
     AckmanParams(min_weight=0.05, max_weight=0.05, rebalance_band=0.05, cash_buffer=0.0, max_positions=20, forced_exit_fails=1)
+
+
+def test_a_cooldown_of_zero_and_the_temperature_bounds_are_accepted() -> None:
+    AckmanParams(reentry_cooldown_reviews=0, agent_temperature=0.0)
+    AckmanParams(agent_temperature=2.0)
+    AckmanParams(agent_temperature=None)

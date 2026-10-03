@@ -213,3 +213,19 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
 
 def test_the_warmup_covers_a_year_of_daily_bars_so_the_12_month_return_exists_from_day_one() -> None:
     assert BillAckmanStrategy.parameters["warmup_trading_days"] > TRADING_DAYS_PER_YEAR
+
+
+def test_every_agent_is_sampled_at_the_configured_temperature(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=AckmanParams(agent_temperature=0.2))
+
+    strategy.initialize()
+
+    assert [created["temperature"] for created in agents.created] == [0.2, 0.2, 0.2]
+
+
+def test_only_the_short_seller_has_a_budget_exempt_tool_its_submit_tool(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path)
+
+    strategy.initialize()
+
+    assert [created.get("exempt_tools") for created in agents.created] == [None, ["submit_verdicts"], None]

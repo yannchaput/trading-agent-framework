@@ -75,13 +75,21 @@ class BillAckmanStrategy(Strategy):
             from trading_agent_framework.agents.tools.news import news_tools
 
             # No agent gets an order, account, indicator or memory tool: they research and hand over structured results.
-            self.agents.create(name="researcher", system_prompt=RESEARCHER_SYSTEM, tools=[*fundamentals_tools(self), *market_data_tools(self), submit["submit_ranking"]])
+            temperature = self.settings.agent_temperature
+            self.agents.create(
+                name="researcher",
+                system_prompt=RESEARCHER_SYSTEM,
+                tools=[*fundamentals_tools(self), *market_data_tools(self), submit["submit_ranking"]],
+                temperature=temperature,
+            )
             self.agents.create(
                 name="short_seller",
                 system_prompt=SHORT_SELLER_SYSTEM,
                 tools=[*fundamentals_tools(self), *news_tools(self), *market_data_tools(self), submit["submit_verdicts"]],
+                temperature=temperature,
+                exempt_tools=["submit_verdicts"],  # its per-review tool budget never blocks the submission
             )
-            self.agents.create(name="trader", system_prompt=TRADER_SYSTEM, tools=[submit["submit_portfolio"]])
+            self.agents.create(name="trader", system_prompt=TRADER_SYSTEM, tools=[submit["submit_portfolio"]], temperature=temperature)
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every day (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc
