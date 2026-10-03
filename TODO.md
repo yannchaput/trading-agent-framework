@@ -60,11 +60,14 @@
 * ~~Log a frontmatter before each model benchmark~~
 
 ### VWAP Pullback continuation
-* Add indicators on equity curve
+* ~~Add indicators on equity curve~~
 * ~~Remove entry agent: it is effectless~~
-* Let the sweep run and make the change with the most interesting parameters
 * ~~Change agentic architecture for : Make the agent "agentic" in the right place (cf chatgpt)~~ => agents removed, the strategy is code only
-* Test EMA Pullback
+
+### Bill Ackman
+* Update claude.md with exempt_tools and budget_tools
+* Update dashboard to display tempearature
+* Update readme with a description of the strategy and 3 agents role
 
 ---
 
