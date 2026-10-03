@@ -15,6 +15,7 @@ class PredefinedWindow(StrEnum):
     """
 
     DECADE = "decade"
+    SEMI_DECADE = "5y"
     YEAR = "year"
     HALF_YEAR = "half_year"
     BI_MONTH = "bi-month"
@@ -22,11 +23,12 @@ class PredefinedWindow(StrEnum):
     WEEK = "week"
 
 
-
 def backtest_window(window: PredefinedWindow) -> tuple[datetime, datetime]:
     match window:
         case PredefinedWindow.DECADE:
             return (datetime(2016, 1, 1, tzinfo=MARKET_TZ), datetime(2026, 9, 23, tzinfo=MARKET_TZ))
+        case PredefinedWindow.SEMI_DECADE:
+            return (datetime(2021, 9, 20, tzinfo=MARKET_TZ), datetime(2026, 9, 23, tzinfo=MARKET_TZ))
         case PredefinedWindow.YEAR:
             return (datetime(2025, 9, 29, tzinfo=MARKET_TZ), datetime(2026, 9, 23, tzinfo=MARKET_TZ))
         case PredefinedWindow.HALF_YEAR:

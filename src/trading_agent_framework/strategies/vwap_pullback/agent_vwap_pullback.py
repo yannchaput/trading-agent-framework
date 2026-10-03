@@ -43,8 +43,8 @@ class VwapPullbackStrategy(Strategy):
     minutes_before_closing = 10  # before_market_closes, and so the flatten, runs at 15:50
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.SEMI_DECADE)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.SEMI_DECADE)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 75,  # 70 daily bars for stage 1, plus the RVOL baseline sessions
         "budget": 10000,
