@@ -18,6 +18,7 @@ from trading_agent_framework.strategies.bill_ackman.parameters import AckmanPara
 SURVIVE = "survive"
 FAIL = "fail"
 VERDICTS = (SURVIVE, FAIL)
+CONCERNS = ("debt", "margin", "competition", "management", "accounting", "valuation")
 _EPS = 1e-9
 
 RANKING, VERDICTS_STAGE, PORTFOLIO = "ranking", "verdicts", "portfolio"
@@ -39,6 +40,8 @@ class Verdict:
     symbol: str
     verdict: str
     reason: str
+    concern: str | None = None  # one of CONCERNS for a short seller's fail; None for a survive or a code verdict
+    what_changed: str | None = None  # required when the verdict differs from the previous review's
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +82,28 @@ def _reason(item: Mapping[str, Any], symbol: str, max_chars: int) -> str:
     return text
 
 
+def _optional_text(item: Mapping[str, Any], key: str, symbol: str, max_chars: int) -> str | None:
+    value = item.get(key)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    if not isinstance(value, str):
+        raise HandoffError(f"the {key} for {symbol} must be text")
+    text = value.strip()
+    if len(text) > max_chars:
+        raise HandoffError(f"the {key} for {symbol} is {len(text)} characters: keep it under {max_chars}")
+    return text
+
+
+def _concern(item: Mapping[str, Any], symbol: str, verdict: str) -> str | None:
+    if verdict != FAIL:
+        return None
+    value = item.get("concern")
+    concern = value.strip().lower() if isinstance(value, str) else None
+    if concern not in CONCERNS:
+        raise HandoffError(f"the fail for {symbol} needs a concern: one of {', '.join(CONCERNS)}")
+    return concern
+
+
 def _weight(item: Mapping[str, Any], symbol: str) -> float:
     value = item.get("weight")
     if isinstance(value, bool):
@@ -114,10 +139,15 @@ def validate_ranking(raw: Any, *, candidates: Sequence[str], top_n: int, reason_
     return ideas
 
 
-def validate_verdicts(raw: Any, *, expected: Collection[str], reason_max_chars: int) -> list[Verdict]:
-    """Exactly one verdict (`survive` or `fail`) per symbol in `expected`, and no other symbol."""
+def validate_verdicts(raw: Any, *, expected: Collection[str], reason_max_chars: int, previous: Mapping[str, str] | None = None) -> list[Verdict]:
+    """Exactly one verdict (`survive` or `fail`) per symbol in `expected`, and no other symbol.
+
+    A `fail` names its `concern` (one of `CONCERNS`); a verdict that differs from `previous` (symbol -> the last
+    review's verdict) says `what_changed`.
+    """
     items = _items(raw, "verdicts")
     wanted = set(expected)
+    before = previous or {}
     seen: set[str] = set()
     verdicts = []
     for index, item in enumerate(items, start=1):
@@ -131,7 +161,12 @@ def validate_verdicts(raw: Any, *, expected: Collection[str], reason_max_chars: 
         verdict = verdict.strip().lower() if isinstance(verdict, str) else verdict
         if verdict not in VERDICTS:
             raise HandoffError(f"the verdict for {symbol} must be 'survive' or 'fail'")
-        verdicts.append(Verdict(symbol, verdict, _reason(item, symbol, reason_max_chars)))
+        reason = _reason(item, symbol, reason_max_chars)
+        concern = _concern(item, symbol, verdict)
+        what_changed = _optional_text(item, "what_changed", symbol, reason_max_chars)
+        if before.get(symbol, verdict) != verdict and what_changed is None:
+            raise HandoffError(f"{symbol} was '{before[symbol]}' at the previous review: say in what_changed what changed since then")
+        verdicts.append(Verdict(symbol, verdict, reason, concern, what_changed))
     missing = sorted(wanted - seen)
     if missing:
         raise HandoffError(f"no verdict for {', '.join(missing)}: give one verdict per symbol")
@@ -147,10 +182,11 @@ def validate_portfolio(
     max_weight: float,
     max_total_weight: float,
     reason_max_chars: int,
+    required: Collection[str] = (),
 ) -> list[PortfolioPosition]:
     """At most `max_positions` unique stocks from `allowed`, each weight in [min, max], their sum at most `max_total_weight`.
 
-    An empty list is valid: it means everything goes to the parking instrument.
+    An empty list is valid: it means everything goes to the parking instrument. Every symbol in `required` must be held.
     """
     items = _items(raw, "positions")
     if len(items) > max_positions:
@@ -169,6 +205,10 @@ def validate_portfolio(
         if not min_weight - _EPS <= weight <= max_weight + _EPS:
             raise HandoffError(f"the weight for {symbol} is {weight:.4f}: it must be between {min_weight} and {max_weight}")
         positions.append(PortfolioPosition(symbol, weight, _reason(item, symbol, reason_max_chars)))
+    held = {position.symbol for position in positions}
+    for symbol in required:
+        if symbol not in held:
+            raise HandoffError(f"{symbol} failed once and is kept until a second consecutive fail: include it with a weight of at least {min_weight}")
     total = sum(position.weight for position in positions)
     if total > max_total_weight + _EPS:
         raise HandoffError(f"the weights sum to {total:.4f}: they must sum to at most {max_total_weight:.2f}")
@@ -192,11 +232,11 @@ class HandoffRecorder:
     def expect_ranking(self, candidates: Sequence[str]) -> None:
         self._arm(RANKING, {"candidates": list(candidates)})
 
-    def expect_verdicts(self, symbols: Sequence[str]) -> None:
-        self._arm(VERDICTS_STAGE, {"expected": list(symbols)})
+    def expect_verdicts(self, symbols: Sequence[str], previous: Mapping[str, str] | None = None) -> None:
+        self._arm(VERDICTS_STAGE, {"expected": list(symbols), "previous": dict(previous or {})})
 
-    def expect_portfolio(self, allowed: Sequence[str]) -> None:
-        self._arm(PORTFOLIO, {"allowed": list(allowed)})
+    def expect_portfolio(self, allowed: Sequence[str], required: Sequence[str] = ()) -> None:
+        self._arm(PORTFOLIO, {"allowed": list(allowed), "required": list(required)})
 
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
         self._stage, self._context = stage, context
@@ -223,7 +263,9 @@ class HandoffRecorder:
             if stage == RANKING:
                 value = validate_ranking(raw, candidates=self._context["candidates"], top_n=params.research_top_n, reason_max_chars=params.reason_max_chars)
             elif stage == VERDICTS_STAGE:
-                value = validate_verdicts(raw, expected=self._context["expected"], reason_max_chars=params.reason_max_chars)
+                value = validate_verdicts(
+                    raw, expected=self._context["expected"], reason_max_chars=params.reason_max_chars, previous=self._context["previous"]
+                )
             else:
                 value = validate_portfolio(
                     raw,
@@ -233,6 +275,7 @@ class HandoffRecorder:
                     max_weight=params.max_weight,
                     max_total_weight=params.max_total_weight,
                     reason_max_chars=params.reason_max_chars,
+                    required=self._context["required"],
                 )
         except HandoffError as exc:
             return self._fail(str(exc))
@@ -255,7 +298,7 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         return recorder.submit(RANKING, ideas)
 
     def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
-        """Submit one verdict per symbol you were asked about: objects with symbol, verdict (survive or fail) and reason."""
+        """Submit one verdict per symbol you were asked about: objects with symbol, verdict (survive or fail), reason, concern (for a fail) and what_changed (when the verdict changed)."""
         return recorder.submit(VERDICTS_STAGE, verdicts)
 
     def submit_portfolio(positions: list[dict[str, Any]]) -> dict[str, Any]:

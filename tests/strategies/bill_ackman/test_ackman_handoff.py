@@ -94,14 +94,14 @@ def test_the_not_a_candidate_message_lists_the_candidates() -> None:
 # --- verdicts -----------------------------------------------------------------------------------
 
 
-def _verdict(symbol: str, verdict: Any = "survive", reason: str = "debt is fine") -> dict[str, Any]:
-    return {"symbol": symbol, "verdict": verdict, "reason": reason}
+def _verdict(symbol: str, verdict: Any = "survive", reason: str = "debt is fine", **extra: Any) -> dict[str, Any]:
+    return {"symbol": symbol, "verdict": verdict, "reason": reason, **extra}
 
 
 def test_valid_verdicts_cover_exactly_the_asked_symbols() -> None:
-    verdicts = validate_verdicts([_verdict("aaa", " FAIL "), _verdict("BBB")], expected=["AAA", "BBB"], reason_max_chars=300)
+    verdicts = validate_verdicts([_verdict("aaa", " FAIL ", concern=" Debt "), _verdict("BBB")], expected=["AAA", "BBB"], reason_max_chars=300)
 
-    assert verdicts == [Verdict("AAA", "fail", "debt is fine"), Verdict("BBB", "survive", "debt is fine")]
+    assert verdicts == [Verdict("AAA", "fail", "debt is fine", concern="debt"), Verdict("BBB", "survive", "debt is fine")]
 
 
 @pytest.mark.parametrize(
@@ -120,6 +120,42 @@ def test_valid_verdicts_cover_exactly_the_asked_symbols() -> None:
 def test_invalid_verdicts_are_refused(raw: Any, message: str) -> None:
     with pytest.raises(HandoffError, match=message):
         validate_verdicts(raw, expected=["AAA", "BBB"], reason_max_chars=300)
+
+
+@pytest.mark.parametrize("concern", [None, "", "lawsuit", 3])
+def test_a_fail_needs_a_concern_from_the_list(concern: Any) -> None:
+    with pytest.raises(HandoffError, match="needs a concern: one of debt, margin, competition, management, accounting, valuation"):
+        validate_verdicts([_verdict("AAA", "fail", concern=concern)], expected=["AAA"], reason_max_chars=300)
+
+
+def test_a_survive_drops_any_concern() -> None:
+    (verdict,) = validate_verdicts([_verdict("AAA", concern="debt")], expected=["AAA"], reason_max_chars=300)
+
+    assert verdict.concern is None
+
+
+def test_a_flip_needs_what_changed() -> None:
+    with pytest.raises(HandoffError, match="AAA was 'survive' at the previous review: say in what_changed what changed since then"):
+        validate_verdicts([_verdict("AAA", "fail", concern="debt")], expected=["AAA"], reason_max_chars=300, previous={"AAA": "survive"})
+
+
+def test_a_flip_with_what_changed_is_accepted_and_kept() -> None:
+    (verdict,) = validate_verdicts(
+        [_verdict("AAA", "fail", concern="margin", what_changed=" margin fell 8 points in the new 10-K ")], expected=["AAA"], reason_max_chars=300, previous={"AAA": "survive"}
+    )
+
+    assert verdict.what_changed == "margin fell 8 points in the new 10-K"
+
+
+def test_an_unchanged_verdict_or_a_new_symbol_needs_no_what_changed() -> None:
+    verdicts = validate_verdicts([_verdict("AAA", "fail", concern="debt"), _verdict("BBB")], expected=["AAA", "BBB"], reason_max_chars=300, previous={"AAA": "fail"})
+
+    assert [verdict.what_changed for verdict in verdicts] == [None, None]
+
+
+def test_what_changed_is_length_capped_like_a_reason() -> None:
+    with pytest.raises(HandoffError, match="what_changed for AAA is 11 characters: keep it under 10"):
+        validate_verdicts([_verdict("AAA", reason="short", what_changed="x" * 11)], expected=["AAA"], reason_max_chars=10, previous={"AAA": "fail"})
 
 
 # --- portfolio ----------------------------------------------------------------------------------
@@ -170,6 +206,24 @@ def test_an_invalid_portfolio_is_refused(raw: Any, message: str) -> None:
 def test_with_nothing_allowed_the_refusal_says_to_submit_an_empty_list() -> None:
     with pytest.raises(HandoffError, match="empty list"):
         _portfolio([_position("AAA", 0.2)], allowed=[])
+
+
+def test_a_required_holding_must_stay_in_the_portfolio() -> None:
+    with pytest.raises(HandoffError, match="CCC failed once and is kept until a second consecutive fail: include it with a weight of at least 0.05"):
+        validate_portfolio([_position("AAA", 0.3)], allowed=["AAA", "CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
+
+
+def test_an_empty_portfolio_is_refused_while_a_holding_is_required() -> None:
+    with pytest.raises(HandoffError, match="CCC failed once"):
+        validate_portfolio([], allowed=["CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
+
+
+def test_a_required_holding_may_be_shrunk_to_the_minimum_weight() -> None:
+    positions = validate_portfolio(
+        [_position("AAA", 0.3), _position("CCC", 0.05)], allowed=["AAA", "CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300
+    )
+
+    assert [position.symbol for position in positions] == ["AAA", "CCC"]
 
 
 # --- the recorder and the tools -------------------------------------------------------------------
@@ -255,6 +309,19 @@ def test_arming_a_stage_clears_the_previous_submission_and_error() -> None:
     assert not recorder.submitted
     assert recorder.submission is None
     assert recorder.last_error is None
+
+
+def test_the_recorder_checks_flips_and_required_holdings_against_what_it_was_armed_with() -> None:
+    recorder = _recorder()
+    tools = submit_tools(recorder)
+
+    recorder.expect_verdicts(["AAA"], previous={"AAA": "survive"})
+    assert "what_changed" in tools["submit_verdicts"]([_verdict("AAA", "fail", concern="debt")])["error"]
+    assert tools["submit_verdicts"]([_verdict("AAA", "fail", concern="debt", what_changed="debt doubled")]) == {"status": "recorded"}
+
+    recorder.expect_portfolio(["AAA", "CCC"], required=["CCC"])
+    assert "CCC failed once" in tools["submit_portfolio"]([_position("AAA", 0.3)])["error"]
+    assert tools["submit_portfolio"]([_position("AAA", 0.3), _position("CCC", 0.1)]) == {"status": "recorded"}
 
 
 def test_each_stage_validates_with_the_recorders_parameters() -> None:

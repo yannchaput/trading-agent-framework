@@ -89,7 +89,12 @@ def ranks(*symbols: str) -> Step:
 
 
 def judges(**verdicts: str) -> Step:
-    return lambda tools, ctx: tools["submit_verdicts"]([{"symbol": symbol, "verdict": verdict, "reason": f"{verdict} reason"} for symbol, verdict in verdicts.items()])
+    return lambda tools, ctx: tools["submit_verdicts"](
+        [
+            {"symbol": symbol, "verdict": verdict, "reason": f"{verdict} reason", "what_changed": "new facts", **({"concern": "debt"} if verdict == "fail" else {})}
+            for symbol, verdict in verdicts.items()
+        ]
+    )
 
 
 def holds(**weights: float) -> Step:
@@ -312,7 +317,7 @@ def test_a_holding_the_screen_rejected_on_quality_fails_by_code_and_never_reache
 
     assert h.short_seller.calls == []
     (line,) = h.log_lines()
-    assert line["verdicts"] == [{"symbol": "HHH", "verdict": "fail", "reason": "screen: negative_fcf", "source": "screen"}]
+    assert line["verdicts"] == [{"symbol": "HHH", "verdict": "fail", "reason": "screen: negative_fcf", "concern": None, "what_changed": None, "source": "screen"}]
     assert h.store.load().fail_counts == {"HHH": 1}
     assert h.trader.calls[0]["context"]["allowed"][0]["verdict_reason"] == "screen: negative_fcf"
 
