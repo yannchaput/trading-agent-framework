@@ -92,7 +92,8 @@ Not doing:
   `{"error": "tool budget of {budget} calls spent; {blocked_tool} was not run. Finish now: call {exempt_tools}."}`
   (or, with no exempt tools, `"... Answer now without calling another tool."`) without running. The template has no
   tool names: `blocked_tool` is read from the refused call, `exempt_tools` and `budget` come from the caller. Both
-  options default to `None`, which adds no middleware, so other strategies are unchanged.
+  options default to `None`: the middleware is installed on every agent but does nothing without a budget, so
+  other strategies are unchanged.
   Ackman creates the short seller with `exempt_tools=["submit_verdicts"]` and runs it with
   `tool_budget = 2 x len(to_judge)`, matching the prompt's "one or two checks per name". The budget is per run because
   D4 makes the review set vary from 1 to 13 names.

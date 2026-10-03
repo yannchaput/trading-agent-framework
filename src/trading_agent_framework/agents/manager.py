@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -96,15 +97,39 @@ def _parse_glm_tool_call(content: Any, valid_names: set[str]) -> tuple[str, dict
     return name_match.group(1), arguments
 
 
+class _ToolBudget:
+    """One agent's tool-call budget for the current run: set by `AgentHandle.run`, enforced by `_tool_budget_middleware`."""
+
+    def __init__(self) -> None:
+        self.limit: int | None = None
+        self.used = 0
+        self.lock = threading.Lock()  # LangGraph runs one turn's tool calls on pool threads
+
+
+def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[str]) -> str:
+    """The error a call past the budget gets instead of running; names only the caller's own tools."""
+    spent = f"tool budget of {budget} calls spent; {blocked_tool} was not run."
+    if exempt_tools:
+        return f"{spent} Finish now: call {' or '.join(exempt_tools)}."
+    return f"{spent} Answer now without calling another tool."
+
+
 class AgentHandle:
     """A single named agent, built once by `AgentManager.create` and run repeatedly."""
 
-    def __init__(self, name: str, agent: Any) -> None:
+    def __init__(self, name: str, agent: Any, budget: _ToolBudget | None = None) -> None:
         self.name = name
         self._agent = agent
+        self._budget = budget or _ToolBudget()
 
     def run(
-        self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None
+        self,
+        task_prompt: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        run_id: str | None = None,
+        force_tool: str | None = None,
+        tool_budget: int | None = None,
     ) -> AgentRunResult:
         """`run_id` defaults to a fresh id (one per run: memory tools dedupe repeats inside it).
 
@@ -118,9 +143,16 @@ class AgentHandle:
         the model to follow a text instruction -- for a corrective retry after the model narrated a
         decision without ever calling the tool that should have recorded it. Later turns in the same
         run are left unforced.
+
+        `tool_budget`, when given, caps this run's tool calls: past it, every tool but the agent's
+        `exempt_tools` (see `AgentManager.create`) returns an `{"error": ...}` without running, so the
+        model finishes with what it has instead of overflowing its context. Each run starts a fresh count.
         """
+        if tool_budget is not None and tool_budget < 0:
+            raise ValueError(f"tool_budget must be at least 0, got {tool_budget}")
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         run_id = run_id or uuid.uuid4().hex
+        self._budget.limit, self._budget.used = tool_budget, 0
         try:
             with agent_call_context(run_id=run_id, force_tool=force_tool):
                 raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
@@ -128,6 +160,8 @@ class AgentHandle:
             return parse_agent_messages(raw_result["messages"])
         except Exception as exc:
             raise AgentError(f"agent {self.name!r} failed: {exc}") from exc
+        finally:
+            self._budget.limit = None
 
 
 class AgentManager:
@@ -216,6 +250,35 @@ class AgentManager:
 
         return force_tool_choice
 
+    def _tool_budget_middleware(self, budget: _ToolBudget, exempt_tools: Sequence[str]) -> Any:
+        """Middleware for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
+
+        A no-op when the run has no budget (the default). A refused call never runs: its result is an
+        `{"error": ...}` the model can act on, the same feedback shape as a tool's own refusal. Exempt
+        calls are neither counted nor refused.
+        """
+        from langchain.agents.middleware import wrap_tool_call
+        from langchain_core.messages import ToolMessage
+
+        exempt = tuple(exempt_tools)
+
+        @wrap_tool_call
+        def enforce_tool_budget(request: Any, handler: Callable[[Any], Any]) -> Any:
+            name = request.tool_call["name"]
+            if budget.limit is None or name in exempt:
+                return handler(request)
+            with budget.lock:  # check-and-increment is atomic; the tool itself runs outside the lock
+                refused = budget.used >= budget.limit
+                if not refused:
+                    budget.used += 1
+            if refused:
+                logger.log_warning(f"tool budget of {budget.limit} calls spent: {name} was refused")
+                error = {"error": _tool_budget_message(budget.limit, name, exempt)}
+                return ToolMessage(content=json.dumps(error), tool_call_id=request.tool_call["id"], name=name)
+            return handler(request)
+
+        return enforce_tool_budget
+
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
 
@@ -260,6 +323,7 @@ class AgentManager:
         tools: Sequence[Callable[..., Any] | BaseTool] | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
+        exempt_tools: Sequence[str] | None = None,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
 
@@ -273,23 +337,31 @@ class AgentManager:
         model's `generation_config.json`). Like `timeout_seconds`, it only applies when `model` is a string;
         a pre-built `BaseChatModel` keeps its own sampling settings. The telemetry summary records the
         temperature the chat model actually has.
+
+        `exempt_tools` names the tools a per-run `tool_budget` (see `AgentHandle.run`) never refuses,
+        typically the tool the agent must end with; without a budget it changes nothing.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
 
         chat_model = self._resolve_model(model, timeout_seconds, temperature)
+        budget = _ToolBudget()
         try:
             from langchain.agents import create_agent
 
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
-            middleware = [self._tool_call_repair_middleware(glm_format=glm_format), self._forced_tool_choice_middleware()]
+            middleware = [
+                self._tool_call_repair_middleware(glm_format=glm_format),
+                self._forced_tool_choice_middleware(),
+                self._tool_budget_middleware(budget, exempt_tools or ()),
+            ]
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
         except Exception as exc:
             raise AgentError(f"failed to create agent {name!r}: {exc}") from exc
 
-        handle = AgentHandle(name, agent)
+        handle = AgentHandle(name, agent, budget)
         self._agents[name] = handle
         self._temperatures[name] = getattr(chat_model, "temperature", None)
         return handle
