@@ -723,3 +723,51 @@ def test_a_flip_without_what_changed_is_refused_and_corrected(tmp_path: Path) ->
     assert "HHH was 'survive' at the previous review" in h.short_seller.calls[1]["task"]
     verdict = h.log_lines()[0]["verdicts"][0]
     assert (verdict["verdict"], verdict["concern"], verdict["what_changed"]) == ("fail", "debt", "new facts")
+
+
+# --- final-review fixes ---------------------------------------------------------------------------------
+
+
+def test_more_pending_fails_than_max_positions_are_capped_so_the_trader_can_still_comply(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([], holdings=[_candidate("AAA"), _candidate("BBB"), _candidate("CCC")])
+    h = _harness(tmp_path, screen, held={"AAA": 10, "BBB": 10, "CCC": 10}, params=AckmanParams(max_positions=2))
+    h.short_seller.steps = [judges(AAA="fail", BBB="fail", CCC="fail")]
+    keeps_required: Step = lambda tools, ctx: tools["submit_portfolio"]([{"symbol": s, "weight": 0.1, "reason": "kept"} for s in ctx["required"]])  # noqa: E731
+    h.trader.steps = [keeps_required]
+
+    with caplog.at_level(logging.WARNING):
+        outcome = h.run()
+
+    assert outcome.completed is True
+    context = h.trader.calls[0]["context"]
+    assert len(context["required"]) == 2 and len(h.trader.calls) == 1
+    assert {entry["symbol"] for entry in context["allowed"]} == {"AAA", "BBB", "CCC"}  # the left-out one stays allowed
+    left_out = ({"AAA", "BBB", "CCC"} - set(context["required"])).pop()
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("pending fail" in message and left_out in message for message in warnings)
+
+
+def test_a_verdict_given_by_code_is_not_remembered_as_the_short_sellers_previous_verdict(tmp_path: Path) -> None:
+    screen = FakeScreen([], holdings=[_candidate("AAA")], holding_rejections={"HHH": "negative_fcf"})
+    h = _harness(tmp_path, screen, held={"AAA": 10, "HHH": 100})
+    h.short_seller.steps = [judges(AAA="survive")]
+    h.trader.steps = [holds(AAA=0.3, HHH=0.2)]
+
+    h.run()
+
+    assert set(h.store.load().last_verdicts) == {"AAA"}
+    assert h.store.load().fail_counts == {"HHH": 1}  # the code verdict still counts
+
+
+def test_a_cooling_holding_is_judged_but_not_allowed_and_is_sold(tmp_path: Path) -> None:
+    screen = FakeScreen([_candidate("AAA", 1)], holdings=[_candidate("HHH")])
+    h = _harness(tmp_path, screen, held={"HHH": 100}, state=ReviewState(cooldowns={"HHH": 2}))
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="survive")]
+    h.trader.steps = [holds(AAA=0.3)]
+
+    h.run()
+
+    assert "HHH" in [entry["fact_sheet"]["symbol"] for entry in h.short_seller.calls[0]["context"]["to_judge"]]
+    assert [entry["symbol"] for entry in h.trader.calls[0]["context"]["allowed"]] == ["AAA"]
+    assert ("HHH", "sell", 100.0) in h.orders

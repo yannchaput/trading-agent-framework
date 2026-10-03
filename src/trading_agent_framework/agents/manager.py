@@ -265,7 +265,7 @@ class AgentManager:
         @wrap_tool_call
         def enforce_tool_budget(request: Any, handler: Callable[[Any], Any]) -> Any:
             name = request.tool_call["name"]
-            if budget.limit is None or name in exempt:
+            if budget.limit is None or name in exempt or request.tool is None:  # an unknown tool name: ToolNode rejects it, uncounted
                 return handler(request)
             with budget.lock:  # check-and-increment is atomic; the tool itself runs outside the lock
                 refused = budget.used >= budget.limit

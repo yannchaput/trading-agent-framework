@@ -54,6 +54,16 @@ def test_calls_past_the_budget_are_refused_and_never_run() -> None:
     assert json.loads(refused.result) == {"error": "tool budget of 2 calls spent; lookup was not run. Finish now: call submit."}
 
 
+def test_an_unknown_tool_name_does_not_use_up_the_budget() -> None:
+    seen: list[str] = []
+    handle = _agent(seen, _calls(("bogus", {})), _calls(("lookup", {"symbol": "A"})), AIMessage(content="done"))
+
+    result = handle.run("go", tool_budget=1)
+
+    assert seen == ["A"]  # bogus was not counted, so lookup still had the one slot
+    assert not any("tool budget" in call.result for call in result.tool_calls)
+
+
 def test_several_calls_in_one_turn_count_one_by_one(monkeypatch: pytest.MonkeyPatch) -> None:
     # LangGraph runs one turn's tool calls on pool threads, so which two of A/B/C get the budget is
     # thread-order dependent: assert the count, not the names. Reading `used` is slowed down so that,
