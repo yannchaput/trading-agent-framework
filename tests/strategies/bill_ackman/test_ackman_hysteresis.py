@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from trading_agent_framework.strategies.bill_ackman.hysteresis import apply_verdicts
+from trading_agent_framework.strategies.bill_ackman.hysteresis import advance_cooldowns, apply_verdicts
 
 
 def _apply(*, holdings=(), ranking=(), verdicts, fail_counts=None, forced_exit_fails: int = 2):
@@ -103,3 +103,35 @@ def test_several_holdings_are_handled_independently() -> None:
     assert outcome.pending == ["C"]
     assert outcome.fail_counts == {"B": 2, "C": 1}
     assert outcome.allowed == ["A", "C"]
+
+
+def test_a_forced_exit_starts_a_cooldown() -> None:
+    assert advance_cooldowns({}, forced_exits=["HLT"], reviews=4) == {"HLT": 4}
+
+
+def test_each_completed_review_counts_every_cooldown_down_and_drops_it_at_zero() -> None:
+    assert advance_cooldowns({"A": 3, "B": 1}, forced_exits=[], reviews=4) == {"A": 2}
+
+
+def test_a_forced_exit_keeps_the_symbol_out_of_the_next_reviews_exactly() -> None:
+    cooldowns = advance_cooldowns({}, forced_exits=["HLT"], reviews=4)  # forced out at review R
+    for _ in range(4):  # reviews R+1 .. R+4 start with HLT still cooling down
+        assert "HLT" in cooldowns
+        cooldowns = advance_cooldowns(cooldowns, forced_exits=[], reviews=4)
+    assert "HLT" not in cooldowns  # back at review R+5
+
+
+def test_a_symbol_forced_out_again_restarts_its_cooldown() -> None:
+    assert advance_cooldowns({"HLT": 2}, forced_exits=["HLT"], reviews=4) == {"HLT": 4}
+
+
+def test_zero_reviews_disables_the_cooldown() -> None:
+    assert advance_cooldowns({}, forced_exits=["HLT"], reviews=0) == {}
+
+
+def test_the_input_cooldowns_are_not_modified() -> None:
+    before = {"A": 2}
+
+    advance_cooldowns(before, forced_exits=["B"], reviews=4)
+
+    assert before == {"A": 2}

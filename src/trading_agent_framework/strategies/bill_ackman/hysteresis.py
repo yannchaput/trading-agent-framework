@@ -2,7 +2,8 @@
 
 A holding that gets the verdict `fail` has its counter raised; at `forced_exit_fails` consecutive fails it is a
 forced exit (code sells it whatever the trader submits). A `survive` resets the counter. A new candidate that
-fails is simply not allowed and has no counter.
+fails is simply not allowed and has no counter. A forced exit then stays out of the candidates and the allowed set
+for a few completed reviews (`advance_cooldowns`).
 """
 
 from __future__ import annotations
@@ -62,3 +63,15 @@ def apply_verdicts(
             allowed.append(symbol)
     allowed.extend(symbol for symbol in pending if symbol not in allowed)
     return HysteresisOutcome(fail_counts=counts, forced_exits=forced_exits, pending=pending, allowed=allowed)
+
+
+def advance_cooldowns(cooldowns: Mapping[str, int], *, forced_exits: Sequence[str], reviews: int) -> dict[str, int]:
+    """The cooldowns after a completed review: each one counts down (dropped at 0), then each forced exit starts at `reviews`.
+
+    The pipeline keeps a symbol with a cooldown out of the researcher's candidates and the trader's allowed set, so
+    a forced exit at review R stays out from R+1 through R+`reviews`. `reviews` = 0 disables cooldowns.
+    """
+    after = {symbol: left - 1 for symbol, left in cooldowns.items() if left > 1}
+    if reviews > 0:
+        after.update(dict.fromkeys(forced_exits, reviews))
+    return after
