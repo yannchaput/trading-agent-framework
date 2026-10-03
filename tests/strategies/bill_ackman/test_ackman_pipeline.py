@@ -77,8 +77,10 @@ class FakeAgent:
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
         self.tool_calls: list[ToolCallRecord] = []
 
-    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult:
-        self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool})
+    def run(
+        self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
+    ) -> AgentRunResult:
+        self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         if self.steps:
             self.steps.pop(0)(self.tools, context)
         return AgentRunResult(output="done", tool_calls=list(self.tool_calls))
@@ -244,7 +246,7 @@ def test_the_agents_get_the_context_the_design_promises(tmp_path: Path) -> None:
     assert researcher["current_datetime"].startswith("2026-09-14T10:00")
     assert [sheet["symbol"] for sheet in researcher["candidates"]] == ["AAA"]
     assert researcher["holdings"] == [{"symbol": "HHH", "weight": 0.5}]
-    assert researcher["previous_ranking"] == ["OLD"]
+    assert "previous_ranking" not in researcher  # no anchoring on the last ranking
     seller = h.short_seller.calls[0]["context"]["to_judge"]
     assert [entry["fact_sheet"]["symbol"] for entry in seller] == ["AAA", "HHH"]  # the ranked first, then the holdings
     assert seller[0]["researcher_reason"] == "AAA is simple" and seller[0]["held"] is False
@@ -677,3 +679,47 @@ def test_every_agent_tool_call_is_logged_at_debug_level(tmp_path: Path, caplog: 
     assert len(lines) == 1
     assert lines[0].levelno == logging.DEBUG
     assert "short_seller" in lines[0].getMessage() and "'AAA'" in lines[0].getMessage()
+
+
+# --- short-seller memory and budget, researcher anchoring ---------------------------------------------
+
+_SURVIVED = {"verdict": "survive", "reason": "fine", "concern": None, "date": "2026-09-07"}
+
+
+def test_the_short_seller_sees_its_previous_verdict_and_gets_two_tool_calls_per_name(tmp_path: Path) -> None:
+    screen = FakeScreen([_candidate("AAA", 1)], holdings=[_candidate("HHH")])
+    h = _harness(tmp_path, screen, held={"HHH": 100}, state=ReviewState(last_verdicts={"HHH": _SURVIVED}))
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="survive")]
+    h.trader.steps = [holds(AAA=0.3, HHH=0.3)]
+
+    h.run()
+
+    to_judge = {entry["fact_sheet"]["symbol"]: entry for entry in h.short_seller.calls[0]["context"]["to_judge"]}
+    assert to_judge["HHH"]["previous_verdict"] == _SURVIVED
+    assert to_judge["AAA"]["previous_verdict"] is None
+    assert h.short_seller.calls[0]["tool_budget"] == 4
+    assert h.researcher.calls[0]["tool_budget"] is None and h.trader.calls[0]["tool_budget"] is None
+
+
+def test_the_forced_retry_keeps_the_short_sellers_budget(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([], holdings=[_candidate("HHH")]), held={"HHH": 100})
+    h.short_seller.steps = [does_nothing, judges(HHH="survive")]
+    h.trader.steps = [holds(HHH=0.3)]
+
+    h.run()
+
+    assert [call["tool_budget"] for call in h.short_seller.calls] == [2, 2]
+
+
+def test_a_flip_without_what_changed_is_refused_and_corrected(tmp_path: Path) -> None:
+    h = _harness(tmp_path, FakeScreen([], holdings=[_candidate("HHH")]), held={"HHH": 100}, state=ReviewState(last_verdicts={"HHH": _SURVIVED}))
+    bare_fail: Step = lambda tools, ctx: tools["submit_verdicts"]([{"symbol": "HHH", "verdict": "fail", "reason": "debt up", "concern": "debt"}])  # noqa: E731
+    h.short_seller.steps = [bare_fail, judges(HHH="fail")]
+    h.trader.steps = [holds(HHH=0.2)]
+
+    h.run()
+
+    assert "HHH was 'survive' at the previous review" in h.short_seller.calls[1]["task"]
+    verdict = h.log_lines()[0]["verdicts"][0]
+    assert (verdict["verdict"], verdict["concern"], verdict["what_changed"]) == ("fail", "debt", "new facts")

@@ -62,7 +62,9 @@ class _Handle:
     def __init__(self, tools: dict[str, Callable[..., dict[str, Any]]], script: Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]) -> None:
         self.tools, self.script, self.runs = tools, script, 0
 
-    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult:
+    def run(
+        self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
+    ) -> AgentRunResult:
         self.runs += 1
         self.script(self.tools, context)
         return AgentRunResult(output="ok", tool_calls=[])

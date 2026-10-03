@@ -42,7 +42,9 @@ class ScreenLike(Protocol):
 
 
 class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult: ...
+    def run(
+        self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
+    ) -> AgentRunResult: ...
 
 
 class AgentLookup(Protocol):
@@ -142,7 +144,6 @@ class ReviewPipeline:
                 "current_datetime": now.isoformat(),
                 "candidates": [sheets[symbol] for symbol in symbols],
                 "holdings": [{"symbol": symbol, "weight": weight} for symbol, weight in weights.items()],
-                "previous_ranking": state.last_ranking,
             }
             self._run_stage("researcher", "submit_ranking", researcher_task(min(params.research_top_n, len(symbols))), context)
             ranking = self._recorder.submission
@@ -161,7 +162,8 @@ class ReviewPipeline:
         # 6. Short seller.
         to_judge = [symbol for symbol in review_set if symbol not in verdicts]
         if to_judge:
-            self._recorder.expect_verdicts(to_judge)
+            previous = {symbol: state.last_verdicts[symbol] for symbol in to_judge if symbol in state.last_verdicts}
+            self._recorder.expect_verdicts(to_judge, previous={symbol: record["verdict"] for symbol, record in previous.items()})
             context = {
                 "current_datetime": now.isoformat(),
                 "to_judge": [
@@ -171,11 +173,14 @@ class ReviewPipeline:
                         "held": symbol in holdings,
                         "current_weight": weights.get(symbol, 0.0),
                         "fail_count": state.fail_counts.get(symbol, 0),
+                        "previous_verdict": previous.get(symbol),
                     }
                     for symbol in to_judge
                 ],
             }
-            self._run_stage("short_seller", "submit_verdicts", SHORT_SELLER_TASK, context)
+            # One or two checks per name; past the budget only submit_verdicts runs (it is exempt), so a long
+            # review set cannot overflow the model's context.
+            self._run_stage("short_seller", "submit_verdicts", SHORT_SELLER_TASK, context, tool_budget=2 * len(to_judge))
             for verdict in self._recorder.submission:
                 verdicts[verdict.symbol] = verdict
                 sources[verdict.symbol] = "llm"
@@ -264,15 +269,18 @@ class ReviewPipeline:
 
     # --- helpers -----------------------------------------------------------------------------------
 
-    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any]) -> None:
-        """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon."""
+    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> None:
+        """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
+
+        `tool_budget` caps each attempt's research tool calls (see `AgentHandle.run`).
+        """
         agent = self._agents[agent_name]
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
         for _ in range(2):
             self._recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
             try:
-                result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool)
+                result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget)
                 self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
