@@ -6,7 +6,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -208,7 +208,7 @@ def load_agent_calls(ref: RunRef) -> pd.DataFrame | None:
     try:
         conn = sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True)
         try:
-            df = pd.read_sql_query(f"SELECT {_AGENT_CALL_COLUMNS} FROM llm_calls WHERE run_id = ? ORDER BY id", conn, params=(run_id,))
+            df = pd.read_sql_query(f"SELECT {_AGENT_CALL_COLUMNS} FROM llm_calls WHERE run_id = ? ORDER BY id", conn, params=[run_id])
         finally:
             conn.close()
     except sqlite3.Error, pd.errors.DatabaseError:
@@ -284,7 +284,7 @@ def load_equity_curve(ref: RunRef) -> list[dict[str, Any]]:
         return []
     if not isinstance(df.index, pd.DatetimeIndex):
         df.index = pd.to_datetime(df.index)
-    return [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in df["portfolio_value"].sort_index().items()]
+    return [{"date": d.strftime("%Y-%m-%d"), "value": float(v)} for d, v in cast(Any, df["portfolio_value"].sort_index()).items()]
 
 
 def _compound_monthly_returns(daily_returns: pd.Series) -> list[float] | None:
@@ -326,12 +326,12 @@ def load_cumulative_returns(ref: RunRef) -> dict[str, Any] | None:
         df.index = pd.to_datetime(df.index)
     df = df.sort_index()
 
-    daily_ret = df["return"].fillna(0.0)
+    daily_ret = cast(pd.Series, df["return"].fillna(0.0))
     strategy_cum = (1 + daily_ret).cumprod() - 1
     benchmark_symbol = get_benchmark_symbol(ref)
     dates = [d.strftime("%Y-%m-%d") for d in df.index]
 
-    has_benchmark = "benchmark_close" in df.columns and df["benchmark_close"].notna().any()
+    has_benchmark = "benchmark_close" in df.columns and bool(df["benchmark_close"].notna().any())
     if not has_benchmark:
         return {
             "dates": dates,
@@ -346,7 +346,7 @@ def load_cumulative_returns(ref: RunRef) -> dict[str, Any] | None:
             "benchmark_daily_returns": None,
         }
 
-    bm_daily_ret = df["benchmark_return"].fillna(0.0)
+    bm_daily_ret = cast(pd.Series, df["benchmark_return"].fillna(0.0))
     bm_cum = (1 + bm_daily_ret).cumprod() - 1
 
     return {
@@ -404,7 +404,7 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
         return None
 
     # Only filled trades carry price/qty
-    fills = df[df["status"] == "fill"].copy()
+    fills = cast(pd.DataFrame, df[df["status"] == "fill"]).copy()
     if fills.empty:
         return None
 
@@ -416,7 +416,7 @@ def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
     settings = load_settings(ref)
     start_dt: pd.Timestamp | None = None
     if settings and settings.backtesting_start:
-        start_dt = pd.Timestamp(settings.backtesting_start)
+        start_dt = cast(pd.Timestamp, pd.Timestamp(settings.backtesting_start))
         if start_dt.tz is None:
             start_dt = start_dt.tz_localize("UTC")
         else:
@@ -497,9 +497,9 @@ def load_indicator_lines(ref: RunRef) -> dict[str, list[dict[str, Any]]] | None:
     df["datetime"] = pd.to_datetime(df["datetime"], utc=True)
     df = df.sort_values("datetime", kind="stable")
     panes: dict[str, list[dict[str, Any]]] = {}
-    for (pane, name), group in df.groupby(["plot_name", "name"], sort=False):
+    for (pane, name), group in cast(Any, df.groupby(["plot_name", "name"], sort=False)):
         series = panes.setdefault("Indicators" if pane == _DEFAULT_PANE else str(pane), [])
-        color = group["color"].dropna().iloc[0] if group["color"].notna().any() else None
+        color = group["color"].dropna().iloc[0] if bool(group["color"].notna().any()) else None
         style = str(group["style"].iloc[0])
         series.append(
             {
@@ -531,10 +531,10 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
         return None
     if df.empty or "status" not in df.columns:
         return None
-    fills = df[df["status"] == "fill"].copy()
+    fills = cast(pd.DataFrame, df[df["status"] == "fill"]).copy()
     if fills.empty:
         return None
-    fills["time"] = pd.to_datetime(fills["time"], utc=True).dt.tz_convert(MARKET_TZ)
+    fills["time"] = cast(pd.Series, pd.to_datetime(fills["time"], utc=True)).dt.tz_convert(MARKET_TZ)
     fills = fills.sort_values("time", kind="stable")
 
     closes = pd.Series(dtype=float)
@@ -546,9 +546,9 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
 
     holdings: dict[str, list[float]] = {}  # symbol -> [shares, remaining cost]
     rows: list[dict[str, Any]] = []
-    by_day = dict(tuple(fills.groupby(fills["time"].dt.date, sort=True)))
+    by_day = dict(tuple(cast(Any, fills.groupby(fills["time"].dt.date, sort=True))))
     # Every session of the equity curve gets a row, so a day without trades shows as zero rather than as nothing.
-    for day in sorted(set(by_day) | set(closes.index)):
+    for day in sorted(set(by_day) | set(cast(Any, closes.index))):
         peak = sum(cost for _, cost in holdings.values())
         most = len(holdings)
         for _, fill in by_day.get(day, fills.iloc[0:0]).iterrows():
@@ -565,7 +565,7 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
                 holdings.pop(symbol, None)
             peak = max(peak, sum(c for _, c in holdings.values()))
             most = max(most, len(holdings))
-        earlier = closes[closes.index < day] if not closes.empty else closes
+        earlier = cast(pd.Series, closes[closes.index < day]) if not closes.empty else closes
         base = float(earlier.iloc[-1]) if not earlier.empty else budget
         rows.append(
             {

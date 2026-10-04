@@ -10,7 +10,7 @@ import logging
 import threading
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from zoneinfo import ZoneInfo
 
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
@@ -115,7 +115,7 @@ class YahooBacktestData(BacktestDataSource):
             df = self._fetch(asset, timestep, self._start, self._end)
         if df is None or df.empty:
             return None
-        visible = df[df.index <= cutoff]
+        visible = cast("pd.DataFrame", df[df.index <= cutoff])
         if visible.empty:
             return None
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
@@ -205,7 +205,7 @@ class YahooBacktestData(BacktestDataSource):
             yf_logger.addHandler(logging.NullHandler())
             yf_logger.propagate = False
 
-        return yf.download
+        return cast(DownloadFn, yf.download)
 
 
 def _extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
@@ -221,7 +221,7 @@ def _extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     if isinstance(raw.columns, pd.MultiIndex):
         if symbol not in raw.columns.get_level_values(0):
             return pd.DataFrame()
-        return raw[symbol]
+        return cast("pd.DataFrame", raw[symbol])
     return raw  # a length-1 batch some yfinance versions return flat, not nested
 
 
@@ -248,7 +248,7 @@ def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df = df.droplevel(1, axis=1)
     df.columns = [str(c).lower() for c in df.columns]
-    df = df[list(_OHLCV)].astype("float64").dropna(subset=list(_OHLCV))
+    df = cast("pd.DataFrame", df[list(_OHLCV)]).astype("float64").dropna(subset=list(_OHLCV))
     close_index = [datetime.combine(ts.date(), SESSION_CLOSE, tzinfo=MARKET_TZ) for ts in df.index]
     df.index = pd.DatetimeIndex(close_index, name="timestamp")
     return df.sort_index()

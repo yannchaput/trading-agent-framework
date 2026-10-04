@@ -405,6 +405,7 @@ def _screen_single_ticker(ticker: str) -> dict | None:
     sem = _get_semaphore()
     gate = _get_rate_limit_gate()
 
+    info = None
     for attempt in range(3):
         gate.wait()
         acquired = sem.acquire(timeout=15.0)

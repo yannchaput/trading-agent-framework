@@ -9,6 +9,7 @@ import json
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
+from typing import cast
 
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY, BacktestDataSource
 from trading_agent_framework.entities.asset import Asset
@@ -92,7 +93,7 @@ class CachedDataSource(BacktestDataSource):
             df = pd.read_parquet(path)
         except (OSError, ValueError) as exc:
             raise BacktestDataError(f"Failed to read cache file {path}: {exc}") from exc
-        visible = df[df.index <= cutoff]
+        visible = cast(pd.DataFrame, df[df.index <= cutoff])
         if visible.empty:
             return None
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))

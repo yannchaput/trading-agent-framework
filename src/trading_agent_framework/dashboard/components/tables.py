@@ -1,6 +1,7 @@
 """Styled table components."""
 
 from collections.abc import Sequence
+from typing import cast
 
 import pandas as pd
 import streamlit as st
@@ -101,15 +102,18 @@ def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") 
         "Description": st.column_config.TextColumn("Description"),
     }
 
-    edited_df = st.data_editor(
-        display_df,
-        width="stretch",
-        height="stretch",
-        hide_index=True,
-        column_config=column_config,
-        disabled=disabled_cols,
-        num_rows="fixed",
-        key=key,
+    edited_df = cast(
+        pd.DataFrame,
+        st.data_editor(
+            display_df,
+            width="stretch",
+            height="stretch",
+            hide_index=True,
+            column_config=column_config,
+            disabled=disabled_cols,
+            num_rows="fixed",
+            key=key,
+        ),
     )
 
     selected_indices = edited_df.index[edited_df["Select"]].tolist()

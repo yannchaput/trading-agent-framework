@@ -34,6 +34,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from typing import cast
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 
@@ -136,11 +137,11 @@ def evaluate_trailing_stop(
     if (trail_price is None) == (trail_percent is None):
         raise ValueError("a trailing stop needs exactly one of trail_price or trail_percent")
     if side is OrderSide.SELL:
-        level = reference - trail_price if trail_price is not None else reference * (1 - trail_percent / 100)  # ty: ignore[unsupported-operator]
+        level = reference - trail_price if trail_price is not None else reference * (1 - cast(Decimal, trail_percent) / 100)  # ty: ignore[unsupported-operator]
         if bar.low <= level:
             return FillResult(price=min(bar.open, level)), reference
         return None, max(reference, bar.high)
-    level = reference + trail_price if trail_price is not None else reference * (1 + trail_percent / 100)  # ty: ignore[unsupported-operator]
+    level = reference + trail_price if trail_price is not None else reference * (1 + cast(Decimal, trail_percent) / 100)  # ty: ignore[unsupported-operator]
     if bar.high >= level:
         return FillResult(price=max(bar.open, level)), reference
     return None, min(reference, bar.low)

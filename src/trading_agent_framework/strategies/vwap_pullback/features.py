@@ -13,7 +13,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal, cast
 
 import pandas as pd
 
@@ -57,13 +57,13 @@ def session_slice(df: pd.DataFrame, session_open: datetime, session_close: datet
     Comparing bar START times makes both stamp conventions agree: the pre-market bar that closes at 09:30
     starts at 09:29 and is dropped, the 15:59 bar is kept whatever it is stamped with.
     """
-    starts = minute_starts(df.index, bar_stamp)
-    return df[(starts >= session_open) & (starts < session_close)]
+    starts = minute_starts(cast(pd.DatetimeIndex, df.index), bar_stamp)
+    return cast(pd.DataFrame, df[(starts >= session_open) & (starts < session_close)])
 
 
 def minute_of_session(df: pd.DataFrame, session_open: datetime, bar_stamp: BarStamp) -> pd.Series:
     """Minutes since the open at which each row's bar started (0 = the opening minute)."""
-    starts = minute_starts(df.index, bar_stamp)
+    starts = minute_starts(cast(pd.DatetimeIndex, df.index), bar_stamp)
     return pd.Series(((starts - session_open) // _MINUTE).astype(int), index=df.index)
 
 
@@ -83,10 +83,10 @@ def cumulative_volume_by_minute(df: pd.DataFrame, session_open: datetime, bar_st
         return pd.Series(dtype=float)
     minutes = minute_of_session(df, session_open, bar_stamp)
     cumulative = pd.Series(df["volume"].astype(float).cumsum().to_numpy(), index=minutes.to_numpy())
-    cumulative = cumulative[~cumulative.index.duplicated(keep="last")]
+    cumulative = cast(pd.Series, cumulative[~cumulative.index.duplicated(keep="last")])
     # Illiquid names skip minutes (no trade, no bar). Reindex to every minute and forward-fill so the
     # baseline has a value at each minute RVOL may be asked about.
-    return cumulative.reindex(range(int(cumulative.index.max()) + 1)).ffill().fillna(0.0)
+    return cumulative.reindex(range(int(cast(int, cumulative.index.max())) + 1)).ffill().fillna(0.0)
 
 
 def rvol_baseline(prior_sessions: Sequence[pd.Series]) -> pd.Series:
@@ -134,7 +134,7 @@ def intraday_contexts(
     bench_closes, bench_open = _benchmark_closes(benchmark_df, session_open, bar_stamp, minutes)
     contexts: list[BarContext] = []
     session_high = -math.inf
-    for bucket_value, rows in df.groupby(buckets.to_numpy(), sort=True):
+    for bucket_value, rows in cast(Any, df.groupby(buckets.to_numpy(), sort=True)):
         bucket = int(bucket_value)
         close_time = session_open + timedelta(minutes=(bucket + 1) * minutes)
         last_minute = (bucket + 1) * minutes - 1
@@ -176,7 +176,7 @@ def _benchmark_closes(benchmark_df: pd.DataFrame, session_open: datetime, bar_st
     if benchmark_df.empty:
         return pd.Series(dtype=float), None
     buckets = minute_of_session(benchmark_df, session_open, bar_stamp) // minutes
-    closes = benchmark_df["close"].astype(float).groupby(buckets.to_numpy()).last()
+    closes = cast(pd.Series, benchmark_df["close"].astype(float).groupby(buckets.to_numpy()).last())
     return closes, float(benchmark_df["open"].iloc[0])
 
 
@@ -188,7 +188,7 @@ def _benchmark_return(closes: pd.Series, bench_open: float | None, bucket: int) 
     """
     if not bench_open:
         return 0.0
-    upto = closes[closes.index <= bucket]
+    upto = cast(pd.Series, closes[closes.index <= bucket])
     return 0.0 if upto.empty else float(upto.iloc[-1]) / bench_open - 1
 
 
@@ -202,7 +202,7 @@ def daily_atr(df: pd.DataFrame, length: int) -> float | None:
     """Mean true range of the last `length` daily bars; None with fewer than `length + 1` bars."""
     if len(df) < length + 1:  # the first bar has no previous close, so `length` true ranges need `length + 1` bars
         return None
-    tr = _true_range(df["high"].astype(float), df["low"].astype(float), df["close"].astype(float))
+    tr = _true_range(cast(pd.Series, df["high"].astype(float)), cast(pd.Series, df["low"].astype(float)), cast(pd.Series, df["close"].astype(float)))
     return float(tr.iloc[-length:].mean())
 
 

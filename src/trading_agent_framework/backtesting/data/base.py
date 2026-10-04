@@ -21,7 +21,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from datetime import datetime
-from typing import ClassVar
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -34,7 +33,7 @@ class BacktestDataSource(ABC):
     """Bars and sessions for a backtest run. Never imports a broker; `BacktestBroker`
     depends on this, never the reverse."""
 
-    name: ClassVar[str]
+    name: str
 
     @abstractmethod
     def load(

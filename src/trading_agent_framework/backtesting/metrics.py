@@ -31,7 +31,7 @@ that only ever passed `risk_free_rate=0.0`.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -69,8 +69,8 @@ def compute_metrics(
         "omega_strategy": float(accessor.omega_ratio(risk_free=daily_rf)),
         "max_drawdown_strategy": float(accessor.max_drawdown()),
         "volatility_strategy": float(accessor.annualized_volatility()),
-        "skew_strategy": float(returns.skew()),
-        "kurtosis_strategy": float(returns.kurt()),
+        "skew_strategy": float(cast(float, returns.skew())),
+        "kurtosis_strategy": float(cast(float, returns.kurt())),
         "win_days_pct_strategy": float((returns > 0).mean()),
     }
     metrics.update(_drawdown_stats(returns, suffix="strategy"))
@@ -88,8 +88,8 @@ def compute_metrics(
                 "omega_benchmark": float(bm_accessor.omega_ratio(risk_free=daily_rf)),
                 "max_drawdown_benchmark": float(bm_accessor.max_drawdown()),
                 "volatility_benchmark": float(bm_accessor.annualized_volatility()),
-                "skew_benchmark": float(benchmark_returns.skew()),
-                "kurtosis_benchmark": float(benchmark_returns.kurt()),
+                "skew_benchmark": float(cast(float, benchmark_returns.skew())),
+                "kurtosis_benchmark": float(cast(float, benchmark_returns.kurt())),
                 "win_days_pct_benchmark": float((benchmark_returns > 0).mean()),
             }
         )
@@ -176,15 +176,15 @@ def _relative_stats(returns: pd.Series, benchmark_returns: pd.Series, periods: i
 
 
 def _yearly_table(returns: pd.Series, benchmark_returns: pd.Series | None) -> list[dict[str, Any]]:
-    years = sorted({ts.year for ts in returns.index})
+    years = sorted({ts.year for ts in cast(Any, returns.index)})
     rows: list[dict[str, Any]] = []
     for year in years:
-        mask = returns.index.year == year
+        mask = cast(Any, returns.index).year == year
         strat_ret = float((1 + returns[mask]).prod() - 1)
         bench_ret = None
         won = False
         if benchmark_returns is not None:
-            b_year = benchmark_returns[benchmark_returns.index.year == year]
+            b_year = cast("pd.Series", benchmark_returns[cast(Any, benchmark_returns.index).year == year])
             if not b_year.empty:
                 bench_ret = float((1 + b_year).prod() - 1)
                 won = strat_ret > bench_ret

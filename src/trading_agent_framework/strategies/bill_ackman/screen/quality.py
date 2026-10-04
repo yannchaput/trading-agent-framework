@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from itertools import pairwise
-from typing import Any
+from typing import Any, cast
 
 from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import MAX_FISCAL_YEAR_DAYS, MIN_FISCAL_YEAR_DAYS
 
@@ -123,7 +123,7 @@ def assess(symbol: str, figures: Mapping[str, Any] | None, *, as_of: datetime, p
         rows = [flows.get((field, end)) for field in _REQUIRED_FLOWS]
         if any(row is None for row in rows):
             return "insufficient_history"
-        revenue, operating_income, operating_cash_flow, capex = (row["value"] for row in rows)  # ty: ignore[not-subscriptable]
+        revenue, operating_income, operating_cash_flow, capex = (cast(Any, row)["value"] for row in rows)
         if revenue <= 0:
             return "insufficient_history"
         revenues.append(revenue)

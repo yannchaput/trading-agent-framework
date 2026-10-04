@@ -52,14 +52,14 @@ def market_data_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]
             return {"error": f"no bars for {symbol!r}"}
         rows = [
             {
-                "date": cast(Any, index).isoformat(),
+                "date": index.isoformat(),
                 "open": float(row["open"]),
                 "high": float(row["high"]),
                 "low": float(row["low"]),
                 "close": float(row["close"]),
                 "volume": float(row["volume"]),
             }
-            for index, row in bars.df.iterrows()
+            for index, row in cast(Any, bars.df.iterrows())
         ]
         return {"symbol": symbol.upper(), "timestep": timestep, "bars": rows}
 

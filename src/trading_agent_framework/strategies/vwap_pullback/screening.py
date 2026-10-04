@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 
@@ -59,7 +60,7 @@ def daily_profile(symbol: str, daily: pd.DataFrame, bench_daily: pd.DataFrame | 
     # Need enough bars for both the 20-session momentum (21 closes) and the ATR (length + 1 bars).
     if len(daily) < max(_MOMENTUM_SESSIONS + 1, params.atr_length + 1):
         return None
-    close = daily["close"].astype(float)
+    close = cast(pd.Series, daily["close"].astype(float))
     last_close = float(close.iloc[-1])
     atr = daily_atr(daily, params.atr_length)
     if atr is None or not last_close > 0:
@@ -67,7 +68,7 @@ def daily_profile(symbol: str, daily: pd.DataFrame, bench_daily: pd.DataFrame | 
     dollar_volume = float((close * daily["volume"].astype(float)).tail(_MOMENTUM_SESSIONS).mean())
     momentum = last_close / float(close.iloc[-(_MOMENTUM_SESSIONS + 1)]) - 1
     # Without benchmark data every symbol gets beta 1.0, i.e. RS becomes "return minus the market's return".
-    stock_beta = beta(close, bench_daily["close"], params.beta_lookback_sessions) if bench_daily is not None and not bench_daily.empty else 1.0
+    stock_beta = beta(close, cast(pd.Series, bench_daily["close"]), params.beta_lookback_sessions) if bench_daily is not None and not bench_daily.empty else 1.0
     return DailyProfile(symbol=symbol, last_close=last_close, daily_atr=atr, atr_pct=atr / last_close, dollar_volume=dollar_volume, momentum=momentum, beta=stock_beta)
 
 
@@ -124,7 +125,7 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     z_rs = zscores({s.symbol: s.rs for s in passing})
     z_rvol = zscores({s.symbol: s.rvol for s in passing if s.rvol is not None})
     candidates = [RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3) for s in passing]
-    ranked = sorted(candidates, key=lambda c: (-c.composite, c.symbol))[: params.tracked_size]
+    ranked = sorted(candidates, key=lambda c: (-cast(float, c.composite), c.symbol))[: params.tracked_size]
     # Sticky symbols: a setup that is already impulsing, pulling back or in a trade must keep being
     # tracked even if its ranking fades, otherwise its pullback (the whole point) would never be seen.
     kept = {c.symbol for c in ranked}

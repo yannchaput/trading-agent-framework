@@ -1,7 +1,7 @@
 """Plotly chart builders for the dashboard."""
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -16,11 +16,12 @@ from trading_agent_framework.dashboard.models import BenchmarkModel
 GRID_COLOR = "#2a2e39"
 ZERO_LINE_COLOR = "#4b5563"
 CHART_TEMPLATE = go.layout.Template(pio.templates["plotly_dark"])
-CHART_TEMPLATE.layout.paper_bgcolor = "rgba(0,0,0,0)"
-CHART_TEMPLATE.layout.plot_bgcolor = "rgba(0,0,0,0)"
-CHART_TEMPLATE.layout.font.color = "#d1d4dc"
-CHART_TEMPLATE.layout.xaxis.gridcolor = GRID_COLOR
-CHART_TEMPLATE.layout.yaxis.gridcolor = GRID_COLOR
+_template_layout: Any = CHART_TEMPLATE.layout
+_template_layout.paper_bgcolor = "rgba(0,0,0,0)"
+_template_layout.plot_bgcolor = "rgba(0,0,0,0)"
+_template_layout.font.color = "#d1d4dc"
+_template_layout.xaxis.gridcolor = GRID_COLOR
+_template_layout.yaxis.gridcolor = GRID_COLOR
 
 # Red -> dark neutral -> green, for signed values (a white midpoint glares on a dark page).
 DIVERGING_SCALE = [[0.0, "#ef4444"], [0.5, "#1f2430"], [1.0, "#22c55e"]]
@@ -56,6 +57,7 @@ def equity_curve_chart(
     fig = go.Figure()
 
     if has_breakdown:
+        breakdown = cast(dict[str, Any], breakdown)
         bd_dates = pd.to_datetime(breakdown["dates"])
 
         # Cash line (red)
@@ -140,7 +142,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
     if "value" not in df.columns:
         return go.Figure()
 
-    values = df["value"].values
+    values = cast(Any, df["value"].values)
     running_max = np.maximum.accumulate(values)
     drawdown = (values - running_max) / running_max * 100
 
@@ -501,6 +503,7 @@ def _rolling_metric(
     """
     s = pd.Series(strategy_daily, index=pd.to_datetime(dates))
     ann = np.sqrt(252)
+    b = b_ann_ret = b_rolling = cast(Any, None)  # only read under `if benchmark_daily`, where they are set
 
     if metric == "volatility":
         # Annualized rolling standard deviation, in percent

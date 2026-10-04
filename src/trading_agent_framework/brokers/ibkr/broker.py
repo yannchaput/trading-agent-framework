@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Sequence
 from decimal import ROUND_FLOOR, Decimal
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
 from trading_agent_framework.brokers.alpaca.data import AlpacaMarketData
@@ -140,7 +140,7 @@ class IbkrBroker(Broker):
             if len(accounts) != 1:
                 raise ConfigurationError(f"IB Gateway manages {len(accounts)} accounts ({', '.join(accounts)}); this framework needs exactly one account")
             self._account_id = accounts[0]
-        return self._account_id
+        return cast(str, self._account_id)
 
     def _summary(self) -> list[Any]:
         account_id = self.account_id
@@ -177,7 +177,7 @@ class IbkrBroker(Broker):
         # Tracked before placing: the event handlers can see this order before the call returns.
         self.tracker.track_unprocessed(order)
         try:
-            trade, ib_errors = self._connection.call(lambda ib: _place_and_wait(ib, contract, ib_order, self._ack_timeout))
+            trade, ib_errors = cast("tuple[Trade, list[str]]", self._connection.call(lambda ib: _place_and_wait(ib, contract, ib_order, self._ack_timeout)))
         except Exception as exc:
             order.set_error(exc)
             logger.exception("Failed to submit order %s", order.identifier)

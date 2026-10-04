@@ -154,7 +154,7 @@ def identifier_from_order_ref(order_ref: str, strategy_name: str) -> str | None:
     return None
 
 
-def to_decimal(value: float | None) -> Decimal | None:
+def to_decimal(value: float | Decimal | None) -> Decimal | None:
     if value is None or math.isnan(value) or value == UNSET_DOUBLE:
         return None
     return Decimal(str(value))

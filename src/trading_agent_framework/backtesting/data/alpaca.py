@@ -21,7 +21,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, cast
 
 from trading_agent_framework.backtesting.data.base import FULL_HISTORY, BacktestDataSource
 from trading_agent_framework.brokers.alpaca import account, market_data
@@ -109,7 +109,7 @@ class AlpacaBacktestData(BacktestDataSource):
             df = self._fetch(asset, timestep, self._start, self._end)
         if df is None or df.empty:
             return None
-        visible = df[df.index <= cutoff]
+        visible = cast("pd.DataFrame", df[df.index <= cutoff])
         if visible.empty:
             return None
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
@@ -219,14 +219,14 @@ class AlpacaBacktestData(BacktestDataSource):
         if self._client is None:
             from trading_agent_framework.brokers.alpaca.client import build_stock_data_client
 
-            self._client = build_stock_data_client(AlpacaCredentials.for_data())
+            self._client = cast(market_data.AlpacaStockDataClient, build_stock_data_client(AlpacaCredentials.for_data()))
         return self._client
 
     def _real_trading_client(self) -> AlpacaTradingCalendarClient:
         if self._trading_client is None:
             from trading_agent_framework.brokers.alpaca.client import build_trading_client
 
-            self._trading_client = build_trading_client(AlpacaCredentials.for_data())
+            self._trading_client = cast(AlpacaTradingCalendarClient, build_trading_client(AlpacaCredentials.for_data()))
         return self._trading_client
 
 

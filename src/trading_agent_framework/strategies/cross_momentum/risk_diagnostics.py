@@ -419,8 +419,8 @@ def compute_baseline_stats(
         if metric in diagnostics_df.columns:
             values = diagnostics_df[metric].dropna()
             if len(values) > 0:
-                stats[f"{metric}_median"] = float(values.median())
-                stats[f"{metric}_p90"] = float(values.quantile(0.90))
+                stats[f"{metric}_median"] = float(cast(float, values.median()))
+                stats[f"{metric}_p90"] = float(cast(float, values.quantile(0.90)))
             else:
                 stats[f"{metric}_median"] = None
                 stats[f"{metric}_p90"] = None

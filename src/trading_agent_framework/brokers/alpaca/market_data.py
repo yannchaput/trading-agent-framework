@@ -184,14 +184,14 @@ def _bars_frame(rows: Sequence[object]) -> pd.DataFrame:
     columns = {name: [float(cast(float, _field(row, name))) for row in rows] for name in _OHLCV}
     df = pd.DataFrame(columns, index=index.tz_convert(MARKET_TZ), dtype="float64")
     df.index.name = "timestamp"
-    return df[~df.index.duplicated(keep="first")].sort_index()
+    return cast(pd.DataFrame, df[~df.index.duplicated(keep="first")]).sort_index()
 
 
 def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.DataFrame:
     keep = pd.Series(False, index=df.index)
     for session in sessions:
         keep |= (df.index >= session.open) & (df.index < session.close)
-    return df[keep]
+    return cast(pd.DataFrame, df[keep])
 
 
 def parse_latest_trades(response: Mapping[str, object], assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:

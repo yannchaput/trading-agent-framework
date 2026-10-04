@@ -6,6 +6,7 @@ import sys
 from collections.abc import Sequence
 from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
 import streamlit as st
 
@@ -127,10 +128,10 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
     with cols[0]:
         render_metric_card("🏆 Best overall", f"{best.display_name} · {(best.overall or 0.0):.0%}")
     with cols[1]:
-        fastest = max(timed, key=lambda m: m.median_tokens_per_s) if timed else None
+        fastest = max(timed, key=lambda m: cast(float, m.median_tokens_per_s)) if timed else None
         render_metric_card("⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—")
     with cols[2]:
-        quickest = min(quick, key=lambda m: m.median_run_s) if quick else None
+        quickest = min(quick, key=lambda m: cast(float, m.median_run_s)) if quick else None
         render_metric_card("⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—")
 
 

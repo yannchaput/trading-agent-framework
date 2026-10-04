@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import date, datetime, time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 import pandas as pd
 
@@ -116,7 +116,7 @@ class Scanner:
         """Average per-minute cumulative volume over the last `rvol_baseline_sessions` dates before `day`."""
         # Group rows by the date their bar STARTED (market time), which is the same for both stamp conventions.
         starts = minute_starts(pd.DatetimeIndex(df.index), self.bar_stamp).tz_convert(MARKET_TZ)
-        dates = sorted({d for d in starts.date if d < day})[-self._params.rvol_baseline_sessions :]
+        dates = sorted({d for d in cast(Any, starts).date if d < day})[-self._params.rvol_baseline_sessions :]
         per_session = []
         for session_day in dates:
             open_at = datetime.combine(session_day, _REGULAR_OPEN, tzinfo=MARKET_TZ)
@@ -182,5 +182,5 @@ def _before(bars: Bars | None, day: date) -> pd.DataFrame | None:
     if bars is None or bars.df.empty:
         return None
     df = bars.df
-    dates = pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ).date
-    return df[dates < day]
+    dates = cast(Any, pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)).date
+    return cast(pd.DataFrame, df[dates < day])

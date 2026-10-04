@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 from uuid import uuid4
 
 from trading_agent_framework.backtesting import fills
@@ -267,9 +267,10 @@ class BacktestBroker(Broker):
             if bars is None or bars.df.empty:
                 return bars
             df = bars.df
-            first, last = df.index[0].to_pydatetime(), df.index[-1].to_pydatetime()
+            index = cast(Any, df.index)
+            first, last = index[0].to_pydatetime(), index[-1].to_pydatetime()
             sessions = self._data_source.sessions(first, last)
-            inside = [any(s.open < ts <= s.close for s in sessions) for ts in df.index.to_pydatetime()]
+            inside = [any(s.open < ts <= s.close for s in sessions) for ts in index.to_pydatetime()]
             regular = df[inside]
             if len(regular) >= length or len(df) < request:
                 return dataclasses.replace(bars, df=regular.tail(length))
@@ -311,7 +312,7 @@ class BacktestBroker(Broker):
             return bars
         try:
             latest = bars.df.index.max()
-            past_cutoff = bool(latest > cutoff)
+            past_cutoff = bool(cast(datetime, latest) > cutoff)
         except TypeError as exc:  # e.g. a tz-naive index compared against a tz-aware cutoff
             raise BacktestDataError(f"{self._data_source.name} returned bars for {asset.symbol} whose index cannot be compared against the {cutoff.isoformat()} cutoff: {exc}") from exc
         if past_cutoff:
@@ -333,7 +334,7 @@ class BacktestBroker(Broker):
             low=Decimal(str(row["low"])),
             close=Decimal(str(row["close"])),
         )
-        return bar, bars.df.index[-1].to_pydatetime()
+        return bar, cast(Any, bars.df.index)[-1].to_pydatetime()
 
     def _latest_bar(self, asset: Asset, cutoff: datetime) -> fills.Bar | None:
         found = self._latest_bar_with_time(asset, cutoff)
@@ -440,7 +441,7 @@ class BacktestBroker(Broker):
             if bars is None or bars.df.empty:
                 return []
             df = bars.df
-            if len(df) < length or df.index[0].to_pydatetime() <= after:
+            if len(df) < length or cast(Any, df.index)[0].to_pydatetime() <= after:
                 break
             length *= 2
         window = df[df.index > after]
@@ -454,7 +455,7 @@ class BacktestBroker(Broker):
                 ),
                 bar_time.to_pydatetime(),
             )
-            for bar_time, row in zip(window.index, window.itertuples(index=False), strict=True)
+            for bar_time, row in zip(cast(Any, window.index), cast(Any, window.itertuples(index=False)), strict=True)
         ]
 
     def _process_pending(self, cutoff: datetime) -> None:
