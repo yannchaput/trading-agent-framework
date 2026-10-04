@@ -218,6 +218,11 @@ def test_an_empty_portfolio_is_refused_while_a_holding_is_required() -> None:
         validate_portfolio([], allowed=["CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
 
 
+def test_every_missing_required_holding_is_named_in_one_error() -> None:
+    with pytest.raises(HandoffError, match=r"BBB, CCC are held and have not failed twice: keep each with a weight of at least 0\.05"):
+        validate_portfolio([_position("AAA", 0.3)], allowed=["AAA", "BBB", "CCC"], required=["BBB", "AAA", "CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
+
+
 def test_a_required_holding_may_be_shrunk_to_the_minimum_weight() -> None:
     positions = validate_portfolio(
         [_position("AAA", 0.3), _position("CCC", 0.05)], allowed=["AAA", "CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300

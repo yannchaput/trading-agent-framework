@@ -207,9 +207,11 @@ def validate_portfolio(
             raise HandoffError(f"the weight for {symbol} is {weight:.4f}: it must be between {min_weight} and {max_weight}")
         positions.append(PortfolioPosition(symbol, weight, _reason(item, symbol, reason_max_chars)))
     held = {position.symbol for position in positions}
-    for symbol in required:
-        if symbol not in held:
-            raise HandoffError(f"{symbol} is held and has not failed twice: keep it with a weight of at least {min_weight}")
+    missing = [symbol for symbol in required if symbol not in held]
+    if len(missing) == 1:
+        raise HandoffError(f"{missing[0]} is held and has not failed twice: keep it with a weight of at least {min_weight}")
+    if missing:
+        raise HandoffError(f"{', '.join(sorted(missing))} are held and have not failed twice: keep each with a weight of at least {min_weight}")
     total = sum(position.weight for position in positions)
     if total > max_total_weight + _EPS:
         raise HandoffError(f"the weights sum to {total:.4f}: they must sum to at most {max_total_weight:.2f}")

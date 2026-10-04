@@ -84,8 +84,10 @@ The context shape is unchanged. Each allowed entry already carries `verdict`, `p
 
 ### 4. `max_positions` 5 -> 8
 
-This equals `research_top_n` (8), so every idea that survives can be held. A book full of protected holdings then
-cannot block a newcomer the short seller passed: new ideas fill free slots. The weights still fit, since
+This equals `research_top_n` (8), so every idea that survives in one review can be held. Protection has a cost: once
+the book holds 8 stocks that have not failed twice, no newcomer can enter until a holding fails twice in a row or is
+rejected on quality (there is no displacement rule, by choice). Watch the rerun for reviews where
+`len(required) == max_positions`. The weights still fit, since
 8 x `min_weight` 0.05 = 0.40 <= `max_total_weight` 0.98, and `__post_init__` already checks that.
 `max_weight` (0.35), `min_weight` (0.05) and `rebalance_band` (0.05) are unchanged.
 
