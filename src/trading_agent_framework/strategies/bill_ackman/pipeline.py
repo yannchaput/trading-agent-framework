@@ -133,7 +133,7 @@ class ReviewPipeline:
         cooling = set(state.cooldowns)  # recent forced exits: kept out of the candidates and the allowed set
         candidates = [candidate for candidate in universe_result.candidates if candidate.symbol not in cooling]
         sheets = self._fact_sheets(candidates, holdings, holdings_result)
-        record.update(candidates=[{"symbol": c.symbol, "rank": c.rank, "score": round(c.score, 4)} for c in candidates], holdings=holdings)
+        record.update(candidates=[{"symbol": c.symbol, "rank": c.rank, "fcf_yield": round(c.fcf_yield, 4)} for c in candidates], holdings=holdings)
 
         # 3. Researcher.
         ranking: list[Idea] = []

@@ -2,7 +2,7 @@
 reasonably priced on a date, from annual SEC figures known on that date.
 
 No I/O, no clock, no state (same rules as `annual_figures.py`). `assess` applies the numeric gates to one company's
-reduced annual figures (`annual_figures.annual_figures`); `rank` scores the companies that were also priced.
+reduced annual figures (`annual_figures.annual_figures`); `rank` orders the companies that were also priced by free cash flow yield.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ class ScreenParams:
     max_filing_age_months: int = 18
     max_net_debt_to_operating_income: float = 4.0
     excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))  # utilities; finance, insurance, real estate
-    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)  # fcf_yield, fcf_margin, operating-margin stability
     top_n: int = 15
     max_age_days: int = 30  # annual SEC figures, by as_of
     split_max_age_days: int = 1  # split history, by the wall clock (it must match today's adjusted prices)
@@ -43,7 +42,6 @@ class ScreenParams:
             "max_filing_age_months": self.max_filing_age_months <= 0,
             "max_net_debt_to_operating_income": not math.isfinite(self.max_net_debt_to_operating_income),
             "top_n": self.top_n < 0,
-            "weights": len(self.weights) != 3 or any(not math.isfinite(weight) or weight < 0 for weight in self.weights),
             "max_age_days": self.max_age_days < 0,
             "split_max_age_days": self.split_max_age_days < 0,
             "max_fetch_failure_ratio": not 0 <= self.max_fetch_failure_ratio <= 1,  # also false for NaN
@@ -184,7 +182,6 @@ class Priced:
 class Candidate:
     symbol: str
     rank: int
-    score: float
     sic: int | None
     market_cap: Decimal
     fcf_yield: float
@@ -209,44 +206,19 @@ def sector_excluded(sic: int | None, params: ScreenParams) -> bool:
     return sic is not None and any(low <= sic <= high for low, high in params.excluded_sic_ranges)
 
 
-def _percentiles(values: Sequence[float]) -> list[float]:
-    """Each value's percentile rank in `values`: (rank - 1) / (n - 1), ties sharing their average rank."""
-    count = len(values)
-    if count == 1:
-        return [1.0]
-    order = sorted(range(count), key=values.__getitem__)
-    ranks = [0.0] * count
-    start = 0
-    while start < count:
-        stop = start
-        while stop + 1 < count and values[order[stop + 1]] == values[order[start]]:
-            stop += 1
-        average_rank = (start + stop) / 2 + 1
-        for position in range(start, stop + 1):
-            ranks[order[position]] = average_rank
-        start = stop + 1
-    return [(rank - 1) / (count - 1) for rank in ranks]
-
-
 def rank(priced: Sequence[Priced], params: ScreenParams) -> list[Candidate]:
-    """Score the priced survivors against each other and return the best `params.top_n`, best first."""
-    if not priced:
-        return []
-    yields = [float(Decimal(item.survivor.free_cash_flow) / item.market_cap) for item in priced]
-    yield_pct = _percentiles(yields)
-    margin_pct = _percentiles([item.survivor.fcf_margin for item in priced])
-    stdev_pct = _percentiles([item.survivor.operating_margin_stdev for item in priced])
-    yield_weight, margin_weight, stability_weight = params.weights
-    scored = [
-        (yield_weight * yield_pct[index] + margin_weight * margin_pct[index] + stability_weight * (1 - stdev_pct[index]), yields[index], item)
-        for index, item in enumerate(priced)
-    ]
-    scored.sort(key=lambda entry: (-entry[0], -entry[2].market_cap, entry[2].survivor.symbol))
+    """The best `params.top_n` priced survivors by free cash flow yield, highest first; ties go to the larger market cap, then the symbol.
+
+    The yield alone ranks: over five years of weekly screens, neither the FCF margin nor the operating-margin
+    stability predicted returns, and blending them in pushed falling high-margin names to the top. Both stay on the
+    candidate as facts for the agents.
+    """
+    scored = [(float(Decimal(item.survivor.free_cash_flow) / item.market_cap), item) for item in priced]
+    scored.sort(key=lambda entry: (-entry[0], -entry[1].market_cap, entry[1].survivor.symbol))
     return [
         Candidate(
             symbol=item.survivor.symbol,
             rank=position,
-            score=score,
             sic=item.sic,
             market_cap=item.market_cap,
             fcf_yield=fcf_yield,
@@ -259,5 +231,5 @@ def rank(priced: Sequence[Priced], params: ScreenParams) -> list[Candidate]:
             fiscal_year_end=item.survivor.fiscal_year_end,
             filed=item.survivor.filed,
         )
-        for position, (score, fcf_yield, item) in enumerate(scored[: params.top_n], start=1)
+        for position, (fcf_yield, item) in enumerate(scored[: params.top_n], start=1)
     ]

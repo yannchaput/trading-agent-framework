@@ -228,7 +228,7 @@ rules for cash accounts, without importing from that strategy.
   counters survive a restart.
 - **Review log**: `reviews.jsonl` in this run's directory (`logs/<strategy>/<mode>/<run_id>/`, as `vwap_pullback` writes
   `trades.jsonl`; no log when there is no run id). One line per review: date; run id; the candidates (symbol, rank,
-  score); the ranking; the review set; each verdict with its source (`llm` or `screen`); the counters before and after;
+  fcf_yield; `score` before 2026-10-04); the ranking; the review set; each verdict with its source (`llm` or `screen`); the counters before and after;
   the forced exits; the allowed set; the submitted portfolio; the targets including SHV; the orders; and `abandoned`
   with the stage and the error when applicable. Decimals as strings.
 

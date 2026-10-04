@@ -250,6 +250,13 @@ score = 0.4 * pct(fcf_yield) + 0.3 * pct(fcf_margin) + 0.3 * (1 - pct(operating_
 The weights are `ScreenParams.weights`. Candidates are sorted by score descending, then market cap descending,
 then symbol, and the first `top_n` (default 15) are returned with `rank` starting at 1.
 
+> **Superseded 2026-10-04: the yield alone ranks.** `ScreenParams.weights`, the percentiles and `Candidate.score`
+> are gone: candidates are sorted by `fcf_yield` descending, then market cap descending, then symbol. Over five
+> years of weekly screens (2021-09 to 2026-09, about 200 survivors a week) neither `fcf_margin` nor the
+> operating-margin stability predicted 1- or 3-month returns, and blending them in put falling high-margin names
+> at the top: the old top 5 trailed ranks 6-15 by about 2.5% over 3 months. The two metrics stay on `Candidate`
+> and in the fact sheet as facts for the agents.
+
 ### 3.4 Types
 
 ```python

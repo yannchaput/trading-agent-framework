@@ -37,7 +37,7 @@ def _bars(closes: list[float]) -> pd.DataFrame:
 
 def _candidate(symbol: str) -> Candidate:
     return Candidate(
-        symbol=symbol, rank=1, score=0.9, sic=5812, market_cap=Decimal("100000000000"), fcf_yield=0.05, fcf_margin=0.2, operating_margin=0.25,
+        symbol=symbol, rank=1, sic=5812, market_cap=Decimal("100000000000"), fcf_yield=0.05, fcf_margin=0.2, operating_margin=0.25,
         operating_margin_stdev=0.02, revenue_growth=0.08, net_debt_to_operating_income=1.0, debt_reported=True,
         fiscal_year_end=date(2025, 12, 31), filed=date(2026, 2, 15),
     )

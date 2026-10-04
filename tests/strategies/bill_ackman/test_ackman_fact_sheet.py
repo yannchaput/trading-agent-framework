@@ -13,7 +13,6 @@ def _candidate(**overrides: object) -> Candidate:
     values: dict[str, object] = {
         "symbol": "AAA",
         "rank": 1,
-        "score": 0.8,
         "sic": 5812,
         "market_cap": Decimal("123456789012"),
         "fcf_yield": 0.0456789,

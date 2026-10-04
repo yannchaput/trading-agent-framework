@@ -280,17 +280,16 @@ def test_sector_excluded_covers_utilities_and_finance_and_lets_an_unknown_code_p
     assert sector_excluded(sic, PARAMS) is excluded
 
 
-def test_rank_scores_by_weighted_percentiles() -> None:
+def test_rank_orders_by_fcf_yield_alone_whatever_the_margin_and_its_stability() -> None:
     priced = [
-        _priced("AAA", market_cap="280", fcf_margin=0.2, stdev=0.00),  # yield 0.100: pct 1.0 | margin pct 0.5 | stdev pct 0.0
-        _priced("BBB", market_cap="560", fcf_margin=0.3, stdev=0.02),  # yield 0.050: pct 0.5 | margin pct 1.0 | stdev pct 1.0
-        _priced("CCC", market_cap="1120", fcf_margin=0.1, stdev=0.01),  # yield 0.025: pct 0.0 | margin pct 0.0 | stdev pct 0.5
+        _priced("STABLE", market_cap="560", fcf_margin=0.3, stdev=0.00),  # yield 0.050, the best margin and stability
+        _priced("CHEAP", market_cap="280", fcf_margin=0.1, stdev=0.03),  # yield 0.100, the worst margin and stability
+        _priced("DEAR", market_cap="1120", fcf_margin=0.2, stdev=0.01),  # yield 0.025
     ]
 
     candidates = rank(priced, PARAMS)
 
-    assert [(c.symbol, c.rank) for c in candidates] == [("AAA", 1), ("BBB", 2), ("CCC", 3)]
-    assert [c.score for c in candidates] == pytest.approx([0.4 * 1.0 + 0.3 * 0.5 + 0.3 * 1.0, 0.4 * 0.5 + 0.3 * 1.0 + 0.3 * 0.0, 0.3 * 0.5])
+    assert [(c.symbol, c.rank) for c in candidates] == [("CHEAP", 1), ("STABLE", 2), ("DEAR", 3)]
     assert [c.fcf_yield for c in candidates] == pytest.approx([0.1, 0.05, 0.025])
 
 
@@ -309,20 +308,7 @@ def test_rank_carries_the_survivor_metrics_into_the_candidate() -> None:
     assert candidate.filed == date(2026, 2, 15)
 
 
-def test_a_single_survivor_gets_percentile_one_on_every_metric() -> None:
-    (candidate,) = rank([_priced("AAA", market_cap="280")], PARAMS)
-
-    assert candidate.score == pytest.approx(0.4 + 0.3 + 0.3 * (1 - 1.0))
-
-
-def test_tied_metrics_share_the_average_percentile() -> None:
-    # Same yield (28/280 and 56/560), same margin, same stdev: every percentile is 0.5 for both.
-    candidates = rank([_priced("AAA", market_cap="280", fcf=28), _priced("BBB", market_cap="560", fcf=56)], PARAMS)
-
-    assert [c.score for c in candidates] == pytest.approx([0.4 * 0.5 + 0.3 * 0.5 + 0.3 * 0.5] * 2)
-
-
-def test_equal_scores_are_ordered_by_market_cap_then_symbol() -> None:
+def test_equal_yields_are_ordered_by_market_cap_then_symbol() -> None:
     priced = [
         _priced("ZZZ", market_cap="280", fcf=28),
         _priced("MMM", market_cap="560", fcf=56),
@@ -356,11 +342,6 @@ def test_rank_of_nothing_is_empty() -> None:
         {"max_net_debt_to_operating_income": float("nan")},
         {"max_net_debt_to_operating_income": float("inf")},
         {"top_n": -1},
-        {"weights": (0.4, 0.3)},
-        {"weights": (0.4, 0.3, 0.2, 0.1)},
-        {"weights": (0.4, -0.1, 0.3)},
-        {"weights": (0.4, float("nan"), 0.3)},
-        {"weights": (0.4, float("inf"), 0.3)},
         {"max_age_days": -1},
         {"split_max_age_days": -1},
         {"max_fetch_failure_ratio": -0.1},
@@ -376,5 +357,5 @@ def test_invalid_screen_params_are_refused(kwargs: dict[str, object]) -> None:
 
 def test_boundary_screen_params_are_accepted() -> None:
     ScreenParams(years=2, min_growth_years=1, top_n=0, max_age_days=0, split_max_age_days=0, max_fetch_failure_ratio=0.0, hollow_min_sample=1)
-    ScreenParams(min_growth_years=0, max_fetch_failure_ratio=1.0, weights=(0.0, 0.0, 1.0))
+    ScreenParams(min_growth_years=0, max_fetch_failure_ratio=1.0)
     ScreenParams(years=5, min_growth_years=4)

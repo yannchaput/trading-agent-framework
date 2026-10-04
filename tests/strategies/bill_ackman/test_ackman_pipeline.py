@@ -34,7 +34,6 @@ def _candidate(symbol: str, rank: int = 1) -> Candidate:
     return Candidate(
         symbol=symbol,
         rank=rank,
-        score=0.8,
         sic=5812,
         market_cap=Decimal("100000000000"),
         fcf_yield=0.05,
@@ -210,7 +209,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
 
     (line,) = h.log_lines()
     assert line["date"] == "2026-09-14" and line["abandoned"] is False
-    assert [c["symbol"] for c in line["candidates"]] == ["AAA", "BBB"]
+    assert line["candidates"] == [{"symbol": "AAA", "rank": 1, "fcf_yield": 0.05}, {"symbol": "BBB", "rank": 2, "fcf_yield": 0.05}]
     assert [idea["symbol"] for idea in line["ranking"]] == ["AAA", "BBB"]
     assert line["review_set"] == ["AAA", "BBB"]
     assert {(v["symbol"], v["verdict"], v["source"]) for v in line["verdicts"]} == {("AAA", "survive", "llm"), ("BBB", "fail", "llm")}
