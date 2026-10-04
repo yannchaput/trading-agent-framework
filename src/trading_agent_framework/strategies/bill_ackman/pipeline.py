@@ -136,6 +136,7 @@ class ReviewPipeline:
         if candidates:
             symbols = [c.symbol for c in candidates]
             self._recorder.expect_ranking(symbols)
+            strategy.log_info(f"[researcher] {len(candidates)} candidates, by FCF yield: {', '.join(f'{c.symbol} (#{c.rank}, {c.fcf_yield:.1%})' for c in candidates)}")
             context = {
                 "current_datetime": now.isoformat(),
                 "candidates": [sheets[symbol] for symbol in symbols],
@@ -158,6 +159,7 @@ class ReviewPipeline:
         if to_judge:
             previous = {symbol: state.last_verdicts[symbol] for symbol in to_judge if symbol in state.last_verdicts}
             self._recorder.expect_verdicts(to_judge, previous={symbol: record["verdict"] for symbol, record in previous.items()})
+            strategy.log_info(f"[short_seller] {len(to_judge)} to judge: {', '.join(f'{symbol} (held)' if symbol in holdings else symbol for symbol in to_judge)}")
             context = {
                 "current_datetime": now.isoformat(),
                 "to_judge": [
@@ -182,6 +184,11 @@ class ReviewPipeline:
         survivors = [symbol for symbol in review_set if verdicts[symbol].verdict == SURVIVE]
         failures = [f"{symbol} ({verdicts[symbol].concern or verdicts[symbol].reason})" for symbol in review_set if verdicts[symbol].verdict == FAIL]
         strategy.log_info(f"[short_seller] reviewed {len(review_set)}: {len(survivors)} survive ({', '.join(survivors) or 'none'}); {len(failures)} fail ({', '.join(failures) or 'none'})")
+        for symbol in review_set:
+            verdict = verdicts[symbol]
+            concern = f" ({verdict.concern})" if verdict.concern else ""
+            changed = f" [changed: {verdict.what_changed}]" if verdict.what_changed else ""
+            strategy.log_info(f"[short_seller]   {symbol} {verdict.verdict}{concern}: {verdict.reason}{changed}")
 
         # 7. Hysteresis.
         outcome = apply_verdicts(
@@ -206,6 +213,9 @@ class ReviewPipeline:
         positions: list[PortfolioPosition] = []
         if allowed:
             self._recorder.expect_portfolio(allowed, required=required)
+            strategy.log_info(
+                f"[trader] {len(allowed)} allowed: {', '.join(allowed)}; required: {', '.join(required) or 'none'}; forced exits: {', '.join(outcome.forced_exits) or 'none'}"
+            )
             context = {
                 "current_datetime": now.isoformat(),
                 "allowed": [
@@ -233,6 +243,14 @@ class ReviewPipeline:
             }
             self._run_stage("trader", "submit_portfolio", TRADER_TASK, context)
             positions = self._recorder.submission
+        else:
+            strategy.log_info("[trader] nothing allowed: everything goes to the parking instrument")
+        if positions:
+            strategy.log_info(f"[trader] decision: {len(positions)} positions, {sum(p.weight for p in positions):.1%} invested")
+            for position in positions:
+                strategy.log_info(f"[trader]   {position.symbol} {position.weight:.1%}: {position.reason}")
+        elif allowed:
+            strategy.log_info(f"[trader] decision: hold nothing, everything goes to {params.parking_symbol}")
 
         # 9. Targets and execution.
         target = target_portfolio({position.symbol: position.weight for position in positions}, cash_buffer=params.cash_buffer)

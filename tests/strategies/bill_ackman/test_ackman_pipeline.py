@@ -338,6 +338,28 @@ def test_the_short_sellers_survivors_and_fails_are_logged_after_its_stage(tmp_pa
     assert "[short_seller] reviewed 3: 1 survive (AAA); 2 fail (BBB (debt), HHH (screen: negative_fcf))" in message
 
 
+def test_each_stage_logs_what_it_gets_and_the_trader_logs_its_decision_with_reasons(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([_candidate("AAA", 1), _candidate("BBB", 2)], holding_rejections={"HHH": "negative_fcf"})
+    h = _harness(tmp_path, screen, held={"HHH": 100})
+    h.researcher.steps = [ranks("AAA", "BBB")]
+    h.short_seller.steps = [judges(AAA="survive", BBB="fail")]
+    h.trader.steps = [holds(AAA=0.3, HHH=0.1)]
+
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("[researcher] 2 candidates, by FCF yield: AAA (#1, 5.0%), BBB (#2, 5.0%)" in m for m in messages)
+    assert any("[short_seller] 2 to judge: AAA, BBB" in m for m in messages)  # HHH failed the screen: code judged it
+    assert any("[short_seller]   AAA survive: survive reason" in m for m in messages)
+    assert any("[short_seller]   BBB fail (debt): fail reason" in m for m in messages)
+    assert any("[short_seller]   HHH fail: screen: negative_fcf" in m for m in messages)
+    assert any("[trader] 2 allowed: AAA, HHH; required: HHH; forced exits: none" in m for m in messages)
+    assert any("[trader] decision: 2 positions, 40.0% invested" in m for m in messages)
+    assert any("[trader]   AAA 30.0%: best idea" in m for m in messages)
+    assert any("[trader]   HHH 10.0%: best idea" in m for m in messages)
+
+
 def test_a_holding_the_screen_could_not_describe_goes_to_the_short_seller_with_a_reduced_sheet(tmp_path: Path) -> None:
     screen = FakeScreen([], holding_rejections={"HHH": "no_data"})
     h = _harness(tmp_path, screen, held={"HHH": 100})
