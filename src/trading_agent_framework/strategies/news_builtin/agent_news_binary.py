@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
@@ -17,11 +16,11 @@ from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecor
 from trading_agent_framework.agents.tools import PrebuiltTools
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.news import news_tools
+from trading_agent_framework.backtesting import PredefinedWindow, backtest_window
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.news_builtin.grounding import require_search_news_before
-from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FatalStrategyError
 
 # A persistent LLM misconfiguration (wrong URL/model, dead server) would otherwise yield a flat "successful" backtest,
@@ -172,8 +171,8 @@ class NewsBinaryStrategy(Strategy):
     TASK_PROMPT = "Research current broad-market news and rebalance if needed. The current datetime is in the context below."
 
     parameters = {
-        "backtesting_start": datetime(2026, 1, 1, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 9, 18, tzinfo=MARKET_TZ),
+        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,  # No warmup needed (just in case)
         "budget": 10000,
