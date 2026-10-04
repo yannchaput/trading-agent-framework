@@ -77,6 +77,8 @@ def page_detail():
     # Load cumulative returns once — used by rolling-metric charts (Charts tab)
     # and the Returns tab.
     cum_ret = load_cumulative_returns(ref)
+    # The market regime rows of the Trades and Returns tabs.
+    indicators = load_indicator_lines(ref)
 
     period_start = s.backtesting_start.strftime("%Y-%m-%d") if s and s.backtesting_start else "?"
     period_end = s.backtesting_end.strftime("%Y-%m-%d") if s and s.backtesting_end else "?"
@@ -186,7 +188,7 @@ def page_detail():
         budget = s.budget if s else 10000.0
         trades_data = load_trades_curve(ref, budget)
         if trades_data and trades_data.get("trades"):
-            st.plotly_chart(trades_chart(trades_data, indicators=load_indicator_lines(ref)), width="stretch")
+            st.plotly_chart(trades_chart(trades_data, indicators=indicators), width="stretch")
             n_buys = sum(1 for t in trades_data["trades"] if t["side"] == "buy")
             n_sells = sum(1 for t in trades_data["trades"] if t["side"] == "sell")
             st.caption(f"{len(trades_data['trades'])} trades — {n_buys} buys, {n_sells} sells")
@@ -204,7 +206,7 @@ def page_detail():
     with tab4:
         st.subheader("Cumulative Returns vs Benchmark")
         if cum_ret:
-            st.plotly_chart(cumulative_returns_chart(cum_ret), width="stretch")
+            st.plotly_chart(cumulative_returns_chart(cum_ret, indicators=indicators), width="stretch")
             bs = cum_ret.get("benchmark_source", "")
             bm_label = cum_ret.get("benchmark_symbol", "SPY")
             if bs:

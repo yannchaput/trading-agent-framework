@@ -415,7 +415,11 @@ def monthly_returns_distribution(
     return fig
 
 
-def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Returns vs Benchmark") -> go.Figure:
+def cumulative_returns_chart(
+    data: dict[str, Any],
+    title: str = "Cumulative Returns vs Benchmark",
+    indicators: dict[str, list[dict[str, Any]]] | None = None,
+) -> go.Figure:
     """Build a cumulative returns comparison chart (strategy vs benchmark).
 
     Args:
@@ -423,6 +427,9 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
               'benchmark' (list[float] or None), and optionally
               'benchmark_symbol' (str).  Values are fractional returns
               (0.10 = +10%).
+        title: Chart title.
+        indicators: Optional ``{plot_name: [series]}`` from :func:`load_indicator_lines`. As in :func:`trades_chart`
+            only the ``"Regime"`` series is drawn, in its own row under the curves with one colored band per run.
 
     Returns a Plotly figure with both strategy and benchmark cumulative return lines.
     """
@@ -436,7 +443,15 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
     strategy_pct = [v * 100 for v in data["strategy"]]
     benchmark = data.get("benchmark")
 
-    fig = go.Figure()
+    regime = _find_regime(indicators)
+    if regime is not None:
+        # The dates are naive session days; the regime times are tz-aware instants, which would not line up with them.
+        regime = {**regime, "times": list(pd.to_datetime(regime["times"], utc=True).tz_localize(None))}
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.85, 0.15])
+    else:
+        fig = go.Figure()
+    # `row=None` addresses a plain figure; with the regime row the curves go to the first one.
+    top = dict(row=1, col=1) if regime is not None else {}
 
     fig.add_trace(
         go.Scatter(
@@ -446,7 +461,8 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
             name="Strategy",
             line=dict(color="#0891b2", width=2),
             hovertemplate="%{y:.1f}%<extra>Strategy</extra>",
-        )
+        ),
+        **top,
     )
 
     if benchmark is not None:
@@ -460,22 +476,27 @@ def cumulative_returns_chart(data: dict[str, Any], title: str = "Cumulative Retu
                 name=bm_symbol,
                 line=dict(color="#eab308", width=1.5, dash="dash"),
                 hovertemplate=f"%{{y:.1f}}%<extra>{bm_symbol}</extra>",
-            )
+            ),
+            **top,
         )
 
     # Zero reference line
-    fig.add_hline(y=0, line_dash="dot", line_color=ZERO_LINE_COLOR, line_width=0.5)
+    fig.add_hline(y=0, line_dash="dot", line_color=ZERO_LINE_COLOR, line_width=0.5, **top)
+
+    if regime is not None:
+        _add_regime_row(fig, regime, max(dates.max(), pd.Timestamp(regime["times"][-1])))
 
     fig.update_layout(
         title=title,
-        xaxis_title="Date",
-        yaxis_title="Cumulative Return (%)",
         template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
-    fig.update_yaxes(tickformat=".1f")
+    if regime is not None:
+        fig.update_layout(height=450 + 140)
+    fig.update_xaxes(title_text="Date", row=2 if regime is not None else None, col=1 if regime is not None else None)
+    fig.update_yaxes(title_text="Cumulative Return (%)", tickformat=".1f", **top)
     return fig
 
 
@@ -637,6 +658,61 @@ def _regime_runs(times: Sequence[Any], values: Sequence[float], end: Any) -> lis
     return [(start, stop, value) for start, stop, value in runs]
 
 
+def _find_regime(indicators: dict[str, list[dict[str, Any]]] | None) -> dict[str, Any] | None:
+    """The market regime series of :func:`load_indicator_lines`, or None; every other line is ignored."""
+    return next((line for line in (indicators or {}).get(REGIME_PANE, []) if line["name"] == REGIME_PANE), None)
+
+
+def _add_regime_row(fig: go.Figure, regime: dict[str, Any], chart_end: Any) -> None:
+    """Draw the regime as a step line on row 2 of `fig`, and one band per run on rows 1 and 2.
+
+    The last run is shaded up to `chart_end`, which must be comparable with the regime times.
+    """
+    regime_values = [int(round(v)) for v in regime["values"]]
+    fig.add_trace(
+        go.Scatter(
+            x=regime["times"],
+            y=regime_values,
+            mode="lines",
+            name=REGIME_PANE,
+            line=dict(color=_REGIME_LINE_COLOR, width=1.5, shape="hv"),
+            text=[REGIME_AXIS_LABELS.get(v, str(v)) for v in regime_values],
+            hovertemplate="%{text}<extra>Regime</extra>",
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+    bands = [
+        dict(
+            type="rect",
+            xref=f"x{row if row > 1 else ''}",
+            yref=f"y{row if row > 1 else ''} domain",
+            x0=start,
+            x1=stop,
+            y0=0,
+            y1=1,
+            fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
+            opacity=opacity,
+            line_width=0,
+            layer="below",
+        )
+        for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end)
+        for row, opacity in _REGIME_BAND_OPACITY.items()
+    ]
+    # One update_layout for all bands: add_vrect re-processes the growing shapes tuple on every call (quadratic).
+    # The existing shapes go first: a list given to update_layout merges element-wise over them (a zero line would be lost).
+    fig.update_layout(shapes=[*fig.layout.shapes, *bands])
+    fig.update_yaxes(
+        range=[-1.3, 1.3],
+        tickvals=[-1, 0, 1],
+        ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
+        title_text=REGIME_PANE,
+        row=2,
+        col=1,
+    )
+
+
 def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", indicators: dict[str, list[dict[str, Any]]] | None = None) -> go.Figure:
     """Build a trade activity chart with portfolio value curve and buy/sell markers.
 
@@ -659,7 +735,7 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    regime = next((line for line in (indicators or {}).get(REGIME_PANE, []) if line["name"] == REGIME_PANE), None)
+    regime = _find_regime(indicators)
     row_heights = [0.85, 0.15] if regime is not None else [1.0]
     fig = make_subplots(rows=len(row_heights), cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=row_heights)
 
@@ -716,50 +792,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
 
     # ── Market regime: a step line on its own row, and one band per run on both rows ──
     if regime is not None:
-        regime_values = [int(round(v)) for v in regime["values"]]
-        fig.add_trace(
-            go.Scatter(
-                x=regime["times"],
-                y=regime_values,
-                mode="lines",
-                name=REGIME_PANE,
-                line=dict(color=_REGIME_LINE_COLOR, width=1.5, shape="hv"),
-                text=[REGIME_AXIS_LABELS.get(v, str(v)) for v in regime_values],
-                hovertemplate="%{text}<extra>Regime</extra>",
-                showlegend=False,
-            ),
-            row=2,
-            col=1,
-        )
         chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
-        # One update_layout for all bands: add_vrect re-processes the growing shapes tuple on every call (quadratic).
-        fig.update_layout(
-            shapes=[
-                dict(
-                    type="rect",
-                    xref=f"x{row if row > 1 else ''}",
-                    yref=f"y{row if row > 1 else ''} domain",
-                    x0=start,
-                    x1=stop,
-                    y0=0,
-                    y1=1,
-                    fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
-                    opacity=opacity,
-                    line_width=0,
-                    layer="below",
-                )
-                for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end)
-                for row, opacity in _REGIME_BAND_OPACITY.items()
-            ]
-        )
-        fig.update_yaxes(
-            range=[-1.3, 1.3],
-            tickvals=[-1, 0, 1],
-            ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
-            title_text=REGIME_PANE,
-            row=2,
-            col=1,
-        )
+        _add_regime_row(fig, regime, chart_end)
 
     fig.update_yaxes(title_text="Portfolio Value ($)", row=1, col=1)
     fig.update_xaxes(title_text="Date", row=len(row_heights), col=1)
