@@ -211,7 +211,7 @@ class ReviewPipeline:
         elif len(required) == params.max_positions:
             blocked = [symbol for symbol in allowed if symbol not in required]
             strategy.log_info(
-                f"[bill_ackman] book is full: {len(required)} holdings to keep fill max_positions ({params.max_positions}); blocked newcomers: {', '.join(blocked) or 'none'}"
+                f"[book] full: {len(required)} holdings to keep fill max_positions ({params.max_positions}); blocked newcomers: {', '.join(blocked) or 'none'}"
             )
 
         # 8. Trader.
@@ -256,6 +256,15 @@ class ReviewPipeline:
                 strategy.log_info(f"[trader]   {position.symbol} {position.weight:.1%}: {position.reason}")
         elif allowed:
             strategy.log_info(f"[trader] decision: hold nothing, everything goes to {params.parking_symbol}")
+
+        chosen = {position.symbol for position in positions}
+        in_use = f"slots in use {len(chosen)}/{params.max_positions}"
+        for symbol in holdings:
+            if symbol not in chosen:
+                strategy.log_info(f"[book] slot freed: {symbol} ({'forced exit' if symbol in outcome.forced_exits else 'cooling down'}); {in_use}")
+        for position in positions:
+            if position.symbol not in holdings:
+                strategy.log_info(f"[book] slot filled: {position.symbol} at {position.weight:.1%}; {in_use}")
 
         # 9. Targets and execution.
         target = target_portfolio({position.symbol: position.weight for position in positions}, cash_buffer=params.cash_buffer)
