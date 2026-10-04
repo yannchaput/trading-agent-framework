@@ -50,7 +50,7 @@ class FakeScreen:
         self.as_ofs: list[Any] = []
         self.prices: list[Decimal | None] = []
 
-    def run(self, symbols, *, as_of, price_of, top_n=None) -> ScreenResult:  # noqa: ANN001
+    def run(self, symbols, *, as_of, price_of, top_n=None, label=None) -> ScreenResult:  # noqa: ANN001
         self.as_ofs.append(as_of)
         if top_n is None:
             self.prices.append(price_of("AAA"))  # the real screen asks for a price; in a backtest this goes through the no-look-ahead gate
@@ -187,7 +187,7 @@ class RotatingScreen:
     def __init__(self) -> None:
         self.universe_calls = 0
 
-    def run(self, symbols, *, as_of, price_of, top_n=None) -> ScreenResult:  # noqa: ANN001
+    def run(self, symbols, *, as_of, price_of, top_n=None, label=None) -> ScreenResult:  # noqa: ANN001
         if top_n is None:
             self.universe_calls += 1
             current = "AAA" if self.universe_calls <= 3 else "BBB"

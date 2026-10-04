@@ -61,7 +61,7 @@ class FakeScreen:
         self.calls: list[tuple[list[str], int | None]] = []
         self.error: FundamentalsError | None = None
 
-    def run(self, symbols, *, as_of, price_of, top_n=None) -> ScreenResult:  # noqa: ANN001
+    def run(self, symbols, *, as_of, price_of, top_n=None, label=None) -> ScreenResult:  # noqa: ANN001
         self.calls.append((list(symbols), top_n))
         if self.error is not None:
             raise self.error
@@ -325,6 +325,20 @@ def test_a_holding_the_screen_rejected_on_quality_fails_by_code_and_never_reache
     assert line["verdicts"] == [{"symbol": "HHH", "verdict": "fail", "reason": "screen: negative_fcf", "concern": None, "what_changed": None, "source": "screen"}]
     assert h.store.load().fail_counts == {"HHH": 1}
     assert h.trader.calls[0]["context"]["allowed"][0]["verdict_reason"] == "screen: negative_fcf"
+
+
+def test_the_short_sellers_survivors_and_fails_are_logged_after_its_stage(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([_candidate("AAA", 1), _candidate("BBB", 2)], holding_rejections={"HHH": "negative_fcf"})
+    h = _harness(tmp_path, screen, held={"HHH": 100})
+    h.researcher.steps = [ranks("AAA", "BBB")]
+    h.short_seller.steps = [judges(AAA="survive", BBB="fail")]
+    h.trader.steps = [holds(AAA=0.3, HHH=0.1)]  # HHH is a pending fail: the trader must keep it
+
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    (message,) = [record.getMessage() for record in caplog.records if "[short_seller] reviewed" in record.getMessage()]
+    assert "[short_seller] reviewed 3: 1 survive (AAA); 2 fail (BBB (debt), HHH (screen: negative_fcf))" in message
 
 
 def test_a_holding_the_screen_could_not_describe_goes_to_the_short_seller_with_a_reduced_sheet(tmp_path: Path) -> None:

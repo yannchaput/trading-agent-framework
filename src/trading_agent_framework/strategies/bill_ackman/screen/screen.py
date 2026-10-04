@@ -49,7 +49,7 @@ class QualityScreen:
         self._splits = splits
         self.params = params or ScreenParams()
 
-    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None) -> ScreenResult:
+    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult:
         """Rank the companies among `symbols` that pass every gate on `as_of`, best first.
 
         `as_of` is expected in market-local time (New York): the screen uses `as_of.date()`, and a
@@ -58,6 +58,7 @@ class QualityScreen:
         `price_of` is called only for companies that passed every gate before the price gate.
         `top_n`, when given, replaces `params.top_n` for this call only (the holdings of a strategy are screened
         with `top_n=len(holdings)` so none is cut); a negative value raises `ValueError`.
+        `label` only names the call in the summary log line (the pipeline runs this twice per review: "universe" and "holdings").
         Raises `FundamentalsError` when more than `params.max_fetch_failure_ratio` of the symbols
         could not be fetched from SEC, or when that share of the symbols that reached the SIC gate (or
         the split gate) failed their lookup -- the SIC and split rules need at least
@@ -128,7 +129,7 @@ class QualityScreen:
 
         candidates = rank(priced, params)
         reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(Counter(rejections.values()).items())) or "none"
-        logger.log_info(f"screened {len(unique)} symbols as of {as_of.date()}: {len(candidates)} candidates from {len(priced)} survivors; rejected: {reasons}")
+        logger.log_info(f"{label}: screened {len(unique)} symbols as of {as_of.date()}: {len(candidates)} candidates from {len(priced)} survivors; rejected: {reasons}")
         return ScreenResult(candidates=candidates, rejections=rejections)
 
 

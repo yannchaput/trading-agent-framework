@@ -475,3 +475,12 @@ def test_the_minimum_sample_is_a_screen_parameter() -> None:
 
     with pytest.raises(FundamentalsError, match="SIC"):
         _run(store, names, params=ScreenParams(hollow_min_sample=3))
+
+
+def test_the_summary_line_names_the_call_by_its_label(caplog: pytest.LogCaptureFixture) -> None:
+    screen = QualityScreen(FakeStore({"AAA": healthy_figures()}), FakeSplits())
+
+    with caplog.at_level(logging.INFO):
+        screen.run(["AAA"], as_of=AS_OF, price_of=Prices(), label="holdings")
+
+    assert "holdings: screened 1 symbols" in caplog.text

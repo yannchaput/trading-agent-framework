@@ -34,7 +34,7 @@ class _FakeAgents:
 
 
 class _FakeScreen:
-    def run(self, symbols, *, as_of, price_of, top_n=None):  # noqa: ANN001, ANN201
+    def run(self, symbols, *, as_of, price_of, top_n=None, label=None):  # noqa: ANN001, ANN201
         raise AssertionError("not called in these tests")
 
 

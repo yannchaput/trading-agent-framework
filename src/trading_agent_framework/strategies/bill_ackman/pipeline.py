@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, price_return, unavailable_fact_sheet
-from trading_agent_framework.strategies.bill_ackman.handoff import FAIL, HandoffRecorder, Idea, PortfolioPosition, Verdict
+from trading_agent_framework.strategies.bill_ackman.handoff import FAIL, SURVIVE, HandoffRecorder, Idea, PortfolioPosition, Verdict
 from trading_agent_framework.strategies.bill_ackman.hysteresis import advance_cooldowns, apply_verdicts
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.portfolio import target_portfolio
@@ -38,7 +38,7 @@ QUALITY_REJECTIONS = frozenset(
 
 
 class ScreenLike(Protocol):
-    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None) -> ScreenResult: ...
+    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult: ...
 
 
 class AgentLike(Protocol):
@@ -124,9 +124,9 @@ class ReviewPipeline:
 
         # 1-2. The screen over the universe, and over the holdings (so each holding has metrics or a reason).
         try:
-            universe_result = self._screen.run(self._universe, as_of=now, price_of=price_of)
+            universe_result = self._screen.run(self._universe, as_of=now, price_of=price_of, label="universe")
             holdings = self._rebalancer.holdings()
-            holdings_result = self._screen.run(holdings, as_of=now, price_of=price_of, top_n=len(holdings)) if holdings else ScreenResult(candidates=[], rejections={})
+            holdings_result = self._screen.run(holdings, as_of=now, price_of=price_of, top_n=len(holdings), label="holdings") if holdings else ScreenResult(candidates=[], rejections={})
         except FundamentalsError as exc:
             raise ReviewAbandoned("screen", str(exc)) from exc
         weights = self._rebalancer.current_weights()
@@ -184,6 +184,12 @@ class ReviewPipeline:
             for verdict in self._recorder.submission:
                 verdicts[verdict.symbol] = verdict
                 sources[verdict.symbol] = "llm"
+
+        survivors = [symbol for symbol in review_set if verdicts[symbol].verdict == SURVIVE]
+        failures = [f"{symbol} ({verdicts[symbol].concern or verdicts[symbol].reason})" for symbol in review_set if verdicts[symbol].verdict == FAIL]
+        strategy.log_info(
+            f"[short_seller] reviewed {len(review_set)}: {len(survivors)} survive ({', '.join(survivors) or 'none'}); {len(failures)} fail ({', '.join(failures) or 'none'})"
+        )
 
         # 7. Hysteresis.
         outcome = apply_verdicts(

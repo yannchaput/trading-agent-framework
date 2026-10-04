@@ -68,7 +68,7 @@
 ### Bill Ackman
 * Update claude.md with exempt_tools and budget_tools
 * Update dashboard to display tempearature
-* Update readme with a description of the strategy and 3 agents role
+* Log output of each agent to understand wht was their decision
 
 ---
 

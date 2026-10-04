@@ -275,6 +275,28 @@ The strategy will rely on those symbols as input.
 
 A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ackman example. Each day code screens the universe for simple, cash-generative, lightly indebted, reasonably priced companies (`strategies/bill_ackman/screen/`), the researcher ranks the best 5, the short seller attacks them and every stock already held, and the trader picks the weights. Code applies a hysteresis (a holding that fails the attack on 2 consecutive days is sold), validates every agent output, and places all orders; money not allocated to stocks is parked in SHV. Run `uv run agent bill_ackman backtesting` (default window `PredefinedWindow.BI_MONTH`); each run writes `reviews.jsonl` (one line per daily review) next to its report. The first run downloads about 5 GB of SEC data once.
 
+#### 📈 `vwap_pullback_continuation` — Intraday VWAP pullback continuation
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/vwap_pullback/agent_vwap_pullback.py` (`VwapPullbackStrategy`) |
+| **Model** | none: code only, no LLM, no news |
+| **Tools** | none |
+| **Asset universe** | the `cross_momentum` universe file (`uv run batch-universe`), cut to 150 names before the open, then 30 tracked each tick |
+| **Agent frequency** | every 5 minutes (`sleeptime = "5M"`) |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.vwap_pullback_continuation.<mode>`: `ALPACA_DATA_*` (minute bars and calendar, also for backtests), plus the broker keys in paper/live |
+
+A strictly intraday long-only strategy: it buys a strong stock that pulls back in an orderly way above VWAP and then resumes upward, and it is flat by the close. Every threshold lives in `VwapPullbackParameters` (`parameters.py`).
+
+1. **Stage 1, before the open** (daily bars): keep names priced at $5 or more, with daily ATR between 1.5% and 8% of the close and 20-day dollar volume in the top 60%, then the 150 best by mean z-score of ATR% and 20-day momentum.
+2. **Stage 2, every tick** (5-minute bars): among those, keep the ones with RVOL of at least 1.5, positive beta-adjusted relative strength against SPY and a last close above VWAP. The 30 best by composite z-score (return, relative strength, RVOL) are tracked.
+3. **Setup state machine**: `WATCH` -> `IMPULSE` (session high at least 0.8 ATR above the open) -> `PULLBACK` (25% to 61.8% of the impulse given back, above VWAP) -> `TRIGGERED` (a close above the previous bar's high on more volume than the pullback's average). The setup goes `BROKEN` for the rest of the session on a loss of VWAP or relative strength, a deeper retracement, a large red bar, heavy selling volume, or a pullback longer than the impulse.
+4. **Entries** (`Desk`, the only order code): every triggered setup is tried, best stage-2 score first, between 09:45 and 15:00 (market time). Size is code-computed so that hitting the stop loses 0.5% of equity (a position is capped at 50% of equity, at most 4 at once). A marketable limit buy goes in, and the entry is refused if the price already ran 0.3R past the trigger or R falls outside 0.15-1.0 ATR.
+5. **Exits**: a protective stop sits under the pullback low (minus 0.1 ATR) from the moment of each fill, and everything still held is sold at the 15:50 flatten. Nothing else closes a trade. No new entry is allowed once the session has lost 1.5% of its opening equity.
+
+Run: `uv run agent vwap_pullback_continuation backtesting` (default window: the last 5 years, minute bars from Alpaca, fetched one year at a time). Each backtest writes `trades.jsonl` (one line per closed trade, with realised P&L and R) next to its report. The universe file must exist first, or the strategy refuses to start.
+
 #### 📈 `opening_range_breakout` — Agent based opening range breakout strategy (ORB)
 | Field | Value |
 |---|---|
