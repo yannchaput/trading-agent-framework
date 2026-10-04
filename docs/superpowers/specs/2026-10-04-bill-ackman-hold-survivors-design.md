@@ -44,11 +44,17 @@ three groups:
 - a pending (first) fail: in `allowed`, so required, as today;
 - a forced exit: not in `allowed`, so not required and sold by code, as today.
 
-A cooling symbol is never held, because its forced-exit sell came first. If a forced exit's sell failed, the
-symbol is still held but stays in `forced_exits`, outside `allowed`.
+A held symbol that is cooling down is outside `allowed`. That happens after a forced exit whose sell did not fill,
+and `test_a_cooling_holding_is_judged_but_not_allowed_and_is_sold` covers it. Such a symbol is therefore not
+required, and the rebalancer sells it as today.
 
-The existing truncation (`pipeline.py:204`) is kept unchanged. When `len(required) > max_positions` it requires the
-first `max_positions`, in holdings order, and logs a warning. Holdings number at most `max_positions` after any
+`holdings` comes from `Rebalancer.holdings()`, sorted alphabetically and excluding the parking symbol. A held
+position the screen has no SEC data for (`no_data`, e.g. an ETF) still reaches the short seller. If it survives it is
+required like any other holding, where today the trader could drop it.
+
+The existing truncation (`pipeline.py:204`) keeps its rule. When `len(required) > max_positions` it requires the
+first `max_positions`, in holdings order, and logs a warning. The warning's "pending fails" becomes "holdings to
+keep", since the list now holds survivors too. Holdings number at most `max_positions` after any
 completed review, so this only fires when `max_positions` was lowered between runs (paper/live restart).
 
 ### 2. The validator's message covers both cases
