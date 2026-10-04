@@ -105,6 +105,17 @@ def test_bars_request_asks_for_adjusted_iex_bars_of_every_symbol() -> None:
     assert request.end == _END.astimezone(UTC).replace(tzinfo=None)
 
 
+def test_bars_request_can_ask_for_the_sip_feed() -> None:
+    request = build_bars_request([Asset("AAPL")], "minute", datetime(2026, 9, 9, tzinfo=ET), _END, feed="sip")
+
+    assert request.feed == DataFeed.SIP
+
+
+def test_bars_request_rejects_an_unknown_feed() -> None:
+    with pytest.raises(ValueError, match="feed"):
+        build_bars_request([Asset("AAPL")], "minute", datetime(2026, 9, 9, tzinfo=ET), _END, feed="otc")
+
+
 def test_bars_request_translates_our_dash_share_class_symbols_to_alpacas_dot_form() -> None:
     start = datetime(2026, 9, 9, tzinfo=ET)
 

@@ -50,6 +50,7 @@ class VwapPullbackStrategy(Strategy):
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 75,  # 70 daily bars for stage 1, plus the RVOL baseline sessions
         "budget": 10000,
+        "slippage": Decimal("0.0005"),
     }
 
     def __init__(
@@ -165,6 +166,7 @@ class VwapPullbackStrategy(Strategy):
             # (a 5Y window of minutes for 150 symbols in one fetch was OOM-killed at 58 GB)
             data_source=partial(YearChunkedData, inner=AlpacaBacktestData),
             timestep="minute",
+            slippage=self.parameters["slippage"],
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             benchmark=self.parameters["benchmark_symbol"],

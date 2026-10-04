@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime
 
 import pandas as pd
 import pytest
+from alpaca.data.enums import DataFeed
 from tests.fakes import FakeStockHistoricalDataClient, FakeTradingClient, bar_payload, make_alpaca_calendar
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData, reindex_to_bar_close
@@ -209,9 +210,29 @@ def test_sessions_are_exact_including_early_closes() -> None:
     assert session.close.hour == 13
 
 
-def test_name_is_alpaca() -> None:
-    source = AlpacaBacktestData(START, END, client=FakeStockHistoricalDataClient(), trading_client=FakeTradingClient())
-    assert source.name == "alpaca"
+def test_the_name_says_which_feed_the_bars_come_from() -> None:
+    clients = {"client": FakeStockHistoricalDataClient(), "trading_client": FakeTradingClient()}
+
+    assert AlpacaBacktestData(START, END, **clients).name == "alpaca_sip"
+    assert AlpacaBacktestData(START, END, feed="iex", **clients).name == "alpaca_iex"
+
+
+@pytest.mark.parametrize(("kwargs", "expected"), [({}, DataFeed.SIP), ({"feed": "iex"}, DataFeed.IEX)])
+def test_bars_requests_use_the_sip_feed_unless_told_otherwise(kwargs, expected) -> None:
+    trading_client = FakeTradingClient()
+    trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
+    data_client = FakeStockHistoricalDataClient()
+    data_client.bars["AAPL"] = [bar_payload("2026-01-05T05:00:00Z", 150.0)]
+    source = AlpacaBacktestData(START, END, client=data_client, trading_client=trading_client, **kwargs)
+
+    source.load([AAPL], START, END, "day")
+
+    assert [request.feed for request in data_client.bars_requests] == [expected]
+
+
+def test_an_unknown_feed_is_refused_at_construction() -> None:
+    with pytest.raises(ValueError, match="feed"):
+        AlpacaBacktestData(START, END, feed="otc", client=FakeStockHistoricalDataClient(), trading_client=FakeTradingClient())
 
 
 def test_load_honors_its_own_start_and_end_arguments() -> None:

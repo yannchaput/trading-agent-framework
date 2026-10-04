@@ -1,8 +1,12 @@
-"""`BacktestDataSource` backed by Alpaca's IEX feed, reusing the existing pure
+"""`BacktestDataSource` backed by Alpaca bars, reusing the existing pure
 `brokers/alpaca/market_data.py` translation and `brokers/alpaca/account.py`'s
-calendar parsing. Exact sessions (early closes included) -- the choice when feed
-parity with paper/live matters more than Yahoo's decades of free history (design
-spec, section 4.2).
+calendar parsing. Exact sessions (early closes included) -- the choice when exact
+sessions matter more than Yahoo's decades of free history (design spec, section 4.2).
+
+The feed is SIP by default (every exchange): IEX alone is ~2-3% of volume, so a thin
+stock has no bar in many minutes and a simulated stop fills late or never. Live and
+paper stay on IEX (SIP data under 15 minutes old needs a paid plan), so a backtest's
+signals are cleaner than the ones live trading sees; pass `feed="iex"` for parity.
 
 Bars are re-indexed from Alpaca's bar-START convention to this subsystem's
 bar-CLOSE convention (see `data/base.py`): a daily bar's index becomes its
@@ -44,23 +48,27 @@ class AlpacaTradingCalendarClient(Protocol):
 
 
 class AlpacaBacktestData(BacktestDataSource):
-    """Exact Alpaca calendar sessions; IEX daily/minute bars, fetched lazily per asset
+    """Exact Alpaca calendar sessions; SIP (or IEX) daily/minute bars, fetched lazily per asset
     over the fixed `[start, end]` window given at construction (`bars()`'s own
     lazy-fetch path, which carries no window of its own, uses that fixed window;
     `load()` always honors its own caller-supplied `start`/`end`). The calendar cache
     backing `sessions()` is NOT fixed to that window, though: it grows on demand to
     cover the union of every range it's ever been queried with (see `sessions()`)."""
 
-    name = "alpaca"
-
     def __init__(
         self,
         start: datetime,
         end: datetime,
         *,
+        feed: str = "sip",
         client: market_data.AlpacaStockDataClient | None = None,
         trading_client: AlpacaTradingCalendarClient | None = None,
     ) -> None:
+        if feed not in ("iex", "sip"):
+            raise ValueError(f"unknown feed {feed!r}: expected 'iex' or 'sip'")
+        self._feed = feed
+        # Per instance: a run's settings.json records which feed it was tested on.
+        self.name = f"alpaca_{feed}"
         self._start = start
         self._end = end
         self._client = client  # injected in tests; built from env credentials otherwise
@@ -191,7 +199,7 @@ class AlpacaBacktestData(BacktestDataSource):
 
         parsed: dict[Asset, Bars] = {}
         for chunk in market_data.chunk_assets(assets):
-            request = market_data.build_bars_request(chunk, timestep, start, end)
+            request = market_data.build_bars_request(chunk, timestep, start, end, feed=self._feed)
             try:
                 with self._client_lock:
                     barset = self._real_client().get_stock_bars(request)

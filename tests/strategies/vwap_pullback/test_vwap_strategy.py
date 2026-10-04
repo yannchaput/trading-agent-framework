@@ -151,3 +151,14 @@ def test_run_backtesting_reads_minute_bars_year_by_year(tmp_path: Path, monkeypa
     assert isinstance(source, partial)
     assert source.func is YearChunkedData and source.keywords == {"inner": AlpacaBacktestData}
     assert captured["timestep"] == "minute"
+
+
+def test_run_backtesting_charges_the_slippage_parameter_unless_overridden(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict = {}
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
+
+    _strategy(tmp_path).run_backtesting()
+    assert captured["slippage"] == VwapPullbackStrategy.parameters["slippage"] == Decimal("0.0005")  # 5 bps per side
+
+    _strategy(tmp_path).run_backtesting(slippage=Decimal(0))
+    assert captured["slippage"] == Decimal(0)

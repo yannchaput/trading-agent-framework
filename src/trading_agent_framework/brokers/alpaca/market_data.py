@@ -112,13 +112,21 @@ def _symbols(assets: Sequence[Asset]) -> list[str]:
     return [to_alpaca_symbol(asset.symbol) for asset in assets]
 
 
-def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> StockBarsRequest:
+_FEEDS = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
+
+
+def build_bars_request(
+    assets: Sequence[Asset], timestep: str, start: datetime, end: datetime, *, feed: str = "iex"
+) -> StockBarsRequest:
+    """`feed` is `"iex"` (live/paper) or `"sip"` (backtests: all exchanges, but never data under 15 minutes old)."""
+    if feed not in _FEEDS:
+        raise ValueError(f"unknown feed {feed!r}: expected one of {sorted(_FEEDS)}")
     return StockBarsRequest(
         symbol_or_symbols=_symbols(assets),
         timeframe=parse_timestep(timestep),
         start=start,
         end=end,
-        feed=FEED,
+        feed=_FEEDS[feed],
         adjustment=ADJUSTMENT,
     )
 
