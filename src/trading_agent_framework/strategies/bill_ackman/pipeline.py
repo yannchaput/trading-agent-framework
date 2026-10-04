@@ -208,6 +208,11 @@ class ReviewPipeline:
                 f"requiring only {', '.join(required[: params.max_positions])}; left to the trader's choice: {', '.join(left_out)}"
             )
             required = required[: params.max_positions]
+        elif len(required) == params.max_positions:
+            blocked = [symbol for symbol in allowed if symbol not in required]
+            strategy.log_info(
+                f"[bill_ackman] book is full: {len(required)} holdings to keep fill max_positions ({params.max_positions}); blocked newcomers: {', '.join(blocked) or 'none'}"
+            )
 
         # 8. Trader.
         positions: list[PortfolioPosition] = []

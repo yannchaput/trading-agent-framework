@@ -418,8 +418,24 @@ def test_a_held_survivor_is_required_and_a_portfolio_that_drops_it_is_refused(tm
     assert "HHH is held and has not failed twice" in h.trader.calls[1]["task"]
     assert ("HHH", "sell", 60.0) in h.orders  # shrunk from 50% to 20%, not sold out
     assert any("[trader] 2 allowed: AAA, HHH; required: HHH; forced exits: none" in record.getMessage() for record in caplog.records)
+    assert not any("book is full" in record.getMessage() for record in caplog.records)  # 1 holding to keep, 8 slots
     (line,) = h.log_lines()
     assert line["required"] == ["HHH"]
+
+
+def test_a_full_book_is_logged_with_the_newcomers_it_blocks(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([_candidate("CCC", 1)], holdings=[_candidate("AAA"), _candidate("BBB")])
+    h = _harness(tmp_path, screen, held={"AAA": 10, "BBB": 10}, params=AckmanParams(max_positions=2))
+    h.researcher.steps = [ranks("CCC")]
+    h.short_seller.steps = [judges(AAA="survive", BBB="survive", CCC="survive")]
+    h.trader.steps = [holds(AAA=0.1, BBB=0.1)]
+
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    messages = [record.getMessage() for record in caplog.records if record.levelno == logging.INFO]
+    assert any("[bill_ackman] book is full: 2 holdings to keep fill max_positions (2); blocked newcomers: CCC" in m for m in messages)
+    assert h.trader.calls[0]["context"]["required"] == ["AAA", "BBB"]
 
 
 def test_a_forced_exit_is_neither_allowed_nor_required(tmp_path: Path) -> None:
