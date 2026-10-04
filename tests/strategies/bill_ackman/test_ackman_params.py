@@ -14,7 +14,7 @@ def test_the_defaults_are_the_spec_values() -> None:
 
     assert params.screen == ScreenParams()
     assert params.screen.top_n == 15
-    assert (params.research_top_n, params.max_positions) == (8, 5)
+    assert (params.research_top_n, params.max_positions) == (8, 8)
     assert (params.max_weight, params.min_weight, params.cash_buffer) == (0.35, 0.05, 0.02)
     assert (params.forced_exit_fails, params.rebalance_band, params.min_trade_pct) == (2, 0.05, 0.005)
     assert (params.parking_symbol, params.max_consecutive_abandoned, params.reason_max_chars) == ("SHV", 3, 300)

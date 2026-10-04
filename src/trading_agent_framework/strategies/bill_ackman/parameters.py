@@ -12,7 +12,7 @@ from trading_agent_framework.strategies.bill_ackman.screen import ScreenParams
 class AckmanParams:
     screen: ScreenParams = field(default_factory=ScreenParams)
     research_top_n: int = 8  # ideas the researcher submits
-    max_positions: int = 5  # stocks in the target portfolio
+    max_positions: int = 8  # stocks in the target portfolio; equal to research_top_n, so every surviving idea can be held
     max_weight: float = 0.35  # largest weight of one stock, as a fraction of portfolio value
     min_weight: float = 0.05  # smallest weight of one stock; must be at least `rebalance_band`
     cash_buffer: float = 0.02  # share of portfolio value never invested (fees, fill drift)

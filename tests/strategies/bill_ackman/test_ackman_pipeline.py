@@ -254,7 +254,7 @@ def test_the_agents_get_the_context_the_design_promises(tmp_path: Path) -> None:
     assert by_symbol["HHH"]["research_rank"] is None and by_symbol["HHH"]["verdict"] == "survive" and by_symbol["HHH"]["pending_fail_count"] == 0
     assert by_symbol["HHH"]["current_weight"] == 0.5
     assert trader["forced_exits"] == []
-    assert trader["constraints"]["max_positions"] == 5 and trader["constraints"]["max_total_weight"] == pytest.approx(0.98)
+    assert trader["constraints"]["max_positions"] == 8 and trader["constraints"]["max_total_weight"] == pytest.approx(0.98)
 
 
 # --- holdings, hysteresis and forced exits ------------------------------------------------------------
