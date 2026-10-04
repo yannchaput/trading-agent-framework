@@ -381,13 +381,12 @@ class AgentManager:
         if not model_id:
             raise ConfigurationError("No model id given and LLM_MODEL is not set; pass model=... explicitly or set LLM_MODEL in the strategy's env file")
         try:
-            sampling = {} if temperature is None else {"temperature": temperature}
             return ChatOpenAI(
                 model=model_id,
                 base_url=credentials.base_url,
                 api_key=SecretStr(credentials.api_key),
                 timeout=timeout_seconds,
-                **sampling,
+                temperature=temperature,
             )
         except Exception as exc:
             raise AgentError(f"could not build chat model {model_id!r}: {exc}") from exc

@@ -13,7 +13,7 @@
 * Log P&L every day in a sqllite database for the dashboard to display it: for backtest, paper and live
 
 ## BUGS
-* Review `uv check` errors and fix or silent them
+* ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Decommission IBKR
     * Withdraw money
@@ -66,7 +66,7 @@
 * ~~Change agentic architecture for : Make the agent "agentic" in the right place (cf chatgpt)~~ => agents removed, the strategy is code only
 
 ### Bill Ackman
-* Update claude.md with exempt_tools and budget_tools
+* ~~Update claude.md with exempt_tools and budget_tools~~
 * Update dashboard to display tempearature
 * Log output of each agent to understand wht was their decision
 
