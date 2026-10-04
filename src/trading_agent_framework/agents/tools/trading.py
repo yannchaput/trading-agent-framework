@@ -81,18 +81,18 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
             current_run_id(),
             key,
             lambda: _submit(symbol, quantity, side, limit_price, stop_price, time_in_force),
-            on_repeat=lambda first: {
-                "error": f"an identical order was already placed in this run ({first['identifier']}); not placed again"
-            },
+            on_repeat=lambda first: {"error": f"an identical order was already placed in this run ({first['identifier']}); not placed again"},
         )
 
-    def _submit(
-        symbol: str, quantity: float, side: str, limit_price: float | None, stop_price: float | None, time_in_force: str
-    ) -> dict[str, Any]:
+    def _submit(symbol: str, quantity: float, side: str, limit_price: float | None, stop_price: float | None, time_in_force: str) -> dict[str, Any]:
         try:
             order = strategy.create_order(
-                symbol, quantity, side,
-                limit_price=limit_price, stop_price=stop_price, time_in_force=time_in_force,
+                symbol,
+                quantity,
+                side,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                time_in_force=time_in_force,
             )
             submitted = strategy.submit_order(order)
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)

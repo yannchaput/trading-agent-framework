@@ -81,9 +81,7 @@ def test_get_historical_prices_for_assets_forwards_every_option() -> None:
     strategy, broker = _strategy()
     broker.bar_frames = {"AAPL": make_bars_frame([1, 2]), "MSFT": make_bars_frame([3, 4])}
 
-    result = strategy.get_historical_prices_for_assets(
-        ["AAPL", Asset("MSFT"), "TLT"], 2, "minute", include_after_hours=False
-    )
+    result = strategy.get_historical_prices_for_assets(["AAPL", Asset("MSFT"), "TLT"], 2, "minute", include_after_hours=False)
 
     assert set(result) == {Asset("AAPL"), Asset("MSFT")}
     assert broker.bars_calls == [(("AAPL", "MSFT", "TLT"), 2, "minute", False)]

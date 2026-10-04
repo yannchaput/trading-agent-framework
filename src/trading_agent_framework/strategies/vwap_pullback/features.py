@@ -231,4 +231,3 @@ def zscores(values: Mapping[str, float]) -> dict[str, float]:
     if not std > 0:
         return dict.fromkeys(values, 0.0)
     return {str(key): float(value) for key, value in ((series - series.mean()) / std).items()}
-

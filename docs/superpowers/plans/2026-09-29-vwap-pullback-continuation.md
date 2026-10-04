@@ -416,10 +416,8 @@ In `_submit_order`, right after the `notional` check and before `projected_rejec
 and replace the `self._pending[order.identifier] = _PendingOrder(...)` statement with:
 
 ```python
-        trail_reference = found[0].close if order.order_type is OrderType.TRAIL and found is not None else None
-        self._pending[order.identifier] = _PendingOrder(
-            order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference
-        )
+trail_reference = found[0].close if order.order_type is OrderType.TRAIL and found is not None else None
+self._pending[order.identifier] = _PendingOrder(order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference)
 ```
 
 Add after `modify_order`:
@@ -727,9 +725,7 @@ def test_zscores() -> None:
 def test_ema_bar_atr_and_latest_levels() -> None:
     assert ema_last([1.0, 1.0, 1.0], 9) == 1.0
     assert ema_last([], 9) is None
-    contexts = intraday_contexts(
-        minute_ohlc(OPEN, _rising(10)), minute_ohlc(OPEN, []), session_open=OPEN, now=CLOSE, bar_stamp="open", beta=1.0, baseline=pd.Series(dtype=float)
-    )
+    contexts = intraday_contexts(minute_ohlc(OPEN, _rising(10)), minute_ohlc(OPEN, []), session_open=OPEN, now=CLOSE, bar_stamp="open", beta=1.0, baseline=pd.Series(dtype=float))
     assert bar_atr(contexts, 14) == pytest.approx(0.5)  # both 5-minute bars span 0.5
     levels = latest_levels(contexts, ema_length=9, atr_length=14)
     assert levels is not None and levels.close == pytest.approx(101.0)
@@ -1204,10 +1200,7 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     z_ret = zscores({s.symbol: s.ret for s in passing})
     z_rs = zscores({s.symbol: s.rs for s in passing})
     z_rvol = zscores({s.symbol: s.rvol for s in passing if s.rvol is not None})
-    candidates = [
-        RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3, z_rs=z_rs[s.symbol], z_rvol=z_rvol[s.symbol])
-        for s in passing
-    ]
+    candidates = [RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3, z_rs=z_rs[s.symbol], z_rvol=z_rvol[s.symbol]) for s in passing]
     ranked = sorted(candidates, key=lambda c: (-c.composite, c.symbol))[: params.tracked_size]
     kept = {c.symbol for c in ranked}
     by_symbol = {c.symbol: c for c in candidates}
@@ -1264,8 +1257,17 @@ ATR = 2.0  # daily ATR: impulse = 1.6 move, large red body > 0.5
 
 def bar(minute: int, o: float, h: float, low: float, c: float, v: float, *, vwap: float, rs: float = 0.01, rvol: float = 2.0, high_so_far: float | None = None) -> BarContext:
     return BarContext(
-        time=et(2026, 9, 1, 9, 30) + timedelta(minutes=minute), open=o, high=h, low=low, close=c, volume=v,
-        vwap=vwap, rs=rs, rvol=rvol, session_open=100.0, session_high=high_so_far if high_so_far is not None else h,
+        time=et(2026, 9, 1, 9, 30) + timedelta(minutes=minute),
+        open=o,
+        high=h,
+        low=low,
+        close=c,
+        volume=v,
+        vwap=vwap,
+        rs=rs,
+        rvol=rvol,
+        session_open=100.0,
+        session_high=high_so_far if high_so_far is not None else h,
     )
 
 
@@ -1442,8 +1444,14 @@ def advance(setup: Setup, bars: Sequence[BarContext], daily_atr: float, params: 
 def step(setup: Setup, bar: BarContext, daily_atr: float, params: VwapPullbackParameters) -> Setup:
     """The setup after one more completed bar."""
     seen = replace(
-        setup, last_bar_time=bar.time, bars_seen=setup.bars_seen + 1, volume_total=setup.volume_total + bar.volume,
-        last_close=bar.close, last_vwap=bar.vwap, last_rs=bar.rs, last_rvol=bar.rvol,
+        setup,
+        last_bar_time=bar.time,
+        bars_seen=setup.bars_seen + 1,
+        volume_total=setup.volume_total + bar.volume,
+        last_close=bar.close,
+        last_vwap=bar.vwap,
+        last_rs=bar.rs,
+        last_rvol=bar.rvol,
     )
     if seen.state in _FROZEN:
         return seen
@@ -1489,7 +1497,11 @@ def _impulse_or_pullback(setup: Setup, bar: BarContext, daily_atr: float, params
         setup = _new_high(setup, bar)
     if retracement >= params.pullback_min_retrace:
         return replace(
-            setup, state=SetupState.PULLBACK, pullback_low=bar.low, pullback_bars=1, pullback_volume_total=bar.volume,
+            setup,
+            state=SetupState.PULLBACK,
+            pullback_low=bar.low,
+            pullback_bars=1,
+            pullback_volume_total=bar.volume,
             largest_red_body_atr=red_body / daily_atr if red_body > 0 and daily_atr > 0 else 0.0,
         )
     return setup
@@ -1511,8 +1523,16 @@ def _broken_reason(setup: Setup, bar: BarContext, red_body: float, retracement: 
 
 def _new_high(setup: Setup, bar: BarContext) -> Setup:
     return replace(
-        setup, state=SetupState.IMPULSE, impulse_high=bar.high, impulse_bars=setup.bars_seen, impulse_volume_total=setup.volume_total,
-        pullback_low=None, pullback_bars=0, pullback_volume_total=0.0, largest_red_body_atr=0.0, retracement=0.0,
+        setup,
+        state=SetupState.IMPULSE,
+        impulse_high=bar.high,
+        impulse_bars=setup.bars_seen,
+        impulse_volume_total=setup.volume_total,
+        pullback_low=None,
+        pullback_bars=0,
+        pullback_volume_total=0.0,
+        largest_red_body_atr=0.0,
+        retracement=0.0,
     )
 
 
@@ -1593,8 +1613,15 @@ PARAMS = VwapPullbackParameters()
 
 def _plan(**overrides: object) -> risk.EntryPlan:
     kwargs: dict[str, object] = {
-        "trigger_close": 101.85, "pullback_low": 101.1, "last_price": D("101.90"), "daily_atr": 2.0,
-        "equity": D("100000"), "buying_power": D("100000"), "cash": D("100000"), "pending_sell_proceeds": D(0), "params": PARAMS,
+        "trigger_close": 101.85,
+        "pullback_low": 101.1,
+        "last_price": D("101.90"),
+        "daily_atr": 2.0,
+        "equity": D("100000"),
+        "buying_power": D("100000"),
+        "cash": D("100000"),
+        "pending_sell_proceeds": D(0),
+        "params": PARAMS,
     }
     return risk.plan_entry(**(kwargs | overrides))  # ty: ignore[invalid-argument-type]
 
@@ -2266,9 +2293,7 @@ class FakeNewsProvider:
         self.articles = articles or {}
         self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int, bool]] = []
 
-    def get_news(
-        self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False
-    ) -> list[dict[str, object]]:
+    def get_news(self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False) -> list[dict[str, object]]:
         self.calls.append((tuple(symbols), start, end, limit, include_content))
         rows = [a for symbol in symbols for a in self.articles.get(symbol, [])]
         in_window = [a for a in rows if (start is None or datetime.fromisoformat(str(a["created_at"])) >= start) and datetime.fromisoformat(str(a["created_at"])) <= end]
@@ -2320,11 +2345,13 @@ def test_prepare_session_runs_stage_one_and_builds_rvol_baselines(tmp_path: Path
         ("CHEAP", "day"): make_bars_frame([3.0] * 71, start=start),
         ("WILD", "day"): make_bars_frame([20.0] * 71, start=start),
         ("SPY", "day"): make_bars_frame([400.0] * 71, start=start),
-        ("AAA", "minute"): pd.concat([
-            _minutes(date(2026, 8, 31), 5, 100),
-            minute_ohlc(et(2026, 9, 1, 9, 29), [(100, 100, 100, 100, 999)]),  # premarket: excluded
-            _minutes(date(2026, 9, 1), 5, 100),
-        ]),
+        ("AAA", "minute"): pd.concat(
+            [
+                _minutes(date(2026, 8, 31), 5, 100),
+                minute_ohlc(et(2026, 9, 1, 9, 29), [(100, 100, 100, 100, 999)]),  # premarket: excluded
+                _minutes(date(2026, 9, 1), 5, 100),
+            ]
+        ),
     }
     state = Scanner(strategy, PARAMS, ["AAA", "BBB", "CHEAP", "WILD"]).prepare_session()
     assert state.day == DAY
@@ -2509,9 +2536,14 @@ class Scanner:
         snapshots = []
         for symbol, info in state.candidates.items():
             contexts = intraday_contexts(
-                self._session_frame(bars.get(Asset(symbol)), state), bench_df,
-                session_open=state.session.open, now=now, bar_stamp=state.bar_stamp, beta=info.beta,
-                baseline=state.baselines.get(symbol, pd.Series(dtype=float)), minutes=self._params.bar_minutes,
+                self._session_frame(bars.get(Asset(symbol)), state),
+                bench_df,
+                session_open=state.session.open,
+                now=now,
+                bar_stamp=state.bar_stamp,
+                beta=info.beta,
+                baseline=state.baselines.get(symbol, pd.Series(dtype=float)),
+                minutes=self._params.bar_minutes,
             )
             state.contexts[symbol] = contexts
             snapshot = snapshot_from(symbol, contexts)
@@ -2654,7 +2686,9 @@ class Rig:
         self.strategy.vars.session = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=D("100000"))
         self.state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0, z_rs=2.5, z_rvol=2.5)
         self.state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
-        self.state.contexts["AAA"] = [BarContext(time=et(2026, 9, 1, 10, 0), open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0, session_open=99.0, session_high=100.2)]
+        self.state.contexts["AAA"] = [
+            BarContext(time=et(2026, 9, 1, 10, 0), open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0, session_open=99.0, session_high=100.2)
+        ]
         self.log = tmp_path / "trades.jsonl"
         self.desk = Desk(self.strategy, params or VwapPullbackParameters(), trade_log=lambda: self.log)
 
@@ -2965,9 +2999,15 @@ class Desk:
             return {"error": f"no price for {symbol}"}
         try:
             plan = risk.plan_entry(
-                trigger_close=setup.trigger_close, pullback_low=setup.pullback_low, last_price=last, daily_atr=info.daily_atr,
-                equity=account.portfolio_value, buying_power=account.buying_power, cash=account.cash,
-                pending_sell_proceeds=self._pending_sell_proceeds(), params=self._params,
+                trigger_close=setup.trigger_close,
+                pullback_low=setup.pullback_low,
+                last_price=last,
+                daily_atr=info.daily_atr,
+                equity=account.portfolio_value,
+                buying_power=account.buying_power,
+                cash=account.cash,
+                pending_sell_proceeds=self._pending_sell_proceeds(),
+                params=self._params,
             )
         except risk.EntryRefused as exc:
             return {"error": str(exc)}
@@ -2975,16 +3015,28 @@ class Desk:
             submitted = self._strategy.submit_order(self._strategy.create_order(symbol, plan.quantity, "buy", limit_price=plan.limit_price))
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             return {"error": str(exc)}
-        state.book.add(Trade(
-            symbol=symbol, entry_order_id=submitted.identifier, planned_quantity=plan.quantity, stop_price=plan.stop_price,
-            r_per_share=plan.r_per_share, catalyst=catalyst, reason=reason, entered_at=now,
-        ))
+        state.book.add(
+            Trade(
+                symbol=symbol,
+                entry_order_id=submitted.identifier,
+                planned_quantity=plan.quantity,
+                stop_price=plan.stop_price,
+                r_per_share=plan.r_per_share,
+                catalyst=catalyst,
+                reason=reason,
+                entered_at=now,
+            )
+        )
         state.setups[symbol] = mark_in_trade(setup)
         state.decided.add(symbol)
         self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share} ({catalyst}: {reason})")
         return {
-            "symbol": symbol, "quantity": int(plan.quantity), "limit_price": float(plan.limit_price),
-            "stop_price": float(plan.stop_price), "r_per_share": float(plan.r_per_share), "status": "entry submitted",
+            "symbol": symbol,
+            "quantity": int(plan.quantity),
+            "limit_price": float(plan.limit_price),
+            "stop_price": float(plan.stop_price),
+            "r_per_share": float(plan.r_per_share),
+            "status": "entry submitted",
         }
 
     def pass_on_setup(self, symbol: str, reason: str) -> dict[str, Any]:
@@ -3376,107 +3428,112 @@ from decimal import ROUND_DOWN, ROUND_FLOOR, ROUND_HALF_UP, Decimal
 Add a section before `# --- session boundaries`:
 
 ```python
-    # --- exits (the exit agent's actions) --------------------------------------------------
+# --- exits (the exit agent's actions) --------------------------------------------------
 
-    def take_partial_profit(self, symbol: str, fraction: float) -> dict[str, Any]:
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        low, high = self._params.tp1_fraction_band
-        if not low <= fraction <= high:
-            return {"error": f"fraction must be between {low} and {high}"}
-        if trade.tp1_done:
-            return {"error": "partial profit was already taken on this trade"}
-        sold = (trade.quantity * Decimal(str(fraction))).to_integral_value(rounding=ROUND_FLOOR)
-        if sold <= 0 or sold >= trade.quantity:
-            return {"error": f"a position of {trade.quantity} shares is too small to split"}
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        remaining = trade.quantity - sold
-        if self._market_sell(trade, sold, "partial profit") is None:
-            self._submit_stop(trade, trade.quantity)
-            return {"error": "the sell failed; the stop was placed again for the whole position"}
-        trade.tp1_done = True
-        self._submit_stop(trade, remaining)
-        self._strategy.log_info(f"partial profit {trade.symbol}: sold {sold}, {remaining} left under the stop")
-        return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
 
-    def tighten_stop(self, symbol: str, stop_price: float) -> dict[str, Any]:
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        if trade.stop_kind == "trail":
-            return {"error": "the stop is already a trailing stop; it ratchets up on its own"}
-        new_level = risk.to_price(stop_price, ROUND_DOWN)
-        if new_level <= trade.stop_level:
-            return {"error": f"a stop can only move up (current stop {trade.stop_level})"}
-        try:
-            last = self._strategy.get_last_price(trade.symbol)
-        except _DATA_ERRORS as exc:
-            return {"error": f"price unavailable: {exc}"}
-        if last is not None and new_level >= last:
-            return {"error": f"the stop must stay below the last price {last}"}
-        order = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id else None
-        if order is None or not order.is_active():
-            return {"error": "no working stop to raise"}
-        try:
-            replacement = self._strategy.modify_order(order, stop_price=new_level)
-        except Exception as exc:  # the broker's modify may raise its own error type (BacktestError, BrokerError)
-            return {"error": f"the stop could not be modified: {exc}"}
-        trade.stop_order_id = replacement.identifier
-        trade.stop_level = new_level
-        self._strategy.log_info(f"stop {trade.symbol} raised to {new_level}")
-        return {"status": "stop raised", "stop_price": float(new_level)}
-
-    def replace_stop_with_trailing(self, symbol: str, trail_atr: float) -> dict[str, Any]:
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        low, high = self._params.trail_atr_band
-        if not low <= trail_atr <= high:
-            return {"error": f"trail_atr must be between {low} and {high}"}
-        levels = self.levels(trade.symbol)
-        if levels is None or levels.atr is None or not levels.atr > 0:
-            return {"error": "no 5-minute ATR yet for this symbol"}
-        trail = risk.to_price(trail_atr * levels.atr, ROUND_HALF_UP)
-        try:
-            last = self._strategy.get_last_price(trade.symbol)
-        except _DATA_ERRORS as exc:
-            return {"error": f"price unavailable: {exc}"}
-        if last is None or trail <= 0:
-            return {"error": "no price to start the trail from"}
-        starts_at = last - trail
-        if starts_at < trade.stop_level:
-            return {"error": f"a {trail_atr} ATR trail would start at {starts_at}, below the current stop {trade.stop_level}; use a tighter trail"}
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        trade.stop_kind, trade.trail_price, trade.stop_level = "trail", trail, starts_at
+def take_partial_profit(self, symbol: str, fraction: float) -> dict[str, Any]:
+    trade = self._open_trade(symbol)
+    if isinstance(trade, dict):
+        return trade
+    low, high = self._params.tp1_fraction_band
+    if not low <= fraction <= high:
+        return {"error": f"fraction must be between {low} and {high}"}
+    if trade.tp1_done:
+        return {"error": "partial profit was already taken on this trade"}
+    sold = (trade.quantity * Decimal(str(fraction))).to_integral_value(rounding=ROUND_FLOOR)
+    if sold <= 0 or sold >= trade.quantity:
+        return {"error": f"a position of {trade.quantity} shares is too small to split"}
+    released = self._release_stop(trade)
+    if released is not None:
+        return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
+    remaining = trade.quantity - sold
+    if self._market_sell(trade, sold, "partial profit") is None:
         self._submit_stop(trade, trade.quantity)
-        self._strategy.log_info(f"stop {trade.symbol} replaced by a {trail} trailing stop")
-        return {"status": "trailing stop placed", "trail_price": float(trail), "starts_at": float(starts_at)}
+        return {"error": "the sell failed; the stop was placed again for the whole position"}
+    trade.tp1_done = True
+    self._submit_stop(trade, remaining)
+    self._strategy.log_info(f"partial profit {trade.symbol}: sold {sold}, {remaining} left under the stop")
+    return {"status": "partial profit taken", "sold": int(sold), "remaining": int(remaining), "stop_price": float(trade.stop_level)}
 
-    def exit_position(self, symbol: str, reason: str) -> dict[str, Any]:
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        released = self._release_stop(trade)
-        if released is not None:
-            return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
-        if self._market_sell(trade, trade.quantity, reason) is None:
-            self._submit_stop(trade, trade.quantity)
-            return {"error": "the sell failed; the stop was placed again"}
-        trade.exit_reason = reason
-        self._strategy.log_info(f"exit {trade.symbol}: {reason}")
-        return {"status": "exit submitted", "quantity": int(trade.quantity)}
 
-    def hold(self, symbol: str, reason: str) -> dict[str, Any]:
-        trade = self._open_trade(symbol)
-        if isinstance(trade, dict):
-            return trade
-        self._strategy.log_info(f"hold {trade.symbol}: {reason}")
-        return {"symbol": trade.symbol, "status": "holding"}
+def tighten_stop(self, symbol: str, stop_price: float) -> dict[str, Any]:
+    trade = self._open_trade(symbol)
+    if isinstance(trade, dict):
+        return trade
+    if trade.stop_kind == "trail":
+        return {"error": "the stop is already a trailing stop; it ratchets up on its own"}
+    new_level = risk.to_price(stop_price, ROUND_DOWN)
+    if new_level <= trade.stop_level:
+        return {"error": f"a stop can only move up (current stop {trade.stop_level})"}
+    try:
+        last = self._strategy.get_last_price(trade.symbol)
+    except _DATA_ERRORS as exc:
+        return {"error": f"price unavailable: {exc}"}
+    if last is not None and new_level >= last:
+        return {"error": f"the stop must stay below the last price {last}"}
+    order = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id else None
+    if order is None or not order.is_active():
+        return {"error": "no working stop to raise"}
+    try:
+        replacement = self._strategy.modify_order(order, stop_price=new_level)
+    except Exception as exc:  # the broker's modify may raise its own error type (BacktestError, BrokerError)
+        return {"error": f"the stop could not be modified: {exc}"}
+    trade.stop_order_id = replacement.identifier
+    trade.stop_level = new_level
+    self._strategy.log_info(f"stop {trade.symbol} raised to {new_level}")
+    return {"status": "stop raised", "stop_price": float(new_level)}
+
+
+def replace_stop_with_trailing(self, symbol: str, trail_atr: float) -> dict[str, Any]:
+    trade = self._open_trade(symbol)
+    if isinstance(trade, dict):
+        return trade
+    low, high = self._params.trail_atr_band
+    if not low <= trail_atr <= high:
+        return {"error": f"trail_atr must be between {low} and {high}"}
+    levels = self.levels(trade.symbol)
+    if levels is None or levels.atr is None or not levels.atr > 0:
+        return {"error": "no 5-minute ATR yet for this symbol"}
+    trail = risk.to_price(trail_atr * levels.atr, ROUND_HALF_UP)
+    try:
+        last = self._strategy.get_last_price(trade.symbol)
+    except _DATA_ERRORS as exc:
+        return {"error": f"price unavailable: {exc}"}
+    if last is None or trail <= 0:
+        return {"error": "no price to start the trail from"}
+    starts_at = last - trail
+    if starts_at < trade.stop_level:
+        return {"error": f"a {trail_atr} ATR trail would start at {starts_at}, below the current stop {trade.stop_level}; use a tighter trail"}
+    released = self._release_stop(trade)
+    if released is not None:
+        return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
+    trade.stop_kind, trade.trail_price, trade.stop_level = "trail", trail, starts_at
+    self._submit_stop(trade, trade.quantity)
+    self._strategy.log_info(f"stop {trade.symbol} replaced by a {trail} trailing stop")
+    return {"status": "trailing stop placed", "trail_price": float(trail), "starts_at": float(starts_at)}
+
+
+def exit_position(self, symbol: str, reason: str) -> dict[str, Any]:
+    trade = self._open_trade(symbol)
+    if isinstance(trade, dict):
+        return trade
+    released = self._release_stop(trade)
+    if released is not None:
+        return {"status": STOPPED_OUT} if released == STOPPED_OUT else {"error": released}
+    if self._market_sell(trade, trade.quantity, reason) is None:
+        self._submit_stop(trade, trade.quantity)
+        return {"error": "the sell failed; the stop was placed again"}
+    trade.exit_reason = reason
+    self._strategy.log_info(f"exit {trade.symbol}: {reason}")
+    return {"status": "exit submitted", "quantity": int(trade.quantity)}
+
+
+def hold(self, symbol: str, reason: str) -> dict[str, Any]:
+    trade = self._open_trade(symbol)
+    if isinstance(trade, dict):
+        return trade
+    self._strategy.log_info(f"hold {trade.symbol}: {reason}")
+    return {"symbol": trade.symbol, "status": "holding"}
 ```
 
 Note on `replace_stop_with_trailing`: the trailing sell is placed by `_submit_stop` (which reads `stop_kind == "trail"` and `trail_price`), so a failed submission falls back to an immediate market sell like every other stop.
@@ -3652,21 +3709,23 @@ def trade_rows(desk: "Desk", now: datetime) -> list[dict[str, Any]]:  # noqa: UP
     for trade in desk.state.book.open_trades():
         levels = desk.levels(trade.symbol)
         last = Decimal(str(levels.close)) if levels is not None else None
-        rows.append({
-            "symbol": trade.symbol,
-            "quantity": int(trade.quantity),
-            "entry_price": float(trade.entry_price) if trade.entry_price is not None else None,
-            "last_close": float(last) if last is not None else None,
-            "stop_kind": trade.stop_kind,
-            "stop_level": float(trade.stop_level),
-            "r_per_share": float(trade.r_per_share),
-            "unrealised_r": trade.unrealised_r(last) if last is not None else None,
-            "tp1_done": trade.tp1_done,
-            "vwap": round(levels.vwap, 2) if levels is not None else None,
-            "ema9": round(levels.ema, 2) if levels is not None and levels.ema is not None else None,
-            "minutes_to_flatten": desk.minutes_to_flatten(now),
-            "headlines_since_entry": [h for h in desk.state.headlines.get(trade.symbol, []) if _after(h["created_at"], trade.entered_at)],
-        })
+        rows.append(
+            {
+                "symbol": trade.symbol,
+                "quantity": int(trade.quantity),
+                "entry_price": float(trade.entry_price) if trade.entry_price is not None else None,
+                "last_close": float(last) if last is not None else None,
+                "stop_kind": trade.stop_kind,
+                "stop_level": float(trade.stop_level),
+                "r_per_share": float(trade.r_per_share),
+                "unrealised_r": trade.unrealised_r(last) if last is not None else None,
+                "tp1_done": trade.tp1_done,
+                "vwap": round(levels.vwap, 2) if levels is not None else None,
+                "ema9": round(levels.ema, 2) if levels is not None and levels.ema is not None else None,
+                "minutes_to_flatten": desk.minutes_to_flatten(now),
+                "headlines_since_entry": [h for h in desk.state.headlines.get(trade.symbol, []) if _after(h["created_at"], trade.entered_at)],
+            }
+        )
     return rows
 
 
@@ -3752,8 +3811,14 @@ def exit_tools(strategy: "Strategy", desk: "Desk") -> list[Callable[..., dict[st
         return desk.hold(symbol, reason)
 
     return [
-        get_open_trades, _bars_tool(desk), budgeted_search_news(strategy, desk.params.news_calls_per_run),
-        take_partial_profit, tighten_stop, replace_stop_with_trailing, exit_position, hold,
+        get_open_trades,
+        _bars_tool(desk),
+        budgeted_search_news(strategy, desk.params.news_calls_per_run),
+        take_partial_profit,
+        tighten_stop,
+        replace_stop_with_trailing,
+        exit_position,
+        hold,
     ]
 ```
 
@@ -4175,9 +4240,7 @@ class VwapPullbackStrategy(Strategy):
 
     def _build_components(self) -> None:
         self.desk = Desk(self, self.settings, trade_log=self._trade_log_path)
-        self.scanner = Scanner(
-            self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None
-        )
+        self.scanner = Scanner(self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None)
 
     def before_market_opens(self) -> None:
         self._ensure_session()

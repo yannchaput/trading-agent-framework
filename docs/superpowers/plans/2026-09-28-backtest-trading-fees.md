@@ -218,8 +218,10 @@ class TradingFeeFactory:
     def fees(self, *, buy_shares: Decimal, sell_shares: Decimal, buy_value: Decimal, sell_value: Decimal) -> TradeFees:
         """Each side with shares is one order; each side's total is rounded up to the cent."""
         for name, value in (
-            ("buy_shares", buy_shares), ("sell_shares", sell_shares),
-            ("buy_value", buy_value), ("sell_value", sell_value),
+            ("buy_shares", buy_shares),
+            ("sell_shares", sell_shares),
+            ("buy_value", buy_value),
+            ("sell_value", sell_value),
         ):
             if value < 0:
                 raise ValueError(f"{name} must not be negative, got {value}")
@@ -227,12 +229,7 @@ class TradingFeeFactory:
         if buy_shares > 0:
             buy = _ceil_cent(self._commission(buy_shares) + CAT_FEE_PER_SHARE * buy_shares)
         if sell_shares > 0:
-            sell = _ceil_cent(
-                self._commission(sell_shares)
-                + SEC_FEE_RATE * sell_value
-                + min(FINRA_TAF_PER_SHARE * sell_shares, FINRA_TAF_MAX_PER_ORDER)
-                + CAT_FEE_PER_SHARE * sell_shares
-            )
+            sell = _ceil_cent(self._commission(sell_shares) + SEC_FEE_RATE * sell_value + min(FINRA_TAF_PER_SHARE * sell_shares, FINRA_TAF_MAX_PER_ORDER) + CAT_FEE_PER_SHARE * sell_shares)
         return TradeFees(buy=buy, sell=sell)
 
 
@@ -350,8 +347,12 @@ def test_fees_and_slippage_reduce_cash_beyond_the_raw_notional() -> None:
     source.set_bars(AAPL, df)
     clock = BacktestClock(start=DAY1, sessions=[])
     broker = BacktestBroker(
-        "momentum", data_source=source, clock=clock, budget=Decimal(10000),
-        fees=IBKR_FEES, slippage=Decimal("0.01"),
+        "momentum",
+        data_source=source,
+        clock=clock,
+        budget=Decimal(10000),
+        fees=IBKR_FEES,
+        slippage=Decimal("0.01"),
     )
     clock.on_advance = broker.on_advance
     broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
@@ -500,21 +501,22 @@ In `__init__`, replace the parameter `commission: Decimal = Decimal(0),` with `f
 Replace `_execution_terms` with these two methods:
 
 ```python
-    def _execution_terms(self, order: Order, raw_price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
-        """`(execution_price, fee, notional)` for filling `order` at `raw_price`."""
-        assert order.quantity is not None  # notional orders are rejected at submission
-        execution_price = fills.apply_slippage(raw_price, order.side, slippage=self._slippage)
-        notional = execution_price * order.quantity
-        return execution_price, self._fee(order.side, order.quantity, notional), notional
+def _execution_terms(self, order: Order, raw_price: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """`(execution_price, fee, notional)` for filling `order` at `raw_price`."""
+    assert order.quantity is not None  # notional orders are rejected at submission
+    execution_price = fills.apply_slippage(raw_price, order.side, slippage=self._slippage)
+    notional = execution_price * order.quantity
+    return execution_price, self._fee(order.side, order.quantity, notional), notional
 
-    def _fee(self, side: OrderSide, quantity: Decimal, notional: Decimal) -> Decimal:
-        """The broker's fee for one order -- a backtest fill is always the whole order."""
-        if self._fees is None:
-            return Decimal(0)
-        zero = Decimal(0)
-        if side is OrderSide.BUY:
-            return self._fees.fees(buy_shares=quantity, sell_shares=zero, buy_value=notional, sell_value=zero).buy
-        return self._fees.fees(buy_shares=zero, sell_shares=quantity, buy_value=zero, sell_value=notional).sell
+
+def _fee(self, side: OrderSide, quantity: Decimal, notional: Decimal) -> Decimal:
+    """The broker's fee for one order -- a backtest fill is always the whole order."""
+    if self._fees is None:
+        return Decimal(0)
+    zero = Decimal(0)
+    if side is OrderSide.BUY:
+        return self._fees.fees(buy_shares=quantity, sell_shares=zero, buy_value=notional, sell_value=zero).buy
+    return self._fees.fees(buy_shares=zero, sell_shares=quantity, buy_value=zero, sell_value=notional).sell
 ```
 
 In `_projection`, `_projected_rejection_reason`, `_rejection_reason` and `_fill`, rename the local `commission_cost` to `fee` (every occurrence, including `trade_cost=fee` in `_fill`), and change both message fragments `(commission included)` to `(fees included)`.
@@ -552,7 +554,7 @@ In `run_backtesting`'s signature replace `commission: Number = Decimal(0),` with
 In the `run_backtest(...)` call replace `commission=_to_decimal(commission),` with:
 
 ```python
-            fees=fees if fees is not None else TradingFeeFactory.from_env(),
+fees = (fees if fees is not None else TradingFeeFactory.from_env(),)
 ```
 
 - [ ] **Step 9: Stop the strategies from passing a commission**
@@ -621,17 +623,29 @@ def test_run_backtest_records_fee_totals_in_settings(tmp_path: Path) -> None:
     source, sessions = _four_session_source()
     start = sessions[0].open - timedelta(hours=1)
     result = run_backtest(
-        _placeholder_strategy(BuyOnceStrategy, tmp_path, start), start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        fees=TradingFeeFactory(BrokerKind.IBKR), slippage=Decimal(0), risk_free_rate=0.0,
+        _placeholder_strategy(BuyOnceStrategy, tmp_path, start),
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        fees=TradingFeeFactory(BrokerKind.IBKR),
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     [fill] = pd.read_parquet(result.run_dir / "trades.parquet").to_dict("records")
     expected = {
-        "broker": "ibkr", "buy_orders": 1, "sell_orders": 0,
-        "buy_shares": 5.0, "sell_shares": 0.0,
-        "buy_value": pytest.approx(fill["price"] * 5), "sell_value": 0.0,
-        "buy_fees": 1.01, "sell_fees": 0.0,  # IBKR: max(1, 5 * 0.005) + CAT 0.000015
+        "broker": "ibkr",
+        "buy_orders": 1,
+        "sell_orders": 0,
+        "buy_shares": 5.0,
+        "sell_shares": 0.0,
+        "buy_value": pytest.approx(fill["price"] * 5),
+        "sell_value": 0.0,
+        "buy_fees": 1.01,
+        "sell_fees": 0.0,  # IBKR: max(1, 5 * 0.005) + CAT 0.000015
     }
     assert result.settings["fees"] == expected
     assert json.loads((result.run_dir / "settings.json").read_text())["fees"] == expected
@@ -642,15 +656,27 @@ def test_run_backtest_records_zero_fee_totals_without_trades(tmp_path: Path) -> 
     source, sessions = _four_session_source()
     start = sessions[0].open - timedelta(hours=1)
     result = run_backtest(
-        _placeholder_strategy(Strategy, tmp_path, start), start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        _placeholder_strategy(Strategy, tmp_path, start),
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert result.settings["fees"] == {
-        "broker": None, "buy_orders": 0, "sell_orders": 0,
-        "buy_shares": 0.0, "sell_shares": 0.0, "buy_value": 0.0, "sell_value": 0.0,
-        "buy_fees": 0.0, "sell_fees": 0.0,
+        "broker": None,
+        "buy_orders": 0,
+        "sell_orders": 0,
+        "buy_shares": 0.0,
+        "sell_shares": 0.0,
+        "buy_value": 0.0,
+        "sell_value": 0.0,
+        "buy_fees": 0.0,
+        "sell_fees": 0.0,
     }
 ```
 

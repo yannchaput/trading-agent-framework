@@ -51,7 +51,7 @@ def _parse_pseudo_tool_call(content: Any, valid_names: set[str]) -> tuple[str, d
         return None
     try:
         parsed, _ = json.JSONDecoder().raw_decode(content, start)
-    except (json.JSONDecodeError, ValueError):
+    except json.JSONDecodeError, ValueError:
         return None
     if not isinstance(parsed, dict):
         return None

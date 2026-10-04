@@ -60,9 +60,7 @@ def new_retrieval_id() -> str:
 
 def json_dumps(value: object) -> str:
     """Sorted-key JSON; `Decimal`, `datetime` and other non-JSON values become strings."""
-    return json.dumps(
-        value if value is not None else {}, sort_keys=True, default=str, ensure_ascii=False
-    )
+    return json.dumps(value if value is not None else {}, sort_keys=True, default=str, ensure_ascii=False)
 
 
 def json_loads(value: str | None, default: Any) -> Any:
@@ -180,7 +178,4 @@ def rank(items: Iterable[Mapping[str, Any]], terms: Sequence[str]) -> list[Mappi
 
 def render_retrieval_text(items: Iterable[Mapping[str, Any]]) -> str:
     """Lumibot's `rendered_text` column of `memory_retrievals`."""
-    return "\n\n".join(
-        f"{item['kind']} {item['symbol'] or ''} {item['status'] or ''}: {item['text'] or ''}".strip()
-        for item in items
-    )
+    return "\n\n".join(f"{item['kind']} {item['symbol'] or ''} {item['status'] or ''}: {item['text'] or ''}".strip() for item in items)

@@ -71,8 +71,13 @@ New `brokers/news.py` (no `alpaca` import, no I/O):
 ```python
 class NewsProvider(Protocol):
     def get_news(
-        self, symbols: Sequence[str] = (), *, start: datetime | None = None,
-        end: datetime, limit: int = 10, include_content: bool = False,
+        self,
+        symbols: Sequence[str] = (),
+        *,
+        start: datetime | None = None,
+        end: datetime,
+        limit: int = 10,
+        include_content: bool = False,
     ) -> list[dict[str, object]]: ...
 ```
 

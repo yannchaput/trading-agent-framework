@@ -63,20 +63,22 @@ CAT_FEE_PER_SHARE = Decimal("0.000003")
 IBKR_FIXED_PER_SHARE = Decimal("0.005")
 IBKR_FIXED_MIN_PER_ORDER = Decimal("1.00")
 
+
 @dataclass(frozen=True, slots=True)
 class TradeFees:
     buy: Decimal
     sell: Decimal
+
 
 class TradingFeeFactory:
     def __init__(self, broker: BrokerKind) -> None: ...
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> TradingFeeFactory:
         """The fee model of the broker named by `BROKER` (via `BrokerSettings.from_env`)."""
+
     @property
     def broker(self) -> BrokerKind: ...
-    def fees(self, *, buy_shares: Decimal, sell_shares: Decimal,
-             buy_value: Decimal, sell_value: Decimal) -> TradeFees: ...
+    def fees(self, *, buy_shares: Decimal, sell_shares: Decimal, buy_value: Decimal, sell_value: Decimal) -> TradeFees: ...
 ```
 
 `fees()` treats each side with a non-zero share count as **one order**:

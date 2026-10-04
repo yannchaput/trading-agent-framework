@@ -58,10 +58,7 @@ def test_importing_brokers_package_does_not_import_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.brokers\n"
-            "import sys\n"
-            "assert 'alpaca' not in sys.modules\n"
-            "print('OK')\n",
+            "import trading_agent_framework.brokers\nimport sys\nassert 'alpaca' not in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -76,10 +73,7 @@ def test_accessing_alpaca_broker_lazily_imports_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "from trading_agent_framework.brokers import AlpacaBroker\n"
-            "import sys\n"
-            "assert 'alpaca' in sys.modules\n"
-            "print('OK')\n",
+            "from trading_agent_framework.brokers import AlpacaBroker\nimport sys\nassert 'alpaca' in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -94,10 +88,7 @@ def test_accessing_alpaca_trade_stream_lazily_imports_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "from trading_agent_framework.brokers import AlpacaTradeStream\n"
-            "import sys\n"
-            "assert 'alpaca' in sys.modules\n"
-            "print('OK')\n",
+            "from trading_agent_framework.brokers import AlpacaTradeStream\nimport sys\nassert 'alpaca' in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -112,10 +103,7 @@ def test_accessing_alpaca_market_clock_lazily_imports_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "from trading_agent_framework.brokers import AlpacaMarketClock\n"
-            "import sys\n"
-            "assert 'alpaca' in sys.modules\n"
-            "print('OK')\n",
+            "from trading_agent_framework.brokers import AlpacaMarketClock\nimport sys\nassert 'alpaca' in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,

@@ -13,8 +13,15 @@ PARAMS = VwapPullbackParameters()
 
 def _plan(**overrides: object) -> risk.EntryPlan:
     kwargs: dict[str, object] = {
-        "trigger_close": 101.85, "pullback_low": 101.1, "last_price": D("101.90"), "daily_atr": 2.0,
-        "equity": D("100000"), "buying_power": D("100000"), "cash": D("100000"), "pending_sell_proceeds": D(0), "params": PARAMS,
+        "trigger_close": 101.85,
+        "pullback_low": 101.1,
+        "last_price": D("101.90"),
+        "daily_atr": 2.0,
+        "equity": D("100000"),
+        "buying_power": D("100000"),
+        "cash": D("100000"),
+        "pending_sell_proceeds": D(0),
+        "params": PARAMS,
     }
     return risk.plan_entry(**(kwargs | overrides))  # ty: ignore[invalid-argument-type]
 

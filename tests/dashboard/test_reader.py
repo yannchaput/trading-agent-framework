@@ -81,12 +81,22 @@ def test_load_metrics_returns_none_when_metrics_json_is_missing(tmp_path: Path) 
 
 def _settings_payload(**overrides) -> dict:
     payload = {
-        "name": "momentum", "mode": "backtesting", "run_ts": "2026-06-22_194053",
-        "backtesting_start": "2026-01-01T09:30:00-05:00", "backtesting_end": "2026-06-01T16:00:00-04:00",
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 12.5, "timestep": "day", "sleeptime": "1D",
-        "commission": 0.0, "slippage": 0.0, "warmup_trading_days": 20,
-        "benchmark_symbol": "QQQ", "framework_version": "0.1.0",
+        "name": "momentum",
+        "mode": "backtesting",
+        "run_ts": "2026-06-22_194053",
+        "backtesting_start": "2026-01-01T09:30:00-05:00",
+        "backtesting_end": "2026-06-01T16:00:00-04:00",
+        "budget": 10000.0,
+        "risk_free_rate": 0.03,
+        "backtesting_data_sources": "yahoo",
+        "backtest_time_seconds": 12.5,
+        "timestep": "day",
+        "sleeptime": "1D",
+        "commission": 0.0,
+        "slippage": 0.0,
+        "warmup_trading_days": 20,
+        "benchmark_symbol": "QQQ",
+        "framework_version": "0.1.0",
         "parameters": {"lookback": 20},
     }
     payload.update(overrides)
@@ -325,11 +335,20 @@ def test_load_trades_curve_reads_trades_parquet(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload(backtesting_start=NOW.isoformat(), budget=10000.0))
     ledger = Ledger()
-    ledger.record_fill(FillRecord(
-        time=NOW, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("100"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.0"),
-    ))
+    ledger.record_fill(
+        FillRecord(
+            time=NOW,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("100"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.0"),
+        )
+    )
     report.write_trades(run_dir, ledger)
 
     curve = load_trades_curve(_ref(run_dir), budget=10000.0)
@@ -354,9 +373,16 @@ def test_load_trades_curve_returns_none_when_file_missing(tmp_path: Path) -> Non
 def _fill(hour: int, minute: int, symbol: str, side: OrderSide, qty: int, price: str, day: int = 5) -> FillRecord:
     # 2026-01-05/06 are winter sessions: market time is UTC-5.
     return FillRecord(
-        time=datetime(2026, 1, day, hour + 5, minute, tzinfo=UTC), identifier=f"{symbol}{day}{hour}{minute}", symbol=symbol, side=side,
-        order_type=OrderType.MARKET, quantity=Decimal(qty), filled_quantity=Decimal(qty), price=Decimal(price),
-        trade_cost=Decimal(0), trade_slippage=Decimal(0),
+        time=datetime(2026, 1, day, hour + 5, minute, tzinfo=UTC),
+        identifier=f"{symbol}{day}{hour}{minute}",
+        symbol=symbol,
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(qty),
+        filled_quantity=Decimal(qty),
+        price=Decimal(price),
+        trade_cost=Decimal(0),
+        trade_slippage=Decimal(0),
     )
 
 
@@ -370,12 +396,15 @@ def _write_fills(run_dir: Path, fills: list[FillRecord]) -> None:
 def test_load_intraday_exposure_reports_the_peak_invested_of_overlapping_positions(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload(budget=10000.0))
-    _write_fills(run_dir, [
-        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # 1,000 invested
-        _fill(10, 30, "BBB", OrderSide.BUY, 5, "200"),  # 2,000: the peak, two positions
-        _fill(11, 0, "AAA", OrderSide.SELL, 10, "110"),
-        _fill(12, 0, "BBB", OrderSide.SELL, 5, "190"),
-    ])
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # 1,000 invested
+            _fill(10, 30, "BBB", OrderSide.BUY, 5, "200"),  # 2,000: the peak, two positions
+            _fill(11, 0, "AAA", OrderSide.SELL, 10, "110"),
+            _fill(12, 0, "BBB", OrderSide.SELL, 5, "190"),
+        ],
+    )
 
     assert load_intraday_exposure(_ref(run_dir)) == [
         {"date": "2026-01-05", "peak_invested": 2000.0, "peak_pct": 20.0, "max_positions": 2},
@@ -385,16 +414,22 @@ def test_load_intraday_exposure_reports_the_peak_invested_of_overlapping_positio
 def test_load_intraday_exposure_measures_a_day_against_the_previous_sessions_close(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload(budget=10000.0))
-    report.write_equity(run_dir, [
-        EquitySample(time=NOW, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
-        EquitySample(time=LATER, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
-    ])
-    _write_fills(run_dir, [
-        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
-        _fill(10, 5, "AAA", OrderSide.SELL, 10, "100"),
-        _fill(10, 0, "AAA", OrderSide.BUY, 20, "100", day=6),  # 2,000 of the 8,000 closing equity of the 5th
-        _fill(15, 0, "AAA", OrderSide.SELL, 20, "100", day=6),
-    ])
+    report.write_equity(
+        run_dir,
+        [
+            EquitySample(time=NOW, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
+            EquitySample(time=LATER, portfolio_value=Decimal(8000), cash=Decimal(8000), positions_value=Decimal(0)),
+        ],
+    )
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+            _fill(10, 5, "AAA", OrderSide.SELL, 10, "100"),
+            _fill(10, 0, "AAA", OrderSide.BUY, 20, "100", day=6),  # 2,000 of the 8,000 closing equity of the 5th
+            _fill(15, 0, "AAA", OrderSide.SELL, 20, "100", day=6),
+        ],
+    )
 
     rows = load_intraday_exposure(_ref(run_dir))
 
@@ -404,11 +439,14 @@ def test_load_intraday_exposure_measures_a_day_against_the_previous_sessions_clo
 def test_load_intraday_exposure_keeps_a_position_carried_overnight_at_its_cost(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload(budget=10000.0))
-    _write_fills(run_dir, [
-        _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # held overnight
-        _fill(10, 0, "BBB", OrderSide.BUY, 10, "50", day=6),  # 1,000 + 500 the next day
-        _fill(11, 0, "AAA", OrderSide.SELL, 5, "120", day=6),  # half of AAA's cost leaves: 500 + 500
-    ])
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),  # held overnight
+            _fill(10, 0, "BBB", OrderSide.BUY, 10, "50", day=6),  # 1,000 + 500 the next day
+            _fill(11, 0, "AAA", OrderSide.SELL, 5, "120", day=6),  # half of AAA's cost leaves: 500 + 500
+        ],
+    )
 
     rows = load_intraday_exposure(_ref(run_dir))
 
@@ -436,8 +474,15 @@ def test_load_intraday_exposure_returns_none_without_fills(tmp_path: Path) -> No
 # --- agent telemetry ------------------------------------------------------------------
 
 _TRADER = {
-    "model": "qwen3-8b", "calls": 3, "tool_calls": 5, "input_tokens": 1234567, "output_tokens": 89000,
-    "reasoning_tokens": 4500, "total_tokens": 1323567, "latency_ms_total": 4500.0, "latency_ms_avg": 1500.0,
+    "model": "qwen3-8b",
+    "calls": 3,
+    "tool_calls": 5,
+    "input_tokens": 1234567,
+    "output_tokens": 89000,
+    "reasoning_tokens": 4500,
+    "total_tokens": 1323567,
+    "latency_ms_total": 4500.0,
+    "latency_ms_avg": 1500.0,
 }
 
 
@@ -513,8 +558,17 @@ def _logs_run_dir(root: Path, strategy: str = "momentum", run: str = "2026-01-05
 
 
 def _call(agent: str = "trader", input_tokens: int | None = 100, latency_ms: float = 1500.0, ts: datetime = datetime(2026, 1, 5, 21, tzinfo=UTC)) -> CallRecord:
-    return CallRecord(ts=ts, agent=agent, model="qwen3-8b", input_tokens=input_tokens, output_tokens=20, reasoning_tokens=None,
-                      total_tokens=None if input_tokens is None else input_tokens + 20, latency_ms=latency_ms, tool_calls=1)
+    return CallRecord(
+        ts=ts,
+        agent=agent,
+        model="qwen3-8b",
+        input_tokens=input_tokens,
+        output_tokens=20,
+        reasoning_tokens=None,
+        total_tokens=None if input_tokens is None else input_tokens + 20,
+        latency_ms=latency_ms,
+        tool_calls=1,
+    )
 
 
 def test_load_agent_calls_returns_this_runs_calls_in_order_from_the_frameworks_own_database(tmp_path: Path) -> None:

@@ -16,8 +16,15 @@ T0 = datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
 
 def _record(**overrides: object) -> CallRecord:
     fields: dict[str, object] = {
-        "ts": T0, "agent": "trader", "model": "qwen3-8b", "input_tokens": 100, "output_tokens": 20,
-        "reasoning_tokens": 5, "total_tokens": 120, "latency_ms": 1234.5, "tool_calls": 2,
+        "ts": T0,
+        "agent": "trader",
+        "model": "qwen3-8b",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "reasoning_tokens": 5,
+        "total_tokens": 120,
+        "latency_ms": 1234.5,
+        "tool_calls": 2,
     }
     return CallRecord(**{**fields, **overrides})  # type: ignore[arg-type]
 
@@ -45,9 +52,17 @@ def test_a_recorded_call_is_stored_with_every_field_and_its_run_id(tmp_path: Pat
 
     [row] = _rows(db)
     assert dict(row) == {
-        "id": 1, "run_id": "2026-01-05_210000_backtesting", "ts": "2026-01-05T21:00:00+00:00",
-        "agent": "trader", "model": "qwen3-8b", "input_tokens": 100, "output_tokens": 20,
-        "reasoning_tokens": 5, "total_tokens": 120, "latency_ms": 1234.5, "tool_calls": 2,
+        "id": 1,
+        "run_id": "2026-01-05_210000_backtesting",
+        "ts": "2026-01-05T21:00:00+00:00",
+        "agent": "trader",
+        "model": "qwen3-8b",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "reasoning_tokens": 5,
+        "total_tokens": 120,
+        "latency_ms": 1234.5,
+        "tool_calls": 2,
     }
 
 

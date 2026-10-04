@@ -31,10 +31,7 @@ def main():
     )
     apply_theme()
     st.logo(str(ASSETS / "logo.svg"), icon_image=str(ASSETS / "logo-icon.svg"), size="large")
-    pages = [
-        st.Page(page, title=title, url_path=url_path, default=(i == 0))
-        for i, (title, url_path, page) in enumerate(NAV_PAGES)
-    ]
+    pages = [st.Page(page, title=title, url_path=url_path, default=(i == 0)) for i, (title, url_path, page) in enumerate(NAV_PAGES)]
     st.navigation(pages, position="top").run()
 
 

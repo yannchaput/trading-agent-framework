@@ -61,7 +61,9 @@ def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | No
 
 
 def macro_tools(
-    strategy: "Strategy", *, fred_client_factory: Callable[[], FredSeriesClient] | None = None  # noqa: UP037
+    strategy: Strategy,
+    *,
+    fred_client_factory: Callable[[], FredSeriesClient] | None = None,  # noqa: UP037
 ) -> list[Callable[..., dict[str, Any]]]:
     """FRED macro tool bound to `strategy`."""
     if fred_client_factory is None:
@@ -80,10 +82,7 @@ def macro_tools(
             series = _fetch_series(fred_client_factory(), series_id, start_date, cutoff)
         except MacroDataError as exc:
             return {"error": str(exc)}
-        observations = [
-            {"date": index.date().isoformat() if hasattr(index, "date") else str(index), "value": float(value)}
-            for index, value in series.items()
-        ]
+        observations = [{"date": index.date().isoformat() if hasattr(index, "date") else str(index), "value": float(value)} for index, value in series.items()]
         return {
             "series_id": series_id,
             "as_of": cutoff.isoformat(),

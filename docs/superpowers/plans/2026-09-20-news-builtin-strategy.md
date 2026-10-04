@@ -376,24 +376,22 @@ In `src/trading_agent_framework/brokers/alpaca/broker.py`:
 - delete `_require_news_client` and replace `get_news` with:
 
 ```python
-    def news_provider(self) -> NewsProvider | None:
-        return self._news_provider
+def news_provider(self) -> NewsProvider | None:
+    return self._news_provider
 
-    def get_news(
-        self,
-        symbols: Sequence[str] = (),
-        *,
-        start: datetime | None = None,
-        end: datetime,
-        limit: int = 10,
-        include_content: bool = False,
-    ) -> list[dict[str, object]]:
-        if self._news_provider is None:
-            raise BrokerError(
-                "no news client configured; construct the broker with news_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
-        return self._news_provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
+
+def get_news(
+    self,
+    symbols: Sequence[str] = (),
+    *,
+    start: datetime | None = None,
+    end: datetime,
+    limit: int = 10,
+    include_content: bool = False,
+) -> list[dict[str, object]]:
+    if self._news_provider is None:
+        raise BrokerError("no news client configured; construct the broker with news_client=... or use AlpacaBroker.from_credentials(...)")
+    return self._news_provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
 ```
 
 (`from_credentials` still passes `news_client=`; leave it unchanged. `build_news_client` stays imported in `broker.py` because `from_credentials` uses it.)
@@ -783,11 +781,12 @@ def test_missing_alpaca_credentials_surface_as_a_broker_error(monkeypatch: pytes
 In `tests/core/test_runners.py`, in `test_run_backtesting_runs_end_to_end_via_the_public_api`: add a stub source before the `strategy = _strategy(...)` line and pass it, then assert it landed on the rebound broker:
 
 ```python
-    class _NewsSource:
-        def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
-            return []
+class _NewsSource:
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
+        return []
 
-    news = _NewsSource()
+
+news = _NewsSource()
 ```
 
 change the call to `strategy.run_backtesting(start=..., end=..., data_source=source, benchmark="SPY", news_source=news,)` (keep the existing arguments) and add after the `isinstance(strategy.broker, BacktestBroker)` assertion:

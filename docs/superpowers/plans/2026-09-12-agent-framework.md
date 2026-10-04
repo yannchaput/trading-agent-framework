@@ -516,8 +516,6 @@ class MemoryValidationError(MemoryStoreError, ValueError):
 Append:
 
 ```python
-
-
 class AgentError(TradingFrameworkError):
     """Raised when building or running a LangChain agent fails (never a raw SDK exception)."""
 ```
@@ -538,8 +536,6 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 Add this class at the end of the file, after `memory_rows`:
 
 ```python
-
-
 class FakeToolCallingChatModel(GenericFakeChatModel):
     """`GenericFakeChatModel` with `bind_tools` stubbed out.
 
@@ -623,9 +619,7 @@ def test_create_with_no_model_and_no_llm_model_env_raises_configuration_error() 
 
 def test_run_returns_a_text_only_result() -> None:
     manager = _manager()
-    handle = manager.create(
-        name="analyst", system_prompt="be helpful", model=_fake_model([AIMessage("The answer is 42.")])
-    )
+    handle = manager.create(name="analyst", system_prompt="be helpful", model=_fake_model([AIMessage("The answer is 42.")]))
 
     result = handle.run("What is the answer?")
 
@@ -659,9 +653,7 @@ def test_run_with_context_appends_it_to_the_prompt() -> None:
             captured["last_human_content"] = messages[-1].content
             return super()._generate(messages, **kwargs)
 
-    handle = manager.create(
-        name="analyst", system_prompt="x", model=RecordingModel(messages=iter([AIMessage("ok")]))
-    )
+    handle = manager.create(name="analyst", system_prompt="x", model=RecordingModel(messages=iter([AIMessage("ok")])))
 
     handle.run("Decide.", context={"symbol": "SPY"})
 
@@ -785,10 +777,7 @@ class AgentManager:
         credentials = self._credentials_source()
         model_id = model if model is not None else credentials.default_model
         if not model_id:
-            raise ConfigurationError(
-                "No model id given and LLM_MODEL is not set; "
-                "pass model=... explicitly or set LLM_MODEL in the strategy's env file"
-            )
+            raise ConfigurationError("No model id given and LLM_MODEL is not set; pass model=... explicitly or set LLM_MODEL in the strategy's env file")
         try:
             return ChatOpenAI(
                 model=model_id,
@@ -949,13 +938,12 @@ add:
 Immediately after the `memory` property (which ends with `return self._memory`), add:
 
 ```python
-
-    @property
-    def agents(self) -> AgentManager:
-        """This strategy's LLM agents (lumibot's `strategy.agents`); built on first use."""
-        if self._agents is None:
-            self._agents = AgentManager(LLMCredentials.from_env)
-        return self._agents
+@property
+def agents(self) -> AgentManager:
+    """This strategy's LLM agents (lumibot's `strategy.agents`); built on first use."""
+    if self._agents is None:
+        self._agents = AgentManager(LLMCredentials.from_env)
+    return self._agents
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**

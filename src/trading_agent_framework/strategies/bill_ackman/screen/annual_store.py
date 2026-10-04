@@ -121,7 +121,7 @@ class AnnualFiguresStore:
     def _read(self, cik: str) -> dict[str, Any] | None:
         try:
             record = json.loads(self._path(cik).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return None  # no file yet, or one truncated by an interrupted write: a cache miss
         if not isinstance(record, dict):
             return None

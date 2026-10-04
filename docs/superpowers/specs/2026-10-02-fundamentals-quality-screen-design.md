@@ -29,8 +29,8 @@ public on D?*
 ```python
 screen = QualityScreen(store, splits, params=ScreenParams())
 result = screen.run(symbols, as_of=strategy.clock.now(), price_of=strategy.get_last_price)
-result.candidates   # ranked list[Candidate], best first, at most params.top_n
-result.rejections   # dict[str, str]: symbol -> reason
+result.candidates  # ranked list[Candidate], best first, at most params.top_n
+result.rejections  # dict[str, str]: symbol -> reason
 ```
 
 Success: the test suite and `ruff check` pass; the manual smoke script runs the real screen on about 20
@@ -267,13 +267,14 @@ class ScreenParams:
     max_filing_age_months: int = 18
     max_net_debt_to_operating_income: float = 4.0
     excluded_sic_ranges: tuple[tuple[int, int], ...] = ((4900, 4999), (6000, 6799))
-    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)   # fcf_yield, fcf_margin, margin stability
+    weights: tuple[float, float, float] = (0.4, 0.3, 0.3)  # fcf_yield, fcf_margin, margin stability
     top_n: int = 15
-    max_age_days: int = 30                  # annual SEC figures, by as_of (§2.4)
-    split_max_age_days: int = 1             # split history, by the wall clock (§2.4)
+    max_age_days: int = 30  # annual SEC figures, by as_of (§2.4)
+    split_max_age_days: int = 1  # split history, by the wall clock (§2.4)
     max_fetch_failure_ratio: float = 0.2
-    hollow_min_sample: int = 5              # symbols at the SIC/split gate before its failure ratio applies (§5)
+    hollow_min_sample: int = 5  # symbols at the SIC/split gate before its failure ratio applies (§5)
     # __post_init__ raises ValueError for out-of-range values (years < 2, a ratio outside [0, 1], ...)
+
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
@@ -290,7 +291,8 @@ class Candidate:
     net_debt_to_operating_income: float
     debt_reported: bool
     fiscal_year_end: date
-    filed: date            # filing date of the latest fiscal year's figures
+    filed: date  # filing date of the latest fiscal year's figures
+
 
 @dataclass(frozen=True, slots=True)
 class ScreenResult:

@@ -37,12 +37,7 @@ BETA_HELP = (
     "(if the market rises 10%, the asset rises 15%).\n"
     "• Beta of 0.5: the asset is half as volatile as the market."
 )
-CORRELATION_HELP = (
-    "Tendency to move in the same direction:\n"
-    "• +1: they always move in the same direction.\n"
-    "• 0: no linear relationship.\n"
-    "• -1: they move in strictly opposite directions."
-)
+CORRELATION_HELP = "Tendency to move in the same direction:\n• +1: they always move in the same direction.\n• 0: no linear relationship.\n• -1: they move in strictly opposite directions."
 
 
 def page_detail():
@@ -77,10 +72,7 @@ def page_detail():
     breakdown = load_portfolio_breakdown(ref)
     bpv: list[dict] = []
     if breakdown:
-        bpv = [
-            {"date": d, "value": v}
-            for d, v in zip(breakdown["dates"], breakdown["portfolio_value"], strict=False)
-        ]
+        bpv = [{"date": d, "value": v} for d, v in zip(breakdown["dates"], breakdown["portfolio_value"], strict=False)]
 
     # Load cumulative returns once — used by rolling-metric charts (Charts tab)
     # and the Returns tab.
@@ -202,8 +194,10 @@ def page_detail():
             if exposure:
                 st.subheader("Intraday exposure")
                 st.plotly_chart(intraday_exposure_chart(exposure), width="stretch")
-                st.caption("Peak value invested (at cost) during each day, against the previous session's closing equity. "
-                           "The equity curve is sampled at the close, so it cannot show positions opened and closed within a day.")
+                st.caption(
+                    "Peak value invested (at cost) during each day, against the previous session's closing equity. "
+                    "The equity curve is sampled at the close, so it cannot show positions opened and closed within a day."
+                )
         else:
             st.info("No trade data available for this run.")
 

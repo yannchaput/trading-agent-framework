@@ -39,9 +39,7 @@ _SESSION = [make_session(date(2026, 9, 10))]
 
 
 def test_day_bars_become_a_float_frame_indexed_in_market_time() -> None:
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]})
 
     bars = parse_bars(barset, [AAPL], "day", 5)[AAPL]
 
@@ -63,9 +61,7 @@ def test_only_the_last_length_bars_are_kept_oldest_first() -> None:
 
 
 def test_duplicate_timestamps_keep_the_first_bar() -> None:
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-09-10T13:30:00Z", 100.0), bar_payload("2026-09-10T13:30:00Z", 555.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-09-10T13:30:00Z", 100.0), bar_payload("2026-09-10T13:30:00Z", 555.0)]})
 
     assert list(parse_bars(barset, [AAPL], "minute", 5)[AAPL].df["close"]) == [100.0]
 
@@ -88,9 +84,7 @@ def test_without_sessions_extended_hours_bars_are_kept() -> None:
 def test_early_close_sessions_drop_bars_after_the_early_close() -> None:
     # Friday 2026-11-27 closes at 13:00 in New York (standard time: 18:00Z).
     early = [make_session(date(2026, 11, 27), close_at=time(13, 0))]
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-11-27T17:59:00Z", 1.0), bar_payload("2026-11-27T18:05:00Z", 2.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-11-27T17:59:00Z", 1.0), bar_payload("2026-11-27T18:05:00Z", 2.0)]})
 
     bars = parse_bars(barset, [AAPL], "minute", 5, sessions=early)[AAPL]
 
@@ -100,9 +94,7 @@ def test_early_close_sessions_drop_bars_after_the_early_close() -> None:
 def test_day_bars_ignore_the_sessions_filter() -> None:
     # Daily bars are timestamped at midnight market time, outside every session's
     # 09:30-16:00 window -- the filter must be a no-op for "day" bars (spec §6.3).
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]})
 
     bars = parse_bars(barset, [AAPL], "day", 5, sessions=_SESSION)[AAPL]
 
@@ -215,9 +207,16 @@ def test_parse_news_includes_content_only_when_present() -> None:
         {
             "news": [
                 {
-                    "id": 1, "headline": "h", "source": "s", "url": None, "summary": "sum",
-                    "created_at": "2026-09-10T00:00:00Z", "updated_at": "2026-09-10T00:00:00Z",
-                    "symbols": [], "author": "a", "content": "full article text",
+                    "id": 1,
+                    "headline": "h",
+                    "source": "s",
+                    "url": None,
+                    "summary": "sum",
+                    "created_at": "2026-09-10T00:00:00Z",
+                    "updated_at": "2026-09-10T00:00:00Z",
+                    "symbols": [],
+                    "author": "a",
+                    "content": "full article text",
                 }
             ],
             "next_page_token": None,

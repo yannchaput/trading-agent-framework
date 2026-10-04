@@ -25,7 +25,9 @@ def _default_client(strategy: "Strategy") -> SecEdgarClient:  # noqa: UP037
 
 
 def fundamentals_tools(
-    strategy: "Strategy", *, client: SecEdgarClient | None = None  # noqa: UP037
+    strategy: Strategy,
+    *,
+    client: SecEdgarClient | None = None,  # noqa: UP037
 ) -> list[Callable[..., dict[str, Any]]]:
     """SEC fundamentals tools bound to `strategy`, backed by one shared `SecEdgarClient`."""
     edgar = client if client is not None else _default_client(strategy)

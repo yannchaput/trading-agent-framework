@@ -138,9 +138,7 @@ class IbkrBroker(Broker):
         if self._account_id is None:
             accounts = self._connection.call(lambda ib: ib.managedAccounts())
             if len(accounts) != 1:
-                raise ConfigurationError(
-                    f"IB Gateway manages {len(accounts)} accounts ({', '.join(accounts)}); this framework needs exactly one account"
-                )
+                raise ConfigurationError(f"IB Gateway manages {len(accounts)} accounts ({', '.join(accounts)}); this framework needs exactly one account")
             self._account_id = accounts[0]
         return self._account_id
 
@@ -193,7 +191,8 @@ class IbkrBroker(Broker):
                 # doesn't lose it, even though IBKR is reporting the rest as rejected/cancelled.
                 logger.warning(
                     "Order %s was rejected by IBKR after a partial fill (%s filled); keeping it tracked",
-                    order.identifier, order.filled_quantity,
+                    order.identifier,
+                    order.filled_quantity,
                 )
             else:
                 self.tracker.untrack(order)
@@ -205,16 +204,11 @@ class IbkrBroker(Broker):
 
     def _open_trade(self, order: Order) -> Trade:
         client_order_id = order.client_order_id
-        trade = self._connection.call(
-            lambda ib: next((t for t in ib.openTrades() if client_order_id and t.order.orderRef == client_order_id), None)
-        )
+        trade = self._connection.call(lambda ib: next((t for t in ib.openTrades() if client_order_id and t.order.orderRef == client_order_id), None))
         if trade is None:
             raise BrokerError(f"no open IBKR order for {order.identifier}")
         if trade.order.clientId != self._client_id:
-            raise BrokerError(
-                f"order {order.identifier} was placed by client id {trade.order.clientId}; "
-                f"only that client id can change it (this broker is client id {self._client_id})"
-            )
+            raise BrokerError(f"order {order.identifier} was placed by client id {trade.order.clientId}; only that client id can change it (this broker is client id {self._client_id})")
         return trade
 
     def cancel_order(self, order: Order) -> None:
@@ -322,9 +316,7 @@ class IbkrBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
-        return self._market_data.get_bars(
-            assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours
-        )
+        return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     # --- stream ----------------------------------------------------------------------
 

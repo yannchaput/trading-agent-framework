@@ -105,7 +105,7 @@ def load_scenario_runs(ref: BenchmarkRunRef, model_key: str, scenario_id: str) -
                     if record["scenario_id"] != scenario_id:
                         continue
                     runs.append(_build_scenario_run(record))
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
+                except json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError:
                     skipped += 1
     except OSError as exc:
         raise BenchmarkReadError(f"Cannot read {path.name}: {exc}") from exc
@@ -121,10 +121,7 @@ def _build_scenario_run(record: dict[str, Any]) -> ScenarioRun:
         passed=bool(record["passed"]),
         partial=float(record["partial"]),
         error=record.get("error"),
-        checks=tuple(
-            Check(type=str(check["type"]), passed=bool(check["passed"]), reason=str(check.get("reason", "")))
-            for check in record.get("checks") or []
-        ),
+        checks=tuple(Check(type=str(check["type"]), passed=bool(check["passed"]), reason=str(check.get("reason", ""))) for check in record.get("checks") or []),
         total_s=_opt_float(metrics.get("total_s")),
         tool_calls=_opt_int(metrics.get("tool_calls")),
         model_calls=_opt_int(metrics.get("model_calls")),
@@ -152,9 +149,7 @@ def _build_run(ref: BenchmarkRunRef, meta: dict[str, Any], summary: Any) -> Benc
         repeats=int(meta["repeats"]),
         timeout_s=float(meta["timeout_s"]),
         scenarios=tuple(str(scenario) for scenario in meta["scenarios"]),
-        models=tuple(
-            _build_model(entry, meta_models.get(entry["key"], {}), versions.get(entry["key"])) for entry in summary
-        ),
+        models=tuple(_build_model(entry, meta_models.get(entry["key"], {}), versions.get(entry["key"])) for entry in summary),
     )
 
 
@@ -170,9 +165,7 @@ def _build_model(entry: dict[str, Any], meta_model: dict[str, Any], vllm_version
         mean_partial=_opt_float(entry.get("mean_partial")),
         categories={str(name): float(score) for name, score in (entry.get("categories") or {}).items()},
         scenarios={
-            str(scenario_id): ScenarioScore(
-                passed=int(score["passed"]), runs=int(score["runs"]), mean_partial=float(score["mean_partial"])
-            )
+            str(scenario_id): ScenarioScore(passed=int(score["passed"]), runs=int(score["runs"]), mean_partial=float(score["mean_partial"]))
             for scenario_id, score in (entry.get("scenarios") or {}).items()
         },
         runs_passed=_opt_int(entry.get("runs_passed")),

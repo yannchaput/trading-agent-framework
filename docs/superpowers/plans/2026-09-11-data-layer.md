@@ -221,9 +221,7 @@ from trading_agent_framework.entities.bars import Bars
 
 
 def _frame() -> pd.DataFrame:
-    index = pd.date_range(
-        "2026-09-01", periods=3, freq="1D", tz="America/New_York", name="timestamp"
-    )
+    index = pd.date_range("2026-09-01", periods=3, freq="1D", tz="America/New_York", name="timestamp")
     close = [1.0, 2.0, 3.0]
     return pd.DataFrame(
         {"open": close, "high": close, "low": close, "close": close, "volume": [10.0] * 3},
@@ -257,10 +255,7 @@ def test_importing_entities_does_not_import_pandas() -> None:
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.entities\n"
-            "import sys\n"
-            "assert 'pandas' not in sys.modules\n"
-            "print('OK')\n",
+            "import trading_agent_framework.entities\nimport sys\nassert 'pandas' not in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -441,9 +436,7 @@ def test_parse_timestep_rejects_everything_else(timestep: str) -> None:
     ("length", "timestep", "expected"),
     [(20, "day", 21), (1, "day", 2), (30, "minute", 2), (390, "minute", 2), (391, "minute", 3)],
 )
-def test_sessions_needed_adds_one_for_a_partial_current_session(
-    length: int, timestep: str, expected: int
-) -> None:
+def test_sessions_needed_adds_one_for_a_partial_current_session(length: int, timestep: str, expected: int) -> None:
     assert sessions_needed(length, timestep) == expected
 
 
@@ -461,9 +454,7 @@ def test_sessions_needed_rejects_an_unknown_timestep() -> None:
     ("length", "timestep", "expected"),
     [(30, "minute", date(2026, 8, 28)), (20, "day", date(2026, 7, 30))],
 )
-def test_calendar_lookback_leaves_room_for_weekends_and_holidays(
-    length: int, timestep: str, expected: date
-) -> None:
+def test_calendar_lookback_leaves_room_for_weekends_and_holidays(length: int, timestep: str, expected: date) -> None:
     # ceil(sessions * 1.5) + 10 calendar days: 2 sessions -> 13 days, 21 sessions -> 42 days
     assert calendar_lookback_start(_END, length, timestep) == expected
 
@@ -573,12 +564,8 @@ class AlpacaStockDataClient(Protocol):
     """
 
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet: ...
-    def get_stock_latest_trade(
-        self, request_params: StockLatestTradeRequest
-    ) -> dict[str, AlpacaTrade]: ...
-    def get_stock_latest_quote(
-        self, request_params: StockLatestQuoteRequest
-    ) -> dict[str, AlpacaQuote]: ...
+    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]: ...
+    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]: ...
 
 
 def parse_timestep(timestep: str) -> TimeFrame:
@@ -605,9 +592,7 @@ def calendar_lookback_start(end: datetime, length: int, timestep: str) -> date:
     return (end.astimezone(MARKET_TZ) - timedelta(days=days)).date()
 
 
-def bars_start(
-    end: datetime, length: int, timestep: str, sessions: Sequence[MarketSession]
-) -> datetime:
+def bars_start(end: datetime, length: int, timestep: str, sessions: Sequence[MarketSession]) -> datetime:
     """Midnight (market time) of the earliest session needed, so its pre-market bars count."""
     needed = sessions_needed(length, timestep)
     today = end.astimezone(MARKET_TZ).date()
@@ -629,9 +614,7 @@ def _symbols(assets: Sequence[Asset]) -> list[str]:
     return [asset.symbol for asset in assets]
 
 
-def build_bars_request(
-    assets: Sequence[Asset], timestep: str, start: datetime, end: datetime
-) -> StockBarsRequest:
+def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> StockBarsRequest:
     return StockBarsRequest(
         symbol_or_symbols=_symbols(assets),
         timeframe=parse_timestep(timestep),
@@ -711,9 +694,7 @@ def make_alpaca_barset(bars: dict[str, list[dict[str, object]]]) -> alpaca_data_
     return alpaca_data_models.BarSet(bars)
 
 
-def make_alpaca_trade(
-    symbol: str = "AAPL", price: float = 100.15, timestamp: str = "2026-09-10T13:30:00Z"
-) -> alpaca_data_models.Trade:
+def make_alpaca_trade(symbol: str = "AAPL", price: float = 100.15, timestamp: str = "2026-09-10T13:30:00Z") -> alpaca_data_models.Trade:
     payload = {"t": timestamp, "x": "V", "p": price, "s": 50, "i": 1, "c": ["@"], "z": "C"}
     return alpaca_data_models.Trade(symbol, payload)
 
@@ -781,9 +762,7 @@ _SESSION = [make_session(date(2026, 9, 10))]
 
 
 def test_day_bars_become_a_float_frame_indexed_in_market_time() -> None:
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-09-09T04:00:00Z", 10.0), bar_payload("2026-09-10T04:00:00Z", 11.0)]})
 
     bars = parse_bars(barset, [AAPL], "day", 5)[AAPL]
 
@@ -805,9 +784,7 @@ def test_only_the_last_length_bars_are_kept_oldest_first() -> None:
 
 
 def test_duplicate_timestamps_keep_the_first_bar() -> None:
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-09-10T13:30:00Z", 100.0), bar_payload("2026-09-10T13:30:00Z", 555.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-09-10T13:30:00Z", 100.0), bar_payload("2026-09-10T13:30:00Z", 555.0)]})
 
     assert list(parse_bars(barset, [AAPL], "minute", 5)[AAPL].df["close"]) == [100.0]
 
@@ -830,9 +807,7 @@ def test_without_sessions_extended_hours_bars_are_kept() -> None:
 def test_early_close_sessions_drop_bars_after_the_early_close() -> None:
     # Friday 2026-11-27 closes at 13:00 in New York (standard time: 18:00Z).
     early = [make_session(date(2026, 11, 27), close_at=time(13, 0))]
-    barset = make_alpaca_barset(
-        {"AAPL": [bar_payload("2026-11-27T17:59:00Z", 1.0), bar_payload("2026-11-27T18:05:00Z", 2.0)]}
-    )
+    barset = make_alpaca_barset({"AAPL": [bar_payload("2026-11-27T17:59:00Z", 1.0), bar_payload("2026-11-27T18:05:00Z", 2.0)]})
 
     bars = parse_bars(barset, [AAPL], "minute", 5, sessions=early)[AAPL]
 
@@ -972,9 +947,7 @@ def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.
     return df[keep]
 
 
-def parse_latest_trades(
-    response: Mapping[str, object], assets: Sequence[Asset]
-) -> dict[Asset, Decimal | None]:
+def parse_latest_trades(response: Mapping[str, object], assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
     """Last traded price per asset; None when Alpaca returned no trade for the symbol."""
     return {asset: _to_decimal(_field(response.get(asset.symbol), "price")) for asset in assets}
 
@@ -1081,17 +1054,13 @@ class FakeStockHistoricalDataClient:
         wanted = _requested_symbols(request_params)
         return alpaca_data_models.BarSet({s: self.bars[s] for s in wanted if s in self.bars})
 
-    def get_stock_latest_trade(
-        self, request_params: StockLatestTradeRequest
-    ) -> dict[str, alpaca_data_models.Trade]:
+    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, alpaca_data_models.Trade]:
         self.trade_requests.append(request_params)
         self._maybe_raise("get_stock_latest_trade")
         wanted = _requested_symbols(request_params)
         return {s: self.trades[s] for s in wanted if s in self.trades}
 
-    def get_stock_latest_quote(
-        self, request_params: StockLatestQuoteRequest
-    ) -> dict[str, alpaca_data_models.Quote]:
+    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, alpaca_data_models.Quote]:
         self.quote_requests.append(request_params)
         self._maybe_raise("get_stock_latest_quote")
         wanted = _requested_symbols(request_params)
@@ -1155,12 +1124,8 @@ _MINUTES = {
 }
 
 
-def _broker(
-    data: FakeStockHistoricalDataClient | None, trading: FakeTradingClient | None = None
-) -> AlpacaBroker:
-    return AlpacaBroker(
-        "momentum", trading or FakeTradingClient(), clock=FakeClock(_NOW), data_client=data
-    )
+def _broker(data: FakeStockHistoricalDataClient | None, trading: FakeTradingClient | None = None) -> AlpacaBroker:
+    return AlpacaBroker("momentum", trading or FakeTradingClient(), clock=FakeClock(_NOW), data_client=data)
 
 
 def _trading_with_calendar() -> FakeTradingClient:
@@ -1283,9 +1248,7 @@ def test_get_bars_rejects_an_unknown_timestep_before_any_request() -> None:
         ("get_stock_bars", lambda b: b.get_bars([AAPL], 5, "day"), "bars"),
     ],
 )
-def test_data_client_failures_become_broker_errors(
-    method: str, call: Callable[[AlpacaBroker], object], match: str
-) -> None:
+def test_data_client_failures_become_broker_errors(method: str, call: Callable[[AlpacaBroker], object], match: str) -> None:
     data = FakeStockHistoricalDataClient()
     data.raises[method] = RuntimeError("boom")
 
@@ -1413,87 +1376,84 @@ from trading_agent_framework.errors import BrokerError
 3. In `from_credentials`, build the data client (the same `cast` reasoning as the trading client applies):
 
 ```python
-        client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
-        data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
-        stream = build_trading_stream(creds) if with_stream else None
-        return cls(
-            strategy_name, client, stream=stream, is_paper=creds.is_paper, data_client=data_client
-        )
+client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
+data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
+stream = build_trading_stream(creds) if with_stream else None
+return cls(strategy_name, client, stream=stream, is_paper=creds.is_paper, data_client=data_client)
 ```
 
 4. Add the market-data section after `sync_open_orders`:
 
 ```python
-    # --- market data -------------------------------------------------------------------
+# --- market data -------------------------------------------------------------------
 
-    def _require_data_client(self) -> market_data.AlpacaStockDataClient:
-        if self._data_client is None:
-            raise BrokerError(
-                "no market data client configured; construct the broker with data_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
-        return self._data_client
 
-    def get_last_price(self, asset: Asset) -> Decimal | None:
-        return self.get_last_prices([asset])[asset]
+def _require_data_client(self) -> market_data.AlpacaStockDataClient:
+    if self._data_client is None:
+        raise BrokerError("no market data client configured; construct the broker with data_client=... or use AlpacaBroker.from_credentials(...)")
+    return self._data_client
 
-    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
-        client = self._require_data_client()
-        prices: dict[Asset, Decimal | None] = {}
-        for chunk in market_data.chunk_assets(assets):
-            request = market_data.build_latest_trade_request(chunk)
-            try:
-                response = client.get_stock_latest_trade(request)
-            except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}"
-                ) from exc
-            prices.update(market_data.parse_latest_trades(response, chunk))
-        return prices
 
-    def get_quote(self, asset: Asset) -> Quote | None:
-        client = self._require_data_client()
-        request = market_data.build_latest_quote_request([asset])
+def get_last_price(self, asset: Asset) -> Decimal | None:
+    return self.get_last_prices([asset])[asset]
+
+
+def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+    client = self._require_data_client()
+    prices: dict[Asset, Decimal | None] = {}
+    for chunk in market_data.chunk_assets(assets):
+        request = market_data.build_latest_trade_request(chunk)
         try:
-            response = client.get_stock_latest_quote(request)
+            response = client.get_stock_latest_trade(request)
         except Exception as exc:
-            raise BrokerError(f"Failed to fetch the latest quote for {asset.symbol}: {exc}") from exc
-        return market_data.parse_quote(response, asset)
+            raise BrokerError(f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}") from exc
+        prices.update(market_data.parse_latest_trades(response, chunk))
+    return prices
 
-    def get_bars(
-        self,
-        assets: Sequence[Asset],
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> dict[Asset, Bars]:
-        client = self._require_data_client()
-        end = self.clock.now()
-        sessions = self._sessions_before(end, length, timestep)
-        start = market_data.bars_start(end, length, timestep, sessions)
-        in_session = None if include_after_hours else sessions
-        bars: dict[Asset, Bars] = {}
-        for chunk in market_data.chunk_assets(assets):
-            request = market_data.build_bars_request(chunk, timestep, start, end)
-            try:
-                barset = client.get_stock_bars(request)
-            except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}"
-                ) from exc
-            bars.update(market_data.parse_bars(barset, chunk, timestep, length, sessions=in_session))
-        return bars
 
-    def _sessions_before(self, end: datetime, length: int, timestep: str) -> list[MarketSession]:
-        first_day = market_data.calendar_lookback_start(end, length, timestep)
-        last_day = end.astimezone(market_data.MARKET_TZ).date()
-        request = account.build_calendar_request(first_day, last_day)
+def get_quote(self, asset: Asset) -> Quote | None:
+    client = self._require_data_client()
+    request = market_data.build_latest_quote_request([asset])
+    try:
+        response = client.get_stock_latest_quote(request)
+    except Exception as exc:
+        raise BrokerError(f"Failed to fetch the latest quote for {asset.symbol}: {exc}") from exc
+    return market_data.parse_quote(response, asset)
+
+
+def get_bars(
+    self,
+    assets: Sequence[Asset],
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> dict[Asset, Bars]:
+    client = self._require_data_client()
+    end = self.clock.now()
+    sessions = self._sessions_before(end, length, timestep)
+    start = market_data.bars_start(end, length, timestep, sessions)
+    in_session = None if include_after_hours else sessions
+    bars: dict[Asset, Bars] = {}
+    for chunk in market_data.chunk_assets(assets):
+        request = market_data.build_bars_request(chunk, timestep, start, end)
         try:
-            days = self._client.get_calendar(request)
+            barset = client.get_stock_bars(request)
         except Exception as exc:
-            raise BrokerError(f"Failed to fetch the Alpaca calendar: {exc}") from exc
-        return account.parse_calendar(days, market_data.MARKET_TZ)
+            raise BrokerError(f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}") from exc
+        bars.update(market_data.parse_bars(barset, chunk, timestep, length, sessions=in_session))
+    return bars
+
+
+def _sessions_before(self, end: datetime, length: int, timestep: str) -> list[MarketSession]:
+    first_day = market_data.calendar_lookback_start(end, length, timestep)
+    last_day = end.astimezone(market_data.MARKET_TZ).date()
+    request = account.build_calendar_request(first_day, last_day)
+    try:
+        days = self._client.get_calendar(request)
+    except Exception as exc:
+        raise BrokerError(f"Failed to fetch the Alpaca calendar: {exc}") from exc
+    return account.parse_calendar(days, market_data.MARKET_TZ)
 ```
 
 `calendar_lookback_start` validates `length` and `timestep` first, so a bad argument raises `ValueError` before any request goes out.
@@ -1627,9 +1587,7 @@ def test_get_historical_prices_for_assets_forwards_every_option() -> None:
     strategy, broker = _strategy()
     broker.bar_frames = {"AAPL": make_bars_frame([1, 2]), "MSFT": make_bars_frame([3, 4])}
 
-    result = strategy.get_historical_prices_for_assets(
-        ["AAPL", Asset("MSFT"), "TLT"], 2, "minute", include_after_hours=False
-    )
+    result = strategy.get_historical_prices_for_assets(["AAPL", Asset("MSFT"), "TLT"], 2, "minute", include_after_hours=False)
 
     assert set(result) == {Asset("AAPL"), Asset("MSFT")}
     assert broker.bars_calls == [(("AAPL", "MSFT", "TLT"), 2, "minute", False)]
@@ -1670,28 +1628,32 @@ from trading_agent_framework.entities.quote import Quote
 and, after `sync_open_orders`, add:
 
 ```python
-    # --- market data -------------------------------------------------------------------
+# --- market data -------------------------------------------------------------------
 
-    @abstractmethod
-    def get_last_price(self, asset: Asset) -> Decimal | None:
-        """Last traded price; None when the data source has no trade for the asset."""
 
-    @abstractmethod
-    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]: ...
+@abstractmethod
+def get_last_price(self, asset: Asset) -> Decimal | None:
+    """Last traded price; None when the data source has no trade for the asset."""
 
-    @abstractmethod
-    def get_quote(self, asset: Asset) -> Quote | None: ...
 
-    @abstractmethod
-    def get_bars(
-        self,
-        assets: Sequence[Asset],
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> dict[Asset, Bars]:
-        """The last `length` bars per asset, oldest first; assets without data are left out."""
+@abstractmethod
+def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]: ...
+
+
+@abstractmethod
+def get_quote(self, asset: Asset) -> Quote | None: ...
+
+
+@abstractmethod
+def get_bars(
+    self,
+    assets: Sequence[Asset],
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> dict[Asset, Bars]:
+    """The last `length` bars per asset, oldest first; assets without data are left out."""
 ```
 
 Update the module docstring's list of what subclasses provide to include "market data".
@@ -1713,9 +1675,7 @@ from trading_agent_framework.errors import BrokerError
 Add after `weekday_sessions`:
 
 ```python
-def make_bars_frame(
-    closes: Sequence[float], *, start: datetime | None = None, freq: str = "1D"
-) -> pd.DataFrame:
+def make_bars_frame(closes: Sequence[float], *, start: datetime | None = None, freq: str = "1D") -> pd.DataFrame:
     """An OHLCV frame shaped like `Bars.df`: high = close + 1, low = close - 1."""
     index = pd.date_range(
         start if start is not None else et(2026, 1, 5),
@@ -1749,39 +1709,39 @@ In `FakeBroker.__init__`, add:
 and add these methods to `FakeBroker` (before `start_stream`):
 
 ```python
-    def _check_market_data(self) -> None:
-        if self.market_data_error is not None:
-            raise self.market_data_error
+def _check_market_data(self) -> None:
+    if self.market_data_error is not None:
+        raise self.market_data_error
 
-    def get_last_price(self, asset: Asset) -> Decimal | None:
-        self._check_market_data()
-        return self.last_prices.get(asset.symbol)
 
-    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
-        self._check_market_data()
-        return {asset: self.last_prices.get(asset.symbol) for asset in assets}
+def get_last_price(self, asset: Asset) -> Decimal | None:
+    self._check_market_data()
+    return self.last_prices.get(asset.symbol)
 
-    def get_quote(self, asset: Asset) -> Quote | None:
-        self._check_market_data()
-        return self.quotes.get(asset.symbol)
 
-    def get_bars(
-        self,
-        assets: Sequence[Asset],
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> dict[Asset, Bars]:
-        self._check_market_data()
-        requested = list(assets)
-        symbols = tuple(asset.symbol for asset in requested)
-        self.bars_calls.append((symbols, length, timestep, include_after_hours))
-        return {
-            asset: Bars(asset=asset, timestep=timestep, df=self.bar_frames[asset.symbol].iloc[-length:])
-            for asset in requested
-            if asset.symbol in self.bar_frames
-        }
+def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+    self._check_market_data()
+    return {asset: self.last_prices.get(asset.symbol) for asset in assets}
+
+
+def get_quote(self, asset: Asset) -> Quote | None:
+    self._check_market_data()
+    return self.quotes.get(asset.symbol)
+
+
+def get_bars(
+    self,
+    assets: Sequence[Asset],
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> dict[Asset, Bars]:
+    self._check_market_data()
+    requested = list(assets)
+    symbols = tuple(asset.symbol for asset in requested)
+    self.bars_calls.append((symbols, length, timestep, include_after_hours))
+    return {asset: Bars(asset=asset, timestep=timestep, df=self.bar_frames[asset.symbol].iloc[-length:]) for asset in requested if asset.symbol in self.bar_frames}
 ```
 
 (`Callable` and `Iterable` were already imported: extend the existing `collections.abc` import line rather than duplicating it.)
@@ -1798,47 +1758,50 @@ from trading_agent_framework.entities.quote import Quote
 and add this section between the accounting section and the trading section:
 
 ```python
-    # --- market data -----------------------------------------------------------------
+# --- market data -----------------------------------------------------------------
 
-    def get_last_price(self, asset: Asset | str) -> Decimal | None:
-        """Last traded price; for the quote midpoint use `get_quote(asset).mid`."""
-        return self.broker.get_last_price(_to_asset(asset))
 
-    def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]:
-        return self.broker.get_last_prices([_to_asset(asset) for asset in assets])
+def get_last_price(self, asset: Asset | str) -> Decimal | None:
+    """Last traded price; for the quote midpoint use `get_quote(asset).mid`."""
+    return self.broker.get_last_price(_to_asset(asset))
 
-    def get_quote(self, asset: Asset | str) -> Quote | None:
-        return self.broker.get_quote(_to_asset(asset))
 
-    def get_historical_prices(
-        self,
-        asset: Asset | str,
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> Bars | None:
-        """The last `length` "minute" or "day" bars, oldest first; None without data."""
-        target = _to_asset(asset)
-        bars = self.broker.get_bars(
-            [target], length, timestep, include_after_hours=include_after_hours
-        )
-        return bars.get(target)
+def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]:
+    return self.broker.get_last_prices([_to_asset(asset) for asset in assets])
 
-    def get_historical_prices_for_assets(
-        self,
-        assets: Iterable[Asset | str],
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> dict[Asset, Bars]:
-        return self.broker.get_bars(
-            [_to_asset(asset) for asset in assets],
-            length,
-            timestep,
-            include_after_hours=include_after_hours,
-        )
+
+def get_quote(self, asset: Asset | str) -> Quote | None:
+    return self.broker.get_quote(_to_asset(asset))
+
+
+def get_historical_prices(
+    self,
+    asset: Asset | str,
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> Bars | None:
+    """The last `length` "minute" or "day" bars, oldest first; None without data."""
+    target = _to_asset(asset)
+    bars = self.broker.get_bars([target], length, timestep, include_after_hours=include_after_hours)
+    return bars.get(target)
+
+
+def get_historical_prices_for_assets(
+    self,
+    assets: Iterable[Asset | str],
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> dict[Asset, Bars]:
+    return self.broker.get_bars(
+        [_to_asset(asset) for asset in assets],
+        length,
+        timestep,
+        include_after_hours=include_after_hours,
+    )
 ```
 
 - [ ] **Step 7: Run the tests to verify they pass**
@@ -1942,9 +1905,7 @@ def test_multi_column_indicators_return_an_indicator_row() -> None:
 
 
 @pytest.mark.parametrize(("kwargs", "expected"), [({"length": 40}, 120), ({"length": 5}, 50), ({}, 150)])
-def test_default_bars_is_three_times_the_length_with_a_floor_of_50(
-    kwargs: dict[str, int], expected: int
-) -> None:
+def test_default_bars_is_three_times_the_length_with_a_floor_of_50(kwargs: dict[str, int], expected: int) -> None:
     assert default_bars(kwargs) == expected
 
 
@@ -1960,9 +1921,7 @@ def test_the_default_lookback_decides_how_many_bars_are_fetched() -> None:
 def test_bars_and_include_after_hours_control_the_fetch() -> None:
     strategy, broker = _strategy()
 
-    value = strategy.indicators.sma(
-        "SPY", timestep="minute", length=5, bars=10, include_after_hours=False
-    )
+    value = strategy.indicators.sma("SPY", timestep="minute", length=5, bars=10, include_after_hours=False)
 
     assert value == pytest.approx(28.0)  # the last 10 closes still end at 26..30
     assert broker.bars_calls == [(("SPY",), 10, "minute", False)]
@@ -1991,9 +1950,7 @@ def test_no_bars_is_none() -> None:
 def test_custom_indicators_get_the_bars_frame_and_their_kwargs() -> None:
     strategy, _ = _strategy()
 
-    value = strategy.indicators.custom(
-        "shifted", lambda df, offset: df["close"] - offset, "SPY", offset=5
-    )
+    value = strategy.indicators.custom("shifted", lambda df, offset: df["close"] - offset, "SPY", offset=5)
 
     assert value == pytest.approx(25.0)
 
@@ -2034,11 +1991,7 @@ def test_importing_core_imports_neither_pandas_nor_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.core\n"
-            "import sys\n"
-            "assert 'pandas' not in sys.modules, 'pandas'\n"
-            "assert 'alpaca' not in sys.modules, 'alpaca'\n"
-            "print('OK')\n",
+            "import trading_agent_framework.core\nimport sys\nassert 'pandas' not in sys.modules, 'pandas'\nassert 'alpaca' not in sys.modules, 'alpaca'\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -2127,10 +2080,7 @@ class Indicators:
             raise AttributeError(name)
         function = getattr(_pandas_ta(), name, None)
         if not callable(function):
-            raise AttributeError(
-                f"pandas_ta_classic has no indicator named {name!r}; "
-                "use indicators.custom(name, fn, asset, ...) for your own"
-            )
+            raise AttributeError(f"pandas_ta_classic has no indicator named {name!r}; use indicators.custom(name, fn, asset, ...) for your own")
 
         def compute(df: pd.DataFrame, **kwargs: Any) -> object:
             return function(**{column: df[column] for column in _OHLCV}, **kwargs)
@@ -2167,9 +2117,7 @@ class Indicators:
         include_after_hours = options.pop("include_after_hours", True)
         if count is None:
             count = default_bars(options)
-        bars = self._strategy.get_historical_prices(
-            asset, count, timestep, include_after_hours=include_after_hours
-        )
+        bars = self._strategy.get_historical_prices(asset, count, timestep, include_after_hours=include_after_hours)
         if bars is None or bars.df.empty:
             return None
         return _latest(name, compute(bars.df, **options))
@@ -2192,9 +2140,7 @@ def _latest(name: str, result: object) -> IndicatorValue:
         return IndicatorRow({str(column): _number(v) for column, v in result.iloc[-1].items()})
     if isinstance(result, pd.Series):
         return None if result.empty else _number(result.iloc[-1])
-    raise TypeError(
-        f"indicator {name!r} returned {type(result).__name__}; expected a pandas Series or DataFrame"
-    )
+    raise TypeError(f"indicator {name!r} returned {type(result).__name__}; expected a pandas Series or DataFrame")
 
 
 def _number(value: object) -> float | None:
@@ -2304,11 +2250,7 @@ class SmokeTestFailure(Exception):
 
 def _load_credentials() -> AlpacaCredentials:
     if not ENV_FILE.is_file():
-        raise SmokeTestFailure(
-            f"Credentials file not found: {ENV_FILE}\n"
-            "Create it with ALPACA_API_KEY / ALPACA_API_SECRET / ALPACA_IS_PAPER=true "
-            "before running this script."
-        )
+        raise SmokeTestFailure(f"Credentials file not found: {ENV_FILE}\nCreate it with ALPACA_API_KEY / ALPACA_API_SECRET / ALPACA_IS_PAPER=true before running this script.")
     load_dotenv(ENV_FILE, override=True)
     try:
         creds = AlpacaCredentials.from_env()
@@ -2353,9 +2295,7 @@ def main() -> int:
     print(f"daily bars: {day.df.index[0]} .. {day.df.index[-1]}\n{day.df.tail(3)}")
 
     extended = strategy.get_historical_prices("SPY", MINUTE_BARS, "minute")
-    regular = strategy.get_historical_prices(
-        "SPY", MINUTE_BARS, "minute", include_after_hours=False
-    )
+    regular = strategy.get_historical_prices("SPY", MINUTE_BARS, "minute", include_after_hours=False)
     _check(extended is not None and regular is not None, "no minute bars for SPY")
     assert extended is not None and regular is not None
     print(f"minute bars, extended hours: {len(extended.df)} ({extended.df.index[0]} .. {extended.df.index[-1]})")
@@ -2366,7 +2306,7 @@ def main() -> int:
     )
 
     many = strategy.get_historical_prices_for_assets(SYMBOLS, DAY_BARS, "day")
-    print(f"get_historical_prices_for_assets: {({a.symbol: len(b.df) for a, b in many.items()})}")
+    print(f"get_historical_prices_for_assets: { ({a.symbol: len(b.df) for a, b in many.items()}) }")
     _check({asset.symbol for asset in many} == set(SYMBOLS), "missing daily bars in the batch")
 
     sma = strategy.indicators.sma("SPY", length=20)

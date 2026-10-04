@@ -29,10 +29,7 @@ if TYPE_CHECKING:
 
 SCHEMA_VERSION = 1
 DB_FILE_NAME = "memory.sqlite"
-RETRIEVAL_POLICY = (
-    "If you hold a symbol and plan to add, reduce, or sell it, "
-    "call search_memory for its open thesis first."
-)
+RETRIEVAL_POLICY = "If you hold a symbol and plan to add, reduce, or sell it, call search_memory for its open thesis first."
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS memory_events (
@@ -515,9 +512,7 @@ class MemoryStore:
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """The current state of one memory (full row, JSON decoded), or None."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM memory_index WHERE memory_id = ?", (memory_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (memory_id,)).fetchone()
         return None if row is None else records.index_item(dict(row))
 
     def search(
@@ -558,9 +553,7 @@ class MemoryStore:
             candidates = [records.index_item(dict(row)) for row in index_rows]
             for row in event_rows:
                 item = records.event_item(dict(row))
-                if (kind is None or item["kind"] == kind) and (
-                    status is None or item["status"] == status
-                ):
+                if (kind is None or item["kind"] == kind) and (status is None or item["status"] == status):
                     candidates.append(item)
             ranked = records.rank(candidates, records.query_terms(query_text))
             selected = ranked[:max_results]
@@ -588,9 +581,7 @@ class MemoryStore:
         return {
             "count": len(ranked),
             "retrieval_id": retrieval_id,
-            "results": [
-                records.lean_item(item, max_chars=records.SEARCH_TEXT_CHARS) for item in selected
-            ],
+            "results": [records.lean_item(item, max_chars=records.SEARCH_TEXT_CHARS) for item in selected],
         }
 
     def compact_state(
@@ -619,9 +610,7 @@ class MemoryStore:
             "as_of": self._timestamp(),
             "held_symbols": sorted(held_by_symbol),
             "open_theses": [records.lean_item(i, max_chars=max_chars_per_item) for i in theses],
-            "validated_lessons": [
-                records.lean_item(i, max_chars=max_chars_per_item) for i in lessons
-            ],
+            "validated_lessons": [records.lean_item(i, max_chars=max_chars_per_item) for i in lessons],
             "retrieval_policy": RETRIEVAL_POLICY,
         }
 
@@ -690,9 +679,7 @@ class MemoryStore:
     def _unused_memory_id(conn: sqlite3.Connection, kind: str) -> str:
         while True:
             memory_id = records.new_memory_id(kind)
-            taken = conn.execute(
-                "SELECT 1 FROM memory_index WHERE memory_id = ?", (memory_id,)
-            ).fetchone()
+            taken = conn.execute("SELECT 1 FROM memory_index WHERE memory_id = ?", (memory_id,)).fetchone()
             if taken is None:
                 return memory_id
 
@@ -775,9 +762,7 @@ class MemoryStore:
         payload_json = records.json_dumps(payload or {})
         event = {
             "event_id": records.new_event_id(),
-            "sequence": conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM memory_events"
-            ).fetchone()[0],
+            "sequence": conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM memory_events").fetchone()[0],
             "timestamp": self._timestamp(),
             "event_type": event_type,
             "subject_id": subject_id,
@@ -825,9 +810,7 @@ class MemoryStore:
         return records.index_item(dict(row))
 
     @staticmethod
-    def _decision_for_call(
-        conn: sqlite3.Connection, agent_name: str | None, model_call_id: str | None
-    ) -> str | None:
+    def _decision_for_call(conn: sqlite3.Connection, agent_name: str | None, model_call_id: str | None) -> str | None:
         """The latest decision recorded in the same model call (lumibot's decision provenance)."""
         if not model_call_id:
             return None
@@ -843,9 +826,7 @@ class MemoryStore:
         return None if row is None else row["subject_id"]
 
     @staticmethod
-    def _latest_index_items(
-        conn: sqlite3.Connection, kind: str, status: str, limit: int
-    ) -> list[dict[str, Any]]:
+    def _latest_index_items(conn: sqlite3.Connection, kind: str, status: str, limit: int) -> list[dict[str, Any]]:
         rows = conn.execute(
             """
             SELECT * FROM memory_index WHERE kind = ? AND status = ?
@@ -896,10 +877,7 @@ class MemoryStore:
                 event_type="thesis.outcome_observed",
                 subject_type="thesis",
                 subject_id=thesis["id"],
-                text=(
-                    f"Observed open thesis for {symbol}: quantity={position.quantity} "
-                    f"last_price={position.last_price} market_value={position.market_value}"
-                ),
+                text=(f"Observed open thesis for {symbol}: quantity={position.quantity} last_price={position.last_price} market_value={position.market_value}"),
                 symbol=symbol,
                 metadata=metadata,
                 payload={"kind": "thesis_outcome", "status": "observed", **metadata},

@@ -32,9 +32,7 @@ if TYPE_CHECKING:
 
 # A holding the screen rejects for one of these reasons failed a quality gate: code gives it the verdict `fail`.
 # The other reasons (no_data, no_price, no_split_data, duplicate_listing) are data problems, not judgements.
-QUALITY_REJECTIONS = frozenset(
-    {"insufficient_history", "stale_filing", "operating_loss", "negative_fcf", "shrinking_revenue", "debt_unknown", "too_much_debt", "excluded_sector"}
-)
+QUALITY_REJECTIONS = frozenset({"insufficient_history", "stale_filing", "operating_loss", "negative_fcf", "shrinking_revenue", "debt_unknown", "too_much_debt", "excluded_sector"})
 
 
 class ScreenLike(Protocol):
@@ -42,9 +40,7 @@ class ScreenLike(Protocol):
 
 
 class AgentLike(Protocol):
-    def run(
-        self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
-    ) -> AgentRunResult: ...
+    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
 
 
 class AgentLookup(Protocol):
@@ -153,9 +149,7 @@ class ReviewPipeline:
         # 4-5. The review set, and the verdicts code gives to holdings the screen rejected on quality.
         review_set = list(dict.fromkeys([*ranked, *holdings]))
         verdicts: dict[str, Verdict] = {
-            symbol: Verdict(symbol, FAIL, f"screen: {holdings_result.rejections[symbol]}")
-            for symbol in holdings
-            if holdings_result.rejections.get(symbol) in QUALITY_REJECTIONS
+            symbol: Verdict(symbol, FAIL, f"screen: {holdings_result.rejections[symbol]}") for symbol in holdings if holdings_result.rejections.get(symbol) in QUALITY_REJECTIONS
         }
         sources = {symbol: "screen" for symbol in verdicts}
 
@@ -187,9 +181,7 @@ class ReviewPipeline:
 
         survivors = [symbol for symbol in review_set if verdicts[symbol].verdict == SURVIVE]
         failures = [f"{symbol} ({verdicts[symbol].concern or verdicts[symbol].reason})" for symbol in review_set if verdicts[symbol].verdict == FAIL]
-        strategy.log_info(
-            f"[short_seller] reviewed {len(review_set)}: {len(survivors)} survive ({', '.join(survivors) or 'none'}); {len(failures)} fail ({', '.join(failures) or 'none'})"
-        )
+        strategy.log_info(f"[short_seller] reviewed {len(review_set)}: {len(survivors)} survive ({', '.join(survivors) or 'none'}); {len(failures)} fail ({', '.join(failures) or 'none'})")
 
         # 7. Hysteresis.
         outcome = apply_verdicts(

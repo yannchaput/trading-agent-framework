@@ -652,51 +652,51 @@ logger = ColorLogger(logging.getLogger(__name__), "SecEdgarClient")
 2. Replace the whole `get_json` method (from `    def get_json(` up to, not including, `    def get_text(`) with:
 
 ```python
-    def get_json(
-        self, url: str, cache_key: tuple[str, ...], *, as_of: datetime | None = None, max_age_days: int | None = None
-    ) -> dict[str, Any]:
-        """The payload at `url`, cached to disk.
+def get_json(self, url: str, cache_key: tuple[str, ...], *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
+    """The payload at `url`, cached to disk.
 
-        Without `as_of` and `max_age_days` a cached file is served forever (the original behaviour). With both,
-        a cached file whose modification time is more than `max_age_days` before `as_of` is stale and is
-        fetched again (`freshness.is_stale`, the screen's rule): in a backtest `as_of` is simulated, and a file
-        written today is fresh for every past date; live refreshes monthly. A stale file that cannot be
-        refreshed is served with a warning rather than failing the caller.
-        """
-        cache_path = self._cache_path(*cache_key)
-        cached = self._read_cached_json(cache_path)
-        if cached is not None and not self._cache_is_stale(cache_path, as_of, max_age_days):
-            return cached
-        try:
-            payload = self.fetch_json(url)
-        except FundamentalsError as exc:
-            if cached is None:
-                raise
-            logger.log_warning(f"{url} could not be refreshed, using the cached copy: {exc}")
-            return cached
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(payload), encoding="utf-8")
-        return payload
+    Without `as_of` and `max_age_days` a cached file is served forever (the original behaviour). With both,
+    a cached file whose modification time is more than `max_age_days` before `as_of` is stale and is
+    fetched again (`freshness.is_stale`, the screen's rule): in a backtest `as_of` is simulated, and a file
+    written today is fresh for every past date; live refreshes monthly. A stale file that cannot be
+    refreshed is served with a warning rather than failing the caller.
+    """
+    cache_path = self._cache_path(*cache_key)
+    cached = self._read_cached_json(cache_path)
+    if cached is not None and not self._cache_is_stale(cache_path, as_of, max_age_days):
+        return cached
+    try:
+        payload = self.fetch_json(url)
+    except FundamentalsError as exc:
+        if cached is None:
+            raise
+        logger.log_warning(f"{url} could not be refreshed, using the cached copy: {exc}")
+        return cached
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    return payload
 
-    @staticmethod
-    def _read_cached_json(cache_path: Path) -> dict[str, Any] | None:
-        if not cache_path.exists():
-            return None
-        try:
-            return json.loads(cache_path.read_text(encoding="utf-8"))
-        except ValueError:
-            # A corrupt/truncated cache entry (e.g. from an interrupted write) is
-            # treated as a cache miss so it self-heals on the next fetch, rather than
-            # permanently wedging the tool until someone deletes the file by hand.
-            return None
 
-    @staticmethod
-    def _cache_is_stale(cache_path: Path, as_of: datetime | None, max_age_days: int | None) -> bool:
-        if as_of is None or max_age_days is None:
-            return False
-        if as_of.tzinfo is None:
-            raise ValueError("as_of must be timezone-aware")
-        return is_stale(datetime.fromtimestamp(cache_path.stat().st_mtime, tz=UTC), as_of, max_age_days)
+@staticmethod
+def _read_cached_json(cache_path: Path) -> dict[str, Any] | None:
+    if not cache_path.exists():
+        return None
+    try:
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+    except ValueError:
+        # A corrupt/truncated cache entry (e.g. from an interrupted write) is
+        # treated as a cache miss so it self-heals on the next fetch, rather than
+        # permanently wedging the tool until someone deletes the file by hand.
+        return None
+
+
+@staticmethod
+def _cache_is_stale(cache_path: Path, as_of: datetime | None, max_age_days: int | None) -> bool:
+    if as_of is None or max_age_days is None:
+        return False
+    if as_of.tzinfo is None:
+        raise ValueError("as_of must be timezone-aware")
+    return is_stale(datetime.fromtimestamp(cache_path.stat().st_mtime, tz=UTC), as_of, max_age_days)
 ```
 
 3. Replace the two payload getters
@@ -741,23 +741,25 @@ In `tests/agents/tools/test_fundamentals_tools.py`:
 2. Replace the two fake getters
 
 ```python
-    def get_company_facts_payload(self, cik: str) -> dict[str, object]:
-        return self.company_facts
+def get_company_facts_payload(self, cik: str) -> dict[str, object]:
+    return self.company_facts
 
-    def get_submissions_payload(self, cik: str) -> dict[str, object]:
-        return self.submissions
+
+def get_submissions_payload(self, cik: str) -> dict[str, object]:
+    return self.submissions
 ```
 
 with
 
 ```python
-    def get_company_facts_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
-        self.freshness_args.append(("companyfacts", as_of, max_age_days))
-        return self.company_facts
+def get_company_facts_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+    self.freshness_args.append(("companyfacts", as_of, max_age_days))
+    return self.company_facts
 
-    def get_submissions_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
-        self.freshness_args.append(("submissions", as_of, max_age_days))
-        return self.submissions
+
+def get_submissions_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+    self.freshness_args.append(("submissions", as_of, max_age_days))
+    return self.submissions
 ```
 
 3. Append at the end of the file:
@@ -1990,7 +1992,7 @@ def _weight(item: Mapping[str, Any], symbol: str) -> float:
         raise HandoffError(f"the weight for {symbol} must be a number")
     try:
         weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         raise HandoffError(f"the weight for {symbol} must be a number, a fraction of portfolio value such as 0.25") from None
     if not math.isfinite(weight):
         raise HandoffError(f"the weight for {symbol} must be a finite number")
@@ -3576,9 +3578,7 @@ end with. No agent is given an order tool; code places every order.
 
 from __future__ import annotations
 
-_ENGLISH = (
-    "Write everything in English: your reasons and every tool argument, even if a source you read drifts into another language."
-)
+_ENGLISH = "Write everything in English: your reasons and every tool argument, even if a source you read drifts into another language."
 
 RESEARCHER_SYSTEM = (
     "You are the researcher of a concentrated, long-only stock portfolio in the style of Bill Ackman: own just a few simple, "
@@ -3647,10 +3647,7 @@ TRADER_TASK = "Choose the portfolio to hold from the allowed list in the context
 
 def retry_prompt(tool: str, error: str) -> str:
     """The corrective turn after a run that never made a valid submit call."""
-    return (
-        f"Your previous run ended without a valid {tool} call. The last problem was: {error}\n"
-        f"Call {tool} now, once, with a valid argument, then stop. Do not do any more research."
-    )
+    return f"Your previous run ended without a valid {tool} call. The last problem was: {error}\nCall {tool} now, once, with a valid argument, then stop. Do not do any more research."
 ```
 
 - [ ] **Step 4: Implement `pipeline.py`**
@@ -3690,9 +3687,7 @@ if TYPE_CHECKING:
 
 # A holding the screen rejects for one of these reasons failed a quality gate: code gives it the verdict `fail`.
 # The other reasons (no_data, no_price, no_split_data, duplicate_listing) are data problems, not judgements.
-QUALITY_REJECTIONS = frozenset(
-    {"insufficient_history", "stale_filing", "operating_loss", "negative_fcf", "shrinking_revenue", "debt_unknown", "too_much_debt", "excluded_sector"}
-)
+QUALITY_REJECTIONS = frozenset({"insufficient_history", "stale_filing", "operating_loss", "negative_fcf", "shrinking_revenue", "debt_unknown", "too_much_debt", "excluded_sector"})
 
 
 class ScreenLike(Protocol):
@@ -3793,9 +3788,7 @@ class ReviewPipeline:
         # 4-5. The review set, and the verdicts code gives to holdings the screen rejected on quality.
         review_set = list(dict.fromkeys([*ranked, *holdings]))
         verdicts: dict[str, Verdict] = {
-            symbol: Verdict(symbol, FAIL, f"screen: {holdings_result.rejections[symbol]}")
-            for symbol in holdings
-            if holdings_result.rejections.get(symbol) in QUALITY_REJECTIONS
+            symbol: Verdict(symbol, FAIL, f"screen: {holdings_result.rejections[symbol]}") for symbol in holdings if holdings_result.rejections.get(symbol) in QUALITY_REJECTIONS
         }
         sources = {symbol: "screen" for symbol in verdicts}
 
@@ -4537,9 +4530,20 @@ def _bars(closes: list[float]) -> pd.DataFrame:
 
 def _candidate(symbol: str) -> Candidate:
     return Candidate(
-        symbol=symbol, rank=1, score=0.9, sic=5812, market_cap=Decimal("100000000000"), fcf_yield=0.05, fcf_margin=0.2, operating_margin=0.25,
-        operating_margin_stdev=0.02, revenue_growth=0.08, net_debt_to_operating_income=1.0, debt_reported=True,
-        fiscal_year_end=date(2025, 12, 31), filed=date(2026, 2, 15),
+        symbol=symbol,
+        rank=1,
+        score=0.9,
+        sic=5812,
+        market_cap=Decimal("100000000000"),
+        fcf_yield=0.05,
+        fcf_margin=0.2,
+        operating_margin=0.25,
+        operating_margin_stdev=0.02,
+        revenue_growth=0.08,
+        net_debt_to_operating_income=1.0,
+        debt_reported=True,
+        fiscal_year_end=date(2025, 12, 31),
+        filed=date(2026, 2, 15),
     )
 
 

@@ -452,11 +452,7 @@ def test_main_registers_the_strategy() -> None:
 
 def test_the_strategy_package_imports_no_llm_library() -> None:
     # A fresh interpreter: this process has already imported LangChain through other tests.
-    code = (
-        "import sys; import trading_agent_framework.strategies.vwap_pullback; "
-        "bad = [m for m in ('langchain', 'langchain_openai', 'langgraph') if m in sys.modules]; "
-        "assert not bad, bad"
-    )
+    code = "import sys; import trading_agent_framework.strategies.vwap_pullback; bad = [m for m in ('langchain', 'langchain_openai', 'langgraph') if m in sys.modules]; assert not bad, bad"
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
@@ -537,94 +533,113 @@ never left without a stop: a stop that cannot be placed is replaced by an immedi
 `desk.py` — replace the whole `entries` section (from the `# --- entries ---` comment through the end of `pass_on_setup`, stopping before `_has_exposure`) with:
 
 ```python
-    # --- entries -------------------------------------------------------------------
+# --- entries -------------------------------------------------------------------
 
-    def enter_triggered(self) -> list[str]:
-        """Try every triggered setup, best stage-2 score first; the symbols whose entry was submitted.
 
-        The score is the filter when triggers outnumber free slots: the best-ranked take the slots. A
-        triggered symbol with no score this tick (tracked only because its setup is under way) goes after
-        every scored one. A refused entry is logged by `enter_long` and the next trigger is tried.
-        """
-        state = self.state
-        triggered = [symbol for symbol, setup in state.setups.items() if setup.state is SetupState.TRIGGERED]
-        if not triggered or state.flattened or not risk.in_entry_window(self._strategy.get_datetime(), self._params) or self.breaker_tripped():
-            return []
-        # Unscored last (False sorts before True), then the higher score, then the symbol: the same order from run to run.
-        triggered.sort(key=lambda symbol: (symbol not in state.scores, -state.scores.get(symbol, 0.0), symbol))
-        entered: list[str] = []
-        for index, symbol in enumerate(triggered):
-            if self.free_slots() <= 0:
-                self._strategy.log_info(f"no free position slot for {', '.join(triggered[index:])}")
-                break
-            if "error" not in self.enter_long(symbol):
-                entered.append(symbol)
-        return entered
+def enter_triggered(self) -> list[str]:
+    """Try every triggered setup, best stage-2 score first; the symbols whose entry was submitted.
 
-    def enter_long(self, symbol: str) -> dict[str, Any]:
-        """Enter a triggered setup: validate, size (`risk.plan_entry`), submit a marketable limit buy.
-
-        Every rule is checked here, and a refusal comes back as `{"error": ...}` (and is logged as a warning,
-        so the run log says why a triggered setup was not entered).
-        The protective stop is NOT placed here: it goes in when the entry fills (`on_order_filled` -> `_protect`).
-        """
-        result = self._enter_long(symbol)
-        if "error" in result:
-            self._strategy.log_warning(f"entry {symbol.strip().upper()} refused: {result['error']}")
-        return result
-
-    def _enter_long(self, symbol: str) -> dict[str, Any]:
-        symbol = symbol.strip().upper()
-        state = self.state
-        setup = state.setups.get(symbol)
-        # Guards, cheapest first; each names the rule so the warning in the log explains itself.
-        if setup is None or setup.state is not SetupState.TRIGGERED:
-            current = setup.state.value if setup is not None else "untracked"
-            return {"error": f"{symbol} has no triggered setup right now (state: {current}); only triggered setups can be entered"}
-        if state.flattened:
-            return {"error": "the session is already flattened; no more entries today"}
-        now = self._strategy.get_datetime()
-        if not risk.in_entry_window(now, self._params):
-            return {"error": f"entries are only allowed between {self._params.no_entry_before:%H:%M} and {self._params.no_entry_after:%H:%M}"}
-        if self.breaker_tripped():
-            return {"error": "the daily loss limit is reached; no more entries today"}
+    The score is the filter when triggers outnumber free slots: the best-ranked take the slots. A
+    triggered symbol with no score this tick (tracked only because its setup is under way) goes after
+    every scored one. A refused entry is logged by `enter_long` and the next trigger is tried.
+    """
+    state = self.state
+    triggered = [symbol for symbol, setup in state.setups.items() if setup.state is SetupState.TRIGGERED]
+    if not triggered or state.flattened or not risk.in_entry_window(self._strategy.get_datetime(), self._params) or self.breaker_tripped():
+        return []
+    # Unscored last (False sorts before True), then the higher score, then the symbol: the same order from run to run.
+    triggered.sort(key=lambda symbol: (symbol not in state.scores, -state.scores.get(symbol, 0.0), symbol))
+    entered: list[str] = []
+    for index, symbol in enumerate(triggered):
         if self.free_slots() <= 0:
-            return {"error": "no free position slot"}
-        if self._has_exposure(symbol):
-            return {"error": f"{symbol} already has a position or an open order"}
-        info = state.candidates.get(symbol)
-        if info is None:
-            return {"error": f"{symbol} is not a candidate this session"}
-        try:
-            last = self._strategy.get_last_price(symbol)
-            account = self._strategy.broker.get_account()
-        except _DATA_ERRORS as exc:
-            return {"error": f"price or account unavailable: {exc}"}
-        if last is None or setup.trigger_close is None or setup.pullback_low is None:
-            return {"error": f"no price for {symbol}"}
-        try:
-            plan = risk.plan_entry(
-                trigger_close=setup.trigger_close, pullback_low=setup.pullback_low, last_price=last, daily_atr=info.daily_atr,
-                equity=account.portfolio_value, buying_power=account.buying_power, cash=account.cash,
-                pending_sell_proceeds=self._pending_sell_proceeds(), params=self._params,
-            )
-        except risk.EntryRefused as exc:
-            return {"error": str(exc)}
-        try:
-            submitted = self._strategy.submit_order(self._strategy.create_order(symbol, plan.quantity, "buy", limit_price=plan.limit_price))
-        except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
-            return {"error": str(exc)}
-        # The trade exists from submission (PENDING): it takes a slot, and the fill/cancel hooks find it by order id.
-        state.book.add(Trade(
-            symbol=symbol, entry_order_id=submitted.identifier, planned_quantity=plan.quantity, stop_price=plan.stop_price,
-            r_per_share=plan.r_per_share, entered_at=now,
-        ))
-        state.setups[symbol] = mark_in_trade(setup)  # freeze the setup: one trade per symbol per session
-        self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share}")
-        return {
-            "symbol": symbol, "quantity": int(plan.quantity), "limit_price": float(plan.limit_price),
-            "stop_price": float(plan.stop_price), "r_per_share": float(plan.r_per_share), "status": "entry submitted",
-        }
+            self._strategy.log_info(f"no free position slot for {', '.join(triggered[index:])}")
+            break
+        if "error" not in self.enter_long(symbol):
+            entered.append(symbol)
+    return entered
+
+
+def enter_long(self, symbol: str) -> dict[str, Any]:
+    """Enter a triggered setup: validate, size (`risk.plan_entry`), submit a marketable limit buy.
+
+    Every rule is checked here, and a refusal comes back as `{"error": ...}` (and is logged as a warning,
+    so the run log says why a triggered setup was not entered).
+    The protective stop is NOT placed here: it goes in when the entry fills (`on_order_filled` -> `_protect`).
+    """
+    result = self._enter_long(symbol)
+    if "error" in result:
+        self._strategy.log_warning(f"entry {symbol.strip().upper()} refused: {result['error']}")
+    return result
+
+
+def _enter_long(self, symbol: str) -> dict[str, Any]:
+    symbol = symbol.strip().upper()
+    state = self.state
+    setup = state.setups.get(symbol)
+    # Guards, cheapest first; each names the rule so the warning in the log explains itself.
+    if setup is None or setup.state is not SetupState.TRIGGERED:
+        current = setup.state.value if setup is not None else "untracked"
+        return {"error": f"{symbol} has no triggered setup right now (state: {current}); only triggered setups can be entered"}
+    if state.flattened:
+        return {"error": "the session is already flattened; no more entries today"}
+    now = self._strategy.get_datetime()
+    if not risk.in_entry_window(now, self._params):
+        return {"error": f"entries are only allowed between {self._params.no_entry_before:%H:%M} and {self._params.no_entry_after:%H:%M}"}
+    if self.breaker_tripped():
+        return {"error": "the daily loss limit is reached; no more entries today"}
+    if self.free_slots() <= 0:
+        return {"error": "no free position slot"}
+    if self._has_exposure(symbol):
+        return {"error": f"{symbol} already has a position or an open order"}
+    info = state.candidates.get(symbol)
+    if info is None:
+        return {"error": f"{symbol} is not a candidate this session"}
+    try:
+        last = self._strategy.get_last_price(symbol)
+        account = self._strategy.broker.get_account()
+    except _DATA_ERRORS as exc:
+        return {"error": f"price or account unavailable: {exc}"}
+    if last is None or setup.trigger_close is None or setup.pullback_low is None:
+        return {"error": f"no price for {symbol}"}
+    try:
+        plan = risk.plan_entry(
+            trigger_close=setup.trigger_close,
+            pullback_low=setup.pullback_low,
+            last_price=last,
+            daily_atr=info.daily_atr,
+            equity=account.portfolio_value,
+            buying_power=account.buying_power,
+            cash=account.cash,
+            pending_sell_proceeds=self._pending_sell_proceeds(),
+            params=self._params,
+        )
+    except risk.EntryRefused as exc:
+        return {"error": str(exc)}
+    try:
+        submitted = self._strategy.submit_order(self._strategy.create_order(symbol, plan.quantity, "buy", limit_price=plan.limit_price))
+    except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
+        return {"error": str(exc)}
+    # The trade exists from submission (PENDING): it takes a slot, and the fill/cancel hooks find it by order id.
+    state.book.add(
+        Trade(
+            symbol=symbol,
+            entry_order_id=submitted.identifier,
+            planned_quantity=plan.quantity,
+            stop_price=plan.stop_price,
+            r_per_share=plan.r_per_share,
+            entered_at=now,
+        )
+    )
+    state.setups[symbol] = mark_in_trade(setup)  # freeze the setup: one trade per symbol per session
+    self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share}")
+    return {
+        "symbol": symbol,
+        "quantity": int(plan.quantity),
+        "limit_price": float(plan.limit_price),
+        "stop_price": float(plan.stop_price),
+        "r_per_share": float(plan.r_per_share),
+        "status": "entry submitted",
+    }
 ```
 
 `desk.py` — the `params` property docstring becomes `"""The strategy's parameters."""`.
@@ -922,10 +937,18 @@ def test_a_pending_full_exit_frees_its_slot_before_the_sell_fills(tmp_path: Path
     # Final review I3 (spec §4): pending entries count as taken, pending full exits as freed.
     rig = _open(tmp_path)
     for symbol in ("BBB", "CCC", "DDD"):
-        rig.state.book.add(Trade(
-            symbol=symbol, entry_order_id=f"entry-{symbol}", planned_quantity=D(10), stop_price=D(90), r_per_share=D(1),
-            entered_at=rig.clock.now(), status=TradeStatus.OPEN, quantity=D(10),
-        ))
+        rig.state.book.add(
+            Trade(
+                symbol=symbol,
+                entry_order_id=f"entry-{symbol}",
+                planned_quantity=D(10),
+                stop_price=D(90),
+                r_per_share=D(1),
+                entered_at=rig.clock.now(),
+                status=TradeStatus.OPEN,
+                quantity=D(10),
+            )
+        )
     assert rig.desk.free_slots() == 0
     trade = rig.state.book.get("AAA")
     assert rig.desk._release_stop(trade) is None
@@ -1145,10 +1168,18 @@ def test_scan_fetches_no_news(tmp_path: Path) -> None:
     state = _state(AAA=CandidateInfo(symbol="AAA", daily_atr=1.0, beta=1.0))
     state.baselines["AAA"] = pd.Series([100.0 * (m + 1) for m in range(390)])
     # An open trade: the symbol whose headlines used to be fetched on every scan.
-    state.book.add(Trade(
-        symbol="AAA", entry_order_id="aaa-entry", planned_quantity=Decimal(1), stop_price=Decimal(99), r_per_share=Decimal(1),
-        entered_at=et(2026, 9, 2, 9, 45), status=TradeStatus.OPEN, quantity=Decimal(1),
-    ))
+    state.book.add(
+        Trade(
+            symbol="AAA",
+            entry_order_id="aaa-entry",
+            planned_quantity=Decimal(1),
+            stop_price=Decimal(99),
+            r_per_share=Decimal(1),
+            entered_at=et(2026, 9, 2, 9, 45),
+            status=TradeStatus.OPEN,
+            quantity=Decimal(1),
+        )
+    )
     Scanner(strategy, PARAMS, ["AAA"]).scan(state)
     assert broker.news.calls == []
 ```

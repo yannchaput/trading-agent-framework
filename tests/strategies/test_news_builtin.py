@@ -53,9 +53,7 @@ class _FakeHandle:
         self.result: AgentRunResult | None = None  # overrides the default successful result when set
         self.results: list[AgentRunResult | Exception] = []  # per-call queue (result or raised exception), checked first
 
-    def run(
-        self, task_prompt: str, *, context: object = None, run_id: str | None = None, force_tool: str | None = None
-    ) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: object = None, run_id: str | None = None, force_tool: str | None = None) -> AgentRunResult:
         self.runs.append((task_prompt, context))
         self.run_ids.append(run_id)
         self.force_tools.append(force_tool)

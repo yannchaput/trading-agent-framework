@@ -166,7 +166,11 @@ def test_scenario_runs_are_filtered_and_sorted_by_repeat(results: Path) -> None:
     assert (first.status, first.passed, first.partial) == ("ok", True, 1.0)
     assert first.checks[0] == Check(type="called", passed=True, reason="found")
     assert (first.total_s, first.tool_calls, first.model_calls, first.tokens_per_s, first.completion_tokens) == (
-        6.906, 4, 5, 121.35, 882,
+        6.906,
+        4,
+        5,
+        121.35,
+        882,
     )
 
 

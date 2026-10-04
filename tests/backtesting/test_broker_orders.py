@@ -45,9 +45,7 @@ def test_submitting_a_notional_order_raises() -> None:
 
 def test_cancel_order_removes_it_from_pending_and_the_tracker() -> None:
     broker = _broker()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     broker.cancel_order(order)
 
@@ -60,8 +58,11 @@ def test_modify_order_updates_the_pending_orders_prices() -> None:
     broker = _broker()
     order = broker.submit_order(
         Order(
-            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
-            quantity=Decimal(10), limit_price=Decimal(140),
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            quantity=Decimal(10),
+            limit_price=Decimal(140),
         )
     )
 
@@ -74,8 +75,12 @@ def test_modify_order_returns_a_distinct_replacement_and_re_keys_pending() -> No
     broker = _broker()
     order = broker.submit_order(
         Order(
-            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
-            quantity=Decimal(10), limit_price=Decimal(140), stop_price=Decimal(130),
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            quantity=Decimal(10),
+            limit_price=Decimal(140),
+            stop_price=Decimal(130),
         )
     )
     old_identifier = order.identifier
@@ -112,9 +117,7 @@ def test_sync_open_orders_returns_nothing_for_a_fresh_backtest() -> None:
 
 def test_pull_orders_and_pull_order_read_from_the_tracker() -> None:
     broker = _broker()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     assert broker.pull_order(order.identifier) == order
     assert order in broker.pull_orders()

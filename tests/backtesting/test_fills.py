@@ -26,9 +26,7 @@ def test_market_order_always_fills_at_open() -> None:
         (OrderSide.SELL, D(99), D(100)),  # open already satisfies (100 >= 99) -> gapped, better price
     ],
 )
-def test_limit_fills_when_touched_pessimistically(
-    side: OrderSide, limit_price: Decimal, expected: Decimal
-) -> None:
+def test_limit_fills_when_touched_pessimistically(side: OrderSide, limit_price: Decimal, expected: Decimal) -> None:
     result = evaluate_fill(order_type=OrderType.LIMIT, side=side, bar=BAR, limit_price=limit_price)
     assert result is not None
     assert result.price == expected
@@ -67,8 +65,11 @@ def test_buy_stop_does_not_trigger_when_high_never_reaches_it() -> None:
 def test_stop_limit_buy_needs_both_the_stop_trigger_and_the_limit_touch() -> None:
     # Stop at 103 (triggers, high=105), limit at 96 (also touched, low=95): fills.
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.BUY, bar=BAR,
-        stop_price=D(103), stop_limit_price=D(96),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.BUY,
+        bar=BAR,
+        stop_price=D(103),
+        stop_limit_price=D(96),
     )
     assert result is not None
     assert result.price == D(96)
@@ -77,23 +78,32 @@ def test_stop_limit_buy_needs_both_the_stop_trigger_and_the_limit_touch() -> Non
     # so use a limit that is NOT touched: low=95 means anything >= 95 IS touched; pick a limit
     # below the low to prove the "not touched" branch).
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.BUY, bar=BAR,
-        stop_price=D(103), stop_limit_price=D(90),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.BUY,
+        bar=BAR,
+        stop_price=D(103),
+        stop_limit_price=D(90),
     )
     assert result is None  # low (95) never reaches down to 90
 
 
 def test_stop_limit_sell_needs_both_the_stop_trigger_and_the_limit_touch() -> None:
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.SELL, bar=BAR,
-        stop_price=D(97), stop_limit_price=D(104),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.SELL,
+        bar=BAR,
+        stop_price=D(97),
+        stop_limit_price=D(104),
     )
     assert result is not None
     assert result.price == D(104)
 
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.SELL, bar=BAR,
-        stop_price=D(97), stop_limit_price=D(110),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.SELL,
+        bar=BAR,
+        stop_price=D(97),
+        stop_limit_price=D(110),
     )
     assert result is None  # high (105) never reaches up to 110
 

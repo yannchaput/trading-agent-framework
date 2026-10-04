@@ -35,10 +35,12 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
     day = first_day
     while len(sessions) < count:
         if day.weekday() < 5:
-            sessions.append(MarketSession(
-                open=datetime.combine(day, time(9, 30), tzinfo=ET),
-                close=datetime.combine(day, time(16, 0), tzinfo=ET),
-            ))
+            sessions.append(
+                MarketSession(
+                    open=datetime.combine(day, time(9, 30), tzinfo=ET),
+                    close=datetime.combine(day, time(16, 0), tzinfo=ET),
+                )
+            )
         day += timedelta(days=1)
     return sessions
 
@@ -46,8 +48,11 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
 def _close_indexed_bars(sessions: list[MarketSession], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-            "close": closes, "volume": [1000.0] * len(closes),
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * len(closes),
         },
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
@@ -63,12 +68,8 @@ class RecordingStrategy(Strategy):
         now = self.clock.now()
         bars = self.get_historical_prices(AAPL, 10, "day")
         last_price = self.get_last_price(AAPL)
-        latest_bar_close = (
-            bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
-        )
-        self.vars.observations.append(
-            {"now": now, "latest_bar_close": latest_bar_close, "last_price": last_price}
-        )
+        latest_bar_close = bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
+        self.vars.observations.append({"now": now, "latest_bar_close": latest_bar_close, "last_price": last_price})
 
 
 def test_strategy_never_observes_a_bar_that_has_not_closed_yet(tmp_path: Path) -> None:
@@ -158,8 +159,7 @@ def test_the_gate_rejects_a_source_row_closing_after_the_cutoff() -> None:
     # `_submit_order`, `_process_pending`, `_positions_value` and `_sample_equity` all
     # read prices through `_latest_bar_with_time`, i.e. through the same single gate.
     with pytest.raises(BacktestDataError, match="cutoff"):
-        broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
-                                  quantity=Decimal(1)))
+        broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(1)))
 
 
 def test_the_gate_accepts_rows_at_exactly_the_cutoff() -> None:
@@ -218,7 +218,9 @@ def test_full_simulated_session_dispatches_hooks_in_order_and_fills_next_bar(tmp
     strategy.executor.run()
 
     assert strategy.vars.hooks_called[:3] == [
-        "before_market_opens", "before_starting_trading", "on_trading_iteration",
+        "before_market_opens",
+        "before_starting_trading",
+        "on_trading_iteration",
     ]
     assert strategy.vars.hooks_called.count("before_market_opens") == 3
     assert strategy.vars.hooks_called.count("on_trading_iteration") == 3

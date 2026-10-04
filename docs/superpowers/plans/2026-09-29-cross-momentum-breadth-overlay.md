@@ -305,7 +305,7 @@ def load_breadth_step(path: Path, n_steps: int) -> int | None:
     """
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError):  # ValueError covers bad JSON and a file that isn't valid text
+    except OSError, ValueError:  # ValueError covers bad JSON and a file that isn't valid text
         return None
     if not isinstance(data, dict):
         return None
@@ -603,9 +603,8 @@ and right after `all_ranks = {entry["symbol"]: entry["rank"] for entry in scored
 7. In `on_trading_iteration`, insert before `        # Step 4: Fast/Slow Volatility Targeting — compute realized vol`:
 
 ```python
-        # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
-        breadth_leg = self._breadth_exposure()
-
+# Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
+breadth_leg = self._breadth_exposure()
 ```
 
 then rename the following comments: `# Step 4: Fast/Slow` → `# Step 5: Fast/Slow`, `# Step 5: Combine` → `# Step 6: Combine`, `# Step 6: Scale` → `# Step 7: Scale`, `# Step 7: Store` → `# Step 8: Store`, `# Step 8: Rebalance` → `# Step 9: Rebalance`. Replace the combine block:

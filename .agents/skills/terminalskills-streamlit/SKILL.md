@@ -70,23 +70,20 @@ with st.sidebar:
     )
     min_revenue = st.slider("Minimum Revenue", 0, 10000, 0, step=100)
 
+
 # Load and filter data
-@st.cache_data(ttl=600)                    # Cache for 10 minutes
+@st.cache_data(ttl=600)  # Cache for 10 minutes
 def load_data():
     return pd.read_parquet("data/sales.parquet")
 
+
 df = load_data()
-filtered = df[
-    (df["date"].between(*date_range)) &
-    (df["region"].isin(regions)) &
-    (df["revenue"] >= min_revenue)
-]
+filtered = df[(df["date"].between(*date_range)) & (df["region"].isin(regions)) & (df["revenue"] >= min_revenue)]
 
 # KPI metrics row
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Total Revenue", f"${filtered['revenue'].sum():,.0f}",
-              delta=f"{filtered['revenue'].pct_change().mean():.1%}")
+    st.metric("Total Revenue", f"${filtered['revenue'].sum():,.0f}", delta=f"{filtered['revenue'].pct_change().mean():.1%}")
 with col2:
     st.metric("Orders", f"{len(filtered):,}")
 with col3:
@@ -98,21 +95,22 @@ with col4:
 tab1, tab2, tab3 = st.tabs(["📈 Trends", "🗺️ Regions", "📋 Data"])
 
 with tab1:
-    monthly = filtered.groupby(filtered["date"].dt.to_period("M")).agg(
-        revenue=("revenue", "sum"),
-        orders=("order_id", "count"),
-    ).reset_index()
+    monthly = (
+        filtered.groupby(filtered["date"].dt.to_period("M"))
+        .agg(
+            revenue=("revenue", "sum"),
+            orders=("order_id", "count"),
+        )
+        .reset_index()
+    )
     monthly["date"] = monthly["date"].dt.to_timestamp()
 
-    fig = px.line(monthly, x="date", y="revenue",
-                  title="Monthly Revenue Trend",
-                  labels={"revenue": "Revenue ($)", "date": "Month"})
+    fig = px.line(monthly, x="date", y="revenue", title="Monthly Revenue Trend", labels={"revenue": "Revenue ($)", "date": "Month"})
     st.plotly_chart(fig, use_container_width=True)
 
 with tab2:
     by_region = filtered.groupby("region")["revenue"].sum().reset_index()
-    fig = px.bar(by_region, x="region", y="revenue",
-                 title="Revenue by Region", color="region")
+    fig = px.bar(by_region, x="region", y="revenue", title="Revenue by Region", color="region")
     st.plotly_chart(fig, use_container_width=True)
 
 with tab3:
@@ -160,8 +158,9 @@ with st.form("feedback_form"):
 # Caching strategies for fast dashboards
 import streamlit as st
 
+
 # Cache data loading (survives reruns, clears on TTL or input change)
-@st.cache_data(ttl=3600)                    # 1-hour cache
+@st.cache_data(ttl=3600)  # 1-hour cache
 def load_large_dataset(path: str) -> pd.DataFrame:
     """Load and preprocess a large dataset.
     Cached result is serialized — safe for DataFrames."""
@@ -169,22 +168,27 @@ def load_large_dataset(path: str) -> pd.DataFrame:
     df["month"] = df["date"].dt.to_period("M")
     return df
 
+
 # Cache resource objects (database connections, ML models)
-@st.cache_resource                           # Persists across all users/sessions
+@st.cache_resource  # Persists across all users/sessions
 def get_db_connection():
     """Create a shared database connection.
     Cached as a resource — not serialized, shared by reference."""
     return create_engine(st.secrets["database"]["url"])
 
+
 @st.cache_resource
 def load_ml_model():
     """Load a trained ML model (shared across all sessions)."""
     import joblib
+
     return joblib.load("models/classifier.pkl")
+
 
 # Session state for per-user data
 if "cart" not in st.session_state:
     st.session_state.cart = []
+
 
 def add_to_cart(item):
     st.session_state.cart.append(item)

@@ -140,22 +140,16 @@ def make_alpaca_account_configuration(**overrides: object) -> alpaca_models.Acco
     return alpaca_models.AccountConfiguration(**defaults)  # ty: ignore[invalid-argument-type]
 
 
-def make_alpaca_calendar(
-    day: str, open_at: str = "09:30", close_at: str = "16:00"
-) -> alpaca_models.Calendar:
+def make_alpaca_calendar(day: str, open_at: str = "09:30", close_at: str = "16:00") -> alpaca_models.Calendar:
     """Build a real `Calendar` the way the SDK does from the API payload (naive times)."""
     return alpaca_models.Calendar(date=day, open=open_at, close=close_at)
 
 
 def make_failed_close_details(symbol: str = "AAPL") -> alpaca_models.FailedClosePositionDetails:
-    return alpaca_models.FailedClosePositionDetails(
-        code=40310000, message="insufficient qty available for order", symbol=symbol
-    )
+    return alpaca_models.FailedClosePositionDetails(code=40310000, message="insufficient qty available for order", symbol=symbol)
 
 
-def make_close_position_response(
-    body: alpaca_models.Order | alpaca_models.FailedClosePositionDetails, symbol: str = "AAPL"
-) -> alpaca_models.ClosePositionResponse:
+def make_close_position_response(body: alpaca_models.Order | alpaca_models.FailedClosePositionDetails, symbol: str = "AAPL") -> alpaca_models.ClosePositionResponse:
     is_order = isinstance(body, alpaca_models.Order)
     return alpaca_models.ClosePositionResponse(
         order_id=body.id if isinstance(body, alpaca_models.Order) else None,
@@ -197,9 +191,7 @@ def make_alpaca_barset(bars: dict[str, list[dict[str, object]]]) -> alpaca_data_
     return alpaca_data_models.BarSet(bars)
 
 
-def make_alpaca_trade(
-    symbol: str = "AAPL", price: float = 100.15, timestamp: str = "2026-09-10T13:30:00Z"
-) -> alpaca_data_models.Trade:
+def make_alpaca_trade(symbol: str = "AAPL", price: float = 100.15, timestamp: str = "2026-09-10T13:30:00Z") -> alpaca_data_models.Trade:
     payload = {"t": timestamp, "x": "V", "p": price, "s": 50, "i": 1, "c": ["@"], "z": "C"}
     return alpaca_data_models.Trade(symbol, payload)
 
@@ -330,17 +322,13 @@ class FakeTradingClient:
         # already provides them.
         return [day for day in self.calendar_response if filters.start <= day.date <= filters.end]
 
-    def replace_order_by_id(
-        self, order_id: str, order_data: ReplaceOrderRequest
-    ) -> alpaca_models.Order:
+    def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> alpaca_models.Order:
         self.replace_calls.append((order_id, order_data))
         self._maybe_raise("replace_order_by_id")
         assert self.replace_response is not None, "test must set client.replace_response"
         return self.replace_response
 
-    def close_position(
-        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
-    ) -> alpaca_models.Order:
+    def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> alpaca_models.Order:
         self.close_position_calls.append((symbol_or_asset_id, close_options))
         self._maybe_raise("close_position")
         assert self.close_position_response is not None, "test must set close_position_response"
@@ -353,14 +341,10 @@ class FakeTradingClient:
 
     def get_account_configurations(self) -> alpaca_models.AccountConfiguration:
         self._maybe_raise("get_account_configurations")
-        assert self.account_configuration_response is not None, (
-            "test must set client.account_configuration_response"
-        )
+        assert self.account_configuration_response is not None, "test must set client.account_configuration_response"
         return self.account_configuration_response
 
-    def set_account_configurations(
-        self, account_configurations: alpaca_models.AccountConfiguration
-    ) -> alpaca_models.AccountConfiguration:
+    def set_account_configurations(self, account_configurations: alpaca_models.AccountConfiguration) -> alpaca_models.AccountConfiguration:
         self.set_account_configuration_calls.append(account_configurations)
         self._maybe_raise("set_account_configurations")
         return account_configurations
@@ -401,17 +385,13 @@ class FakeStockHistoricalDataClient:
         wanted = _requested_symbols(request_params)
         return alpaca_data_models.BarSet({s: self.bars[s] for s in wanted if s in self.bars})
 
-    def get_stock_latest_trade(
-        self, request_params: StockLatestTradeRequest
-    ) -> dict[str, alpaca_data_models.Trade]:
+    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, alpaca_data_models.Trade]:
         self.trade_requests.append(request_params)
         self._maybe_raise("get_stock_latest_trade")
         wanted = _requested_symbols(request_params)
         return {s: self.trades[s] for s in wanted if s in self.trades}
 
-    def get_stock_latest_quote(
-        self, request_params: StockLatestQuoteRequest
-    ) -> dict[str, alpaca_data_models.Quote]:
+    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, alpaca_data_models.Quote]:
         self.quote_requests.append(request_params)
         self._maybe_raise("get_stock_latest_quote")
         wanted = _requested_symbols(request_params)
@@ -452,16 +432,12 @@ class FakeNewsClient:
 ET = ZoneInfo("America/New_York")
 
 
-def et(
-    year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0
-) -> datetime:
+def et(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0) -> datetime:
     """A tz-aware datetime in market (Eastern) time."""
     return datetime(year, month, day, hour, minute, second, tzinfo=ET)
 
 
-def make_session(
-    day: date, open_at: time = time(9, 30), close_at: time = time(16, 0)
-) -> MarketSession:
+def make_session(day: date, open_at: time = time(9, 30), close_at: time = time(16, 0)) -> MarketSession:
     return MarketSession(
         open=datetime.combine(day, open_at, tzinfo=ET),
         close=datetime.combine(day, close_at, tzinfo=ET),
@@ -480,9 +456,7 @@ def weekday_sessions(first_day: date, count: int) -> list[MarketSession]:
     return sessions
 
 
-def make_bars_frame(
-    closes: Sequence[float], *, start: datetime | None = None, freq: str = "1D"
-) -> pd.DataFrame:
+def make_bars_frame(closes: Sequence[float], *, start: datetime | None = None, freq: str = "1D") -> pd.DataFrame:
     """An OHLCV frame shaped like `Bars.df`: high = close + 1, low = close - 1."""
     index = pd.date_range(
         start if start is not None else et(2026, 1, 5),
@@ -548,13 +522,9 @@ class FakeBroker(Broker):
 
     name: ClassVar[str] = "fake"
 
-    def __init__(
-        self, clock: MarketClock, strategy_name: str = "momentum", *, is_paper: bool = True
-    ) -> None:
+    def __init__(self, clock: MarketClock, strategy_name: str = "momentum", *, is_paper: bool = True) -> None:
         super().__init__(strategy_name, clock=clock, is_paper=is_paper)
-        self.account = AccountBalances(
-            cash=Decimal("10000"), portfolio_value=Decimal("25000"), buying_power=Decimal("20000")
-        )
+        self.account = AccountBalances(cash=Decimal("10000"), portfolio_value=Decimal("25000"), buying_power=Decimal("20000"))
         self.positions: list[Position] = []
         self.remote_orders: dict[str, Order] = {}
         self.orders_to_sync: list[Order] = []
@@ -676,9 +646,7 @@ MEMORY_START = et(2026, 9, 14, 10, 0)
 MEMORY_WALL_TIME = datetime(2026, 9, 14, 14, 0, 5, tzinfo=UTC)
 
 
-def make_memory_store(
-    directory: Path, clock: FakeClock | None = None, *, fresh: bool = False
-) -> MemoryStore:
+def make_memory_store(directory: Path, clock: FakeClock | None = None, *, fresh: bool = False) -> MemoryStore:
     """A `MemoryStore` at `directory/memory.sqlite`, on fake time (`MEMORY_START` by default)."""
     clock = clock if clock is not None else FakeClock(MEMORY_START)
     return MemoryStore(
@@ -690,9 +658,7 @@ def make_memory_store(
     )
 
 
-def memory_rows(
-    store: MemoryStore, sql: str, params: Sequence[object] = ()
-) -> list[dict[str, Any]]:
+def memory_rows(store: MemoryStore, sql: str, params: Sequence[object] = ()) -> list[dict[str, Any]]:
     """Raw rows from the store's database, read on the test's own connection."""
     conn = sqlite3.connect(store.db_path)
     conn.row_factory = sqlite3.Row
@@ -740,12 +706,25 @@ def make_ib_trade(
     log_error_code: int = 0,
 ) -> Trade:
     order = IbOrder(
-        orderId=order_id, clientId=client_id, permId=perm_id, action=action, totalQuantity=quantity,
-        orderType=order_type, lmtPrice=lmt_price, auxPrice=aux_price, tif=tif, orderRef=order_ref,
+        orderId=order_id,
+        clientId=client_id,
+        permId=perm_id,
+        action=action,
+        totalQuantity=quantity,
+        orderType=order_type,
+        lmtPrice=lmt_price,
+        auxPrice=aux_price,
+        tif=tif,
+        orderRef=order_ref,
     )
     order_status = IbOrderStatus(
-        orderId=order_id, status=status, filled=filled, remaining=quantity - filled,
-        avgFillPrice=avg_fill_price, permId=perm_id, clientId=client_id,
+        orderId=order_id,
+        status=status,
+        filled=filled,
+        remaining=quantity - filled,
+        avgFillPrice=avg_fill_price,
+        permId=perm_id,
+        clientId=client_id,
     )
     log = [TradeLogEntry(time=_IB_TIME, status=status, message=log_message, errorCode=log_error_code)]
     return Trade(contract=Stock(symbol, "SMART", "USD"), order=order, orderStatus=order_status, fills=[], log=log)
@@ -762,8 +741,14 @@ def make_ib_fill(
     symbol: str = "AAPL",
 ) -> Fill:
     execution = Execution(
-        execId=exec_id, time=_IB_TIME, shares=shares, price=price, cumQty=cum_qty,
-        avgPrice=avg_price, orderRef=order_ref, side="BOT",
+        execId=exec_id,
+        time=_IB_TIME,
+        shares=shares,
+        price=price,
+        cumQty=cum_qty,
+        avgPrice=avg_price,
+        orderRef=order_ref,
+        side="BOT",
     )
     return Fill(contract=Stock(symbol, "SMART", "USD"), execution=execution, commissionReport=IbCommissionReport(), time=_IB_TIME)
 
@@ -779,8 +764,14 @@ def make_ib_portfolio_item(
     account: str = "DU123",
 ) -> PortfolioItem:
     return PortfolioItem(
-        contract=Stock(symbol, "SMART", "USD"), position=position, marketPrice=market_price, marketValue=market_value,
-        averageCost=average_cost, unrealizedPNL=unrealized_pnl, realizedPNL=0.0, account=account,
+        contract=Stock(symbol, "SMART", "USD"),
+        position=position,
+        marketPrice=market_price,
+        marketValue=market_value,
+        averageCost=average_cost,
+        unrealizedPNL=unrealized_pnl,
+        realizedPNL=0.0,
+        account=account,
     )
 
 
@@ -852,10 +843,7 @@ class FakeIB:
         return list(self.summary)
 
     async def qualifyContractsAsync(self, *contracts: Stock) -> list[Stock | None]:
-        return [
-            None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol))
-            for c in contracts
-        ]
+        return [None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol)) for c in contracts]
 
     def placeOrder(self, contract: Stock, order: IbOrder) -> Trade:
         self.placed.append((contract, order))
@@ -868,9 +856,17 @@ class FakeIB:
         order.clientId = self.client_id
         self._next_order_id += 1
         trade = make_ib_trade(
-            symbol=contract.symbol, action=order.action, quantity=order.totalQuantity, order_type=order.orderType,
-            order_ref=order.orderRef, status=self.place_status, order_id=order.orderId, perm_id=order.permId,
-            client_id=self.client_id, log_message=self.place_log_message, log_error_code=self.place_log_error_code,
+            symbol=contract.symbol,
+            action=order.action,
+            quantity=order.totalQuantity,
+            order_type=order.orderType,
+            order_ref=order.orderRef,
+            status=self.place_status,
+            order_id=order.orderId,
+            perm_id=order.permId,
+            client_id=self.client_id,
+            log_message=self.place_log_message,
+            log_error_code=self.place_log_error_code,
         )
         trade.order = order
         self.all_trades.append(trade)
@@ -940,9 +936,7 @@ class FakeNewsProvider:
         self.articles = articles or {}
         self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int, bool]] = []
 
-    def get_news(
-        self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False
-    ) -> list[dict[str, object]]:
+    def get_news(self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False) -> list[dict[str, object]]:
         self.calls.append((tuple(symbols), start, end, limit, include_content))
         rows = [a for symbol in symbols for a in self.articles.get(symbol, [])]
         in_window = [a for a in rows if (start is None or datetime.fromisoformat(str(a["created_at"])) >= start) and datetime.fromisoformat(str(a["created_at"])) <= end]

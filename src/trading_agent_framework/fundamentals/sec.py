@@ -41,13 +41,10 @@ BALANCE_SHEET_TAGS: dict[str, list[str]] = {
     ],
 }
 
-_PRIORITY_COMPANY_FACT_TAGS = tuple(
-    dict.fromkeys(
-        tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags
-    )
-)
+_PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
 
 _FORM_PRIORITY = {"10-K": 5, "20-F": 5, "40-F": 5, "10-Q": 4, "8-K": 2}
+
 
 def parse_company_tickers(payload: dict[str, Any], symbol: str) -> str:
     """The zero-padded 10-digit CIK for `symbol`; raises `ValueError` if not found."""
@@ -181,20 +178,14 @@ def _same_statement_period(candidate: dict[str, Any], anchor: dict[str, Any]) ->
     return True
 
 
-def statement_values(
-    payload: dict[str, Any], tag_map: dict[str, list[str]], *, as_of: datetime
-) -> dict[str, dict[str, Any]]:
+def statement_values(payload: dict[str, Any], tag_map: dict[str, list[str]], *, as_of: datetime) -> dict[str, dict[str, Any]]:
     """Income-statement / balance-sheet field values as of `as_of`, from a raw company-facts payload.
 
     A field whose best candidate doesn't match the statement's period anchor is omitted, rather
     than mixing facts pulled from different SEC filings or periods.
     """
     facts = payload.get("facts", {}).get("us-gaap", {})
-    field_candidates = {
-        field: candidates
-        for field, tags in tag_map.items()
-        if (candidates := filter_facts_as_of(facts, tags, as_of))
-    }
+    field_candidates = {field: candidates for field, tags in tag_map.items() if (candidates := filter_facts_as_of(facts, tags, as_of))}
     anchor = _statement_anchor(field_candidates)
     if anchor is None:
         return {}
@@ -203,8 +194,10 @@ def statement_values(
         for candidate in candidates:
             if _same_statement_period(candidate, anchor):
                 values[field] = {
-                    "value": candidate["value"], "unit": candidate["unit"],
-                    "filed": candidate["filed"], "form": candidate["form"],
+                    "value": candidate["value"],
+                    "unit": candidate["unit"],
+                    "filed": candidate["filed"],
+                    "form": candidate["form"],
                 }
                 break
     return values

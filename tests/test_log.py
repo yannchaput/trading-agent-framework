@@ -111,9 +111,7 @@ def test_debug_is_dropped_at_info_level(tmp_path: Path) -> None:
 
 def test_setup_is_idempotent_and_closes_previous_file(tmp_path: Path) -> None:
     first = _setup(tmp_path)
-    second = setup_strategy_logging(
-        "momentum", TradingMode.PAPER, project_root=tmp_path, started_at=datetime(2026, 9, 10, 15)
-    )
+    second = setup_strategy_logging("momentum", TradingMode.PAPER, project_root=tmp_path, started_at=datetime(2026, 9, 10, 15))
     assert len(logging.getLogger(PACKAGE_LOGGER_NAME).handlers) == 2
     _color_logger().log_info("only in second")
     _last_line(second)

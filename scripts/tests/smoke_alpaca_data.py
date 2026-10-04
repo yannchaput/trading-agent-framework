@@ -66,9 +66,7 @@ def _check(condition: bool, message: str) -> None:
 
 def main() -> int:
     creds = _load_credentials()
-    broker = AlpacaBroker.from_credentials(
-        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False
-    )
+    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False)
     strategy = Strategy(broker)
 
     price = strategy.get_last_price("SPY")
@@ -100,14 +98,11 @@ def main() -> int:
     print(f"daily bars, include_after_hours=False: {len(day_regular.df)} bars")
     _check(
         len(day_regular.df) == len(day.df),
-        "include_after_hours=False should be a no-op for day bars "
-        f"(got {len(day_regular.df)} vs {len(day.df)})",
+        f"include_after_hours=False should be a no-op for day bars (got {len(day_regular.df)} vs {len(day.df)})",
     )
 
     extended = strategy.get_historical_prices("SPY", MINUTE_BARS, "minute")
-    regular = strategy.get_historical_prices(
-        "SPY", MINUTE_BARS, "minute", include_after_hours=False
-    )
+    regular = strategy.get_historical_prices("SPY", MINUTE_BARS, "minute", include_after_hours=False)
     _check(extended is not None and regular is not None, "no minute bars for SPY")
     assert extended is not None and regular is not None
     print(f"minute bars, extended hours: {len(extended.df)} ({extended.df.index[0]} .. {extended.df.index[-1]})")
@@ -118,7 +113,7 @@ def main() -> int:
     )
 
     many = strategy.get_historical_prices_for_assets(SYMBOLS, DAY_BARS, "day")
-    print(f"get_historical_prices_for_assets: {({a.symbol: len(b.df) for a, b in many.items()})}")
+    print(f"get_historical_prices_for_assets: { ({a.symbol: len(b.df) for a, b in many.items()}) }")
     _check({asset.symbol for asset in many} == set(SYMBOLS), "missing daily bars in the batch")
 
     sma = strategy.indicators.sma("SPY", length=20)

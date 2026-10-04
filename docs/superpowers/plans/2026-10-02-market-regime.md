@@ -714,7 +714,10 @@ def test_run_backtesting_widens_the_warmup_to_the_regime_history(tmp_path: Path,
     source = FakeBacktestDataSource()
 
     _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, fees=FEES, warmup_trading_days=requested,
+        start=start,
+        end=end,
+        fees=FEES,
+        warmup_trading_days=requested,
         data_source=lambda window_start, window_end: windows.append((window_start, window_end)) or source,
     )
 
@@ -734,7 +737,13 @@ def test_a_daily_backtest_has_a_regime_from_its_first_session_and_never_looks_ah
     end = sessions[302].close
 
     result = _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day", fees=FEES,
+        start=start,
+        end=end,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        fees=FEES,
     )
 
     assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(273)), end)]
@@ -773,7 +782,7 @@ with
 and in the `run_backtest(...)` call replace `warmup_trading_days=warmup_trading_days,` with:
 
 ```python
-            warmup_trading_days=resolved_warmup,
+warmup_trading_days = (resolved_warmup,)
 ```
 
 In the docstring, replace the first sentence of the `warmup_trading_days:` entry
@@ -1079,11 +1088,14 @@ def _regime_runs(times: Sequence[Any], values: Sequence[float], end: Any) -> lis
 4. Replace the block that builds the subplots:
 
 ```python
-    panes = list((indicators or {}).items())
-    fig = make_subplots(
-        rows=1 + len(panes), cols=1, shared_xaxes=True, vertical_spacing=0.05,
-        row_heights=[0.5, *[0.5 / len(panes)] * len(panes)] if panes else [1.0],
-    )
+panes = list((indicators or {}).items())
+fig = make_subplots(
+    rows=1 + len(panes),
+    cols=1,
+    shared_xaxes=True,
+    vertical_spacing=0.05,
+    row_heights=[0.5, *[0.5 / len(panes)] * len(panes)] if panes else [1.0],
+)
 ```
 
 with:
@@ -1115,33 +1127,44 @@ with
 6. Right before the `# ── Indicator panes` comment, add the regime row:
 
 ```python
-    # ── Market regime: a step line on its own row, and one band per run on both rows ──
-    if regime is not None:
-        regime_values = [int(round(v)) for v in regime["values"]]
-        fig.add_trace(
-            go.Scatter(
-                x=regime["times"],
-                y=regime_values,
-                mode="lines",
-                name=REGIME_PANE,
-                line=dict(color=_REGIME_LINE_COLOR, width=1.5, shape="hv"),
-                text=[REGIME_AXIS_LABELS.get(v, str(v)) for v in regime_values],
-                hovertemplate="%{text}<extra>Regime</extra>",
-                showlegend=False,
-            ),
-            row=2, col=1,
-        )
-        chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
-        for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end):
-            for row, opacity in _REGIME_BAND_OPACITY.items():
-                fig.add_vrect(
-                    x0=start, x1=stop, fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
-                    opacity=opacity, line_width=0, layer="below", row=row, col=1,
-                )
-        fig.update_yaxes(
-            range=[-1.3, 1.3], tickvals=[-1, 0, 1], ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
-            title_text=REGIME_PANE, row=2, col=1,
-        )
+# ── Market regime: a step line on its own row, and one band per run on both rows ──
+if regime is not None:
+    regime_values = [int(round(v)) for v in regime["values"]]
+    fig.add_trace(
+        go.Scatter(
+            x=regime["times"],
+            y=regime_values,
+            mode="lines",
+            name=REGIME_PANE,
+            line=dict(color=_REGIME_LINE_COLOR, width=1.5, shape="hv"),
+            text=[REGIME_AXIS_LABELS.get(v, str(v)) for v in regime_values],
+            hovertemplate="%{text}<extra>Regime</extra>",
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+    chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
+    for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end):
+        for row, opacity in _REGIME_BAND_OPACITY.items():
+            fig.add_vrect(
+                x0=start,
+                x1=stop,
+                fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
+                opacity=opacity,
+                line_width=0,
+                layer="below",
+                row=row,
+                col=1,
+            )
+    fig.update_yaxes(
+        range=[-1.3, 1.3],
+        tickvals=[-1, 0, 1],
+        ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
+        title_text=REGIME_PANE,
+        row=2,
+        col=1,
+    )
 ```
 
 7. Replace the two layout lines that depend on the row count:
@@ -1159,13 +1182,13 @@ with
 and
 
 ```python
-        height=450 + 200 * len(panes),
+height = (450 + 200 * len(panes),)
 ```
 
 with
 
 ```python
-        height=450 + 200 * len(panes) + (140 if regime is not None else 0),
+height = (450 + 200 * len(panes) + (140 if regime is not None else 0),)
 ```
 
 - [ ] **Step 4: Run the chart tests**

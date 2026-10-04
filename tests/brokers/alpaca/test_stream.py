@@ -113,9 +113,7 @@ def test_handle_trade_update_partial_fill_records_transaction() -> None:
     order = _make_order()
     tracker.track_unprocessed(order)
     stream = AlpacaTradeStream(tracker)
-    trade_update = _trade_update(
-        event="partial_fill", order=_order_stub(id="order-1"), price="150.00", qty="4"
-    )
+    trade_update = _trade_update(event="partial_fill", order=_order_stub(id="order-1"), price="150.00", qty="4")
 
     result = asyncio.run(stream.handle_trade_update(trade_update))
 
@@ -160,9 +158,7 @@ def test_handle_trade_update_fill_missing_price_raises_order_event_error() -> No
     order = _make_order()
     tracker.track_unprocessed(order)
     stream = AlpacaTradeStream(tracker)
-    trade_update = _trade_update(
-        event="fill", order=_order_stub(id="order-1"), price=None, qty="10"
-    )
+    trade_update = _trade_update(event="fill", order=_order_stub(id="order-1"), price=None, qty="10")
 
     with pytest.raises(OrderEventError):
         asyncio.run(stream.handle_trade_update(trade_update))

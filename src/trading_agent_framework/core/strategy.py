@@ -328,6 +328,8 @@ class Strategy:
                 self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily bars of {self.benchmark_symbol}")
             return
         self.regime = reading.regime
+        # Latest realized volatility (vol): 20-day rolling realized volatility, annualized
+        # Threshold (vol_threshold): the 80th percentile of all rolling volatilities in the last 252 days
         self.log_info(
             f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): {self.benchmark_symbol} close {reading.close:.2f}, "
             f"SMA{params.sma_fast} {reading.sma_fast:.2f}, SMA{params.sma_slow} {reading.sma_slow:.2f}, "

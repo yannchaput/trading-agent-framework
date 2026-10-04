@@ -10,8 +10,15 @@ T0 = datetime(2026, 1, 5, 21, 0, tzinfo=UTC)
 
 def _record(agent: str = "trader", **overrides: object) -> CallRecord:
     fields: dict[str, object] = {
-        "ts": T0, "agent": agent, "model": "qwen3-8b", "input_tokens": 100, "output_tokens": 20,
-        "reasoning_tokens": 5, "total_tokens": 120, "latency_ms": 1000.0, "tool_calls": 1,
+        "ts": T0,
+        "agent": agent,
+        "model": "qwen3-8b",
+        "input_tokens": 100,
+        "output_tokens": 20,
+        "reasoning_tokens": 5,
+        "total_tokens": 120,
+        "latency_ms": 1000.0,
+        "tool_calls": 1,
     }
     return CallRecord(**{**fields, **overrides})  # type: ignore[arg-type]
 
@@ -44,12 +51,26 @@ def test_summarize_totals_each_agent_separately() -> None:
 
     assert summarize(records) == {
         "trader": {
-            "model": "qwen3-8b", "calls": 2, "tool_calls": 2, "input_tokens": 400, "output_tokens": 60,
-            "reasoning_tokens": 20, "total_tokens": 460, "latency_ms_total": 4000.0, "latency_ms_avg": 2000.0,
+            "model": "qwen3-8b",
+            "calls": 2,
+            "tool_calls": 2,
+            "input_tokens": 400,
+            "output_tokens": 60,
+            "reasoning_tokens": 20,
+            "total_tokens": 460,
+            "latency_ms_total": 4000.0,
+            "latency_ms_avg": 2000.0,
         },
         "researcher": {
-            "model": "other", "calls": 1, "tool_calls": 1, "input_tokens": 7, "output_tokens": 3,
-            "reasoning_tokens": None, "total_tokens": 10, "latency_ms_total": 500.0, "latency_ms_avg": 500.0,
+            "model": "other",
+            "calls": 1,
+            "tool_calls": 1,
+            "input_tokens": 7,
+            "output_tokens": 3,
+            "reasoning_tokens": None,
+            "total_tokens": 10,
+            "latency_ms_total": 500.0,
+            "latency_ms_avg": 500.0,
         },
     }
 

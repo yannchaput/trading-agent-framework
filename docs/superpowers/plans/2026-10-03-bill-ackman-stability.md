@@ -633,11 +633,12 @@ In `validate_portfolio`, add the keyword parameter `required: Collection[str] = 
 In `HandoffRecorder`, replace `expect_verdicts` and `expect_portfolio`:
 
 ```python
-    def expect_verdicts(self, symbols: Sequence[str], previous: Mapping[str, str] | None = None) -> None:
-        self._arm(VERDICTS_STAGE, {"expected": list(symbols), "previous": dict(previous or {})})
+def expect_verdicts(self, symbols: Sequence[str], previous: Mapping[str, str] | None = None) -> None:
+    self._arm(VERDICTS_STAGE, {"expected": list(symbols), "previous": dict(previous or {})})
 
-    def expect_portfolio(self, allowed: Sequence[str], required: Sequence[str] = ()) -> None:
-        self._arm(PORTFOLIO, {"allowed": list(allowed), "required": list(required)})
+
+def expect_portfolio(self, allowed: Sequence[str], required: Sequence[str] = ()) -> None:
+    self._arm(PORTFOLIO, {"allowed": list(allowed), "required": list(required)})
 ```
 
 In `submit`, pass `previous=self._context["previous"]` to `validate_verdicts` and `required=self._context["required"]` to `validate_portfolio`.
@@ -780,10 +781,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 In `test_ackman_params.py`, change the line `assert (params.research_top_n, params.max_positions) == (5, 5)` to `assert (params.research_top_n, params.max_positions) == (8, 5)` and add below it `assert (params.reentry_cooldown_reviews, params.agent_temperature) == (4, 0.3)`. Add these entries to the `test_an_out_of_range_value_is_refused` parametrize list:
 
 ```python
-        {"reentry_cooldown_reviews": -1},
-        {"agent_temperature": -0.1},
-        {"agent_temperature": 2.01},
-        {"agent_temperature": math.nan},
+({"reentry_cooldown_reviews": -1},)
+({"agent_temperature": -0.1},)
+({"agent_temperature": 2.01},)
+({"agent_temperature": math.nan},)
 ```
 
 and append:
@@ -911,13 +912,13 @@ In `test_the_empty_state_has_no_history`, change the assertion to:
 In the parametrize list above `test_a_corrupt_or_wrong_shaped_file_is_an_empty_state_with_a_warning`: change `json.dumps({"version": 2})` to `json.dumps({"version": 3})`, change every other `"version": 1` to `"version": 2`, replace the `last_verdicts` entry with the three entries below, and add the four entries after them:
 
 ```python
-        json.dumps({"version": 2, "last_verdicts": {"AAA": "survive"}}),  # the version-1 shape
-        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "maybe", "reason": "x", "concern": None, "date": "2026-09-14"}}}),
-        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": "x", "concern": None}}}),  # no date
-        json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": 1, "concern": None, "date": "2026-09-14"}}}),
-        json.dumps({"version": 2, "cooldowns": {"OLD": 0}}),
-        json.dumps({"version": 2, "cooldowns": {"OLD": True}}),
-        json.dumps({"version": 2, "cooldowns": []}),
+(json.dumps({"version": 2, "last_verdicts": {"AAA": "survive"}}),)  # the version-1 shape
+(json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "maybe", "reason": "x", "concern": None, "date": "2026-09-14"}}}),)
+(json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": "x", "concern": None}}}),)  # no date
+(json.dumps({"version": 2, "last_verdicts": {"AAA": {"verdict": "fail", "reason": 1, "concern": None, "date": "2026-09-14"}}}),)
+(json.dumps({"version": 2, "cooldowns": {"OLD": 0}}),)
+(json.dumps({"version": 2, "cooldowns": {"OLD": True}}),)
+(json.dumps({"version": 2, "cooldowns": []}),)
 ```
 
 Append:
@@ -1013,17 +1014,14 @@ In `StateStore.load`, change the `last_verdicts=` line to `last_verdicts={symbol
 In `pipeline.py` `_review`, step 10, replace the `ReviewState(...)` argument list with:
 
 ```python
-            ReviewState(
-                last_review=now.date().isoformat(),
-                fail_counts=outcome.fail_counts,
-                last_ranking=ranked,
-                last_verdicts={
-                    symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "concern": verdict.concern, "date": now.date().isoformat()}
-                    for symbol, verdict in verdicts.items()
-                },
-                abandoned_streak=0,
-                cooldowns=dict(state.cooldowns),
-            )
+ReviewState(
+    last_review=now.date().isoformat(),
+    fail_counts=outcome.fail_counts,
+    last_ranking=ranked,
+    last_verdicts={symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "concern": verdict.concern, "date": now.date().isoformat()} for symbol, verdict in verdicts.items()},
+    abandoned_streak=0,
+    cooldowns=dict(state.cooldowns),
+)
 ```
 
 - [ ] **Step 5: Run the tests to verify they pass**
@@ -1181,13 +1179,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 In `test_ackman_pipeline.py`, replace `FakeAgent.run`:
 
 ```python
-    def run(
-        self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
-    ) -> AgentRunResult:
-        self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
-        if self.steps:
-            self.steps.pop(0)(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=list(self.tool_calls))
+def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
+    self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
+    if self.steps:
+        self.steps.pop(0)(self.tools, context)
+    return AgentRunResult(output="done", tool_calls=list(self.tool_calls))
 ```
 
 In `test_the_agents_get_the_context_the_design_promises`, replace `assert researcher["previous_ranking"] == ["OLD"]` with `assert "previous_ranking" not in researcher  # no anchoring on the last ranking`.
@@ -1249,9 +1245,7 @@ Expected: FAIL (`KeyError: 'previous_verdict'`, `tool_budget` is `None`, `previo
 Change `AgentLike.run` to:
 
 ```python
-    def run(
-        self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
-    ) -> AgentRunResult: ...
+def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
 ```
 
 In step 3 (researcher), delete the line `"previous_ranking": state.last_ranking,` from the context.

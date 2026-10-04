@@ -13,11 +13,16 @@ from trading_agent_framework.dashboard.benchmark_reader import BENCHMARK_DIR_FLA
 # Streamlit reads .streamlit/config.toml from the working directory, not the app's, so the dark
 # trading theme travels as flags. User-supplied args come later and win.
 THEME_ARGS = [
-    "--theme.base", "dark",
-    "--theme.backgroundColor", "#0b0e14",
-    "--theme.secondaryBackgroundColor", "#131722",
-    "--theme.textColor", "#d1d4dc",
-    "--theme.primaryColor", "#22d3ee",
+    "--theme.base",
+    "dark",
+    "--theme.backgroundColor",
+    "#0b0e14",
+    "--theme.secondaryBackgroundColor",
+    "#131722",
+    "--theme.textColor",
+    "#d1d4dc",
+    "--theme.primaryColor",
+    "#22d3ee",
 ]
 
 

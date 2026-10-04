@@ -39,11 +39,7 @@ ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
 def _tag_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str]) -> list[dict[str, Any]]:
     """One tag's facts in one unit, from `forms` only, that carry a value, a period end and a filing date."""
     rows = (facts.get(tag) or {}).get("units", {}).get(unit, [])
-    return [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")
-    ]
+    return [row for row in rows if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")]
 
 
 def _is_fiscal_year(row: dict[str, Any]) -> bool:
@@ -93,10 +89,7 @@ def _largest_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[str, A
 def _summed(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str) -> list[dict[str, Any]]:
     """Noncurrent + current debt per filing; the current part counts as 0 when the filing lacks it."""
     current = {(row["end"], row["filed"]): row["val"] for row in _tag_rows(gaap, current_tag, "USD", _ANNUAL_FORMS)}
-    return [
-        {"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]}
-        for row in _tag_rows(gaap, noncurrent_tag, "USD", _ANNUAL_FORMS)
-    ]
+    return [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in _tag_rows(gaap, noncurrent_tag, "USD", _ANNUAL_FORMS)]
 
 
 def _debt_sources(gaap: dict[str, Any]) -> list[list[dict[str, Any]]]:

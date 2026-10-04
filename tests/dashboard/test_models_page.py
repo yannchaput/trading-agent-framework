@@ -54,9 +54,7 @@ def test_drill_down_defaults_to_the_winners_worst_scenario(results: Path, monkey
     assert any("1 malformed line" in caption.value for caption in at.caption)
 
 
-def test_drill_down_falls_back_to_the_first_scenario_when_the_default_model_has_no_scores(
-    results: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_drill_down_falls_back_to_the_first_scenario_when_the_default_model_has_no_scores(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import json
 
     # The default-selected model (the run's winner) has an empty `scenarios` dict --
@@ -75,9 +73,7 @@ def test_drill_down_falls_back_to_the_first_scenario_when_the_default_model_has_
     assert scenario.value == SCENARIOS[0]
 
 
-def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(
-    results: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     at = _app(results, monkeypatch)
     at.sidebar.selectbox[0].set_value(OLDER).run()
 
@@ -86,9 +82,7 @@ def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(
     assert at.main.selectbox[0].value == "glm"
 
 
-def test_switching_runs_recomputes_the_default_model_for_the_new_run(
-    results: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_switching_runs_recomputes_the_default_model_for_the_new_run(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # OLDER has only one *ran* model (glm), so a default-model assertion there can't tell
     # "recomputed correctly" from "there was only one valid choice". SWITCHED has two ran
     # models where gptoss -- not glm, and not LATEST's winner qwen3627b -- wins overall, so

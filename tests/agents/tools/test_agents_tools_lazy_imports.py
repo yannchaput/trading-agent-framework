@@ -63,11 +63,7 @@ def test_importing_agents_tools_package_does_not_import_alpaca_or_httpx() -> Non
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.agents.tools\n"
-            "import sys\n"
-            "assert 'alpaca' not in sys.modules\n"
-            "assert 'httpx' not in sys.modules\n"
-            "print('OK')\n",
+            "import trading_agent_framework.agents.tools\nimport sys\nassert 'alpaca' not in sys.modules\nassert 'httpx' not in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -83,10 +79,7 @@ def test_accessing_news_tools_does_not_import_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "from trading_agent_framework.agents.tools import news_tools\n"
-            "import sys\n"
-            "assert 'alpaca' not in sys.modules\n"
-            "print('OK')\n",
+            "from trading_agent_framework.agents.tools import news_tools\nimport sys\nassert 'alpaca' not in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,
@@ -101,10 +94,7 @@ def test_accessing_fundamentals_tools_lazily_imports_httpx() -> None:
         [
             sys.executable,
             "-c",
-            "from trading_agent_framework.agents.tools import fundamentals_tools\n"
-            "import sys\n"
-            "assert 'httpx' in sys.modules\n"
-            "print('OK')\n",
+            "from trading_agent_framework.agents.tools import fundamentals_tools\nimport sys\nassert 'httpx' in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,

@@ -131,18 +131,14 @@ from trading_agent_framework.entities.account import AccountBalances
 
 
 def test_account_balances_holds_decimals() -> None:
-    balances = AccountBalances(
-        cash=Decimal("1000.50"), portfolio_value=Decimal("2500"), buying_power=Decimal("4000")
-    )
+    balances = AccountBalances(cash=Decimal("1000.50"), portfolio_value=Decimal("2500"), buying_power=Decimal("4000"))
     assert balances.cash == Decimal("1000.50")
     assert balances.portfolio_value == Decimal("2500")
     assert balances.buying_power == Decimal("4000")
 
 
 def test_account_balances_is_frozen() -> None:
-    balances = AccountBalances(
-        cash=Decimal("1"), portfolio_value=Decimal("1"), buying_power=Decimal("1")
-    )
+    balances = AccountBalances(cash=Decimal("1"), portfolio_value=Decimal("1"), buying_power=Decimal("1"))
     with pytest.raises(dataclasses.FrozenInstanceError):
         balances.cash = Decimal("2")  # ty: ignore[invalid-assignment]
 ```
@@ -384,9 +380,7 @@ def et(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: 
     return datetime(year, month, day, hour, minute, second, tzinfo=ET)
 
 
-def make_session(
-    day: date, open_at: time = time(9, 30), close_at: time = time(16, 0)
-) -> MarketSession:
+def make_session(day: date, open_at: time = time(9, 30), close_at: time = time(16, 0)) -> MarketSession:
     return MarketSession(
         open=datetime.combine(day, open_at, tzinfo=ET),
         close=datetime.combine(day, close_at, tzinfo=ET),
@@ -606,9 +600,7 @@ def test_debug_is_dropped_at_info_level(tmp_path: Path) -> None:
 
 def test_setup_is_idempotent_and_closes_previous_file(tmp_path: Path) -> None:
     first = _setup(tmp_path)
-    second = setup_strategy_logging(
-        "momentum", TradingMode.PAPER, project_root=tmp_path, started_at=datetime(2026, 9, 10, 15)
-    )
+    second = setup_strategy_logging("momentum", TradingMode.PAPER, project_root=tmp_path, started_at=datetime(2026, 9, 10, 15))
     assert len(logging.getLogger(PACKAGE_LOGGER_NAME).handlers) == 2
     _color_logger().log_info("only in second")
     _last_line(second)
@@ -686,9 +678,7 @@ class LumibotStyleFormatter(logging.Formatter):
     """lumibot's line format: the source location is shown for WARNING and above only."""
 
     _short = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
-    _long = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(filename)s:%(funcName)s:%(lineno)d | %(message)s"
-    )
+    _long = logging.Formatter("%(asctime)s | %(levelname)s | %(filename)s:%(funcName)s:%(lineno)d | %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
         formatter = self._long if record.levelno >= logging.WARNING else self._short
@@ -854,9 +844,7 @@ def test_parse_sleeptime_valid(value: int | str, expected: SleepTime) -> None:
     assert parse_sleeptime(value) == expected
 
 
-@pytest.mark.parametrize(
-    "value", ["", "M", "5", "5X", "1.5H", "-5M", "0M", "5 M M", 0, -1, True, 5.0, None]
-)
+@pytest.mark.parametrize("value", ["", "M", "5", "5X", "1.5H", "-5M", "0M", "5 M M", 0, -1, True, 5.0, None])
 def test_parse_sleeptime_invalid(value: object) -> None:
     with pytest.raises(ConfigurationError):
         parse_sleeptime(value)  # ty: ignore[invalid-argument-type]
@@ -1004,22 +992,16 @@ def make_alpaca_account(**overrides: object) -> alpaca_models.TradeAccount:
     return alpaca_models.TradeAccount(**defaults)  # ty: ignore[invalid-argument-type]
 
 
-def make_alpaca_calendar(
-    day: str, open_at: str = "09:30", close_at: str = "16:00"
-) -> alpaca_models.Calendar:
+def make_alpaca_calendar(day: str, open_at: str = "09:30", close_at: str = "16:00") -> alpaca_models.Calendar:
     """Build a real `Calendar` the way the SDK does from the API payload (naive times)."""
     return alpaca_models.Calendar(date=day, open=open_at, close=close_at)  # ty: ignore[invalid-argument-type]
 
 
 def make_failed_close_details(symbol: str = "AAPL") -> alpaca_models.FailedClosePositionDetails:
-    return alpaca_models.FailedClosePositionDetails(
-        code=40310000, message="insufficient qty available for order", symbol=symbol
-    )
+    return alpaca_models.FailedClosePositionDetails(code=40310000, message="insufficient qty available for order", symbol=symbol)
 
 
-def make_close_position_response(
-    body: alpaca_models.Order | alpaca_models.FailedClosePositionDetails, symbol: str = "AAPL"
-) -> alpaca_models.ClosePositionResponse:
+def make_close_position_response(body: alpaca_models.Order | alpaca_models.FailedClosePositionDetails, symbol: str = "AAPL") -> alpaca_models.ClosePositionResponse:
     is_order = isinstance(body, alpaca_models.Order)
     return alpaca_models.ClosePositionResponse(
         order_id=body.id if isinstance(body, alpaca_models.Order) else None,
@@ -1052,41 +1034,42 @@ In `FakeTradingClient.__init__`, append:
 Add `self._maybe_raise("get_orders")` as the first line of the existing `get_orders`, then append these methods to the class:
 
 ```python
-    def _maybe_raise(self, method: str) -> None:
-        error = self.raises.get(method)
-        if error is not None:
-            raise error
+def _maybe_raise(self, method: str) -> None:
+    error = self.raises.get(method)
+    if error is not None:
+        raise error
 
-    def get_account(self) -> alpaca_models.TradeAccount:
-        self._maybe_raise("get_account")
-        assert self.account_response is not None, "test must set client.account_response"
-        return self.account_response
 
-    def get_calendar(self, filters: GetCalendarRequest) -> list[alpaca_models.Calendar]:
-        self.calendar_requests.append(filters)
-        self._maybe_raise("get_calendar")
-        return self.calendar_response
+def get_account(self) -> alpaca_models.TradeAccount:
+    self._maybe_raise("get_account")
+    assert self.account_response is not None, "test must set client.account_response"
+    return self.account_response
 
-    def replace_order_by_id(
-        self, order_id: str, order_data: ReplaceOrderRequest
-    ) -> alpaca_models.Order:
-        self.replace_calls.append((order_id, order_data))
-        self._maybe_raise("replace_order_by_id")
-        assert self.replace_response is not None, "test must set client.replace_response"
-        return self.replace_response
 
-    def close_position(
-        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
-    ) -> alpaca_models.Order:
-        self.close_position_calls.append((symbol_or_asset_id, close_options))
-        self._maybe_raise("close_position")
-        assert self.close_position_response is not None, "test must set close_position_response"
-        return self.close_position_response
+def get_calendar(self, filters: GetCalendarRequest) -> list[alpaca_models.Calendar]:
+    self.calendar_requests.append(filters)
+    self._maybe_raise("get_calendar")
+    return self.calendar_response
 
-    def close_all_positions(self, cancel_orders: bool) -> list[alpaca_models.ClosePositionResponse]:
-        self.close_all_calls.append(cancel_orders)
-        self._maybe_raise("close_all_positions")
-        return self.close_all_response
+
+def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> alpaca_models.Order:
+    self.replace_calls.append((order_id, order_data))
+    self._maybe_raise("replace_order_by_id")
+    assert self.replace_response is not None, "test must set client.replace_response"
+    return self.replace_response
+
+
+def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> alpaca_models.Order:
+    self.close_position_calls.append((symbol_or_asset_id, close_options))
+    self._maybe_raise("close_position")
+    assert self.close_position_response is not None, "test must set close_position_response"
+    return self.close_position_response
+
+
+def close_all_positions(self, cancel_orders: bool) -> list[alpaca_models.ClosePositionResponse]:
+    self.close_all_calls.append(cancel_orders)
+    self._maybe_raise("close_all_positions")
+    return self.close_all_response
 ```
 
 - [ ] **Step 2: Write the failing tests**
@@ -1189,9 +1172,7 @@ def test_get_orders_request_can_ask_for_open_orders_only() -> None:
 
 
 def test_replace_request_rounds_prices_to_alpaca_ticks() -> None:
-    request = orders.build_replace_order_request(
-        limit_price=Decimal("101.005"), stop_price=Decimal("99.999")
-    )
+    request = orders.build_replace_order_request(limit_price=Decimal("101.005"), stop_price=Decimal("99.999"))
     assert request.limit_price == 101.01
     assert request.stop_price == 100.0
 
@@ -1206,9 +1187,7 @@ def test_replace_request_wraps_sdk_validation_errors() -> None:
         orders.build_replace_order_request(stop_price=Decimal("-1"))
 
 
-@pytest.mark.parametrize(
-    ("fraction", "percentage"), [(Decimal(1), "100"), (Decimal("0.25"), "25.00")]
-)
+@pytest.mark.parametrize(("fraction", "percentage"), [(Decimal(1), "100"), (Decimal("0.25"), "25.00")])
 def test_close_position_request_uses_a_percentage(fraction: Decimal, percentage: str) -> None:
     request = orders.build_close_position_request(fraction)
     assert request.percentage == percentage
@@ -1293,20 +1272,16 @@ Extend the `TYPE_CHECKING` block:
 Replace the Protocol body's method list (and change "only needs to implement these five methods" in its docstring to "only needs to implement the methods below"):
 
 ```python
-    def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel: ...
-    def cancel_order_by_id(self, order_id: str) -> None: ...
-    def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]: ...
-    def get_order_by_id(self, order_id: str) -> AlpacaOrderModel: ...
-    def get_all_positions(self) -> list[AlpacaPositionModel]: ...
-    def get_account(self) -> AlpacaTradeAccount: ...
-    def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]: ...
-    def replace_order_by_id(
-        self, order_id: str, order_data: ReplaceOrderRequest
-    ) -> AlpacaOrderModel: ...
-    def close_position(
-        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
-    ) -> AlpacaOrderModel: ...
-    def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
+def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel: ...
+def cancel_order_by_id(self, order_id: str) -> None: ...
+def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]: ...
+def get_order_by_id(self, order_id: str) -> AlpacaOrderModel: ...
+def get_all_positions(self) -> list[AlpacaPositionModel]: ...
+def get_account(self) -> AlpacaTradeAccount: ...
+def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]: ...
+def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> AlpacaOrderModel: ...
+def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> AlpacaOrderModel: ...
+def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
 ```
 
 Replace `build_get_orders_request`:
@@ -1318,18 +1293,14 @@ def build_get_orders_request(limit: int = 100, *, open_only: bool = False) -> Ge
     return GetOrdersRequest(status=status, limit=limit)
 
 
-def build_replace_order_request(
-    *, limit_price: Decimal | None = None, stop_price: Decimal | None = None
-) -> ReplaceOrderRequest:
+def build_replace_order_request(*, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> ReplaceOrderRequest:
     """Build the PATCH /orders/{id} body; prices are rounded to Alpaca's ticks first."""
     if limit_price is None and stop_price is None:
         raise OrderValidationError("modify_order needs a new limit_price and/or stop_price")
     try:
         return ReplaceOrderRequest(
             limit_price=_to_api_number(None if limit_price is None else round_price(limit_price)),
-            stop_price=_to_api_number(
-                None if stop_price is None else round_stop_price(stop_price)
-            ),
+            stop_price=_to_api_number(None if stop_price is None else round_stop_price(stop_price)),
         )
     except (ValidationError, ValueError) as exc:
         raise OrderValidationError(str(exc)) from exc
@@ -1598,9 +1569,7 @@ class AlpacaMarketClock(MarketClock):
 
     LOOKAHEAD_DAYS = 14
 
-    def __init__(
-        self, client: AlpacaTradingClient, now: Callable[[], datetime] | None = None
-    ) -> None:
+    def __init__(self, client: AlpacaTradingClient, now: Callable[[], datetime] | None = None) -> None:
         self._client = client
         self._now = now
         self._sessions: list[MarketSession] = []
@@ -1622,9 +1591,7 @@ class AlpacaMarketClock(MarketClock):
         return next((s for s in self._sessions if s.close > now), None)
 
     def _refresh(self, start: date) -> None:
-        request = account.build_calendar_request(
-            start, start + timedelta(days=self.LOOKAHEAD_DAYS)
-        )
+        request = account.build_calendar_request(start, start + timedelta(days=self.LOOKAHEAD_DAYS))
         try:
             responses = self._client.get_calendar(filters=request)
         except Exception as exc:
@@ -1808,9 +1775,7 @@ def test_get_account_wraps_client_errors() -> None:
 
 def test_modify_order_replaces_and_tracks_the_new_order() -> None:
     client = FakeTradingClient()
-    client.replace_response = make_alpaca_order(
-        id=_NEW_ID, type="limit", limit_price="101.00", client_order_id="momentum:x"
-    )
+    client.replace_response = make_alpaca_order(id=_NEW_ID, type="limit", limit_price="101.00", client_order_id="momentum:x")
     broker = _broker(client)
     old = _tracked_limit_order(broker)
 
@@ -1950,35 +1915,41 @@ Replace `__init__`:
 Append to the class:
 
 ```python
-    @abstractmethod
-    def get_account(self) -> AccountBalances: ...
+@abstractmethod
+def get_account(self) -> AccountBalances: ...
 
-    @abstractmethod
-    def modify_order(
-        self,
-        order: Order,
-        *,
-        limit_price: Decimal | None = None,
-        stop_price: Decimal | None = None,
-    ) -> Order:
-        """Replace `order`'s prices at the broker; returns the replacement order."""
 
-    @abstractmethod
-    def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
-        """Close `fraction` of the position in `asset`; None when there is no position."""
+@abstractmethod
+def modify_order(
+    self,
+    order: Order,
+    *,
+    limit_price: Decimal | None = None,
+    stop_price: Decimal | None = None,
+) -> Order:
+    """Replace `order`'s prices at the broker; returns the replacement order."""
 
-    @abstractmethod
-    def close_all_positions(self, cancel_orders: bool = True) -> list[Order]: ...
 
-    @abstractmethod
-    def sync_open_orders(self) -> list[Order]:
-        """Track this strategy's open broker orders (e.g. after a restart); returns the adopted ones."""
+@abstractmethod
+def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+    """Close `fraction` of the position in `asset`; None when there is no position."""
 
-    def start_stream(self) -> None:  # noqa: B027 -- optional hook, deliberately not abstract
-        """Start pushing order events into `tracker`. No-op for brokers without a stream."""
 
-    def stop_stream(self, timeout: float = 5.0) -> None:  # noqa: B027 -- optional hook
-        """Stop the order-event stream. No-op for brokers without a stream."""
+@abstractmethod
+def close_all_positions(self, cancel_orders: bool = True) -> list[Order]: ...
+
+
+@abstractmethod
+def sync_open_orders(self) -> list[Order]:
+    """Track this strategy's open broker orders (e.g. after a restart); returns the adopted ones."""
+
+
+def start_stream(self) -> None:  # noqa: B027 -- optional hook, deliberately not abstract
+    """Start pushing order events into `tracker`. No-op for brokers without a stream."""
+
+
+def stop_stream(self, timeout: float = 5.0) -> None:  # noqa: B027 -- optional hook
+    """Stop the order-event stream. No-op for brokers without a stream."""
 ```
 
 - [ ] **Step 4: Implement the `AlpacaBroker` changes**
@@ -1999,27 +1970,28 @@ from trading_agent_framework.entities.asset import Asset
 Replace `__init__` and the `from_credentials` return line:
 
 ```python
-    _SYNC_LIMIT = 500  # Alpaca's maximum page size for GET /orders
+_SYNC_LIMIT = 500  # Alpaca's maximum page size for GET /orders
 
-    def __init__(
-        self,
-        strategy_name: str,
-        client: orders.AlpacaTradingClient,
-        tracker: OrderTracker | None = None,
-        stream: TradingStream | None = None,
-        *,
-        clock: MarketClock | None = None,
-        is_paper: bool = True,
-    ) -> None:
-        super().__init__(
-            strategy_name,
-            tracker,
-            clock=clock if clock is not None else AlpacaMarketClock(client),
-            is_paper=is_paper,
-        )
-        self._client = client
-        self._stream = stream
-        self._alpaca_stream: AlpacaTradeStream | None = None
+
+def __init__(
+    self,
+    strategy_name: str,
+    client: orders.AlpacaTradingClient,
+    tracker: OrderTracker | None = None,
+    stream: TradingStream | None = None,
+    *,
+    clock: MarketClock | None = None,
+    is_paper: bool = True,
+) -> None:
+    super().__init__(
+        strategy_name,
+        tracker,
+        clock=clock if clock is not None else AlpacaMarketClock(client),
+        is_paper=is_paper,
+    )
+    self._client = client
+    self._stream = stream
+    self._alpaca_stream: AlpacaTradeStream | None = None
 ```
 
 ```python
@@ -2029,72 +2001,76 @@ Replace `__init__` and the `from_credentials` return line:
 Add the new methods after `pull_positions`:
 
 ```python
-    def get_account(self) -> AccountBalances:
-        try:
-            response = self._client.get_account()
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch the Alpaca account: {exc}") from exc
-        return account.parse_account(response)
+def get_account(self) -> AccountBalances:
+    try:
+        response = self._client.get_account()
+    except Exception as exc:
+        raise BrokerError(f"Failed to fetch the Alpaca account: {exc}") from exc
+    return account.parse_account(response)
 
-    def modify_order(
-        self,
-        order: Order,
-        *,
-        limit_price: Decimal | None = None,
-        stop_price: Decimal | None = None,
-    ) -> Order:
-        request = orders.build_replace_order_request(limit_price=limit_price, stop_price=stop_price)
-        try:
-            response = self._client.replace_order_by_id(order.identifier, order_data=request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to modify order {order.identifier}: {exc}") from exc
-        replacement = orders.parse_broker_order(response, self.strategy_name)
-        if replacement is None:
-            raise BrokerError(f"Alpaca returned no usable replacement for order {order.identifier}")
-        self.tracker.mark_replaced(order, replacement)
-        return replacement
 
-    def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
-        request = orders.build_close_position_request(fraction)
-        try:
-            response = self._client.close_position(asset.symbol, close_options=request)
-        except APIError as exc:
-            if exc.status_code == 404:
-                return None
-            raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
-        except Exception as exc:
-            raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
-        order = orders.parse_broker_order(response, self.strategy_name)
-        if order is not None:
-            self.tracker.track_unprocessed(order)
-        return order
+def modify_order(
+    self,
+    order: Order,
+    *,
+    limit_price: Decimal | None = None,
+    stop_price: Decimal | None = None,
+) -> Order:
+    request = orders.build_replace_order_request(limit_price=limit_price, stop_price=stop_price)
+    try:
+        response = self._client.replace_order_by_id(order.identifier, order_data=request)
+    except Exception as exc:
+        raise BrokerError(f"Failed to modify order {order.identifier}: {exc}") from exc
+    replacement = orders.parse_broker_order(response, self.strategy_name)
+    if replacement is None:
+        raise BrokerError(f"Alpaca returned no usable replacement for order {order.identifier}")
+    self.tracker.mark_replaced(order, replacement)
+    return replacement
 
-    def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
-        try:
-            responses = self._client.close_all_positions(cancel_orders=cancel_orders)
-        except Exception as exc:
-            raise BrokerError(f"Failed to close all positions: {exc}") from exc
-        closed = orders.parse_close_all_responses(responses, self.strategy_name)
-        for order in closed:
-            self.tracker.track_unprocessed(order)
-        return closed
 
-    def sync_open_orders(self) -> list[Order]:
-        request = orders.build_get_orders_request(self._SYNC_LIMIT, open_only=True)
-        try:
-            responses = self._client.get_orders(filter=request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch open orders: {exc}") from exc
-        prefix = f"{self.strategy_name}:"
-        adopted: list[Order] = []
-        for order in orders.parse_broker_orders(responses, self.strategy_name):
-            if not (order.client_order_id or "").startswith(prefix):
-                continue
-            if self.tracker.get_tracked_order(order.identifier) is not None:
-                continue
-            self.tracker.track_unprocessed(order)
-            adopted.append(order)
-        return adopted
+def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+    request = orders.build_close_position_request(fraction)
+    try:
+        response = self._client.close_position(asset.symbol, close_options=request)
+    except APIError as exc:
+        if exc.status_code == 404:
+            return None
+        raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
+    except Exception as exc:
+        raise BrokerError(f"Failed to close position {asset.symbol}: {exc}") from exc
+    order = orders.parse_broker_order(response, self.strategy_name)
+    if order is not None:
+        self.tracker.track_unprocessed(order)
+    return order
+
+
+def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+    try:
+        responses = self._client.close_all_positions(cancel_orders=cancel_orders)
+    except Exception as exc:
+        raise BrokerError(f"Failed to close all positions: {exc}") from exc
+    closed = orders.parse_close_all_responses(responses, self.strategy_name)
+    for order in closed:
+        self.tracker.track_unprocessed(order)
+    return closed
+
+
+def sync_open_orders(self) -> list[Order]:
+    request = orders.build_get_orders_request(self._SYNC_LIMIT, open_only=True)
+    try:
+        responses = self._client.get_orders(filter=request)
+    except Exception as exc:
+        raise BrokerError(f"Failed to fetch open orders: {exc}") from exc
+    prefix = f"{self.strategy_name}:"
+    adopted: list[Order] = []
+    for order in orders.parse_broker_orders(responses, self.strategy_name):
+        if not (order.client_order_id or "").startswith(prefix):
+            continue
+        if self.tracker.get_tracked_order(order.identifier) is not None:
+            continue
+        self.tracker.track_unprocessed(order)
+        adopted.append(order)
+    return adopted
 ```
 
 - [ ] **Step 5: Add `FakeBroker` to `tests/fakes.py`**
@@ -2111,13 +2087,9 @@ class FakeBroker(Broker):
 
     name: ClassVar[str] = "fake"
 
-    def __init__(
-        self, clock: MarketClock, strategy_name: str = "momentum", *, is_paper: bool = True
-    ) -> None:
+    def __init__(self, clock: MarketClock, strategy_name: str = "momentum", *, is_paper: bool = True) -> None:
         super().__init__(strategy_name, clock=clock, is_paper=is_paper)
-        self.account = AccountBalances(
-            cash=Decimal("10000"), portfolio_value=Decimal("25000"), buying_power=Decimal("20000")
-        )
+        self.account = AccountBalances(cash=Decimal("10000"), portfolio_value=Decimal("25000"), buying_power=Decimal("20000"))
         self.positions: list[Position] = []
         self.remote_orders: dict[str, Order] = {}
         self.orders_to_sync: list[Order] = []
@@ -2237,9 +2209,7 @@ from trading_agent_framework.strategies.events import OrderEventQueue, QueuedOrd
 
 
 def _order() -> Order:
-    return Order(
-        strategy_name="momentum", asset=Asset("AAPL"), side=OrderSide.BUY, quantity=Decimal(10)
-    )
+    return Order(strategy_name="momentum", asset=Asset("AAPL"), side=OrderSide.BUY, quantity=Decimal(10))
 
 
 def test_listener_queues_the_event_and_sets_wake() -> None:
@@ -2294,9 +2264,7 @@ def test_events_posted_by_the_tracker_on_another_thread_are_queued() -> None:
 
     def stream_thread() -> None:
         tracker.process_trade_event(order, OrderEvent.NEW)
-        tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=Decimal("99"), filled_quantity=Decimal("10")
-        )
+        tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal("99"), filled_quantity=Decimal("10"))
 
     thread = threading.Thread(target=stream_thread)
     thread.start()
@@ -2594,9 +2562,7 @@ def test_create_market_order_from_plain_values() -> None:
 
 
 def test_create_limit_order() -> None:
-    order = Strategy(_broker()).create_order(
-        Asset("AAPL"), "2.5", OrderSide.SELL, limit_price=101.25, time_in_force="gtc"
-    )
+    order = Strategy(_broker()).create_order(Asset("AAPL"), "2.5", OrderSide.SELL, limit_price=101.25, time_in_force="gtc")
     assert order.order_type is OrderType.LIMIT
     assert order.limit_price == Decimal("101.25")
     assert order.quantity == Decimal("2.5")
@@ -2633,9 +2599,7 @@ def test_cancel_open_orders_skips_finished_orders() -> None:
     strategy = Strategy(broker)
     open_order = strategy.submit_order(strategy.create_order("AAPL", 1, "buy"))
     filled = strategy.submit_order(strategy.create_order("TSLA", 1, "buy"))
-    broker.tracker.process_trade_event(
-        filled, OrderEvent.FILLED, price=Decimal("100"), filled_quantity=Decimal(1)
-    )
+    broker.tracker.process_trade_event(filled, OrderEvent.FILLED, price=Decimal("100"), filled_quantity=Decimal(1))
 
     strategy.cancel_open_orders()
 
@@ -2936,9 +2900,7 @@ class Strategy:
     def cancel_open_orders(self) -> None:
         self.cancel_orders(self.broker.tracker.get_active_orders())
 
-    def modify_order(
-        self, order: Order, limit_price: Number | None = None, stop_price: Number | None = None
-    ) -> Order:
+    def modify_order(self, order: Order, limit_price: Number | None = None, stop_price: Number | None = None) -> Order:
         """Change an open order's prices; returns the replacement order (new identifier)."""
         return self.broker.modify_order(
             order,
@@ -3420,11 +3382,7 @@ class StrategyExecutor:
     def _initialize(self) -> None:
         strategy = self.strategy
         signature = inspect.signature(strategy.initialize)
-        kwargs = {
-            name: value
-            for name, value in strategy.parameters.items()
-            if name in signature.parameters and signature.parameters[name].kind in _KEYWORD_KINDS
-        }
+        kwargs = {name: value for name, value in strategy.parameters.items() if name in signature.parameters and signature.parameters[name].kind in _KEYWORD_KINDS}
         logger.info("Initializing strategy %s", strategy.name)
         try:
             strategy.initialize(**kwargs)
@@ -3550,15 +3508,17 @@ In `src/trading_agent_framework/strategies/strategy.py`:
 - add a control section after the logging section:
 
 ```python
-    # --- control -------------------------------------------------------------------
+# --- control -------------------------------------------------------------------
 
-    def sleep(self, seconds: float) -> None:
-        """Pause for `seconds` of clock time (returns early if the run is stopped)."""
-        self.executor.wait_until(self.get_datetime() + timedelta(seconds=seconds))
 
-    def stop(self) -> None:
-        """End the run once the current hook returns; `on_strategy_end` still runs."""
-        self.executor.stop()
+def sleep(self, seconds: float) -> None:
+    """Pause for `seconds` of clock time (returns early if the run is stopped)."""
+    self.executor.wait_until(self.get_datetime() + timedelta(seconds=seconds))
+
+
+def stop(self) -> None:
+    """End the run once the current hook returns; `on_strategy_end` still runs."""
+    self.executor.stop()
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -3692,9 +3652,7 @@ def _strategy(cls: type[OrderHooks] = OrderHooks, sessions: int = 1) -> OrderHoo
 
 
 def _aapl_position() -> Position:
-    return Position(
-        strategy_name="momentum", asset=Asset("AAPL"), quantity=Decimal(10), side=PositionSide.LONG
-    )
+    return Position(strategy_name="momentum", asset=Asset("AAPL"), quantity=Decimal(10), side=PositionSide.LONG)
 
 
 def _on_first_wait(clock: FakeClock, action: Callable[[], None]) -> None:
@@ -3717,12 +3675,8 @@ def test_events_from_the_stream_thread_run_hooks_on_the_executor_thread() -> Non
 
     def stream() -> None:
         broker.tracker.process_trade_event(order, OrderEvent.NEW)
-        broker.tracker.process_trade_event(
-            order, OrderEvent.PARTIALLY_FILLED, price=Decimal(100), filled_quantity=Decimal(4)
-        )
-        broker.tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=Decimal(101), filled_quantity=Decimal(6)
-        )
+        broker.tracker.process_trade_event(order, OrderEvent.PARTIALLY_FILLED, price=Decimal(100), filled_quantity=Decimal(4))
+        broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal(101), filled_quantity=Decimal(6))
 
     _on_first_wait(strategy.fake_clock, stream)
     strategy.executor.run()
@@ -3764,9 +3718,7 @@ def test_order_hook_crash_goes_to_on_bot_crash_and_trading_continues() -> None:
     strategy = _strategy(BadHook)
     broker = strategy.fake_broker
     order = broker.submit_order(strategy.create_order("AAPL", 1, "buy"))
-    _on_first_wait(
-        strategy.fake_clock, lambda: broker.tracker.process_trade_event(order, OrderEvent.NEW)
-    )
+    _on_first_wait(strategy.fake_clock, lambda: broker.tracker.process_trade_event(order, OrderEvent.NEW))
 
     strategy.executor.run()
 
@@ -3785,9 +3737,7 @@ class Waiter(OrderHooks):
         if self.fill_it:
             _on_first_wait(
                 self.fake_clock,
-                lambda: broker.tracker.process_trade_event(
-                    order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(1)
-                ),
+                lambda: broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(1)),
             )
         started = self.get_datetime()
         self.vars.result = self.wait_for_order_execution(order, timeout=600)
@@ -3910,80 +3860,79 @@ Replace `run` with:
 Replace `wait_until` with:
 
 ```python
-    def wait_until(self, deadline: datetime, until: Callable[[], bool] | None = None) -> bool:
-        """Wait on the clock until `deadline`, dispatching order events meanwhile.
+def wait_until(self, deadline: datetime, until: Callable[[], bool] | None = None) -> bool:
+    """Wait on the clock until `deadline`, dispatching order events meanwhile.
 
-        Returns True as soon as `until()` holds; False at the deadline or on `stop()`.
-        """
-        clock = self.strategy.clock
-        while True:
-            self._dispatch_events()
-            if until is not None and until():
-                return True
-            remaining = (deadline - clock.now()).total_seconds()
-            if remaining <= 0 or self._stop.is_set():
-                return False
-            clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
-            self._wake.clear()
+    Returns True as soon as `until()` holds; False at the deadline or on `stop()`.
+    """
+    clock = self.strategy.clock
+    while True:
+        self._dispatch_events()
+        if until is not None and until():
+            return True
+        remaining = (deadline - clock.now()).total_seconds()
+        if remaining <= 0 or self._stop.is_set():
+            return False
+        clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
+        self._wake.clear()
 
-    def wait_for(self, until: Callable[[], bool], timeout: float | None = None) -> bool:
-        """`wait_until` with a relative timeout; no timeout means a one-year horizon."""
-        horizon = timedelta(days=365) if timeout is None else timedelta(seconds=timeout)
-        return self.wait_until(self._now() + horizon, until)
+
+def wait_for(self, until: Callable[[], bool], timeout: float | None = None) -> bool:
+    """`wait_until` with a relative timeout; no timeout means a one-year horizon."""
+    horizon = timedelta(days=365) if timeout is None else timedelta(seconds=timeout)
+    return self.wait_until(self._now() + horizon, until)
 ```
 
 Add to the helpers section:
 
 ```python
-    def _dispatch_events(self) -> None:
-        for item in self._events.drain():
-            self._dispatch(item)
+def _dispatch_events(self) -> None:
+    for item in self._events.drain():
+        self._dispatch(item)
 
-    def _dispatch(self, item: QueuedOrderEvent) -> None:
-        strategy = self.strategy
-        order = item.order
-        try:
-            if item.event is OrderEvent.NEW:
-                strategy.on_new_order(order)
-            elif item.event is OrderEvent.CANCELED:
-                strategy.on_canceled_order(order)
-            elif item.event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED):
-                if item.price is None or item.quantity is None:
-                    logger.warning("Fill event for order %s has no fill data", order.identifier)
-                    return
-                hook = (
-                    strategy.on_filled_order
-                    if item.event is OrderEvent.FILLED
-                    else strategy.on_partially_filled_order
-                )
-                position = strategy.get_position(order.asset)
-                hook(position, order, item.price, item.quantity, 1)
-            elif item.event is OrderEvent.ERROR:
-                logger.warning(
-                    "Order %s for %s was rejected: %s",
-                    order.identifier,
-                    strategy.name,
-                    order.error_message,
-                )
-        except Exception as exc:
-            logger.exception("Order hook failed for %s (%s)", strategy.name, item.event)
-            self._on_bot_crash(exc)
 
-    def _install_sigterm_handler(self) -> Callable[[], None]:
-        """Turn SIGTERM into KeyboardInterrupt for this run; returns the undo function."""
-        if threading.current_thread() is not threading.main_thread():
-            return lambda: None  # signal handlers can only be installed on the main thread
-        previous = signal.getsignal(signal.SIGTERM)
+def _dispatch(self, item: QueuedOrderEvent) -> None:
+    strategy = self.strategy
+    order = item.order
+    try:
+        if item.event is OrderEvent.NEW:
+            strategy.on_new_order(order)
+        elif item.event is OrderEvent.CANCELED:
+            strategy.on_canceled_order(order)
+        elif item.event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED):
+            if item.price is None or item.quantity is None:
+                logger.warning("Fill event for order %s has no fill data", order.identifier)
+                return
+            hook = strategy.on_filled_order if item.event is OrderEvent.FILLED else strategy.on_partially_filled_order
+            position = strategy.get_position(order.asset)
+            hook(position, order, item.price, item.quantity, 1)
+        elif item.event is OrderEvent.ERROR:
+            logger.warning(
+                "Order %s for %s was rejected: %s",
+                order.identifier,
+                strategy.name,
+                order.error_message,
+            )
+    except Exception as exc:
+        logger.exception("Order hook failed for %s (%s)", strategy.name, item.event)
+        self._on_bot_crash(exc)
 
-        def interrupt(signum: int, frame: FrameType | None) -> None:
-            raise KeyboardInterrupt
 
-        signal.signal(signal.SIGTERM, interrupt)
+def _install_sigterm_handler(self) -> Callable[[], None]:
+    """Turn SIGTERM into KeyboardInterrupt for this run; returns the undo function."""
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None  # signal handlers can only be installed on the main thread
+    previous = signal.getsignal(signal.SIGTERM)
 
-        def restore() -> None:
-            signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+    def interrupt(signum: int, frame: FrameType | None) -> None:
+        raise KeyboardInterrupt
 
-        return restore
+    signal.signal(signal.SIGTERM, interrupt)
+
+    def restore() -> None:
+        signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
+
+    return restore
 ```
 
 (MODIFIED events need no branch: the tracker already treats them as a no-op.)
@@ -3993,28 +3942,23 @@ Add to the helpers section:
 In `src/trading_agent_framework/strategies/strategy.py`, add `OrderStatus` to the enums import, define below the `Number` alias:
 
 ```python
-_FINAL_STATUSES = frozenset(
-    {OrderStatus.FILL, OrderStatus.CANCELED, OrderStatus.ERROR, OrderStatus.EXPIRED}
-)
+_FINAL_STATUSES = frozenset({OrderStatus.FILL, OrderStatus.CANCELED, OrderStatus.ERROR, OrderStatus.EXPIRED})
 ```
 
 and add to the control section:
 
 ```python
-    def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
-        """Wait until `order` is filled, canceled, expired or rejected; False on timeout/stop.
+def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
+    """Wait until `order` is filled, canceled, expired or rejected; False on timeout/stop.
 
-        Needs the broker's trade stream (the runners start it). Order hooks keep firing
-        while waiting. A modified order is replaced: wait on the order `modify_order` returned.
-        """
-        return self.wait_for_orders_execution([order], timeout)
+    Needs the broker's trade stream (the runners start it). Order hooks keep firing
+    while waiting. A modified order is replaced: wait on the order `modify_order` returned.
+    """
+    return self.wait_for_orders_execution([order], timeout)
 
-    def wait_for_orders_execution(
-        self, orders: Sequence[Order], timeout: float | None = None
-    ) -> bool:
-        return self.executor.wait_for(
-            lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout
-        )
+
+def wait_for_orders_execution(self, orders: Sequence[Order], timeout: float | None = None) -> bool:
+    return self.executor.wait_for(lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout)
 ```
 
 Update the `sleep` docstring to: `"""Pause for `seconds` of clock time; order hooks still fire meanwhile."""`
@@ -4195,64 +4139,66 @@ Expected: FAIL — `AttributeError: 'Hello' object has no attribute 'run_paper_t
 In `src/trading_agent_framework/strategies/strategy.py`, add these imports: `from trading_agent_framework.errors import BrokerError, ConfigurationError` and `from trading_agent_framework.log import ColorLogger, setup_strategy_logging` (replacing the existing `ColorLogger` import). Then append to the class:
 
 ```python
-    # --- runners (the lumibot-agent `WrappingStrategy` entry points) -------------------
+# --- runners (the lumibot-agent `WrappingStrategy` entry points) -------------------
 
-    def run_strategy(self) -> None:
-        if self.trading_mode is TradingMode.LIVE:
-            self.run_live_trading()
-        elif self.trading_mode is TradingMode.PAPER:
-            self.run_paper_trading()
-        else:
-            self.run_backtesting()
 
-    def run_paper_trading(self) -> None:
-        self._run_trading(TradingMode.PAPER)
+def run_strategy(self) -> None:
+    if self.trading_mode is TradingMode.LIVE:
+        self.run_live_trading()
+    elif self.trading_mode is TradingMode.PAPER:
+        self.run_paper_trading()
+    else:
+        self.run_backtesting()
 
-    def run_live_trading(self) -> None:
-        self._run_trading(TradingMode.LIVE)
 
-    def run_backtesting(self) -> None:
-        raise NotImplementedError(
-            "backtesting is not implemented yet; it ships with the backtesting subproject"
-        )
+def run_paper_trading(self) -> None:
+    self._run_trading(TradingMode.PAPER)
 
-    def _run_trading(self, mode: TradingMode) -> None:
-        if self.broker.is_paper != (mode is TradingMode.PAPER):
-            account_kind = "paper" if self.broker.is_paper else "live"
-            raise ConfigurationError(
-                f"Refusing to run strategy {self.name!r} in {mode} mode "
-                f"against a {account_kind} broker account"
-            )
-        self.trading_mode = mode
-        log_file = setup_strategy_logging(self.name, mode, project_root=self.project_root)
-        self._log_startup_banner(mode, log_file)
-        self.executor.run()
 
-    def _log_startup_banner(self, mode: TradingMode, log_file: Path) -> None:
-        self.log_info(f"======== {mode.value.upper()} TRADING MODE ========")
-        self.log_info(f"Logs will be saved to: {log_file.parent}")
-        self.log_info(f"Broker account: {'PAPER' if self.broker.is_paper else 'LIVE'}")
-        self.log_info(f"Parameters: {dict(self.parameters)}")
-        self._log_market_conditions()
-        self.log_info(f"Initial cash: {self.get_cash()}")
-        for position in self.get_positions():
-            self.log_info(f"Position: {position.quantity} {position.asset}")
+def run_live_trading(self) -> None:
+    self._run_trading(TradingMode.LIVE)
 
-    def _log_market_conditions(self) -> None:
-        try:
-            session = self.clock.next_session()
-        except BrokerError as exc:
-            self.log_warning(f"Market calendar unavailable: {exc}")
-            return
-        if session is None:
-            self.log_warning("No upcoming market session")
-            return
-        now = self.clock.now()
-        if session.open > now:
-            self.log_info(f"{_format_duration(session.open - now)} until market opens")
-        else:
-            self.log_info("Market is open")
-        self.log_info(f"{_format_duration(session.close - now)} until market closes")
+
+def run_backtesting(self) -> None:
+    raise NotImplementedError("backtesting is not implemented yet; it ships with the backtesting subproject")
+
+
+def _run_trading(self, mode: TradingMode) -> None:
+    if self.broker.is_paper != (mode is TradingMode.PAPER):
+        account_kind = "paper" if self.broker.is_paper else "live"
+        raise ConfigurationError(f"Refusing to run strategy {self.name!r} in {mode} mode against a {account_kind} broker account")
+    self.trading_mode = mode
+    log_file = setup_strategy_logging(self.name, mode, project_root=self.project_root)
+    self._log_startup_banner(mode, log_file)
+    self.executor.run()
+
+
+def _log_startup_banner(self, mode: TradingMode, log_file: Path) -> None:
+    self.log_info(f"======== {mode.value.upper()} TRADING MODE ========")
+    self.log_info(f"Logs will be saved to: {log_file.parent}")
+    self.log_info(f"Broker account: {'PAPER' if self.broker.is_paper else 'LIVE'}")
+    self.log_info(f"Parameters: {dict(self.parameters)}")
+    self._log_market_conditions()
+    self.log_info(f"Initial cash: {self.get_cash()}")
+    for position in self.get_positions():
+        self.log_info(f"Position: {position.quantity} {position.asset}")
+
+
+def _log_market_conditions(self) -> None:
+    try:
+        session = self.clock.next_session()
+    except BrokerError as exc:
+        self.log_warning(f"Market calendar unavailable: {exc}")
+        return
+    if session is None:
+        self.log_warning("No upcoming market session")
+        return
+    now = self.clock.now()
+    if session.open > now:
+        self.log_info(f"{_format_duration(session.open - now)} until market opens")
+    else:
+        self.log_info("Market is open")
+    self.log_info(f"{_format_duration(session.close - now)} until market closes")
 ```
 
 and at module level, after `_to_optional_decimal`:
@@ -4414,9 +4360,7 @@ class SmokeStrategy(Strategy):
             self.vars.modified = True
         elif iteration == 3:
             self.cancel_order(self.vars.order)
-            self.vars.cancel_confirmed = self.wait_for_order_execution(
-                self.vars.order, timeout=CANCEL_TIMEOUT_SECONDS
-            )
+            self.vars.cancel_confirmed = self.wait_for_order_execution(self.vars.order, timeout=CANCEL_TIMEOUT_SECONDS)
             self.stop()
 
     def on_new_order(self, order: Order) -> None:
@@ -4461,9 +4405,7 @@ def main() -> int:
         return 1
 
     broker = AlpacaBroker.from_credentials(STRATEGY_NAME, creds)
-    strategy = SmokeStrategy(
-        broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT
-    )
+    strategy = SmokeStrategy(broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT)
     started = datetime.now()
     try:
         strategy.run_paper_trading()

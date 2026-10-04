@@ -275,10 +275,7 @@ class AlpacaBroker(Broker):
     ) -> list[dict[str, object]]:
         provider = self.news_provider()
         if provider is None:
-            raise BrokerError(
-                "no news client configured; construct the broker with news_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
+            raise BrokerError("no news client configured; construct the broker with news_client=... or use AlpacaBroker.from_credentials(...)")
         return provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
@@ -298,9 +295,7 @@ class AlpacaBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
-        return self._market_data.get_bars(
-            assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours
-        )
+        return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
         if self._alpaca_stream is None:
@@ -309,10 +304,7 @@ class AlpacaBroker(Broker):
 
     def start_stream(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
         if self._stream is None:
-            raise BrokerError(
-                "no TradingStream configured; construct the broker with a stream "
-                "or use AlpacaBroker.from_credentials(..., with_stream=True)"
-            )
+            raise BrokerError("no TradingStream configured; construct the broker with a stream or use AlpacaBroker.from_credentials(..., with_stream=True)")
         self._ensure_alpaca_stream().start(connect_timeout=connect_timeout)
 
     def stop_stream(self, timeout: float = 5.0) -> None:

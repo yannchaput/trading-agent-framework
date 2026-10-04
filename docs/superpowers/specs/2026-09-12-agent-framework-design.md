@@ -104,8 +104,7 @@ class LLMCredentials:
     default_model: str | None = None
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str] | None = None) -> LLMCredentials:
-        ...
+    def from_env(cls, env: Mapping[str, str] | None = None) -> LLMCredentials: ...
 ```
 
 - Loaded the same way `AlpacaCredentials.from_env()` is: from whatever env file `load_strategy_env()`
@@ -230,6 +229,7 @@ class ToolCallRecord:
     args: dict[str, Any]
     result: str
 
+
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
     output: str
@@ -261,6 +261,7 @@ Usage in a strategy subclass:
 
 ```python
 from trading_agent_framework.memory.tools import memory_tools
+
 
 class MyStrategy(Strategy):
     def initialize(self):

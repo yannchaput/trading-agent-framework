@@ -10,9 +10,7 @@ from trading_agent_framework.entities.bars import Bars
 
 
 def _frame() -> pd.DataFrame:
-    index = pd.date_range(
-        "2026-09-01", periods=3, freq="1D", tz="America/New_York", name="timestamp"
-    )
+    index = pd.date_range("2026-09-01", periods=3, freq="1D", tz="America/New_York", name="timestamp")
     close = [1.0, 2.0, 3.0]
     return pd.DataFrame(
         {"open": close, "high": close, "low": close, "close": close, "volume": [10.0] * 3},
@@ -46,10 +44,7 @@ def test_importing_entities_does_not_import_pandas() -> None:
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.entities\n"
-            "import sys\n"
-            "assert 'pandas' not in sys.modules\n"
-            "print('OK')\n",
+            "import trading_agent_framework.entities\nimport sys\nassert 'pandas' not in sys.modules\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,

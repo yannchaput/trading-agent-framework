@@ -72,9 +72,7 @@ class IbkrConnection:
                 self._connect_timeout + 5,
             )
         except BrokerError as exc:
-            raise BrokerError(
-                f"Could not connect to IB Gateway at {settings.host}:{settings.port} (client id {settings.client_id}): {exc}"
-            ) from exc
+            raise BrokerError(f"Could not connect to IB Gateway at {settings.host}:{settings.port} (client id {settings.client_id}): {exc}") from exc
         self._has_connected = True
         logger.info("Connected to IB Gateway at %s:%s (client id %s)", settings.host, settings.port, settings.client_id)
 

@@ -83,17 +83,11 @@ class AlpacaTradingClient(Protocol):
     def get_all_positions(self) -> list[AlpacaPositionModel]: ...
     def get_account(self) -> AlpacaTradeAccount: ...
     def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]: ...
-    def replace_order_by_id(
-        self, order_id: str, order_data: ReplaceOrderRequest
-    ) -> AlpacaOrderModel: ...
-    def close_position(
-        self, symbol_or_asset_id: str, close_options: ClosePositionRequest
-    ) -> AlpacaOrderModel: ...
+    def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> AlpacaOrderModel: ...
+    def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> AlpacaOrderModel: ...
     def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
     def get_account_configurations(self) -> AlpacaAccountConfiguration: ...
-    def set_account_configurations(
-        self, account_configurations: AlpacaAccountConfiguration
-    ) -> AlpacaAccountConfiguration: ...
+    def set_account_configurations(self, account_configurations: AlpacaAccountConfiguration) -> AlpacaAccountConfiguration: ...
 
 
 # --- status / event maps -----------------------------------------------------
@@ -245,30 +239,16 @@ def validate_order(order: Order) -> None:
     OrderValidationError; never a raw pydantic ValidationError.
     """
     if order.notional is not None and order.order_type is not OrderType.MARKET:
-        raise OrderValidationError(
-            f"notional is only supported for MARKET orders (order_type={order.order_type})"
-        )
+        raise OrderValidationError(f"notional is only supported for MARKET orders (order_type={order.order_type})")
 
     if order.quantity is not None and order.quantity % 1 != 0:
         if order.order_type is not OrderType.MARKET:
-            raise OrderValidationError(
-                "fractional quantity is only supported for MARKET orders "
-                f"(order_type={order.order_type})"
-            )
+            raise OrderValidationError(f"fractional quantity is only supported for MARKET orders (order_type={order.order_type})")
         if order.time_in_force is not TimeInForce.DAY:
-            raise OrderValidationError(
-                "fractional quantity requires time_in_force=DAY "
-                f"(time_in_force={order.time_in_force})"
-            )
+            raise OrderValidationError(f"fractional quantity requires time_in_force=DAY (time_in_force={order.time_in_force})")
 
-    if (
-        order.time_in_force in _OPENING_CLOSING_TIF
-        and order.order_type not in _OPENING_CLOSING_ORDER_TYPES
-    ):
-        raise OrderValidationError(
-            f"time_in_force={order.time_in_force} requires order_type MARKET or LIMIT "
-            f"(order_type={order.order_type})"
-        )
+    if order.time_in_force in _OPENING_CLOSING_TIF and order.order_type not in _OPENING_CLOSING_ORDER_TYPES:
+        raise OrderValidationError(f"time_in_force={order.time_in_force} requires order_type MARKET or LIMIT (order_type={order.order_type})")
 
 
 # --- request builders ---------------------------------------------------------
@@ -346,18 +326,14 @@ def build_get_orders_request(limit: int = 100, *, open_only: bool = False) -> Ge
     return GetOrdersRequest(status=status, limit=limit)
 
 
-def build_replace_order_request(
-    *, limit_price: Decimal | None = None, stop_price: Decimal | None = None
-) -> ReplaceOrderRequest:
+def build_replace_order_request(*, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> ReplaceOrderRequest:
     """Build the PATCH /orders/{id} body; prices are rounded to Alpaca's ticks first."""
     if limit_price is None and stop_price is None:
         raise OrderValidationError("modify_order needs a new limit_price and/or stop_price")
     try:
         return ReplaceOrderRequest(
             limit_price=_to_api_number(None if limit_price is None else round_price(limit_price)),
-            stop_price=_to_api_number(
-                None if stop_price is None else round_stop_price(stop_price)
-            ),
+            stop_price=_to_api_number(None if stop_price is None else round_stop_price(stop_price)),
         )
     except (ValidationError, ValueError) as exc:
         raise OrderValidationError(str(exc)) from exc
@@ -440,9 +416,7 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 
     return Order(
         strategy_name=strategy_name,
-        asset=Asset(
-            symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK
-        ),
+        asset=Asset(symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK),
         side=OrderSide(_normalize_key(_field(response, "side"))),
         order_type=order_type,
         quantity=_to_decimal(qty),
@@ -467,11 +441,7 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 def parse_broker_orders(responses: Iterable[object], strategy_name: str) -> list[Order]:
     """Parse an iterable of broker order responses, dropping any that
     `parse_broker_order` returns None for."""
-    return [
-        order
-        for order in (parse_broker_order(response, strategy_name) for response in responses)
-        if order is not None
-    ]
+    return [order for order in (parse_broker_order(response, strategy_name) for response in responses) if order is not None]
 
 
 def parse_broker_position(response: object, strategy_name: str) -> Position:
@@ -483,9 +453,7 @@ def parse_broker_position(response: object, strategy_name: str) -> Position:
     assert quantity is not None, "Alpaca position response is missing qty"
     return Position(
         strategy_name=strategy_name,
-        asset=Asset(
-            symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK
-        ),
+        asset=Asset(symbol=from_alpaca_symbol(cast(str, _field(response, "symbol"))), asset_type=AssetType.STOCK),
         quantity=quantity,
         side=PositionSide(_normalize_key(_field(response, "side"))),
         avg_fill_price=_to_decimal(_field(response, "avg_entry_price")),

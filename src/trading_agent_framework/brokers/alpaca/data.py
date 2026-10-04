@@ -45,10 +45,7 @@ class AlpacaMarketData:
 
     def _require_data_client(self) -> market_data.AlpacaStockDataClient:
         if self._data_client is None:
-            raise BrokerError(
-                "no market data client configured; construct the broker with data_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
+            raise BrokerError("no market data client configured; construct the broker with data_client=... or use AlpacaBroker.from_credentials(...)")
         return self._data_client
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
@@ -62,9 +59,7 @@ class AlpacaMarketData:
             try:
                 response = client.get_stock_latest_trade(request)
             except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}"
-                ) from exc
+                raise BrokerError(f"Failed to fetch latest trades ({len(chunk)} symbols): {exc}") from exc
             prices.update(market_data.parse_latest_trades(response, chunk))
         return prices
 
@@ -98,9 +93,7 @@ class AlpacaMarketData:
             try:
                 barset = client.get_stock_bars(request)
             except Exception as exc:
-                raise BrokerError(
-                    f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}"
-                ) from exc
+                raise BrokerError(f"Failed to fetch {timestep} bars ({len(chunk)} symbols): {exc}") from exc
             bars.update(market_data.parse_bars(barset, chunk, timestep, length, sessions=in_session))
         return bars
 

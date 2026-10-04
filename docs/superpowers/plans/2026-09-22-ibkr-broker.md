@@ -574,10 +574,7 @@ class AlpacaMarketData:
 
     def _require_data_client(self) -> market_data.AlpacaStockDataClient:
         if self._data_client is None:
-            raise BrokerError(
-                "no market data client configured; construct the broker with data_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
+            raise BrokerError("no market data client configured; construct the broker with data_client=... or use AlpacaBroker.from_credentials(...)")
         return self._data_client
 ```
 
@@ -662,26 +659,27 @@ In `get_news`, start with `provider = self.news_provider()`, keep the existing "
 - Replace the removed market-data methods with delegates:
 
 ```python
-    def get_last_price(self, asset: Asset) -> Decimal | None:
-        return self._market_data.get_last_price(asset)
+def get_last_price(self, asset: Asset) -> Decimal | None:
+    return self._market_data.get_last_price(asset)
 
-    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
-        return self._market_data.get_last_prices(assets)
 
-    def get_quote(self, asset: Asset) -> Quote | None:
-        return self._market_data.get_quote(asset)
+def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+    return self._market_data.get_last_prices(assets)
 
-    def get_bars(
-        self,
-        assets: Sequence[Asset],
-        length: int,
-        timestep: str = "day",
-        *,
-        include_after_hours: bool = True,
-    ) -> dict[Asset, Bars]:
-        return self._market_data.get_bars(
-            assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours
-        )
+
+def get_quote(self, asset: Asset) -> Quote | None:
+    return self._market_data.get_quote(asset)
+
+
+def get_bars(
+    self,
+    assets: Sequence[Asset],
+    length: int,
+    timestep: str = "day",
+    *,
+    include_after_hours: bool = True,
+) -> dict[Asset, Bars]:
+    return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 ```
 
 - [ ] **Step 6: Update the existing `from_credentials` tests**
@@ -1305,9 +1303,7 @@ def test_market_day_order() -> None:
 
 
 def test_limit_sell_gtc_outside_regular_hours() -> None:
-    ib_order = orders.build_order(
-        _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=Decimal("101.25"), time_in_force=TimeInForce.GTC, extended_hours=True)
-    )
+    ib_order = orders.build_order(_order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=Decimal("101.25"), time_in_force=TimeInForce.GTC, extended_hours=True))
 
     assert (ib_order.action, ib_order.orderType, ib_order.lmtPrice, ib_order.tif, ib_order.outsideRth) == ("SELL", "LMT", 101.25, "GTC", True)
 
@@ -1430,9 +1426,7 @@ def conform_order(order: Order) -> Order:
         raise OrderValidationError(f"order {order.identifier} has no quantity")
     whole = order.quantity.to_integral_value(rounding=ROUND_FLOOR)
     if whole < 1:
-        raise OrderValidationError(
-            f"order {order.identifier} for {order.quantity} {order.asset.symbol} is below one whole share (IBKR trades whole shares only)"
-        )
+        raise OrderValidationError(f"order {order.identifier} for {order.quantity} {order.asset.symbol} is below one whole share (IBKR trades whole shares only)")
     if whole != order.quantity:
         logger.warning("IBKR trades whole shares only: %s quantity %s floored to %s", order.asset.symbol, order.quantity, whole)
         order.quantity = whole
@@ -1557,12 +1551,25 @@ def make_ib_trade(
     log_error_code: int = 0,
 ) -> Trade:
     order = IbOrder(
-        orderId=order_id, clientId=client_id, permId=perm_id, action=action, totalQuantity=quantity,
-        orderType=order_type, lmtPrice=lmt_price, auxPrice=aux_price, tif=tif, orderRef=order_ref,
+        orderId=order_id,
+        clientId=client_id,
+        permId=perm_id,
+        action=action,
+        totalQuantity=quantity,
+        orderType=order_type,
+        lmtPrice=lmt_price,
+        auxPrice=aux_price,
+        tif=tif,
+        orderRef=order_ref,
     )
     order_status = IbOrderStatus(
-        orderId=order_id, status=status, filled=filled, remaining=quantity - filled,
-        avgFillPrice=avg_fill_price, permId=perm_id, clientId=client_id,
+        orderId=order_id,
+        status=status,
+        filled=filled,
+        remaining=quantity - filled,
+        avgFillPrice=avg_fill_price,
+        permId=perm_id,
+        clientId=client_id,
     )
     log = [TradeLogEntry(time=_IB_TIME, status=status, message=log_message, errorCode=log_error_code)]
     return Trade(contract=Stock(symbol, "SMART", "USD"), order=order, orderStatus=order_status, fills=[], log=log)
@@ -1579,8 +1586,14 @@ def make_ib_fill(
     symbol: str = "AAPL",
 ) -> Fill:
     execution = Execution(
-        execId=exec_id, time=_IB_TIME, shares=shares, price=price, cumQty=cum_qty,
-        avgPrice=avg_price, orderRef=order_ref, side="BOT",
+        execId=exec_id,
+        time=_IB_TIME,
+        shares=shares,
+        price=price,
+        cumQty=cum_qty,
+        avgPrice=avg_price,
+        orderRef=order_ref,
+        side="BOT",
     )
     return Fill(contract=Stock(symbol, "SMART", "USD"), execution=execution, commissionReport=IbCommissionReport(), time=_IB_TIME)
 
@@ -1596,8 +1609,14 @@ def make_ib_portfolio_item(
     account: str = "DU123",
 ) -> PortfolioItem:
     return PortfolioItem(
-        contract=Stock(symbol, "SMART", "USD"), position=position, marketPrice=market_price, marketValue=market_value,
-        averageCost=average_cost, unrealizedPNL=unrealized_pnl, realizedPNL=0.0, account=account,
+        contract=Stock(symbol, "SMART", "USD"),
+        position=position,
+        marketPrice=market_price,
+        marketValue=market_value,
+        averageCost=average_cost,
+        unrealizedPNL=unrealized_pnl,
+        realizedPNL=0.0,
+        account=account,
     )
 
 
@@ -1725,9 +1744,7 @@ def test_parse_portfolio_item() -> None:
 
     assert position is not None
     assert (position.asset, position.quantity, position.side) == (Asset("AAPL"), Decimal(10), PositionSide.LONG)
-    assert (position.avg_fill_price, position.current_price, position.market_value, position.unrealized_pnl) == (
-        Decimal(100), Decimal(101), Decimal(1010), Decimal(10)
-    )
+    assert (position.avg_fill_price, position.current_price, position.market_value, position.unrealized_pnl) == (Decimal(100), Decimal(101), Decimal(1010), Decimal(10))
 
 
 def test_a_flat_portfolio_item_is_no_position() -> None:
@@ -1804,7 +1821,7 @@ def map_status_event(status: str) -> OrderEvent | None:
 def identifier_from_order_ref(order_ref: str, strategy_name: str) -> str | None:
     prefix = f"{strategy_name}:"
     if order_ref.startswith(prefix) and len(order_ref) > len(prefix):
-        return order_ref[len(prefix):]
+        return order_ref[len(prefix) :]
     return None
 
 
@@ -2032,9 +2049,7 @@ def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: 
     """Raise `ConfigurationError` when the account must not trade; return warnings to log."""
     if is_paper_account(account_id) != is_paper:
         kind = "a paper" if is_paper_account(account_id) else "a live"
-        raise ConfigurationError(
-            f"IB Gateway is logged into {kind} account ({account_id}) but BROKER_API_IS_PAPER={str(is_paper).lower()}"
-        )
+        raise ConfigurationError(f"IB Gateway is logged into {kind} account ({account_id}) but BROKER_API_IS_PAPER={str(is_paper).lower()}")
     tags = _tags(values, account_id)
     currency = tags["NetLiquidation"].currency if "NetLiquidation" in tags else ""
     if currency != BASE_CURRENCY:
@@ -2042,10 +2057,7 @@ def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: 
     cash = _amount(tags, "TotalCashValue")
     buying_power = _amount(tags, "BuyingPower")
     if buying_power > cash * _MARGIN_TOLERANCE + 1:
-        message = (
-            f"IBKR account {account_id} looks like a margin account (buying power {buying_power} > cash {cash}); "
-            "this framework expects a cash account (no margin, no shorting)"
-        )
+        message = f"IBKR account {account_id} looks like a margin account (buying power {buying_power} > cash {cash}); this framework expects a cash account (no margin, no shorting)"
         if not is_paper:
             raise ConfigurationError(message)
         return [message]
@@ -2137,10 +2149,7 @@ class FakeIB:
         return list(self.summary)
 
     async def qualifyContractsAsync(self, *contracts: Stock) -> list[Stock | None]:
-        return [
-            None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol))
-            for c in contracts
-        ]
+        return [None if c.symbol in self.unknown_symbols else Stock(c.symbol, c.exchange, c.currency, conId=100 + len(c.symbol)) for c in contracts]
 
     def placeOrder(self, contract: Stock, order: IbOrder) -> Trade:
         self.placed.append((contract, order))
@@ -2153,9 +2162,17 @@ class FakeIB:
         order.clientId = self.client_id
         self._next_order_id += 1
         trade = make_ib_trade(
-            symbol=contract.symbol, action=order.action, quantity=order.totalQuantity, order_type=order.orderType,
-            order_ref=order.orderRef, status=self.place_status, order_id=order.orderId, perm_id=order.permId,
-            client_id=self.client_id, log_message=self.place_log_message, log_error_code=self.place_log_error_code,
+            symbol=contract.symbol,
+            action=order.action,
+            quantity=order.totalQuantity,
+            order_type=order.orderType,
+            order_ref=order.orderRef,
+            status=self.place_status,
+            order_id=order.orderId,
+            perm_id=order.permId,
+            client_id=self.client_id,
+            log_message=self.place_log_message,
+            log_error_code=self.place_log_error_code,
         )
         trade.order = order
         self.all_trades.append(trade)
@@ -2379,9 +2396,7 @@ class IbkrConnection:
                 self._connect_timeout + 5,
             )
         except BrokerError as exc:
-            raise BrokerError(
-                f"Could not connect to IB Gateway at {settings.host}:{settings.port} (client id {settings.client_id}): {exc}"
-            ) from exc
+            raise BrokerError(f"Could not connect to IB Gateway at {settings.host}:{settings.port} (client id {settings.client_id}): {exc}") from exc
         self._has_connected = True
         logger.info("Connected to IB Gateway at %s:%s (client id %s)", settings.host, settings.port, settings.client_id)
 
@@ -2791,8 +2806,12 @@ def broker(ib: FakeIB) -> Iterator[IbkrBroker]:
     data = FakeStockHistoricalDataClient()
     data.trades = {"AAPL": make_alpaca_trade("AAPL", 100.5)}
     built = IbkrBroker(
-        "s", connection, market_data=AlpacaMarketData(data, FakeTradingClient()), client_id=1,
-        clock=FakeClock(et(2026, 9, 22, 10)), ack_timeout=0.2,
+        "s",
+        connection,
+        market_data=AlpacaMarketData(data, FakeTradingClient()),
+        client_id=1,
+        clock=FakeClock(et(2026, 9, 22, 10)),
+        ack_timeout=0.2,
     )
     yield built
     connection.disconnect()
@@ -3107,9 +3126,7 @@ class IbkrBroker(Broker):
         if self._account_id is None:
             accounts = self._connection.call(lambda ib: ib.managedAccounts())
             if len(accounts) != 1:
-                raise ConfigurationError(
-                    f"IB Gateway manages {len(accounts)} accounts ({', '.join(accounts)}); this framework needs exactly one account"
-                )
+                raise ConfigurationError(f"IB Gateway manages {len(accounts)} accounts ({', '.join(accounts)}); this framework needs exactly one account")
             self._account_id = accounts[0]
         return self._account_id
 
@@ -3167,16 +3184,11 @@ class IbkrBroker(Broker):
 
     def _open_trade(self, order: Order) -> Trade:
         client_order_id = order.client_order_id
-        trade = self._connection.call(
-            lambda ib: next((t for t in ib.openTrades() if client_order_id and t.order.orderRef == client_order_id), None)
-        )
+        trade = self._connection.call(lambda ib: next((t for t in ib.openTrades() if client_order_id and t.order.orderRef == client_order_id), None))
         if trade is None:
             raise BrokerError(f"no open IBKR order for {order.identifier}")
         if trade.order.clientId != self._client_id:
-            raise BrokerError(
-                f"order {order.identifier} was placed by client id {trade.order.clientId}; "
-                f"only that client id can change it (this broker is client id {self._client_id})"
-            )
+            raise BrokerError(f"order {order.identifier} was placed by client id {trade.order.clientId}; only that client id can change it (this broker is client id {self._client_id})")
         return trade
 
     def cancel_order(self, order: Order) -> None:
@@ -3284,9 +3296,7 @@ class IbkrBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
-        return self._market_data.get_bars(
-            assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours
-        )
+        return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     # --- stream ----------------------------------------------------------------------
 
@@ -3340,7 +3350,10 @@ def test_from_settings_connects_and_checks_the_account(ib: FakeIB) -> None:
     connection = IbkrConnection(SETTINGS, ib_factory=lambda: ib)
 
     built = IbkrBroker.from_settings(
-        "s", SETTINGS, data=AlpacaCredentials("k", "s"), connection=connection,
+        "s",
+        SETTINGS,
+        data=AlpacaCredentials("k", "s"),
+        connection=connection,
         market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
     )
     try:
@@ -3357,7 +3370,10 @@ def test_from_settings_disconnects_when_the_account_check_fails(ib: FakeIB) -> N
 
     with pytest.raises(ConfigurationError, match="BROKER_API_IS_PAPER"):
         IbkrBroker.from_settings(
-            "s", live, data=AlpacaCredentials("k", "s"), connection=connection,
+            "s",
+            live,
+            data=AlpacaCredentials("k", "s"),
+            connection=connection,
             market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
         )
 

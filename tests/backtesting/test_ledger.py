@@ -19,9 +19,16 @@ def test_ledger_starts_empty() -> None:
 def test_ledger_records_a_fill() -> None:
     ledger = Ledger()
     record = FillRecord(
-        time=NOW, identifier="abc", symbol="AAPL", side=OrderSide.BUY,
-        order_type=OrderType.MARKET, quantity=Decimal(10), filled_quantity=Decimal(10),
-        price=Decimal("150.00"), trade_cost=Decimal("0.15"), trade_slippage=Decimal("0.05"),
+        time=NOW,
+        identifier="abc",
+        symbol="AAPL",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(10),
+        filled_quantity=Decimal(10),
+        price=Decimal("150.00"),
+        trade_cost=Decimal("0.15"),
+        trade_slippage=Decimal("0.05"),
     )
 
     ledger.record_fill(record)
@@ -32,9 +39,7 @@ def test_ledger_records_a_fill() -> None:
 
 def test_ledger_records_an_equity_sample() -> None:
     ledger = Ledger()
-    sample = EquitySample(
-        time=NOW, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)
-    )
+    sample = EquitySample(time=NOW, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000))
 
     ledger.record_equity(sample)
 
@@ -44,8 +49,12 @@ def test_ledger_records_an_equity_sample() -> None:
 def test_ledger_records_an_indicator_line() -> None:
     ledger = Ledger()
     line = IndicatorLine(
-        time=NOW, name="sma_200", value=Decimal("148.5"), color=None,
-        style="solid", plot_name="default_plot",
+        time=NOW,
+        name="sma_200",
+        value=Decimal("148.5"),
+        color=None,
+        style="solid",
+        plot_name="default_plot",
     )
 
     ledger.record_line(line)

@@ -65,13 +65,9 @@ def test_parse_calendar_converts_aware_times() -> None:
 
 
 def test_apply_account_restrictions_sets_the_three_fields_only() -> None:
-    configuration = make_alpaca_account_configuration(
-        no_shorting=False, max_margin_multiplier="4", fractional_trading=False
-    )
+    configuration = make_alpaca_account_configuration(no_shorting=False, max_margin_multiplier="4", fractional_trading=False)
 
-    updated = account.apply_account_restrictions(
-        configuration, no_shorting=True, max_margin_multiplier="1", fractional_trading=True
-    )
+    updated = account.apply_account_restrictions(configuration, no_shorting=True, max_margin_multiplier="1", fractional_trading=True)
 
     assert updated is configuration
     assert updated.no_shorting is True

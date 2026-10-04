@@ -159,18 +159,19 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
         day = first_day
         while len(result) < count:
             if day.weekday() < 5:
-                result.append(MarketSession(
-                    open=datetime.combine(day, time(9, 30), tzinfo=et_tz),
-                    close=datetime.combine(day, time(16, 0), tzinfo=et_tz),
-                ))
+                result.append(
+                    MarketSession(
+                        open=datetime.combine(day, time(9, 30), tzinfo=et_tz),
+                        close=datetime.combine(day, time(16, 0), tzinfo=et_tz),
+                    )
+                )
             day += timedelta(days=1)
         return result
 
     sessions = _sessions(date(2026, 1, 5), 3)
     closes = [150.0, 151.0, 152.0]
     df = pd.DataFrame(
-        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-         "close": closes, "volume": [1000.0] * len(closes)},
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
     source = FakeBacktestDataSource()
@@ -186,8 +187,11 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
 
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(
-        start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
-        data_source=source, benchmark="SPY", news_source=news,
+        start=sessions[0].open - timedelta(hours=1),
+        end=sessions[-1].close,
+        data_source=source,
+        benchmark="SPY",
+        news_source=news,
     )
 
     assert result.run_dir.is_dir()
@@ -240,8 +244,11 @@ def test_run_backtesting_forwards_warmup_trading_days_with_explicit_data_source(
 
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(
-        start=sessions[0].open, end=sessions[-1].close,
-        data_source=source, benchmark="SPY", warmup_trading_days=400,
+        start=sessions[0].open,
+        end=sessions[-1].close,
+        data_source=source,
+        benchmark="SPY",
+        warmup_trading_days=400,
     )
 
     assert result.settings["warmup_trading_days"] == 400
@@ -307,8 +314,10 @@ def test_run_backtesting_rejects_an_unknown_broker_before_building_the_data_sour
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     with pytest.raises(ConfigurationError, match="Unknown BROKER"):
         strategy.run_backtesting(
-            start=datetime(2026, 1, 5, tzinfo=UTC), end=datetime(2026, 1, 9, tzinfo=UTC),
-            data_source=lambda start, end: built.append((start, end)), benchmark="SPY",  # type: ignore[arg-type]
+            start=datetime(2026, 1, 5, tzinfo=UTC),
+            end=datetime(2026, 1, 9, tzinfo=UTC),
+            data_source=lambda start, end: built.append((start, end)),
+            benchmark="SPY",  # type: ignore[arg-type]
         )
 
     assert built == []

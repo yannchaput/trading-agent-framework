@@ -113,9 +113,7 @@ def test_event_item_takes_kind_and_status_from_the_payload() -> None:
 
 
 def test_event_item_falls_back_to_the_subject_type() -> None:
-    row = _event_row(
-        event_type="agent_warning", subject_type="warning", payload_json='{"warning": "w"}'
-    )
+    row = _event_row(event_type="agent_warning", subject_type="warning", payload_json='{"warning": "w"}')
     item = records.event_item(row)
     assert (item["kind"], item["status"]) == ("warning", None)
 
@@ -168,9 +166,7 @@ def test_rank_drops_misses_and_orders_by_score_then_recency() -> None:
     two_terms_late = {"id": "b", "updated_at": "2026-09-14T11:00", "text": "spy breadth"}
     one_term_latest = {"id": "c", "updated_at": "2026-09-14T12:00", "text": "spy"}
     miss = {"id": "d", "updated_at": "2026-09-14T13:00", "text": "gold"}
-    ranked = records.rank(
-        [two_terms_early, one_term_latest, miss, two_terms_late], ["spy", "breadth"]
-    )
+    ranked = records.rank([two_terms_early, one_term_latest, miss, two_terms_late], ["spy", "breadth"])
     assert [item["id"] for item in ranked] == ["b", "a", "c"]
 
 

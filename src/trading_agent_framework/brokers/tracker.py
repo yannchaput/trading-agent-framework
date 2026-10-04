@@ -194,13 +194,8 @@ class OrderTracker:
         `OrderEventError` and leaves all bucket state untouched.
         """
         with self._transition_lock:
-            if event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED) and (
-                price is None or filled_quantity is None
-            ):
-                raise OrderEventError(
-                    f"{event} event for order {order.identifier} requires both "
-                    "price and filled_quantity"
-                )
+            if event in (OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED) and (price is None or filled_quantity is None):
+                raise OrderEventError(f"{event} event for order {order.identifier} requires both price and filled_quantity")
 
             if event == OrderEvent.MODIFIED:
                 logger.info("Order %s modified; no bucket change", order.identifier)

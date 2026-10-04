@@ -29,8 +29,13 @@ def test_returns_seven_tools_with_one_line_docstrings() -> None:
     strategy, _ = _strategy()
     tools = trading_tools(strategy)
     assert [t.__name__ for t in tools] == [
-        "submit_order", "cancel_order", "cancel_open_orders",
-        "close_position", "sell_all", "get_orders", "get_order",
+        "submit_order",
+        "cancel_order",
+        "cancel_open_orders",
+        "close_position",
+        "sell_all",
+        "get_orders",
+        "get_order",
     ]
     for tool in tools:
         assert tool.__doc__ is not None
@@ -227,9 +232,7 @@ def test_close_position_without_a_position_reports_no_position() -> None:
 
 def test_sell_all_returns_the_closed_orders() -> None:
     strategy, broker = _strategy()
-    broker.close_all_positions = lambda cancel_orders=True: [
-        Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, order_type=OrderType.MARKET, quantity=Decimal(1))
-    ]
+    broker.close_all_positions = lambda cancel_orders=True: [Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, order_type=OrderType.MARKET, quantity=Decimal(1))]
     tools = _tools(strategy)
 
     result = tools["sell_all"]()

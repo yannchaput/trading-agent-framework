@@ -535,7 +535,7 @@ def load_metrics(ref: RunRef) -> MetricSet | None:
     try:
         with open(path) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
 
     raw = data.get("raw") or {}
@@ -586,12 +586,22 @@ from trading_agent_framework.dashboard.reader import get_benchmark_symbol, load_
 
 def _settings_payload(**overrides) -> dict:
     payload = {
-        "name": "momentum", "mode": "backtesting", "run_ts": "2026-06-22_194053",
-        "backtesting_start": "2026-01-01T09:30:00-05:00", "backtesting_end": "2026-06-01T16:00:00-04:00",
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 12.5, "timestep": "day", "sleeptime": "1D",
-        "commission": 0.0, "slippage": 0.0, "warmup_trading_days": 20,
-        "benchmark_symbol": "QQQ", "framework_version": "0.1.0",
+        "name": "momentum",
+        "mode": "backtesting",
+        "run_ts": "2026-06-22_194053",
+        "backtesting_start": "2026-01-01T09:30:00-05:00",
+        "backtesting_end": "2026-06-01T16:00:00-04:00",
+        "budget": 10000.0,
+        "risk_free_rate": 0.03,
+        "backtesting_data_sources": "yahoo",
+        "backtest_time_seconds": 12.5,
+        "timestep": "day",
+        "sleeptime": "1D",
+        "commission": 0.0,
+        "slippage": 0.0,
+        "warmup_trading_days": 20,
+        "benchmark_symbol": "QQQ",
+        "framework_version": "0.1.0",
         "parameters": {"lookback": 20},
     }
     payload.update(overrides)
@@ -659,7 +669,7 @@ def get_benchmark_symbol(ref: RunRef) -> str:
             data = json.load(f)
         symbol = data.get("benchmark_symbol", "")
         return symbol if symbol else "SPY"
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return "SPY"
 ```
 
@@ -1088,11 +1098,20 @@ def test_load_trades_curve_reads_trades_parquet(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     report.write_settings(run_dir, _settings_payload(backtesting_start=NOW.isoformat(), budget=10000.0))
     ledger = Ledger()
-    ledger.record_fill(FillRecord(
-        time=NOW, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("100"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.0"),
-    ))
+    ledger.record_fill(
+        FillRecord(
+            time=NOW,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("100"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.0"),
+        )
+    )
     report.write_trades(run_dir, ledger)
 
     curve = load_trades_curve(_ref(run_dir), budget=10000.0)
@@ -1283,11 +1302,20 @@ def _build_full_run(base: Path) -> Path:
     ledger = Ledger()
     ledger.record_equity(EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)))
     ledger.record_equity(EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)))
-    ledger.record_fill(FillRecord(
-        time=LATER, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("950"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.0"),
-    ))
+    ledger.record_fill(
+        FillRecord(
+            time=LATER,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("950"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.0"),
+        )
+    )
     ledger.record_line(IndicatorLine(time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"))
 
     report.write_equity(run_dir, ledger.equity, {NOW: Decimal("400.0"), LATER: Decimal("404.0")})
@@ -1305,14 +1333,28 @@ def _build_full_run(base: Path) -> Path:
     }
     report.write_metrics(run_dir, metrics)
 
-    report.write_settings(run_dir, {
-        "name": "momentum", "mode": "backtesting", "run_ts": "2026-01-05_210000",
-        "backtesting_start": NOW.isoformat(), "backtesting_end": LATER.isoformat(),
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 1.5, "timestep": "day", "sleeptime": "1D",
-        "commission": 0.0, "slippage": 0.0, "warmup_trading_days": 0,
-        "benchmark_symbol": "SPY", "framework_version": "0.1.0", "parameters": {},
-    })
+    report.write_settings(
+        run_dir,
+        {
+            "name": "momentum",
+            "mode": "backtesting",
+            "run_ts": "2026-01-05_210000",
+            "backtesting_start": NOW.isoformat(),
+            "backtesting_end": LATER.isoformat(),
+            "budget": 10000.0,
+            "risk_free_rate": 0.03,
+            "backtesting_data_sources": "yahoo",
+            "backtest_time_seconds": 1.5,
+            "timestep": "day",
+            "sleeptime": "1D",
+            "commission": 0.0,
+            "slippage": 0.0,
+            "warmup_trading_days": 0,
+            "benchmark_symbol": "SPY",
+            "framework_version": "0.1.0",
+            "parameters": {},
+        },
+    )
     return run_dir
 
 

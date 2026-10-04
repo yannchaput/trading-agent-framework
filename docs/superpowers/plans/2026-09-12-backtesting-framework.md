@@ -297,9 +297,7 @@ class BacktestDataSource(ABC):
     name: ClassVar[str]
 
     @abstractmethod
-    def load(
-        self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str
-    ) -> None:
+    def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
         """Pre-fetch and cache `assets` for [start, end]. Optional to call; `bars()`
         fetches lazily for any asset it hasn't seen."""
 
@@ -372,9 +370,7 @@ class FakeBacktestDataSource(BacktestDataSource):
         return [s for s in self._sessions if s.open >= start and s.close <= end]
 
 
-def make_close_indexed_frame(
-    closes: list[float], *, start: datetime, freq: str = "1D"
-) -> pd.DataFrame:
+def make_close_indexed_frame(closes: list[float], *, start: datetime, freq: str = "1D") -> pd.DataFrame:
     """An OHLCV frame indexed by bar CLOSE (see `data/base.py`'s convention).
     high = close + 1, low = close - 1, matching `tests/fakes.py:make_bars_frame`'s shape."""
     index = pd.date_range(start, periods=len(closes), freq=freq, name="timestamp")
@@ -486,9 +482,7 @@ def test_market_order_always_fills_at_open() -> None:
         (OrderSide.SELL, D(99), D(100)),  # open already satisfies (100 >= 99) -> gapped, better price
     ],
 )
-def test_limit_fills_when_touched_pessimistically(
-    side: OrderSide, limit_price: Decimal, expected: Decimal
-) -> None:
+def test_limit_fills_when_touched_pessimistically(side: OrderSide, limit_price: Decimal, expected: Decimal) -> None:
     result = evaluate_fill(order_type=OrderType.LIMIT, side=side, bar=BAR, limit_price=limit_price)
     assert result is not None
     assert result.price == expected
@@ -527,8 +521,11 @@ def test_buy_stop_does_not_trigger_when_high_never_reaches_it() -> None:
 def test_stop_limit_buy_needs_both_the_stop_trigger_and_the_limit_touch() -> None:
     # Stop at 103 (triggers, high=105), limit at 96 (also touched, low=95): fills.
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.BUY, bar=BAR,
-        stop_price=D(103), stop_limit_price=D(96),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.BUY,
+        bar=BAR,
+        stop_price=D(103),
+        stop_limit_price=D(96),
     )
     assert result is not None
     assert result.price == D(96)
@@ -537,23 +534,32 @@ def test_stop_limit_buy_needs_both_the_stop_trigger_and_the_limit_touch() -> Non
     # so use a limit that is NOT touched: low=95 means anything >= 95 IS touched; pick a limit
     # below the low to prove the "not touched" branch).
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.BUY, bar=BAR,
-        stop_price=D(103), stop_limit_price=D(90),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.BUY,
+        bar=BAR,
+        stop_price=D(103),
+        stop_limit_price=D(90),
     )
     assert result is None  # low (95) never reaches down to 90
 
 
 def test_stop_limit_sell_needs_both_the_stop_trigger_and_the_limit_touch() -> None:
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.SELL, bar=BAR,
-        stop_price=D(97), stop_limit_price=D(104),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.SELL,
+        bar=BAR,
+        stop_price=D(97),
+        stop_limit_price=D(104),
     )
     assert result is not None
     assert result.price == D(104)
 
     result = evaluate_fill(
-        order_type=OrderType.STOP_LIMIT, side=OrderSide.SELL, bar=BAR,
-        stop_price=D(97), stop_limit_price=D(110),
+        order_type=OrderType.STOP_LIMIT,
+        side=OrderSide.SELL,
+        bar=BAR,
+        stop_price=D(97),
+        stop_limit_price=D(110),
     )
     assert result is None  # high (105) never reaches up to 110
 
@@ -578,12 +584,13 @@ def test_limit_order_without_a_limit_price_raises() -> None:
     ],
 )
 def test_commission_and_slippage(
-    side: OrderSide, commission: Decimal, slippage: Decimal,
-    expected_price: Decimal, expected_commission: Decimal,
+    side: OrderSide,
+    commission: Decimal,
+    slippage: Decimal,
+    expected_price: Decimal,
+    expected_commission: Decimal,
 ) -> None:
-    price, commission_per_share = apply_commission_and_slippage(
-        D(100), side, commission=commission, slippage=slippage
-    )
+    price, commission_per_share = apply_commission_and_slippage(D(100), side, commission=commission, slippage=slippage)
     assert price == expected_price
     assert commission_per_share == expected_commission
 ```
@@ -669,7 +676,8 @@ def evaluate_fill(
         return _stop_fill(side, bar, _require(stop_price, "stop_price"))
     if order_type is OrderType.STOP_LIMIT:
         return _stop_limit_fill(
-            side, bar,
+            side,
+            bar,
             _require(stop_price, "stop_price"),
             _require(stop_limit_price, "stop_limit_price"),
         )
@@ -702,9 +710,7 @@ def _stop_fill(side: OrderSide, bar: Bar, stop_price: Decimal) -> FillResult | N
     return FillResult(price=min(bar.open, stop_price))
 
 
-def _stop_limit_fill(
-    side: OrderSide, bar: Bar, stop_price: Decimal, stop_limit_price: Decimal
-) -> FillResult | None:
+def _stop_limit_fill(side: OrderSide, bar: Bar, stop_price: Decimal, stop_limit_price: Decimal) -> FillResult | None:
     if side is OrderSide.BUY:
         if bar.high < stop_price or bar.low > stop_limit_price:
             return None
@@ -714,9 +720,7 @@ def _stop_limit_fill(
     return FillResult(price=max(bar.open, stop_limit_price))
 
 
-def apply_commission_and_slippage(
-    price: Decimal, side: OrderSide, *, commission: Decimal, slippage: Decimal
-) -> tuple[Decimal, Decimal]:
+def apply_commission_and_slippage(price: Decimal, side: OrderSide, *, commission: Decimal, slippage: Decimal) -> tuple[Decimal, Decimal]:
     """Return (execution_price, commission_per_share). The caller multiplies
     commission_per_share by the fill quantity for the total dollar cost."""
     execution_price = price * (1 + slippage) if side is OrderSide.BUY else price * (1 - slippage)
@@ -783,9 +787,16 @@ def test_ledger_starts_empty() -> None:
 def test_ledger_records_a_fill() -> None:
     ledger = Ledger()
     record = FillRecord(
-        time=NOW, identifier="abc", symbol="AAPL", side=OrderSide.BUY,
-        order_type=OrderType.MARKET, quantity=Decimal(10), filled_quantity=Decimal(10),
-        price=Decimal("150.00"), trade_cost=Decimal("0.15"), trade_slippage=Decimal("0.05"),
+        time=NOW,
+        identifier="abc",
+        symbol="AAPL",
+        side=OrderSide.BUY,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(10),
+        filled_quantity=Decimal(10),
+        price=Decimal("150.00"),
+        trade_cost=Decimal("0.15"),
+        trade_slippage=Decimal("0.05"),
     )
 
     ledger.record_fill(record)
@@ -796,9 +807,7 @@ def test_ledger_records_a_fill() -> None:
 
 def test_ledger_records_an_equity_sample() -> None:
     ledger = Ledger()
-    sample = EquitySample(
-        time=NOW, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)
-    )
+    sample = EquitySample(time=NOW, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000))
 
     ledger.record_equity(sample)
 
@@ -808,8 +817,12 @@ def test_ledger_records_an_equity_sample() -> None:
 def test_ledger_records_an_indicator_line() -> None:
     ledger = Ledger()
     line = IndicatorLine(
-        time=NOW, name="sma_200", value=Decimal("148.5"), color=None,
-        style="solid", plot_name="default_plot",
+        time=NOW,
+        name="sma_200",
+        value=Decimal("148.5"),
+        color=None,
+        style="solid",
+        plot_name="default_plot",
     )
 
     ledger.record_line(line)
@@ -968,18 +981,14 @@ def test_wait_does_nothing_when_wake_is_already_set() -> None:
 
 def test_wait_calls_on_advance_with_previous_and_new_now() -> None:
     calls: list[tuple] = []
-    clock = BacktestClock(
-        start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new))
-    )
+    clock = BacktestClock(start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new)))
     clock.wait(60, threading.Event())
     assert calls == [(et(2026, 1, 5, 9, 30), et(2026, 1, 5, 9, 31))]
 
 
 def test_wait_does_not_call_on_advance_when_it_does_not_move_time() -> None:
     calls: list[tuple] = []
-    clock = BacktestClock(
-        start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new))
-    )
+    clock = BacktestClock(start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new)))
     wake = threading.Event()
     wake.set()
     clock.wait(60, wake)
@@ -1157,9 +1166,7 @@ def test_submitting_a_notional_order_raises() -> None:
 
 def test_cancel_order_removes_it_from_pending_and_the_tracker() -> None:
     broker = _broker()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     broker.cancel_order(order)
 
@@ -1172,8 +1179,11 @@ def test_modify_order_updates_the_pending_orders_prices() -> None:
     broker = _broker()
     order = broker.submit_order(
         Order(
-            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
-            quantity=Decimal(10), limit_price=Decimal(140),
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            quantity=Decimal(10),
+            limit_price=Decimal(140),
         )
     )
 
@@ -1197,9 +1207,7 @@ def test_sync_open_orders_returns_nothing_for_a_fresh_backtest() -> None:
 
 def test_pull_orders_and_pull_order_read_from_the_tracker() -> None:
     broker = _broker()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     assert broker.pull_order(order.identifier) == order
     assert order in broker.pull_orders()
@@ -1334,16 +1342,12 @@ class BacktestBroker(Broker):
 
     def _submit_order(self, order: Order) -> Order:
         if order.notional is not None:
-            raise OrderValidationError(
-                "backtesting only supports quantity-based orders, not notional orders"
-            )
+            raise OrderValidationError("backtesting only supports quantity-based orders, not notional orders")
         if not order.client_order_id:
             order.client_order_id = f"{self.strategy_name}:{order.identifier}"
         self.tracker.track_unprocessed(order)
         self.tracker.process_trade_event(order, OrderEvent.NEW)
-        self._pending[order.identifier] = _PendingOrder(
-            order=order, asset=order.asset, last_evaluated=self.clock.now()
-        )
+        self._pending[order.identifier] = _PendingOrder(order=order, asset=order.asset, last_evaluated=self.clock.now())
         return order
 
     def cancel_order(self, order: Order) -> None:
@@ -1361,13 +1365,9 @@ class BacktestBroker(Broker):
 
     def get_account(self) -> AccountBalances:
         portfolio_value = self._portfolio_value(self.clock.now())
-        return AccountBalances(
-            cash=self._cash, portfolio_value=portfolio_value, buying_power=self._cash
-        )
+        return AccountBalances(cash=self._cash, portfolio_value=portfolio_value, buying_power=self._cash)
 
-    def modify_order(
-        self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None
-    ) -> Order:
+    def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
         if order.identifier not in self._pending:
             raise BacktestError(f"order {order.identifier} is not pending; cannot modify")
         if limit_price is not None:
@@ -1413,12 +1413,20 @@ class BacktestBroker(Broker):
         if bar is None:
             return None
         return Quote(
-            asset=asset, bid=bar.close, ask=bar.close, bid_size=None, ask_size=None,
+            asset=asset,
+            bid=bar.close,
+            ask=bar.close,
+            bid_size=None,
+            ask_size=None,
             timestamp=self.clock.now(),
         )
 
     def get_bars(
-        self, assets: Sequence[Asset], length: int, timestep: str = "day", *,
+        self,
+        assets: Sequence[Asset],
+        length: int,
+        timestep: str = "day",
+        *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
         result: dict[Asset, Bars] = {}
@@ -1436,16 +1444,16 @@ class BacktestBroker(Broker):
 
     # --- shared bar lookup -----------------------------------------------------------------
 
-    def _latest_bar_with_time(
-        self, asset: Asset, cutoff: datetime
-    ) -> tuple[fills.Bar, datetime] | None:
+    def _latest_bar_with_time(self, asset: Asset, cutoff: datetime) -> tuple[fills.Bar, datetime] | None:
         bars = self._data_source.bars(asset, cutoff, 1, self._timestep)
         if bars is None or bars.df.empty:
             return None
         row = bars.df.iloc[-1]
         bar = fills.Bar(
-            open=Decimal(str(row["open"])), high=Decimal(str(row["high"])),
-            low=Decimal(str(row["low"])), close=Decimal(str(row["close"])),
+            open=Decimal(str(row["open"])),
+            high=Decimal(str(row["high"])),
+            low=Decimal(str(row["low"])),
+            close=Decimal(str(row["close"])),
         )
         return bar, bars.df.index[-1].to_pydatetime()
 
@@ -1534,9 +1542,7 @@ def _broker_with_two_bars(budget: Decimal = Decimal(10000)) -> BacktestBroker:
 
 def test_market_order_fills_on_the_next_bar_not_the_submission_bar() -> None:
     broker, clock, _ = _broker_with_two_bars()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     # Advancing time without a new bar closing yet: still pending (no bar past DAY1 exists yet
     # at exactly DAY1's cutoff -- the fake's only bar closed *at* DAY1, same as last_evaluated).
@@ -1567,9 +1573,7 @@ def test_fill_updates_cash_and_creates_a_long_position() -> None:
 
 def test_fill_records_a_fill_in_the_ledger() -> None:
     broker, clock, _ = _broker_with_two_bars()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
     clock._now = DAY2
     broker.on_advance(DAY1, DAY2)
 
@@ -1587,8 +1591,12 @@ def test_commission_and_slippage_reduce_cash_beyond_the_raw_notional() -> None:
     source.set_bars(AAPL, df)
     clock = BacktestClock(start=DAY1, sessions=[])
     broker = BacktestBroker(
-        "momentum", data_source=source, clock=clock, budget=Decimal(10000),
-        commission=Decimal("0.01"), slippage=Decimal("0.01"),
+        "momentum",
+        data_source=source,
+        clock=clock,
+        budget=Decimal(10000),
+        commission=Decimal("0.01"),
+        slippage=Decimal("0.01"),
     )
     clock.on_advance = broker.on_advance
     broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
@@ -1609,8 +1617,11 @@ def test_unfilled_limit_order_stays_pending_and_is_retried_next_bar() -> None:
     clock.on_advance = broker.on_advance
     order = broker.submit_order(
         Order(
-            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY,
-            quantity=Decimal(10), limit_price=Decimal(90),  # never touched by this fixture's bars
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            quantity=Decimal(10),
+            limit_price=Decimal(90),  # never touched by this fixture's bars
         )
     )
 
@@ -1685,84 +1696,100 @@ Expected: FAIL — `AttributeError: 'BacktestBroker' object has no attribute 'on
 Add these methods to the `BacktestBroker` class, after `_positions_value` (the last method from Task 7). Also add `from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord` to the existing `from trading_agent_framework.backtesting.ledger import Ledger` import line (change it to import all three names).
 
 ```python
-    # --- fills: called by BacktestClock.on_advance --------------------------------------
+# --- fills: called by BacktestClock.on_advance --------------------------------------
 
-    def on_advance(self, previous_now: datetime, new_now: datetime) -> None:
-        """Registered as `BacktestClock.on_advance`: process fills, then sample equity."""
-        self._process_pending(new_now)
-        self._sample_equity(new_now)
 
-    def _process_pending(self, cutoff: datetime) -> None:
-        for identifier in list(self._pending):
-            pending = self._pending[identifier]
-            found = self._latest_bar_with_time(pending.asset, cutoff)
-            if found is None:
-                continue
-            bar, bar_time = found
-            if bar_time <= pending.last_evaluated:
-                continue  # no new bar has closed for this asset since we last checked
-            pending.last_evaluated = bar_time
-            order = pending.order
-            try:
-                result = fills.evaluate_fill(
-                    order_type=order.order_type, side=order.side, bar=bar,
-                    limit_price=order.limit_price, stop_price=order.stop_price,
-                    stop_limit_price=order.stop_limit_price,
-                )
-            except ValueError as exc:
-                order.set_error(exc)
-                self.tracker.process_trade_event(order, OrderEvent.ERROR)
-                del self._pending[identifier]
-                continue
-            if result is None:
-                continue  # still doesn't touch the trigger; retried on the next bar
-            self._fill(order, result.price, bar_time)
+def on_advance(self, previous_now: datetime, new_now: datetime) -> None:
+    """Registered as `BacktestClock.on_advance`: process fills, then sample equity."""
+    self._process_pending(new_now)
+    self._sample_equity(new_now)
+
+
+def _process_pending(self, cutoff: datetime) -> None:
+    for identifier in list(self._pending):
+        pending = self._pending[identifier]
+        found = self._latest_bar_with_time(pending.asset, cutoff)
+        if found is None:
+            continue
+        bar, bar_time = found
+        if bar_time <= pending.last_evaluated:
+            continue  # no new bar has closed for this asset since we last checked
+        pending.last_evaluated = bar_time
+        order = pending.order
+        try:
+            result = fills.evaluate_fill(
+                order_type=order.order_type,
+                side=order.side,
+                bar=bar,
+                limit_price=order.limit_price,
+                stop_price=order.stop_price,
+                stop_limit_price=order.stop_limit_price,
+            )
+        except ValueError as exc:
+            order.set_error(exc)
+            self.tracker.process_trade_event(order, OrderEvent.ERROR)
             del self._pending[identifier]
+            continue
+        if result is None:
+            continue  # still doesn't touch the trigger; retried on the next bar
+        self._fill(order, result.price, bar_time)
+        del self._pending[identifier]
 
-    def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
-        assert order.quantity is not None  # notional orders are rejected at submission
-        execution_price, commission_per_share = fills.apply_commission_and_slippage(
-            raw_price, order.side, commission=self._commission, slippage=self._slippage
-        )
-        quantity = order.quantity
-        commission_cost = commission_per_share * quantity
-        notional = execution_price * quantity
-        if order.side is OrderSide.BUY:
-            self._cash -= notional + commission_cost
-        else:
-            self._cash += notional - commission_cost
-        self._apply_to_position(order.asset, order.side, quantity, execution_price)
-        self.ledger.record_fill(FillRecord(
-            time=bar_time, identifier=order.identifier, symbol=order.asset.symbol,
-            side=order.side, order_type=order.order_type, quantity=order.quantity,
-            filled_quantity=quantity, price=execution_price, trade_cost=commission_cost,
+
+def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
+    assert order.quantity is not None  # notional orders are rejected at submission
+    execution_price, commission_per_share = fills.apply_commission_and_slippage(raw_price, order.side, commission=self._commission, slippage=self._slippage)
+    quantity = order.quantity
+    commission_cost = commission_per_share * quantity
+    notional = execution_price * quantity
+    if order.side is OrderSide.BUY:
+        self._cash -= notional + commission_cost
+    else:
+        self._cash += notional - commission_cost
+    self._apply_to_position(order.asset, order.side, quantity, execution_price)
+    self.ledger.record_fill(
+        FillRecord(
+            time=bar_time,
+            identifier=order.identifier,
+            symbol=order.asset.symbol,
+            side=order.side,
+            order_type=order.order_type,
+            quantity=order.quantity,
+            filled_quantity=quantity,
+            price=execution_price,
+            trade_cost=commission_cost,
             trade_slippage=(execution_price - raw_price).copy_abs(),
-        ))
-        self.tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity
         )
+    )
+    self.tracker.process_trade_event(order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity)
 
-    def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
-        existing = self._positions.get(asset)
-        signed = quantity if side is OrderSide.BUY else -quantity
-        new_quantity = signed if existing is None else (
-            existing.quantity if existing.side is PositionSide.LONG else -existing.quantity
-        ) + signed
-        if new_quantity == 0:
-            self._positions.pop(asset, None)
-            return
-        self._positions[asset] = Position(
-            strategy_name=self.strategy_name, asset=asset, quantity=new_quantity.copy_abs(),
-            side=PositionSide.LONG if new_quantity > 0 else PositionSide.SHORT,
-            avg_fill_price=price,
+
+def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
+    existing = self._positions.get(asset)
+    signed = quantity if side is OrderSide.BUY else -quantity
+    new_quantity = signed if existing is None else (existing.quantity if existing.side is PositionSide.LONG else -existing.quantity) + signed
+    if new_quantity == 0:
+        self._positions.pop(asset, None)
+        return
+    self._positions[asset] = Position(
+        strategy_name=self.strategy_name,
+        asset=asset,
+        quantity=new_quantity.copy_abs(),
+        side=PositionSide.LONG if new_quantity > 0 else PositionSide.SHORT,
+        avg_fill_price=price,
+    )
+
+
+def _sample_equity(self, cutoff: datetime) -> None:
+    positions_value = self._positions_value(cutoff)
+    self.ledger.record_equity(
+        EquitySample(
+            time=cutoff,
+            portfolio_value=self._cash + positions_value,
+            cash=self._cash,
+            positions_value=positions_value,
         )
-
-    def _sample_equity(self, cutoff: datetime) -> None:
-        positions_value = self._positions_value(cutoff)
-        self.ledger.record_equity(EquitySample(
-            time=cutoff, portfolio_value=self._cash + positions_value,
-            cash=self._cash, positions_value=positions_value,
-        ))
+    )
 ```
 
 Note the fix in `_apply_to_position` versus a naive draft: an existing position's *signed* quantity must be reconstructed from its `(quantity, side)` pair (Position stores an unsigned magnitude, per `entities/position.py`) before adding the new fill's signed delta — otherwise a SELL that flips a long position short would double-subtract.
@@ -1839,10 +1866,12 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
     day = first_day
     while len(sessions) < count:
         if day.weekday() < 5:
-            sessions.append(MarketSession(
-                open=datetime.combine(day, time(9, 30), tzinfo=ET),
-                close=datetime.combine(day, time(16, 0), tzinfo=ET),
-            ))
+            sessions.append(
+                MarketSession(
+                    open=datetime.combine(day, time(9, 30), tzinfo=ET),
+                    close=datetime.combine(day, time(16, 0), tzinfo=ET),
+                )
+            )
         day += timedelta(days=1)
     return sessions
 
@@ -1850,8 +1879,11 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
 def _close_indexed_bars(sessions: list[MarketSession], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            "open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-            "close": closes, "volume": [1000.0] * len(closes),
+            "open": closes,
+            "high": [c + 1 for c in closes],
+            "low": [c - 1 for c in closes],
+            "close": closes,
+            "volume": [1000.0] * len(closes),
         },
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
@@ -1867,12 +1899,8 @@ class RecordingStrategy(Strategy):
         now = self.clock.now()
         bars = self.get_historical_prices(AAPL, 10, "day")
         last_price = self.get_last_price(AAPL)
-        latest_bar_close = (
-            bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
-        )
-        self.vars.observations.append(
-            {"now": now, "latest_bar_close": latest_bar_close, "last_price": last_price}
-        )
+        latest_bar_close = bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
+        self.vars.observations.append({"now": now, "latest_bar_close": latest_bar_close, "last_price": last_price})
 
 
 def test_strategy_never_observes_a_bar_that_has_not_closed_yet(tmp_path: Path) -> None:
@@ -1950,7 +1978,9 @@ def test_full_simulated_session_dispatches_hooks_in_order_and_fills_next_bar(tmp
     strategy.executor.run()
 
     assert strategy.vars.hooks_called[:3] == [
-        "before_market_opens", "before_starting_trading", "on_trading_iteration",
+        "before_market_opens",
+        "before_starting_trading",
+        "on_trading_iteration",
     ]
     assert strategy.vars.hooks_called.count("before_market_opens") == 3
     assert strategy.vars.hooks_called.count("on_trading_iteration") == 3
@@ -2175,17 +2205,17 @@ class CachedDataSource(BacktestDataSource):
         meta_path.write_text(
             json.dumps(
                 {
-                    "provider": self.name, "symbol": asset.symbol,
-                    "fetched_at": datetime.now().isoformat(), "rows": len(bars.df),
+                    "provider": self.name,
+                    "symbol": asset.symbol,
+                    "fetched_at": datetime.now().isoformat(),
+                    "rows": len(bars.df),
                 },
                 indent=2,
             ),
             encoding="utf-8",
         )
 
-    def _read(
-        self, path: Path, asset: Asset, timestep: str, cutoff: datetime, length: int
-    ) -> Bars | None:
+    def _read(self, path: Path, asset: Asset, timestep: str, cutoff: datetime, length: int) -> Bars | None:
         import pandas as pd
 
         df = pd.read_parquet(path)
@@ -2255,8 +2285,10 @@ def _raw_yahoo_frame() -> pd.DataFrame:
     index = pd.date_range("2026-01-05", periods=3, freq="B")
     return pd.DataFrame(
         {
-            "Open": [150.0, 151.0, 152.0], "High": [151.0, 152.0, 153.0],
-            "Low": [149.0, 150.0, 151.0], "Close": [150.5, 151.5, 152.5],
+            "Open": [150.0, 151.0, 152.0],
+            "High": [151.0, 152.0, 153.0],
+            "Low": [149.0, 150.0, 151.0],
+            "Close": [150.5, 151.5, 152.5],
             "Volume": [1000.0, 1100.0, 1200.0],
         },
         index=index,
@@ -2380,9 +2412,7 @@ class YahooBacktestData(BacktestDataSource):
 
     name = "yahoo"
 
-    def __init__(
-        self, start: datetime, end: datetime, *, download: DownloadFn | None = None
-    ) -> None:
+    def __init__(self, start: datetime, end: datetime, *, download: DownloadFn | None = None) -> None:
         self._start = start
         self._end = end
         self._download = download  # injected in tests; real yfinance.download otherwise
@@ -2536,11 +2566,8 @@ def _sessions() -> list[MarketSession]:
 
 def test_reindex_to_bar_close_maps_daily_bars_to_their_sessions_close() -> None:
     df = pd.DataFrame(
-        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0],
-         "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
-        index=pd.DatetimeIndex(
-            [datetime(2026, 1, 5, tzinfo=MARKET_TZ), datetime(2026, 1, 6, tzinfo=MARKET_TZ)]
-        ),
+        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0], "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
+        index=pd.DatetimeIndex([datetime(2026, 1, 5, tzinfo=MARKET_TZ), datetime(2026, 1, 6, tzinfo=MARKET_TZ)]),
     )
     result = reindex_to_bar_close(df, "day", _sessions())
     assert list(result.index) == [_sessions()[0].close, _sessions()[1].close]  # early close respected
@@ -2562,11 +2589,13 @@ def test_reindex_to_bar_close_handles_an_empty_frame() -> None:
 def test_bars_fetches_and_reindexes_via_the_injected_clients() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [
-        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06"),
+        make_alpaca_calendar("2026-01-05"),
+        make_alpaca_calendar("2026-01-06"),
     ]
     data_client = FakeStockHistoricalDataClient()
     data_client.bars["AAPL"] = [
-        bar_payload("2026-01-05T00:00:00Z", 150.0), bar_payload("2026-01-06T00:00:00Z", 151.0),
+        bar_payload("2026-01-05T00:00:00Z", 150.0),
+        bar_payload("2026-01-06T00:00:00Z", 151.0),
     ]
     source = AlpacaBacktestData(data_client, trading_client, START, END)
 
@@ -2734,9 +2763,7 @@ class AlpacaBacktestData(BacktestDataSource):
         return df
 
 
-def reindex_to_bar_close(
-    df: pd.DataFrame, timestep: str, sessions: Sequence[MarketSession]
-) -> pd.DataFrame:
+def reindex_to_bar_close(df: pd.DataFrame, timestep: str, sessions: Sequence[MarketSession]) -> pd.DataFrame:
     """Pure: shift Alpaca's bar-START index to bar-CLOSE."""
     import pandas as pd
 
@@ -2939,19 +2966,21 @@ def compute_metrics(
 
     if benchmark_returns is not None and not benchmark_returns.empty:
         bm_accessor = benchmark_returns.vbt.returns(freq="D")
-        metrics.update({
-            "total_return_benchmark": float(bm_accessor.total()),
-            "cagr_benchmark": float(bm_accessor.annualized()),
-            "sharpe_benchmark": float(bm_accessor.sharpe_ratio(risk_free=risk_free_rate)),
-            "sortino_benchmark": float(bm_accessor.sortino_ratio()),
-            "calmar_benchmark": float(bm_accessor.calmar_ratio()),
-            "omega_benchmark": float(bm_accessor.omega_ratio()),
-            "max_drawdown_benchmark": float(bm_accessor.max_drawdown()),
-            "volatility_benchmark": float(bm_accessor.annualized_volatility()),
-            "skew_benchmark": float(benchmark_returns.skew()),
-            "kurtosis_benchmark": float(benchmark_returns.kurt()),
-            "win_days_pct_benchmark": float((benchmark_returns > 0).mean()),
-        })
+        metrics.update(
+            {
+                "total_return_benchmark": float(bm_accessor.total()),
+                "cagr_benchmark": float(bm_accessor.annualized()),
+                "sharpe_benchmark": float(bm_accessor.sharpe_ratio(risk_free=risk_free_rate)),
+                "sortino_benchmark": float(bm_accessor.sortino_ratio()),
+                "calmar_benchmark": float(bm_accessor.calmar_ratio()),
+                "omega_benchmark": float(bm_accessor.omega_ratio()),
+                "max_drawdown_benchmark": float(bm_accessor.max_drawdown()),
+                "volatility_benchmark": float(bm_accessor.annualized_volatility()),
+                "skew_benchmark": float(benchmark_returns.skew()),
+                "kurtosis_benchmark": float(benchmark_returns.kurt()),
+                "win_days_pct_benchmark": float((benchmark_returns > 0).mean()),
+            }
+        )
         metrics.update(_drawdown_stats(benchmark_returns, suffix="benchmark"))
         metrics.update(_monthly_win_pct(benchmark_returns, suffix="benchmark"))
         metrics.update(_relative_stats(returns, benchmark_returns, periods, risk_free_rate))
@@ -2993,18 +3022,21 @@ def _monthly_win_pct(returns: pd.Series, *, suffix: str) -> dict[str, float]:
     return {f"win_month_pct_{suffix}": float((monthly > 0).mean()) if not monthly.empty else 0.0}
 
 
-def _relative_stats(
-    returns: pd.Series, benchmark_returns: pd.Series, periods: int, risk_free_rate: float
-) -> dict[str, float]:
+def _relative_stats(returns: pd.Series, benchmark_returns: pd.Series, periods: int, risk_free_rate: float) -> dict[str, float]:
     import numpy as np
 
     aligned = returns.align(benchmark_returns, join="inner")
     strat, bench = aligned[0].to_numpy(), aligned[1].to_numpy()
     if len(strat) < 2 or np.std(bench) == 0:
         return {
-            "beta": 0.0, "alpha": 0.0, "correlation": 0.0, "r_squared_strategy": 0.0,
-            "r_squared_benchmark": 0.0, "treynor_ratio": 0.0,
-            "information_ratio_strategy": 0.0, "information_ratio_benchmark": 0.0,
+            "beta": 0.0,
+            "alpha": 0.0,
+            "correlation": 0.0,
+            "r_squared_strategy": 0.0,
+            "r_squared_benchmark": 0.0,
+            "treynor_ratio": 0.0,
+            "information_ratio_strategy": 0.0,
+            "information_ratio_benchmark": 0.0,
         }
     covariance = np.cov(strat, bench)[0, 1]
     beta = covariance / np.var(bench)
@@ -3014,14 +3046,15 @@ def _relative_stats(
     r_squared = correlation**2
     excess = strat - bench
     tracking_error = np.std(excess, ddof=1)
-    information_ratio = (
-        float(np.mean(excess) / tracking_error * np.sqrt(periods)) if tracking_error else 0.0
-    )
+    information_ratio = float(np.mean(excess) / tracking_error * np.sqrt(periods)) if tracking_error else 0.0
     mean_excess_return = np.mean(strat) - daily_rf
     treynor = float(mean_excess_return * periods / beta) if beta != 0 else 0.0
     return {
-        "beta": float(beta), "alpha": float(alpha_daily * periods), "correlation": correlation,
-        "r_squared_strategy": float(r_squared), "r_squared_benchmark": float(r_squared),
+        "beta": float(beta),
+        "alpha": float(alpha_daily * periods),
+        "correlation": correlation,
+        "r_squared_strategy": float(r_squared),
+        "r_squared_benchmark": float(r_squared),
         "treynor_ratio": treynor,
         "information_ratio_strategy": information_ratio,
         "information_ratio_benchmark": information_ratio,
@@ -3041,10 +3074,14 @@ def _yearly_table(returns: pd.Series, benchmark_returns: pd.Series | None) -> li
             if not b_year.empty:
                 bench_ret = float((1 + b_year).prod() - 1)
                 won = strat_ret > bench_ret
-        rows.append({
-            "year": year, "strategy": round(strat_ret, 6),
-            "benchmark": round(bench_ret, 6) if bench_ret is not None else None, "won": won,
-        })
+        rows.append(
+            {
+                "year": year,
+                "strategy": round(strat_ret, 6),
+                "benchmark": round(bench_ret, 6) if bench_ret is not None else None,
+                "won": won,
+            }
+        )
     return rows
 
 
@@ -3059,17 +3096,25 @@ def _drawdown_table(returns: pd.Series) -> list[dict[str, Any]]:
             start = time
         elif not is_under and start is not None:
             window = drawdown[start:time]
-            rows.append({
-                "start": str(start.date()), "end": str(time.date()),
-                "max_drawdown": round(float(window.min()), 6), "days": int(len(window)),
-            })
+            rows.append(
+                {
+                    "start": str(start.date()),
+                    "end": str(time.date()),
+                    "max_drawdown": round(float(window.min()), 6),
+                    "days": int(len(window)),
+                }
+            )
             start = None
     if start is not None:
         window = drawdown[start:]
-        rows.append({
-            "start": str(start.date()), "end": str(drawdown.index[-1].date()),
-            "max_drawdown": round(float(window.min()), 6), "days": int(len(window)),
-        })
+        rows.append(
+            {
+                "start": str(start.date()),
+                "end": str(drawdown.index[-1].date()),
+                "max_drawdown": round(float(window.min()), 6),
+                "days": int(len(window)),
+            }
+        )
     return rows
 ```
 
@@ -3126,24 +3171,62 @@ and how to keep it in sync. Source: lumibot_trading_agent/dashboard/models.py.
 
 from __future__ import annotations
 
-REQUIRED_SETTINGS_FIELDS = frozenset({
-    "name", "backtesting_start", "backtesting_end", "budget", "risk_free_rate",
-    "backtesting_data_sources", "backtest_time_seconds", "parameters",
-})
+REQUIRED_SETTINGS_FIELDS = frozenset(
+    {
+        "name",
+        "backtesting_start",
+        "backtesting_end",
+        "budget",
+        "risk_free_rate",
+        "backtesting_data_sources",
+        "backtest_time_seconds",
+        "parameters",
+    }
+)
 
-METRIC_SET_FIELDS = frozenset({
-    "total_return_strategy", "total_return_benchmark", "cagr_strategy", "cagr_benchmark",
-    "sharpe_strategy", "sharpe_benchmark", "sortino_strategy", "sortino_benchmark",
-    "calmar_strategy", "calmar_benchmark", "omega_strategy", "omega_benchmark",
-    "max_drawdown_strategy", "max_drawdown_benchmark", "volatility_strategy",
-    "volatility_benchmark", "beta", "alpha", "correlation", "treynor_ratio",
-    "information_ratio_strategy", "information_ratio_benchmark", "r_squared_strategy",
-    "r_squared_benchmark", "skew_strategy", "skew_benchmark", "kurtosis_strategy",
-    "kurtosis_benchmark", "win_days_pct_strategy", "win_days_pct_benchmark",
-    "win_month_pct_strategy", "win_month_pct_benchmark", "longest_dd_days_strategy",
-    "longest_dd_days_benchmark", "avg_drawdown_strategy", "avg_drawdown_benchmark",
-    "recovery_factor_strategy", "recovery_factor_benchmark", "raw",
-})
+METRIC_SET_FIELDS = frozenset(
+    {
+        "total_return_strategy",
+        "total_return_benchmark",
+        "cagr_strategy",
+        "cagr_benchmark",
+        "sharpe_strategy",
+        "sharpe_benchmark",
+        "sortino_strategy",
+        "sortino_benchmark",
+        "calmar_strategy",
+        "calmar_benchmark",
+        "omega_strategy",
+        "omega_benchmark",
+        "max_drawdown_strategy",
+        "max_drawdown_benchmark",
+        "volatility_strategy",
+        "volatility_benchmark",
+        "beta",
+        "alpha",
+        "correlation",
+        "treynor_ratio",
+        "information_ratio_strategy",
+        "information_ratio_benchmark",
+        "r_squared_strategy",
+        "r_squared_benchmark",
+        "skew_strategy",
+        "skew_benchmark",
+        "kurtosis_strategy",
+        "kurtosis_benchmark",
+        "win_days_pct_strategy",
+        "win_days_pct_benchmark",
+        "win_month_pct_strategy",
+        "win_month_pct_benchmark",
+        "longest_dd_days_strategy",
+        "longest_dd_days_benchmark",
+        "avg_drawdown_strategy",
+        "avg_drawdown_benchmark",
+        "recovery_factor_strategy",
+        "recovery_factor_benchmark",
+        "raw",
+    }
+)
 ```
 
 - [ ] **Step 2: Write the failing tests**
@@ -3171,28 +3254,36 @@ LATER = datetime(2026, 1, 6, 16, tzinfo=UTC)
 
 def _ledger() -> Ledger:
     ledger = Ledger()
-    ledger.record_equity(EquitySample(
-        time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)
-    ))
-    ledger.record_equity(EquitySample(
-        time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)
-    ))
-    ledger.record_fill(FillRecord(
-        time=LATER, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("1000"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.5"),
-    ))
-    ledger.record_line(IndicatorLine(
-        time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"
-    ))
+    ledger.record_equity(EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)))
+    ledger.record_equity(EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)))
+    ledger.record_fill(
+        FillRecord(
+            time=LATER,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("1000"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.5"),
+        )
+    )
+    ledger.record_line(IndicatorLine(time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"))
     return ledger
 
 
 def test_write_settings_round_trips_through_json(tmp_path: Path) -> None:
     settings = {
-        "name": "momentum", "backtesting_start": NOW.isoformat(), "backtesting_end": LATER.isoformat(),
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 1.5, "parameters": {"lookback": 20},
+        "name": "momentum",
+        "backtesting_start": NOW.isoformat(),
+        "backtesting_end": LATER.isoformat(),
+        "budget": 10000.0,
+        "risk_free_rate": 0.03,
+        "backtesting_data_sources": "yahoo",
+        "backtest_time_seconds": 1.5,
+        "parameters": {"lookback": 20},
     }
     path = report.write_settings(tmp_path, settings)
     loaded = json.loads(path.read_text())
@@ -3241,8 +3332,18 @@ def test_write_trades_produces_a_parquet_file_with_the_dashboards_expected_colum
     path = report.write_trades(tmp_path, _ledger())
     df = pd.read_parquet(path)
     for column in (
-        "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
-        "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+        "time",
+        "symbol",
+        "side",
+        "status",
+        "order_type",
+        "quantity",
+        "filled_quantity",
+        "price",
+        "trade_cost",
+        "trade_slippage",
+        "identifier",
+        "event_kind",
     ):
         assert column in df.columns
     assert df["status"].iloc[0] == "fill"
@@ -3302,9 +3403,7 @@ def write_metrics(run_dir: Path, metrics: dict[str, Any]) -> Path:
     return path
 
 
-def write_equity(
-    run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decimal] | None = None
-) -> Path:
+def write_equity(run_dir: Path, ledger: Ledger, benchmark: dict[datetime, Decimal] | None = None) -> Path:
     import pandas as pd
 
     rows = [
@@ -3319,9 +3418,7 @@ def write_equity(
     ]
     df = pd.DataFrame(rows).set_index("datetime").sort_index()
     df["return"] = df["portfolio_value"].pct_change()
-    df["benchmark_return"] = (
-        df["benchmark_close"].pct_change() if benchmark else pd.Series(dtype="float64")
-    )
+    df["benchmark_return"] = df["benchmark_close"].pct_change() if benchmark else pd.Series(dtype="float64")
     path = run_dir / "equity.parquet"
     df.to_parquet(path)
     return path
@@ -3332,11 +3429,18 @@ def write_trades(run_dir: Path, ledger: Ledger) -> Path:
 
     rows = [
         {
-            "time": f.time, "symbol": f.symbol, "side": f.side.value, "status": f.status,
-            "order_type": f.order_type.value, "quantity": _float(f.quantity),
-            "filled_quantity": _float(f.filled_quantity), "price": _float(f.price),
-            "trade_cost": _float(f.trade_cost), "trade_slippage": _float(f.trade_slippage),
-            "identifier": f.identifier, "event_kind": f.event_kind,
+            "time": f.time,
+            "symbol": f.symbol,
+            "side": f.side.value,
+            "status": f.status,
+            "order_type": f.order_type.value,
+            "quantity": _float(f.quantity),
+            "filled_quantity": _float(f.filled_quantity),
+            "price": _float(f.price),
+            "trade_cost": _float(f.trade_cost),
+            "trade_slippage": _float(f.trade_slippage),
+            "identifier": f.identifier,
+            "event_kind": f.event_kind,
         }
         for f in ledger.fills
     ]
@@ -3351,8 +3455,12 @@ def write_indicators(run_dir: Path, ledger: Ledger) -> Path:
 
     rows = [
         {
-            "datetime": line.time, "name": line.name, "value": _float(line.value),
-            "color": line.color, "style": line.style, "plot_name": line.plot_name,
+            "datetime": line.time,
+            "name": line.name,
+            "value": _float(line.value),
+            "color": line.color,
+            "style": line.style,
+            "plot_name": line.plot_name,
         }
         for line in ledger.lines
     ]
@@ -3428,18 +3536,19 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
     day = first_day
     while len(sessions) < count:
         if day.weekday() < 5:
-            sessions.append(MarketSession(
-                open=datetime.combine(day, time(9, 30), tzinfo=ET),
-                close=datetime.combine(day, time(16, 0), tzinfo=ET),
-            ))
+            sessions.append(
+                MarketSession(
+                    open=datetime.combine(day, time(9, 30), tzinfo=ET),
+                    close=datetime.combine(day, time(16, 0), tzinfo=ET),
+                )
+            )
         day += timedelta(days=1)
     return sessions
 
 
 def _bars(sessions: list[MarketSession], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(
-        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-         "close": closes, "volume": [1000.0] * len(closes)},
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
 
@@ -3462,9 +3571,16 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
     strategy = BuyOnceStrategy(broker=None, project_root=tmp_path)  # ty: ignore[invalid-argument-type]
 
     result = run_backtest(
-        strategy, start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=sessions[0].open - timedelta(hours=1),
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        commission=Decimal(0),
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert isinstance(result, BacktestResult)
@@ -3498,9 +3614,16 @@ def test_run_backtest_rebinds_the_strategys_broker_and_clock(tmp_path: Path) -> 
 
     strategy = BuyOnceStrategy(broker=None, project_root=tmp_path)  # ty: ignore[invalid-argument-type]
     run_backtest(
-        strategy, start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        commission=Decimal(0), slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=sessions[0].open - timedelta(hours=1),
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        commission=Decimal(0),
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert isinstance(strategy.broker, BacktestBroker)
@@ -3575,8 +3698,13 @@ def run_backtest(
 
     clock = BacktestClock(start=start, sessions=sessions)
     broker = BacktestBroker(
-        strategy.name, data_source=data_source, clock=clock, budget=budget,
-        timestep=timestep, commission=commission, slippage=slippage,
+        strategy.name,
+        data_source=data_source,
+        clock=clock,
+        budget=budget,
+        timestep=timestep,
+        commission=commission,
+        slippage=slippage,
     )
     clock.on_advance = broker.on_advance
 
@@ -3584,9 +3712,7 @@ def run_backtest(
     strategy.clock = clock
     strategy.trading_mode = TradingMode.BACKTESTING
 
-    log_file = setup_strategy_logging(
-        strategy.name, TradingMode.BACKTESTING, project_root=strategy.project_root
-    )
+    log_file = setup_strategy_logging(strategy.name, TradingMode.BACKTESTING, project_root=strategy.project_root)
     run_dir = log_file.parent
 
     started = time.monotonic()
@@ -3594,14 +3720,8 @@ def run_backtest(
     elapsed = time.monotonic() - started
 
     benchmark_bars = data_source.bars(benchmark_asset, end, FULL_HISTORY, timestep)
-    benchmark_series = (
-        pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index)
-        if benchmark_bars is not None else None
-    )
-    benchmark_by_time = (
-        {ts: Decimal(str(v)) for ts, v in benchmark_series.items()}
-        if benchmark_series is not None else None
-    )
+    benchmark_series = pd.Series(benchmark_bars.df["close"].to_numpy(), index=benchmark_bars.df.index) if benchmark_bars is not None else None
+    benchmark_by_time = {ts: Decimal(str(v)) for ts, v in benchmark_series.items()} if benchmark_series is not None else None
 
     report.write_equity(run_dir, broker.ledger, benchmark_by_time)
     report.write_trades(run_dir, broker.ledger)
@@ -3612,19 +3732,25 @@ def run_backtest(
     portfolio_returns = pd.Series(equity_values, index=equity_index).pct_change().dropna()
     benchmark_returns = benchmark_series.pct_change().dropna() if benchmark_series is not None else None
 
-    computed_metrics = metrics_module.compute_metrics(
-        portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate
-    )
+    computed_metrics = metrics_module.compute_metrics(portfolio_returns, benchmark_returns, timestep=timestep, risk_free_rate=risk_free_rate)
     report.write_metrics(run_dir, computed_metrics)
 
     settings = {
-        "name": strategy.name, "mode": "backtesting", "run_ts": run_dir.name,
-        "backtesting_start": start.isoformat(), "backtesting_end": end.isoformat(),
-        "budget": float(budget), "risk_free_rate": risk_free_rate,
-        "backtesting_data_sources": data_source.name, "backtest_time_seconds": elapsed,
-        "timestep": timestep, "sleeptime": strategy.sleeptime,
-        "commission": float(commission), "slippage": float(slippage),
-        "benchmark_symbol": benchmark, "framework_version": __version__,
+        "name": strategy.name,
+        "mode": "backtesting",
+        "run_ts": run_dir.name,
+        "backtesting_start": start.isoformat(),
+        "backtesting_end": end.isoformat(),
+        "budget": float(budget),
+        "risk_free_rate": risk_free_rate,
+        "backtesting_data_sources": data_source.name,
+        "backtest_time_seconds": elapsed,
+        "timestep": timestep,
+        "sleeptime": strategy.sleeptime,
+        "commission": float(commission),
+        "slippage": float(slippage),
+        "benchmark_symbol": benchmark,
+        "framework_version": __version__,
         "parameters": dict(strategy.parameters),
     }
     report.write_settings(run_dir, settings)
@@ -3708,8 +3834,14 @@ def test_lazy_attributes_resolve_to_the_real_classes_in_process() -> None:
 def test_dir_includes_lazy_and_eager_names() -> None:
     names = dir(backtesting)
     for name in (
-        "BacktestDataSource", "BacktestBroker", "BacktestClock", "CachedDataSource",
-        "YahooBacktestData", "AlpacaBacktestData", "run_backtest", "BacktestResult",
+        "BacktestDataSource",
+        "BacktestBroker",
+        "BacktestClock",
+        "CachedDataSource",
+        "YahooBacktestData",
+        "AlpacaBacktestData",
+        "run_backtest",
+        "BacktestResult",
     ):
         assert name in names
 
@@ -3720,15 +3852,13 @@ def test_importing_backtesting_package_does_not_import_vectorbt_or_yfinance() ->
     runs in-process, so only a fresh interpreter makes the assertion meaningful."""
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "import trading_agent_framework.backtesting\n"
-            "import sys\n"
-            "assert 'vectorbt' not in sys.modules\n"
-            "assert 'numba' not in sys.modules\n"
-            "assert 'yfinance' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "import trading_agent_framework.backtesting\nimport sys\nassert 'vectorbt' not in sys.modules\nassert 'numba' not in sys.modules\nassert 'yfinance' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -3740,13 +3870,13 @@ def test_accessing_run_backtest_lazily_imports_vectorbt_is_not_true_until_called
     vectorbt in either, only actually calling compute_metrics does (not exercised here)."""
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "from trading_agent_framework.backtesting import run_backtest\n"
-            "import sys\n"
-            "assert 'vectorbt' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "from trading_agent_framework.backtesting import run_backtest\nimport sys\nassert 'vectorbt' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -3755,13 +3885,13 @@ def test_accessing_run_backtest_lazily_imports_vectorbt_is_not_true_until_called
 def test_accessing_yahoo_backtest_data_does_not_import_yfinance_until_used() -> None:
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "from trading_agent_framework.backtesting import YahooBacktestData\n"
-            "import sys\n"
-            "assert 'yfinance' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "from trading_agent_framework.backtesting import YahooBacktestData\nimport sys\nassert 'yfinance' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -3939,25 +4069,34 @@ Add to the `class Strategy:` body, alongside the existing `sleeptime`/`minutes_b
 Add this method to `Strategy`, in the "control" section near `sleep`/`stop`:
 
 ```python
-    def add_line(
-        self, name: str, value: Number, *, color: str | None = None,
-        style: str = "solid", plot_name: str = "default_plot",
-    ) -> None:
-        """Record a charted value at the current simulated time (lumibot-compatible
-        signature). No-op outside backtesting."""
-        if not self.is_backtesting:
-            return
-        from trading_agent_framework.backtesting.broker import BacktestBroker
-        from trading_agent_framework.backtesting.ledger import IndicatorLine
+def add_line(
+    self,
+    name: str,
+    value: Number,
+    *,
+    color: str | None = None,
+    style: str = "solid",
+    plot_name: str = "default_plot",
+) -> None:
+    """Record a charted value at the current simulated time (lumibot-compatible
+    signature). No-op outside backtesting."""
+    if not self.is_backtesting:
+        return
+    from trading_agent_framework.backtesting.broker import BacktestBroker
+    from trading_agent_framework.backtesting.ledger import IndicatorLine
 
-        if not isinstance(self.broker, BacktestBroker):
-            return
-        self.broker.ledger.record_line(
-            IndicatorLine(
-                time=self.clock.now(), name=name, value=_to_decimal(value),
-                color=color, style=style, plot_name=plot_name,
-            )
+    if not isinstance(self.broker, BacktestBroker):
+        return
+    self.broker.ledger.record_line(
+        IndicatorLine(
+            time=self.clock.now(),
+            name=name,
+            value=_to_decimal(value),
+            color=color,
+            style=style,
+            plot_name=plot_name,
         )
+    )
 ```
 
 - [ ] **Step 5: Run to verify it passes**
@@ -4021,18 +4160,19 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
         day = first_day
         while len(result) < count:
             if day.weekday() < 5:
-                result.append(MarketSession(
-                    open=datetime.combine(day, time(9, 30), tzinfo=et_tz),
-                    close=datetime.combine(day, time(16, 0), tzinfo=et_tz),
-                ))
+                result.append(
+                    MarketSession(
+                        open=datetime.combine(day, time(9, 30), tzinfo=et_tz),
+                        close=datetime.combine(day, time(16, 0), tzinfo=et_tz),
+                    )
+                )
             day += timedelta(days=1)
         return result
 
     sessions = _sessions(date(2026, 1, 5), 3)
     closes = [150.0, 151.0, 152.0]
     df = pd.DataFrame(
-        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-         "close": closes, "volume": [1000.0] * len(closes)},
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
     source = FakeBacktestDataSource()
@@ -4042,8 +4182,10 @@ def test_run_backtesting_runs_end_to_end_via_the_public_api(tmp_path: Path) -> N
 
     strategy = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(
-        start=sessions[0].open - timedelta(hours=1), end=sessions[-1].close,
-        data_source=source, benchmark="SPY",
+        start=sessions[0].open - timedelta(hours=1),
+        end=sessions[-1].close,
+        data_source=source,
+        benchmark="SPY",
     )
 
     assert result.run_dir.is_dir()
@@ -4064,56 +4206,54 @@ Expected: FAIL — the "requires start/end" test fails with `NotImplementedError
 In `src/trading_agent_framework/core/strategy.py`, replace:
 
 ```python
-    def run_backtesting(self) -> None:
-        raise NotImplementedError(
-            "backtesting is not implemented yet; it ships with the backtesting subproject"
-        )
+def run_backtesting(self) -> None:
+    raise NotImplementedError("backtesting is not implemented yet; it ships with the backtesting subproject")
 ```
 
 with:
 
 ```python
-    def run_backtesting(
+def run_backtesting(
+    self,
+    *,
+    start: datetime | None = None,
+    end: datetime | None = None,
+    budget: Number | None = None,
+    data_source: BacktestDataSource | None = None,
+    benchmark: str | None = None,
+    timestep: str = "day",
+    commission: Number = Decimal(0),
+    slippage: Number = Decimal(0),
+    risk_free_rate: float = 0.0,
+) -> BacktestResult:
+    """Run this strategy against simulated time and simulated fills.
+
+    `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
+    `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
+    `data_source` defaults to a Yahoo daily source over [start, end] (no on-disk
+    cache by default -- wrap it in `backtesting.CachedDataSource` for repeat runs).
+    """
+    from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+    from trading_agent_framework.backtesting.runner import run_backtest
+
+    resolved_start = start if start is not None else self.backtesting_start
+    resolved_end = end if end is not None else self.backtesting_end
+    if resolved_start is None or resolved_end is None:
+        raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
+    resolved_budget = _to_decimal(budget) if budget is not None else self.budget
+    resolved_source = data_source if data_source is not None else YahooBacktestData(resolved_start, resolved_end)
+    return run_backtest(
         self,
-        *,
-        start: datetime | None = None,
-        end: datetime | None = None,
-        budget: Number | None = None,
-        data_source: BacktestDataSource | None = None,
-        benchmark: str | None = None,
-        timestep: str = "day",
-        commission: Number = Decimal(0),
-        slippage: Number = Decimal(0),
-        risk_free_rate: float = 0.0,
-    ) -> BacktestResult:
-        """Run this strategy against simulated time and simulated fills.
-
-        `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
-        `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
-        `data_source` defaults to a Yahoo daily source over [start, end] (no on-disk
-        cache by default -- wrap it in `backtesting.CachedDataSource` for repeat runs).
-        """
-        from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
-        from trading_agent_framework.backtesting.runner import run_backtest
-
-        resolved_start = start if start is not None else self.backtesting_start
-        resolved_end = end if end is not None else self.backtesting_end
-        if resolved_start is None or resolved_end is None:
-            raise ConfigurationError(
-                "run_backtesting needs start/end, either as arguments or as "
-                "backtesting_start/backtesting_end class attributes"
-            )
-        resolved_budget = _to_decimal(budget) if budget is not None else self.budget
-        resolved_source = (
-            data_source if data_source is not None
-            else YahooBacktestData(resolved_start, resolved_end)
-        )
-        return run_backtest(
-            self, start=resolved_start, end=resolved_end, budget=resolved_budget,
-            data_source=resolved_source, benchmark=benchmark or self.benchmark_symbol,
-            timestep=timestep, commission=_to_decimal(commission), slippage=_to_decimal(slippage),
-            risk_free_rate=risk_free_rate,
-        )
+        start=resolved_start,
+        end=resolved_end,
+        budget=resolved_budget,
+        data_source=resolved_source,
+        benchmark=benchmark or self.benchmark_symbol,
+        timestep=timestep,
+        commission=_to_decimal(commission),
+        slippage=_to_decimal(slippage),
+        risk_free_rate=risk_free_rate,
+    )
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -4267,9 +4407,7 @@ def main() -> None:
     from trading_agent_framework.config.env import load_strategy_env, AlpacaCredentials
 
     load_strategy_env("smoke_backtest", "paper")
-    placeholder_broker = AlpacaBroker.from_credentials(
-        "smoke_backtest", AlpacaCredentials.from_env(), with_stream=False
-    )
+    placeholder_broker = AlpacaBroker.from_credentials("smoke_backtest", AlpacaCredentials.from_env(), with_stream=False)
 
     strategy = BuyAndHold(placeholder_broker, mode=TradingMode.BACKTESTING)
     result = strategy.run_backtesting(start=start, end=end)

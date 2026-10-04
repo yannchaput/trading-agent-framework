@@ -11,9 +11,7 @@ from trading_agent_framework.entities.order import Order
 
 
 def _order() -> Order:
-    return Order(
-        strategy_name="momentum", asset=Asset("AAPL"), side=OrderSide.BUY, quantity=Decimal(10)
-    )
+    return Order(strategy_name="momentum", asset=Asset("AAPL"), side=OrderSide.BUY, quantity=Decimal(10))
 
 
 def test_listener_queues_the_event_and_sets_wake() -> None:
@@ -68,9 +66,7 @@ def test_events_posted_by_the_tracker_on_another_thread_are_queued() -> None:
 
     def stream_thread() -> None:
         tracker.process_trade_event(order, OrderEvent.NEW)
-        tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=Decimal("99"), filled_quantity=Decimal("10")
-        )
+        tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal("99"), filled_quantity=Decimal("10"))
 
     thread = threading.Thread(target=stream_thread)
     thread.start()

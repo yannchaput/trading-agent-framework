@@ -158,17 +158,18 @@ onto the clock, because only the clock knows whether time is real:
 ```python
 # utils/clock.py
 class MarketClock(ABC):
-    max_wait_slice: float = 60.0        # live/paper: correct drift (e.g. suspended laptop)
+    max_wait_slice: float = 60.0  # live/paper: correct drift (e.g. suspended laptop)
+
 
 # backtesting/clock.py
 class BacktestClock(MarketClock):
-    max_wait_slice: float = math.inf    # simulated: jump straight to the deadline
+    max_wait_slice: float = math.inf  # simulated: jump straight to the deadline
 ```
 
 ```python
 # core/executor.py
-- clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
-+ clock.wait(min(remaining, clock.max_wait_slice), self._wake)
+-clock.wait(min(remaining, MAX_WAIT_SLICE_SECONDS), self._wake)
++clock.wait(min(remaining, clock.max_wait_slice), self._wake)
 ```
 
 Live behaviour is byte-identical. Without it, a 10-year daily backtest burns roughly 2M no-op wait slices.
@@ -193,13 +194,11 @@ class BacktestDataSource(ABC):
     name: ClassVar[str]
 
     @abstractmethod
-    def load(self, assets: Sequence[Asset], start: datetime, end: datetime,
-             timestep: str) -> None:
+    def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
         """Fetch and hold the whole window for these assets. Called once per run."""
 
     @abstractmethod
-    def bars(self, asset: Asset, cutoff: datetime, length: int,
-             timestep: str) -> Bars | None:
+    def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         """The last `length` bars *closed at or before* `cutoff`, oldest first."""
 
     @abstractmethod
@@ -321,11 +320,12 @@ class Strategy:
     benchmark_symbol: str = "SPY"
 
     def run_backtesting(
-        self, *,
+        self,
+        *,
         start: datetime | None = None,
         end: datetime | None = None,
         budget: Number | None = None,
-        data_source: BacktestDataSource | None = None,   # default: cached Yahoo
+        data_source: BacktestDataSource | None = None,  # default: cached Yahoo
         benchmark: str | None = None,
         timestep: str = "day",
         commission: Decimal = Decimal(0),
@@ -340,8 +340,7 @@ on disk rather than in memory — a minute-resolution run is ~1M rows.
 ### 6.3 `Strategy.add_line`
 
 ```python
-def add_line(self, name: str, value: Number, *, color: str | None = None,
-             style: str = "solid", plot_name: str = "default_plot") -> None:
+def add_line(self, name: str, value: Number, *, color: str | None = None, style: str = "solid", plot_name: str = "default_plot") -> None:
     """Record a charted value at the current simulated time. No-op outside backtesting."""
 ```
 

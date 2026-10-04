@@ -7,9 +7,7 @@ end with. No agent is given an order tool; code places every order.
 
 from __future__ import annotations
 
-_ENGLISH = (
-    "Write everything in English: your reasons and every tool argument, even if a source you read drifts into another language."
-)
+_ENGLISH = "Write everything in English: your reasons and every tool argument, even if a source you read drifts into another language."
 
 RESEARCHER_SYSTEM = (
     "You are the researcher of a concentrated, long-only stock portfolio in the style of Bill Ackman: own just a few simple, "
@@ -88,7 +86,4 @@ TRADER_TASK = "Choose the portfolio to hold from the allowed list in the context
 
 def retry_prompt(tool: str, error: str) -> str:
     """The corrective turn after a run that never made a valid submit call."""
-    return (
-        f"Your previous run ended without a valid {tool} call. The last problem was: {error}\n"
-        f"Call {tool} now, once, with a valid argument, then stop. Do not do any more research."
-    )
+    return f"Your previous run ended without a valid {tool} call. The last problem was: {error}\nCall {tool} now, once, with a valid argument, then stop. Do not do any more research."

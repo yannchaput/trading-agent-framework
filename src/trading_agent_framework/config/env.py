@@ -45,9 +45,7 @@ def find_project_root(start: Path | None = None) -> Path:
         current = current.parent
         searched.append(current)
     searched_display = ", ".join(str(path) for path in searched)
-    raise ConfigurationError(
-        f"Could not find project root (no pyproject.toml found in: {searched_display})"
-    )
+    raise ConfigurationError(f"Could not find project root (no pyproject.toml found in: {searched_display})")
 
 
 def resolve_env_file(
@@ -60,9 +58,7 @@ def resolve_env_file(
     Priority: env/.env.{strategy}.{mode} -> env/.env -> <root>/.env, first that exists.
     """
     if trading_mode not in TRADING_MODES:
-        raise ConfigurationError(
-            f"Unknown trading_mode {trading_mode!r}; expected one of {sorted(TRADING_MODES)}"
-        )
+        raise ConfigurationError(f"Unknown trading_mode {trading_mode!r}; expected one of {sorted(TRADING_MODES)}")
 
     root = project_root if project_root is not None else find_project_root()
 

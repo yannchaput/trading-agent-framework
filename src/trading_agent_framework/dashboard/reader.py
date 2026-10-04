@@ -30,7 +30,7 @@ def load_description(ref: RunRef) -> str | None:
             data = json.load(f)
         desc = data.get("description")
         return desc if isinstance(desc, str) else None
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return None
 
 
@@ -51,7 +51,7 @@ def _save_settings_leaf(ref: RunRef, key: str, value: str | list[str]) -> None:
     try:
         with open(path) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         data = {}
     data[key] = value
     with open(path, "w") as f:
@@ -88,7 +88,7 @@ def get_benchmark_symbol(ref: RunRef) -> str:
             data = json.load(f)
         symbol = data.get("benchmark_symbol", "")
         return symbol if symbol else "SPY"
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return "SPY"
 
 
@@ -100,7 +100,7 @@ def load_settings(ref: RunRef) -> Settings | None:
     try:
         with open(path) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     return Settings.model_validate(data)
 
@@ -122,7 +122,7 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
     try:
         with open(path) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return []
 
     rows: list[tuple[str, str, str]] = []
@@ -211,7 +211,7 @@ def load_agent_calls(ref: RunRef) -> pd.DataFrame | None:
             df = pd.read_sql_query(f"SELECT {_AGENT_CALL_COLUMNS} FROM llm_calls WHERE run_id = ? ORDER BY id", conn, params=(run_id,))
         finally:
             conn.close()
-    except (sqlite3.Error, pd.errors.DatabaseError):
+    except sqlite3.Error, pd.errors.DatabaseError:
         return None
     if df.empty:
         return None
@@ -235,7 +235,7 @@ def load_metrics(ref: RunRef) -> MetricSet | None:
     try:
         with open(path) as f:
             data = json.load(f)
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
 
     raw = data.get("raw") or {}
@@ -567,12 +567,14 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
             most = max(most, len(holdings))
         earlier = closes[closes.index < day] if not closes.empty else closes
         base = float(earlier.iloc[-1]) if not earlier.empty else budget
-        rows.append({
-            "date": day.isoformat(),
-            "peak_invested": round(peak, 2),
-            "peak_pct": round(100 * peak / base, 2) if base else None,
-            "max_positions": most,
-        })
+        rows.append(
+            {
+                "date": day.isoformat(),
+                "peak_invested": round(peak, 2),
+                "peak_pct": round(100 * peak / base, 2) if base else None,
+                "max_positions": most,
+            }
+        )
     return rows
 
 

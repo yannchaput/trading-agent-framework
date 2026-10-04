@@ -39,12 +39,8 @@ _MINUTES = {
 }
 
 
-def _broker(
-    data: FakeStockHistoricalDataClient | None, trading: FakeTradingClient | None = None
-) -> AlpacaBroker:
-    return AlpacaBroker(
-        "momentum", trading or FakeTradingClient(), clock=FakeClock(_NOW), data_client=data
-    )
+def _broker(data: FakeStockHistoricalDataClient | None, trading: FakeTradingClient | None = None) -> AlpacaBroker:
+    return AlpacaBroker("momentum", trading or FakeTradingClient(), clock=FakeClock(_NOW), data_client=data)
 
 
 def _trading_with_calendar() -> FakeTradingClient:
@@ -177,9 +173,7 @@ def test_get_bars_with_no_assets_makes_no_network_calls() -> None:
         ("get_stock_bars", lambda b: b.get_bars([AAPL], 5, "day"), "bars"),
     ],
 )
-def test_data_client_failures_become_broker_errors(
-    method: str, call: Callable[[AlpacaBroker], object], match: str
-) -> None:
+def test_data_client_failures_become_broker_errors(method: str, call: Callable[[AlpacaBroker], object], match: str) -> None:
     data = FakeStockHistoricalDataClient()
     data.raises[method] = RuntimeError("boom")
 
@@ -254,9 +248,7 @@ def test_from_credentials_builds_the_news_provider_lazily(monkeypatch: pytest.Mo
 
 
 def _broker_with_news(news: FakeNewsClient) -> AlpacaBroker:
-    return AlpacaBroker(
-        "momentum", FakeTradingClient(), clock=FakeClock(_NOW), news_client=news
-    )
+    return AlpacaBroker("momentum", FakeTradingClient(), clock=FakeClock(_NOW), news_client=news)
 
 
 def test_get_news_builds_a_request_and_parses_the_response() -> None:

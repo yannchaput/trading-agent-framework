@@ -75,11 +75,11 @@ def parse_insufficient_buying_power(error: Exception) -> float | None:
     """
     try:
         payload = json.loads(str(error))
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
     if not isinstance(payload, dict) or payload.get("message") != "insufficient buying power":
         return None
     try:
         return float(payload["buying_power"])
-    except (KeyError, TypeError, ValueError):
+    except KeyError, TypeError, ValueError:
         return None

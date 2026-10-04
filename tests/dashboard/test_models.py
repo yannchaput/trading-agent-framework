@@ -43,10 +43,12 @@ def test_settings_dashboard_regime_accepts_the_legacy_single_string() -> None:
 
 
 def test_settings_parses_dashboard_decision_and_agents() -> None:
-    settings = Settings.model_validate({
-        "dashboard_decision": "validated",
-        "agents": {"trader": {"model": "qwen3.6-35b-a3b-awq"}},
-    })
+    settings = Settings.model_validate(
+        {
+            "dashboard_decision": "validated",
+            "agents": {"trader": {"model": "qwen3.6-35b-a3b-awq"}},
+        }
+    )
     assert settings.dashboard_decision == "validated"
     assert settings.agents["trader"]["model"] == "qwen3.6-35b-a3b-awq"
 

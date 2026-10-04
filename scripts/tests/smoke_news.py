@@ -48,9 +48,7 @@ def _check(condition: bool, message: str) -> None:
 
 def main() -> int:
     creds = _load_credentials()
-    broker = AlpacaBroker.from_credentials(
-        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False
-    )
+    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False)
     strategy = Strategy(broker)
     [search_news] = news_tools(strategy)
 

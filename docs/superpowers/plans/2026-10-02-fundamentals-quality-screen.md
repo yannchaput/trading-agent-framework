@@ -157,8 +157,6 @@ Expected: collection error, `ImportError: cannot import name 'FundamentalsNotFou
 Append to `src/trading_agent_framework/utils/errors.py`:
 
 ```python
-
-
 class FundamentalsNotFoundError(FundamentalsError):
     """Raised when SEC has nothing for the request (unknown ticker, HTTP 404): a real absence, not a failed lookup."""
 ```
@@ -168,61 +166,66 @@ In `src/trading_agent_framework/fundamentals/edgar_client.py`, change the errors
 and replace `get_json` with these two methods:
 
 ```python
-    def fetch_json(self, url: str) -> dict[str, Any]:
-        """One uncached request. HTTP 404 raises `FundamentalsNotFoundError`, any other failure `FundamentalsError`."""
-        self._rate_limit()
-        try:
-            response = self._client.get(url, headers=self._headers())
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404:
-                raise FundamentalsNotFoundError(f"Not found: {url}") from exc
-            raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            # ValueError also covers json.JSONDecodeError: SEC's fair-access throttling
-            # sometimes serves an HTML block page with a 2xx status instead of JSON.
-            raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
+def fetch_json(self, url: str) -> dict[str, Any]:
+    """One uncached request. HTTP 404 raises `FundamentalsNotFoundError`, any other failure `FundamentalsError`."""
+    self._rate_limit()
+    try:
+        response = self._client.get(url, headers=self._headers())
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            raise FundamentalsNotFoundError(f"Not found: {url}") from exc
+        raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        # ValueError also covers json.JSONDecodeError: SEC's fair-access throttling
+        # sometimes serves an HTML block page with a 2xx status instead of JSON.
+        raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
 
-    def get_json(self, url: str, cache_key: tuple[str, ...]) -> dict[str, Any]:
-        cache_path = self._cache_path(*cache_key)
-        if cache_path.exists():
-            try:
-                return json.loads(cache_path.read_text(encoding="utf-8"))
-            except ValueError:
-                # A corrupt/truncated cache entry (e.g. from an interrupted write) is
-                # treated as a cache miss so it self-heals on the next fetch, rather than
-                # permanently wedging the tool until someone deletes the file by hand.
-                pass
-        payload = self.fetch_json(url)
-        cache_path.parent.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(payload), encoding="utf-8")
-        return payload
+
+def get_json(self, url: str, cache_key: tuple[str, ...]) -> dict[str, Any]:
+    cache_path = self._cache_path(*cache_key)
+    if cache_path.exists():
+        try:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except ValueError:
+            # A corrupt/truncated cache entry (e.g. from an interrupted write) is
+            # treated as a cache miss so it self-heals on the next fetch, rather than
+            # permanently wedging the tool until someone deletes the file by hand.
+            pass
+    payload = self.fetch_json(url)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(json.dumps(payload), encoding="utf-8")
+    return payload
 ```
 
 Replace `ticker_to_cik`, `get_company_facts_payload` and `get_submissions_payload` with:
 
 ```python
-    def ticker_to_cik(self, symbol: str) -> str:
-        payload = self.get_json(SEC_COMPANY_TICKERS_URL, ("company_tickers.json",))
-        try:
-            return sec.parse_company_tickers(payload, symbol)
-        except ValueError as exc:
-            raise FundamentalsNotFoundError(str(exc)) from exc
+def ticker_to_cik(self, symbol: str) -> str:
+    payload = self.get_json(SEC_COMPANY_TICKERS_URL, ("company_tickers.json",))
+    try:
+        return sec.parse_company_tickers(payload, symbol)
+    except ValueError as exc:
+        raise FundamentalsNotFoundError(str(exc)) from exc
 
-    def get_company_facts_payload(self, cik: str) -> dict[str, Any]:
-        return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"))
 
-    def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
-        """Uncached: the payload is about 4 MB, and the quality screen keeps only a reduced copy."""
-        return self.fetch_json(_company_facts_url(cik))
+def get_company_facts_payload(self, cik: str) -> dict[str, Any]:
+    return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"))
 
-    def get_submissions_payload(self, cik: str) -> dict[str, Any]:
-        return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"))
 
-    def fetch_submissions_payload(self, cik: str) -> dict[str, Any]:
-        """Uncached, for a caller that needs one field of it."""
-        return self.fetch_json(_submissions_url(cik))
+def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
+    """Uncached: the payload is about 4 MB, and the quality screen keeps only a reduced copy."""
+    return self.fetch_json(_company_facts_url(cik))
+
+
+def get_submissions_payload(self, cik: str) -> dict[str, Any]:
+    return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"))
+
+
+def fetch_submissions_payload(self, cik: str) -> dict[str, Any]:
+    """Uncached, for a caller that needs one field of it."""
+    return self.fetch_json(_submissions_url(cik))
 ```
 
 Add these module-level helpers above `class SecEdgarClient`:
@@ -412,11 +415,7 @@ def test_annual_figures_reads_cash_from_annual_reports_only() -> None:
 
 def test_annual_figures_keeps_both_share_counts_cover_page_first() -> None:
     payload = _company(
-        gaap={
-            "WeightedAverageNumberOfDilutedSharesOutstanding": _share_units(
-                {"val": 1010, "start": "2026-01-01", "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"}
-            )
-        },
+        gaap={"WeightedAverageNumberOfDilutedSharesOutstanding": _share_units({"val": 1010, "start": "2026-01-01", "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"})},
         dei={
             "EntityCommonStockSharesOutstanding": _share_units(
                 _instant(1000, "2026-01-31", "2026-02-15"),
@@ -471,7 +470,6 @@ Expected: the new tests FAIL with `AttributeError: module 'trading_agent_framewo
 In `src/trading_agent_framework/fundamentals/sec.py`, add after the `_FORM_PRIORITY` line:
 
 ```python
-
 # The quality screen's annual figures (`annual_figures`). A fiscal year is identified by its period END
 # date: each 10-K repeats three years of figures, all tagged with the filing's own `fy`.
 MIN_FISCAL_YEAR_DAYS = 350
@@ -493,16 +491,10 @@ ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
 Append at the end of the file:
 
 ```python
-
-
 def _tag_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str]) -> list[dict[str, Any]]:
     """One tag's facts in one unit, from `forms` only, that carry a value, a period end and a filing date."""
     rows = (facts.get(tag) or {}).get("units", {}).get(unit, [])
-    return [
-        row
-        for row in rows
-        if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")
-    ]
+    return [row for row in rows if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")]
 
 
 def _is_fiscal_year(row: dict[str, Any]) -> bool:
@@ -534,10 +526,7 @@ def _first_source_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[s
 def _debt_sources(gaap: dict[str, Any]) -> list[list[dict[str, Any]]]:
     """Total debt, in order of preference: the total tag, noncurrent + current, the combined tag."""
     current = {(row["end"], row["filed"]): row["val"] for row in _tag_rows(gaap, "LongTermDebtCurrent", "USD", _ANNUAL_FORMS)}
-    summed = [
-        {"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]}
-        for row in _tag_rows(gaap, "LongTermDebtNoncurrent", "USD", _ANNUAL_FORMS)
-    ]
+    summed = [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in _tag_rows(gaap, "LongTermDebtNoncurrent", "USD", _ANNUAL_FORMS)]
     return [
         [_slim(row) for row in _tag_rows(gaap, "LongTermDebt", "USD", _ANNUAL_FORMS)],
         summed,
@@ -650,11 +639,7 @@ def healthy_figures(
         if (field, year) not in drop
     ]
     last = years[-1]
-    balances = [
-        {"field": field, "end": f"{last}-12-31", "value": value, "filed": f"{last + 1}-02-15"}
-        for field, value in (("debt", debt), ("cash", cash))
-        if value is not None
-    ]
+    balances = [{"field": field, "end": f"{last}-12-31", "value": value, "filed": f"{last + 1}-02-15"} for field, value in (("debt", debt), ("cash", cash)) if value is not None]
     share_rows = [] if shares is None else [{"end": f"{last + 1}-01-31", "value": shares, "filed": f"{last + 1}-02-15"}]
     return {"cik": "0000000001", "fetched_at": "2026-10-02T00:00:00+00:00", "status": "ok", "flows": flows, "balances": balances, "shares": share_rows}
 ```
@@ -1126,8 +1111,6 @@ Expected: collection error, `ImportError: cannot import name 'Priced'`.
 In `src/trading_agent_framework/fundamentals/quality.py`, add `from decimal import Decimal` to the imports, then append:
 
 ```python
-
-
 @dataclass(frozen=True, slots=True)
 class Priced:
     """A survivor of every gate, with its sector code and its split-restated market cap (above zero)."""
@@ -1194,10 +1177,7 @@ def rank(priced: Sequence[Priced], params: ScreenParams) -> list[Candidate]:
     margin_pct = _percentiles([item.survivor.fcf_margin for item in priced])
     stdev_pct = _percentiles([item.survivor.operating_margin_stdev for item in priced])
     yield_weight, margin_weight, stability_weight = params.weights
-    scored = [
-        (yield_weight * yield_pct[index] + margin_weight * margin_pct[index] + stability_weight * (1 - stdev_pct[index]), yields[index], item)
-        for index, item in enumerate(priced)
-    ]
+    scored = [(yield_weight * yield_pct[index] + margin_weight * margin_pct[index] + stability_weight * (1 - stdev_pct[index]), yields[index], item) for index, item in enumerate(priced)]
     scored.sort(key=lambda entry: (-entry[0], -entry[2].market_cap, entry[2].survivor.symbol))
     return [
         Candidate(
@@ -1561,7 +1541,7 @@ class SplitHistory:
         if self._entries is None:
             try:
                 loaded = json.loads(self._cache_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 loaded = {}  # no file yet, or one truncated by an interrupted write
             self._entries = loaded if isinstance(loaded, dict) else {}
         return self._entries
@@ -1946,7 +1926,7 @@ class AnnualFiguresStore:
     def _read(self, cik: str) -> dict[str, Any] | None:
         try:
             record = json.loads(self._path(cik).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except OSError, ValueError:
             return None  # no file yet, or one truncated by an interrupted write: a cache miss
         if not isinstance(record, dict) or "fetched_at" not in record or "status" not in record:
             return None

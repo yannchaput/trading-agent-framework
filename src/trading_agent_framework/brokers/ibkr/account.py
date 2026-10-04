@@ -63,9 +63,7 @@ def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: 
     """
     if is_paper_account(account_id) != is_paper:
         kind = "a paper" if is_paper_account(account_id) else "a live"
-        raise ConfigurationError(
-            f"IB Gateway is logged into {kind} account ({account_id}) but BROKER_API_IS_PAPER={str(is_paper).lower()}"
-        )
+        raise ConfigurationError(f"IB Gateway is logged into {kind} account ({account_id}) but BROKER_API_IS_PAPER={str(is_paper).lower()}")
     tags = _tags(values, account_id)
     currency = tags["NetLiquidation"].currency if "NetLiquidation" in tags else ""
     if currency != BASE_CURRENCY:
@@ -75,7 +73,4 @@ def check_account(values: Iterable[AccountValue], account_id: str, *, is_paper: 
     cash = _amount(tags, "TotalCashValue")
     buying_power = _amount(tags, "BuyingPower")
     if buying_power > cash * _MARGIN_TOLERANCE + 1:
-        raise ConfigurationError(
-            f"IBKR account {account_id} looks like a margin account (buying power {buying_power} > cash {cash}); "
-            "this framework expects a cash account (no margin, no shorting)"
-        )
+        raise ConfigurationError(f"IBKR account {account_id} looks like a margin account (buying power {buying_power} > cash {cash}); this framework expects a cash account (no margin, no shorting)")

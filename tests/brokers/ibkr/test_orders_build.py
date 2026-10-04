@@ -57,9 +57,7 @@ def test_market_day_order() -> None:
 
 
 def test_limit_sell_gtc_outside_regular_hours() -> None:
-    ib_order = orders.build_order(
-        _order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=Decimal("101.25"), time_in_force=TimeInForce.GTC, extended_hours=True)
-    )
+    ib_order = orders.build_order(_order(side=OrderSide.SELL, order_type=OrderType.LIMIT, limit_price=Decimal("101.25"), time_in_force=TimeInForce.GTC, extended_hours=True))
 
     assert (ib_order.action, ib_order.orderType, ib_order.lmtPrice, ib_order.tif, ib_order.outsideRth) == ("SELL", "LMT", 101.25, "GTC", True)
 

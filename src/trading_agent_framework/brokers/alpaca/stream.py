@@ -82,9 +82,7 @@ class AlpacaTradeStream:
 
         price = orders._to_decimal(orders._field(trade_update, "price"))
         filled_quantity = orders._to_decimal(orders._field(trade_update, "qty"))
-        self._tracker.process_trade_event(
-            stored, event, price=price, filled_quantity=filled_quantity
-        )
+        self._tracker.process_trade_event(stored, event, price=price, filled_quantity=filled_quantity)
         return True
 
     def start(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
@@ -102,19 +100,14 @@ class AlpacaTradeStream:
         """
         stream = self._stream
         if stream is None:
-            raise BrokerError(
-                "no TradingStream configured; construct AlpacaTradeStream with a "
-                "real (or mocked) stream before calling start()"
-            )
+            raise BrokerError("no TradingStream configured; construct AlpacaTradeStream with a real (or mocked) stream before calling start()")
         stream.subscribe_trade_updates(self.handle_trade_update)
         self._thread = threading.Thread(target=stream.run, daemon=True, name="alpaca-trade-stream")
         self._thread.start()
         deadline = time.monotonic() + connect_timeout
         while not getattr(stream, "_running", False):
             if time.monotonic() >= deadline:
-                raise BrokerError(
-                    f"alpaca trade stream did not connect within {connect_timeout}s"
-                )
+                raise BrokerError(f"alpaca trade stream did not connect within {connect_timeout}s")
             time.sleep(0.05)
 
     @property

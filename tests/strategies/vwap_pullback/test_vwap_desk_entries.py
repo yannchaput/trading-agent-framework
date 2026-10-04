@@ -42,9 +42,21 @@ class Rig:
         self.strategy.vars.session = SessionState(day=DAY, session=make_session(DAY), bar_stamp="close", session_open_equity=D("100000"))
         self.state.candidates["AAA"] = CandidateInfo(symbol="AAA", daily_atr=2.0, beta=1.0)
         self.state.setups["AAA"] = Setup(symbol="AAA", state=SetupState.TRIGGERED, pullback_low=99.5, trigger_close=100.0, last_close=100.0)
-        self.state.contexts["AAA"] = [BarContext(time=et(2026, 9, 1, 10, 0), open=100, high=100.2, low=99.8, close=100, volume=5000, vwap=99.9, rs=0.01, rvol=2.0,
-            session_open=99.0, session_high=100.2,
-        )]
+        self.state.contexts["AAA"] = [
+            BarContext(
+                time=et(2026, 9, 1, 10, 0),
+                open=100,
+                high=100.2,
+                low=99.8,
+                close=100,
+                volume=5000,
+                vwap=99.9,
+                rs=0.01,
+                rvol=2.0,
+                session_open=99.0,
+                session_high=100.2,
+            )
+        ]
         self.log = tmp_path / "trades.jsonl"
         self.desk = Desk(self.strategy, params or PARAMS, trade_log=lambda: self.log)
 

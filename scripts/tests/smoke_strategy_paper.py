@@ -88,9 +88,7 @@ class SmokeStrategy(Strategy):
             self.vars.modified = True
         elif iteration == 3:
             self.cancel_order(self.vars.order)
-            self.vars.cancel_confirmed = self.wait_for_order_execution(
-                self.vars.order, timeout=CANCEL_TIMEOUT_SECONDS
-            )
+            self.vars.cancel_confirmed = self.wait_for_order_execution(self.vars.order, timeout=CANCEL_TIMEOUT_SECONDS)
             self.stop()
 
     def on_new_order(self, order: Order) -> None:
@@ -134,22 +132,17 @@ def main() -> int:
         print("Refusing to run: BROKER_API_IS_PAPER is false (live account).", file=sys.stderr)
         return 1
 
-    broker = AlpacaBroker.from_credentials(
-        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news
-    )
+    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news)
 
     session = broker.clock.next_session()
     now = broker.clock.now()
     if now < session.open:
         print(
-            f"SKIP: outside regular trading hours; next session opens {session.open.isoformat()} "
-            "(the order-modify step needs a real, currently-open session; rerun then).",
+            f"SKIP: outside regular trading hours; next session opens {session.open.isoformat()} (the order-modify step needs a real, currently-open session; rerun then).",
         )
         return 0
 
-    strategy = SmokeStrategy(
-        broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT
-    )
+    strategy = SmokeStrategy(broker, mode=TradingMode.PAPER, clock=AlwaysOpenClock(), project_root=PROJECT_ROOT)
     started = datetime.now()
     try:
         strategy.run_paper_trading()

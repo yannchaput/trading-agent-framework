@@ -55,9 +55,7 @@ def test_multi_column_indicators_return_an_indicator_row() -> None:
 
 
 @pytest.mark.parametrize(("kwargs", "expected"), [({"length": 40}, 120), ({"length": 5}, 50), ({}, 150)])
-def test_default_bars_is_three_times_the_length_with_a_floor_of_50(
-    kwargs: dict[str, int], expected: int
-) -> None:
+def test_default_bars_is_three_times_the_length_with_a_floor_of_50(kwargs: dict[str, int], expected: int) -> None:
     assert default_bars(kwargs) == expected
 
 
@@ -73,9 +71,7 @@ def test_the_default_lookback_decides_how_many_bars_are_fetched() -> None:
 def test_bars_and_include_after_hours_control_the_fetch() -> None:
     strategy, broker = _strategy()
 
-    value = strategy.indicators.sma(
-        "SPY", timestep="minute", length=5, bars=10, include_after_hours=False
-    )
+    value = strategy.indicators.sma("SPY", timestep="minute", length=5, bars=10, include_after_hours=False)
 
     assert value == pytest.approx(28.0)  # the last 10 closes still end at 26..30
     assert broker.bars_calls == [(("SPY",), 10, "minute", False)]
@@ -104,9 +100,7 @@ def test_no_bars_is_none() -> None:
 def test_custom_indicators_get_the_bars_frame_and_their_kwargs() -> None:
     strategy, _ = _strategy()
 
-    value = strategy.indicators.custom(
-        "shifted", lambda df, offset: df["close"] - offset, "SPY", offset=5
-    )
+    value = strategy.indicators.custom("shifted", lambda df, offset: df["close"] - offset, "SPY", offset=5)
 
     assert value == pytest.approx(25.0)
 
@@ -147,11 +141,7 @@ def test_importing_core_imports_neither_pandas_nor_alpaca() -> None:
         [
             sys.executable,
             "-c",
-            "import trading_agent_framework.core\n"
-            "import sys\n"
-            "assert 'pandas' not in sys.modules, 'pandas'\n"
-            "assert 'alpaca' not in sys.modules, 'alpaca'\n"
-            "print('OK')\n",
+            "import trading_agent_framework.core\nimport sys\nassert 'pandas' not in sys.modules, 'pandas'\nassert 'alpaca' not in sys.modules, 'alpaca'\nprint('OK')\n",
         ],
         capture_output=True,
         text=True,

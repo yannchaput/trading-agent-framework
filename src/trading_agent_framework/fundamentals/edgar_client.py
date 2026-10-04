@@ -97,9 +97,7 @@ class SecEdgarClient:
             # sometimes serves an HTML block page with a 2xx status instead of JSON.
             raise FundamentalsError(f"Failed to fetch {url}: {exc}") from exc
 
-    def get_json(
-        self, url: str, cache_key: tuple[str, ...], *, as_of: datetime | None = None, max_age_days: int | None = None
-    ) -> dict[str, Any]:
+    def get_json(self, url: str, cache_key: tuple[str, ...], *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
         """The payload at `url`, cached to disk.
 
         Without `as_of` and `max_age_days` a cached file is served forever (the original behaviour). With both,

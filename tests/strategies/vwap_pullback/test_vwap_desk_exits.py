@@ -41,10 +41,18 @@ def test_a_pending_full_exit_frees_its_slot_before_the_sell_fills(tmp_path: Path
     # Final review I3 (spec §4): pending entries count as taken, pending full exits as freed.
     rig = _open(tmp_path)
     for symbol in ("BBB", "CCC", "DDD"):
-        rig.state.book.add(Trade(
-            symbol=symbol, entry_order_id=f"entry-{symbol}", planned_quantity=D(10), stop_price=D(90), r_per_share=D(1),
-            entered_at=rig.clock.now(), status=TradeStatus.OPEN, quantity=D(10),
-        ))
+        rig.state.book.add(
+            Trade(
+                symbol=symbol,
+                entry_order_id=f"entry-{symbol}",
+                planned_quantity=D(10),
+                stop_price=D(90),
+                r_per_share=D(1),
+                entered_at=rig.clock.now(),
+                status=TradeStatus.OPEN,
+                quantity=D(10),
+            )
+        )
     assert rig.desk.free_slots() == 0
     trade = rig.state.book.get("AAA")
     assert rig.desk._release_stop(trade) is None

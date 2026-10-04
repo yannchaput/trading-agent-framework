@@ -45,7 +45,11 @@ def _tools(client: _FakeEdgarClient) -> dict[str, object]:
 def test_returns_five_tools_with_one_line_docstrings() -> None:
     tools = fundamentals_tools(_strategy(), client=_FakeEdgarClient())  # type: ignore
     assert [t.__name__ for t in tools] == [  # type: ignore
-        "get_company_facts", "get_income_statement", "get_balance_sheet", "get_filings", "get_filing_document",
+        "get_company_facts",
+        "get_income_statement",
+        "get_balance_sheet",
+        "get_filings",
+        "get_filing_document",
     ]
     for tool in tools:
         assert len(tool.__doc__.splitlines()) == 1  # type: ignore
@@ -53,9 +57,7 @@ def test_returns_five_tools_with_one_line_docstrings() -> None:
 
 def test_get_company_facts_returns_symbol_cik_and_compact_facts() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_company_facts"]("aapl")  # type: ignore
@@ -75,9 +77,7 @@ def test_get_company_facts_returns_error_on_unknown_ticker() -> None:
 
 def test_get_income_statement_returns_values_for_the_symbol() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_income_statement"]("AAPL")  # type: ignore
@@ -88,9 +88,7 @@ def test_get_income_statement_returns_values_for_the_symbol() -> None:
 
 def test_get_balance_sheet_returns_values_for_the_symbol() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"Assets": {"units": {"USD": [{"val": 999, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"Assets": {"units": {"USD": [{"val": 999, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_balance_sheet"]("AAPL")  # type: ignore

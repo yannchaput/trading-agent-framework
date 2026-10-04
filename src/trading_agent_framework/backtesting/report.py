@@ -31,19 +31,48 @@ from trading_agent_framework.utils.errors import BacktestDataError
 # no extra="allow", so write_metrics must emit exactly these fields -- no more, no
 # less -- or the real dashboard's model_validate() would silently drop stray keys
 # (worse than raising) or fail on missing required ones.
-_METRIC_SET_FIELDS = frozenset({
-    "total_return_strategy", "total_return_benchmark", "cagr_strategy", "cagr_benchmark",
-    "sharpe_strategy", "sharpe_benchmark", "sortino_strategy", "sortino_benchmark",
-    "calmar_strategy", "calmar_benchmark", "omega_strategy", "omega_benchmark",
-    "max_drawdown_strategy", "max_drawdown_benchmark", "volatility_strategy",
-    "volatility_benchmark", "beta", "alpha", "correlation", "treynor_ratio",
-    "information_ratio_strategy", "information_ratio_benchmark", "r_squared_strategy",
-    "r_squared_benchmark", "skew_strategy", "skew_benchmark", "kurtosis_strategy",
-    "kurtosis_benchmark", "win_days_pct_strategy", "win_days_pct_benchmark",
-    "win_month_pct_strategy", "win_month_pct_benchmark", "longest_dd_days_strategy",
-    "longest_dd_days_benchmark", "avg_drawdown_strategy", "avg_drawdown_benchmark",
-    "recovery_factor_strategy", "recovery_factor_benchmark",
-})
+_METRIC_SET_FIELDS = frozenset(
+    {
+        "total_return_strategy",
+        "total_return_benchmark",
+        "cagr_strategy",
+        "cagr_benchmark",
+        "sharpe_strategy",
+        "sharpe_benchmark",
+        "sortino_strategy",
+        "sortino_benchmark",
+        "calmar_strategy",
+        "calmar_benchmark",
+        "omega_strategy",
+        "omega_benchmark",
+        "max_drawdown_strategy",
+        "max_drawdown_benchmark",
+        "volatility_strategy",
+        "volatility_benchmark",
+        "beta",
+        "alpha",
+        "correlation",
+        "treynor_ratio",
+        "information_ratio_strategy",
+        "information_ratio_benchmark",
+        "r_squared_strategy",
+        "r_squared_benchmark",
+        "skew_strategy",
+        "skew_benchmark",
+        "kurtosis_strategy",
+        "kurtosis_benchmark",
+        "win_days_pct_strategy",
+        "win_days_pct_benchmark",
+        "win_month_pct_strategy",
+        "win_month_pct_benchmark",
+        "longest_dd_days_strategy",
+        "longest_dd_days_benchmark",
+        "avg_drawdown_strategy",
+        "avg_drawdown_benchmark",
+        "recovery_factor_strategy",
+        "recovery_factor_benchmark",
+    }
+)
 
 
 def _float(value: Decimal | None) -> float | None:
@@ -119,8 +148,18 @@ def write_metrics(run_dir: Path, metrics: dict[str, Any]) -> Path:
 # not a KeyError (write_equity's set_index) or a columns-less frame.
 _EQUITY_COLUMNS = ("datetime", "portfolio_value", "cash", "positions_value", "benchmark_close")
 _TRADE_COLUMNS = (
-    "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
-    "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+    "time",
+    "symbol",
+    "side",
+    "status",
+    "order_type",
+    "quantity",
+    "filled_quantity",
+    "price",
+    "trade_cost",
+    "trade_slippage",
+    "identifier",
+    "event_kind",
 )
 _INDICATOR_COLUMNS = ("datetime", "name", "value", "color", "style", "plot_name")
 
@@ -175,11 +214,18 @@ def write_trades(run_dir: Path, ledger: Ledger) -> Path:
 
     rows = [
         {
-            "time": f.time, "symbol": f.symbol, "side": f.side.value, "status": f.status,
-            "order_type": f.order_type.value, "quantity": _float(f.quantity),
-            "filled_quantity": _float(f.filled_quantity), "price": _float(f.price),
-            "trade_cost": _float(f.trade_cost), "trade_slippage": _float(f.trade_slippage),
-            "identifier": f.identifier, "event_kind": f.event_kind,
+            "time": f.time,
+            "symbol": f.symbol,
+            "side": f.side.value,
+            "status": f.status,
+            "order_type": f.order_type.value,
+            "quantity": _float(f.quantity),
+            "filled_quantity": _float(f.filled_quantity),
+            "price": _float(f.price),
+            "trade_cost": _float(f.trade_cost),
+            "trade_slippage": _float(f.trade_slippage),
+            "identifier": f.identifier,
+            "event_kind": f.event_kind,
         }
         for f in ledger.fills
     ]
@@ -192,8 +238,12 @@ def write_indicators(run_dir: Path, ledger: Ledger) -> Path:
 
     rows = [
         {
-            "datetime": line.time, "name": line.name, "value": _float(line.value),
-            "color": line.color, "style": line.style, "plot_name": line.plot_name,
+            "datetime": line.time,
+            "name": line.name,
+            "value": _float(line.value),
+            "color": line.color,
+            "style": line.style,
+            "plot_name": line.plot_name,
         }
         for line in ledger.lines
     ]

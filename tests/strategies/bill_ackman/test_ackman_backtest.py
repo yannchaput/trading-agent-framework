@@ -37,9 +37,19 @@ def _bars(closes: list[float]) -> pd.DataFrame:
 
 def _candidate(symbol: str) -> Candidate:
     return Candidate(
-        symbol=symbol, rank=1, sic=5812, market_cap=Decimal("100000000000"), fcf_yield=0.05, fcf_margin=0.2, operating_margin=0.25,
-        operating_margin_stdev=0.02, revenue_growth=0.08, net_debt_to_operating_income=1.0, debt_reported=True,
-        fiscal_year_end=date(2025, 12, 31), filed=date(2026, 2, 15),
+        symbol=symbol,
+        rank=1,
+        sic=5812,
+        market_cap=Decimal("100000000000"),
+        fcf_yield=0.05,
+        fcf_margin=0.2,
+        operating_margin=0.25,
+        operating_margin_stdev=0.02,
+        revenue_growth=0.08,
+        net_debt_to_operating_income=1.0,
+        debt_reported=True,
+        fiscal_year_end=date(2025, 12, 31),
+        filed=date(2026, 2, 15),
     )
 
 
@@ -62,9 +72,7 @@ class _Handle:
     def __init__(self, tools: dict[str, Callable[..., dict[str, Any]]], script: Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]) -> None:
         self.tools, self.script, self.runs = tools, script, 0
 
-    def run(
-        self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
-    ) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.runs += 1
         self.script(self.tools, context)
         return AgentRunResult(output="ok", tool_calls=[])

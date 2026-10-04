@@ -108,9 +108,9 @@ Ordinary frozen dataclass — all fields are hashable/comparable, so default `__
 @dataclass(frozen=True, slots=True, eq=False)
 class Bars:
     asset: Asset
-    timestep: str                 # "day" | "minute"
-    df: pd.DataFrame              # tz-aware (America/New_York) DatetimeIndex
-                                   # columns: open, high, low, close, volume (float64)
+    timestep: str  # "day" | "minute"
+    df: pd.DataFrame  # tz-aware (America/New_York) DatetimeIndex
+    # columns: open, high, low, close, volume (float64)
 ```
 
 `eq=False` is deliberate: a dataclass-generated `__eq__` would compare `df` fields with `==`, and
@@ -209,18 +209,14 @@ def get_last_price(self, asset: Asset | str) -> Decimal | None: ...
 def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]: ...
 def get_quote(self, asset: Asset | str) -> Quote | None: ...
 
-def get_historical_prices(
-    self, asset: Asset | str, length: int, timestep: str = "day", *, include_after_hours: bool = True
-) -> Bars | None:
+
+def get_historical_prices(self, asset: Asset | str, length: int, timestep: str = "day", *, include_after_hours: bool = True) -> Bars | None:
     asset = _to_asset(asset)
     return self.broker.get_bars([asset], length, timestep, include_after_hours=include_after_hours).get(asset)
 
-def get_historical_prices_for_assets(
-    self, assets: Iterable[Asset | str], length: int, timestep: str = "day", *, include_after_hours: bool = True
-) -> dict[Asset, Bars]:
-    return self.broker.get_bars(
-        [_to_asset(a) for a in assets], length, timestep, include_after_hours=include_after_hours
-    )
+
+def get_historical_prices_for_assets(self, assets: Iterable[Asset | str], length: int, timestep: str = "day", *, include_after_hours: bool = True) -> dict[Asset, Bars]:
+    return self.broker.get_bars([_to_asset(a) for a in assets], length, timestep, include_after_hours=include_after_hours)
 ```
 
 ### 7.1 `indicators` property
@@ -254,6 +250,7 @@ revisit if the 200 req/min IEX rate limit becomes a real problem for some strate
 class IndicatorRow:
     """Attribute-style read-only view over one pandas Series (one row of a
     multi-column indicator result, e.g. bbands -> .BBL_20_2_0)."""
+
 
 class Indicators:
     def __init__(self, strategy: Strategy) -> None:

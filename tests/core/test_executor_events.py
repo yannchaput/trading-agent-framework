@@ -91,9 +91,7 @@ def _strategy(cls: type[OrderHooks] = OrderHooks, sessions: int = 1) -> OrderHoo
 
 
 def _aapl_position() -> Position:
-    return Position(
-        strategy_name="momentum", asset=Asset("AAPL"), quantity=Decimal(10), side=PositionSide.LONG
-    )
+    return Position(strategy_name="momentum", asset=Asset("AAPL"), quantity=Decimal(10), side=PositionSide.LONG)
 
 
 def _on_first_wait(clock: FakeClock, action: Callable[[], None]) -> None:
@@ -116,12 +114,8 @@ def test_events_from_the_stream_thread_run_hooks_on_the_executor_thread() -> Non
 
     def stream() -> None:
         broker.tracker.process_trade_event(order, OrderEvent.NEW)
-        broker.tracker.process_trade_event(
-            order, OrderEvent.PARTIALLY_FILLED, price=Decimal(100), filled_quantity=Decimal(4)
-        )
-        broker.tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=Decimal(101), filled_quantity=Decimal(6)
-        )
+        broker.tracker.process_trade_event(order, OrderEvent.PARTIALLY_FILLED, price=Decimal(100), filled_quantity=Decimal(4))
+        broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal(101), filled_quantity=Decimal(6))
 
     _on_first_wait(strategy.fake_clock, stream)
     strategy.executor.run()
@@ -163,9 +157,7 @@ def test_order_hook_crash_goes_to_on_bot_crash_and_trading_continues() -> None:
     strategy = _strategy(BadHook)
     broker = strategy.fake_broker
     order = broker.submit_order(strategy.create_order("AAPL", 1, "buy"))
-    _on_first_wait(
-        strategy.fake_clock, lambda: broker.tracker.process_trade_event(order, OrderEvent.NEW)
-    )
+    _on_first_wait(strategy.fake_clock, lambda: broker.tracker.process_trade_event(order, OrderEvent.NEW))
 
     strategy.executor.run()
 
@@ -185,9 +177,7 @@ def test_fill_hook_still_fires_with_no_position_when_position_lookup_fails() -> 
 
     _on_first_wait(
         strategy.fake_clock,
-        lambda: broker.tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(10)
-        ),
+        lambda: broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(10)),
     )
     strategy.executor.run()
 
@@ -206,9 +196,7 @@ class Waiter(OrderHooks):
         if self.fill_it:
             _on_first_wait(
                 self.fake_clock,
-                lambda: broker.tracker.process_trade_event(
-                    order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(1)
-                ),
+                lambda: broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal(100), filled_quantity=Decimal(1)),
             )
         started = self.get_datetime()
         self.vars.result = self.wait_for_order_execution(order, timeout=600)

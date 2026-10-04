@@ -80,12 +80,8 @@ def test_statement_values_omits_a_field_whose_only_candidate_mismatches_the_anch
     payload = {
         "facts": {
             "us-gaap": {
-                "NetIncomeLoss": {
-                    "units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}
-                },
-                "GrossProfit": {
-                    "units": {"USD": [{"val": 99, "filed": "2026-01-01", "form": "10-K", "end": "2024-12-31", "accn": "a2"}]}
-                },
+                "NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}},
+                "GrossProfit": {"units": {"USD": [{"val": 99, "filed": "2026-01-01", "form": "10-K", "end": "2024-12-31", "accn": "a2"}]}},
             }
         }
     }

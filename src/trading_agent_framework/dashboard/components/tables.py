@@ -154,10 +154,7 @@ def benchmark_summary_frame(models: Sequence[BenchmarkModel], categories: Sequen
 def render_benchmark_summary_table(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> None:
     frame = benchmark_summary_frame(models, categories)
     score_columns = ["Overall", *(category.capitalize() for category in categories)]
-    column_config = {
-        column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%")
-        for column in score_columns
-    }
+    column_config = {column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%") for column in score_columns}
     column_config |= {
         "Avg tool calls": st.column_config.NumberColumn(format="%.2f"),
         "Median run (s)": st.column_config.NumberColumn(format="%.1f"),

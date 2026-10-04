@@ -81,9 +81,7 @@ class Order:
 
     def __post_init__(self) -> None:
         if (self.quantity is None) == (self.notional is None):
-            raise OrderValidationError(
-                "Exactly one of `quantity` or `notional` must be set on an Order."
-            )
+            raise OrderValidationError("Exactly one of `quantity` or `notional` must be set on an Order.")
 
         for field_name in _DECIMAL_FIELDS:
             setattr(self, field_name, _to_decimal(getattr(self, field_name)))

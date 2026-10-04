@@ -36,18 +36,19 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
     day = first_day
     while len(sessions) < count:
         if day.weekday() < 5:
-            sessions.append(MarketSession(
-                open=datetime.combine(day, time(9, 30), tzinfo=ET),
-                close=datetime.combine(day, time(16, 0), tzinfo=ET),
-            ))
+            sessions.append(
+                MarketSession(
+                    open=datetime.combine(day, time(9, 30), tzinfo=ET),
+                    close=datetime.combine(day, time(16, 0), tzinfo=ET),
+                )
+            )
         day += timedelta(days=1)
     return sessions
 
 
 def _bars(sessions: list[MarketSession], closes: list[float]) -> pd.DataFrame:
     return pd.DataFrame(
-        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes],
-         "close": closes, "volume": [1000.0] * len(closes)},
+        {"open": closes, "high": [c + 1 for c in closes], "low": [c - 1 for c in closes], "close": closes, "volume": [1000.0] * len(closes)},
         index=pd.DatetimeIndex([s.close for s in sessions], name="timestamp"),
     )
 
@@ -88,9 +89,15 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert isinstance(result, BacktestResult)
@@ -118,9 +125,7 @@ def test_run_backtest_writes_every_expected_file(tmp_path: Path) -> None:
     ("naive_start", "naive_end", "expected"),
     [(True, True, "start, end"), (True, False, "start"), (False, True, "end")],
 )
-def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(
-    tmp_path: Path, naive_start: bool, naive_end: bool, expected: str
-) -> None:
+def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(tmp_path: Path, naive_start: bool, naive_end: bool, expected: str) -> None:
     """Important whole-branch review finding: the README's own quickstart used
     `datetime.now()`, and the only symptom was `BacktestError: backtest run failed:
     can't compare offset-naive and offset-aware datetimes` raised from deep inside
@@ -142,8 +147,12 @@ def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(
             strategy,
             start=aware_start.replace(tzinfo=None) if naive_start else aware_start,
             end=aware_end.replace(tzinfo=None) if naive_end else aware_end,
-            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            slippage=Decimal(0), risk_free_rate=0.0,
+            budget=Decimal(10000),
+            data_source=source,
+            benchmark="SPY",
+            timestep="day",
+            slippage=Decimal(0),
+            risk_free_rate=0.0,
         )
 
     # The message names the offending argument(s) -- the whole point of validating here.
@@ -166,9 +175,15 @@ def test_run_backtest_accepts_aware_datetimes_in_any_timezone(tmp_path: Path) ->
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close.astimezone(UTC),
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close.astimezone(UTC),
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
     assert (result.run_dir / "metrics.json").is_file()
 
@@ -187,9 +202,15 @@ def test_run_backtest_rebinds_the_strategys_broker_and_clock(tmp_path: Path) -> 
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert isinstance(strategy.broker, BacktestBroker)
@@ -213,9 +234,7 @@ class RecordingStrategy(Strategy):
     def on_trading_iteration(self) -> None:
         now = self.clock.now()
         bars = self.get_historical_prices(AAPL, 10, "day")
-        latest_bar_close = (
-            bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
-        )
+        latest_bar_close = bars.df.index[-1].to_pydatetime() if bars is not None and not bars.df.empty else None
         self.vars.observations.append({"now": now, "latest_bar_close": latest_bar_close})
         if self.first_iteration:
             self.submit_order(self.create_order(AAPL, 5, "buy"))
@@ -237,9 +256,15 @@ def test_run_backtest_never_lets_the_strategy_observe_an_unclosed_bar(tmp_path: 
     strategy = _placeholder_strategy(RecordingStrategy, tmp_path, start)
 
     run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     observations = strategy.vars.observations
@@ -277,9 +302,15 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     broker = strategy.broker
@@ -298,15 +329,8 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     # runner.py's own dedup algorithm): before the fill, equity is just the untouched
     # budget; from the fill's session onward, it's settled cash plus the 5-share
     # position revalued at that session's own closing price.
-    expected_equity = [
-        10000.0
-        if session.close < fill_time
-        else float(cash_after_fill + 5 * Decimal(str(close)))
-        for session, close in zip(sessions, aapl_closes, strict=True)
-    ]
-    expected_returns = pd.Series(
-        expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])
-    ).pct_change().dropna()
+    expected_equity = [10000.0 if session.close < fill_time else float(cash_after_fill + 5 * Decimal(str(close))) for session, close in zip(sessions, aapl_closes, strict=True)]
+    expected_returns = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])).pct_change().dropna()
     assert len(expected_returns) == len(sessions) - 1  # one return per day-over-day session gap
 
     expected_total_return = float((1 + expected_returns).prod() - 1)
@@ -348,9 +372,15 @@ def test_run_backtest_annualizes_metrics_at_session_cadence_even_with_a_minute_t
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="minute",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     total_return = result.metrics["total_return_strategy"]
@@ -390,14 +420,18 @@ def test_run_backtest_fetches_the_benchmark_at_daily_cadence_even_with_a_minute_
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="minute",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="minute",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
-    expected_benchmark_returns = pd.Series(
-        [400.0, 404.0, 396.0, 412.0], index=pd.DatetimeIndex([s.close for s in sessions])
-    ).pct_change().dropna()
+    expected_benchmark_returns = pd.Series([400.0, 404.0, 396.0, 412.0], index=pd.DatetimeIndex([s.close for s in sessions])).pct_change().dropna()
     expected_total_return_benchmark = float((1 + expected_benchmark_returns).prod() - 1)
 
     assert result.metrics["total_return_benchmark"] == pytest.approx(expected_total_return_benchmark, rel=1e-9)
@@ -416,9 +450,15 @@ def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_co
     start = sessions[0].open - timedelta(hours=1)
     strategy = _placeholder_strategy(strategy_cls, tmp_path, start)
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
     # Premise of the whole finding, verified rather than assumed: the raw ledger really
     # is oversampled relative to sessions, so a session-cadence parquet is a real
@@ -475,9 +515,15 @@ def test_run_backtest_reaches_the_last_session_when_end_is_a_bare_midnight(tmp_p
     end = datetime.combine(sessions[-1].close.date(), time(0), tzinfo=ET)  # midnight BEFORE the last session opens
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
     result = run_backtest(
-        strategy, start=start, end=end,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=end,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     equity = pd.read_parquet(result.run_dir / "equity.parquet")
@@ -526,9 +572,15 @@ def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp
     strategy = _placeholder_strategy(LateCloseBuyOnceStrategy, tmp_path, start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     broker = strategy.broker
@@ -543,17 +595,10 @@ def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp
     # Same ground-truth formula as the default-timing test: correct per-session
     # equity, built from the broker's actual recorded fill, does not depend on
     # `minutes_after_closing`.
-    expected_equity = [
-        10000.0
-        if session.close < fill_time
-        else float(cash_after_fill + 5 * Decimal(str(close)))
-        for session, close in zip(sessions, aapl_closes, strict=True)
-    ]
+    expected_equity = [10000.0 if session.close < fill_time else float(cash_after_fill + 5 * Decimal(str(close))) for session, close in zip(sessions, aapl_closes, strict=True)]
     assert expected_equity == [10000.0, 10000.0, pytest.approx(10005.0), pytest.approx(10015.0)]
 
-    expected_returns = pd.Series(
-        expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])
-    ).pct_change().dropna()
+    expected_returns = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])).pct_change().dropna()
     expected_total_return = float((1 + expected_returns).prod() - 1)
     expected_cagr = (1 + expected_total_return) ** (252 / len(expected_returns)) - 1
 
@@ -613,9 +658,15 @@ def test_run_backtest_widens_only_the_eager_benchmark_load_by_warmup(tmp_path: P
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
 
     run_backtest(
-        strategy, start=start, end=end,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=end,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
         warmup_trading_days=10,
     )
 
@@ -640,9 +691,15 @@ def test_run_backtest_warmup_never_becomes_an_extra_simulated_session(tmp_path: 
         strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / subdir, start)
 
         result = run_backtest(
-            strategy, start=start, end=sessions[-1].close,
-            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            slippage=Decimal(0), risk_free_rate=0.0,
+            strategy,
+            start=start,
+            end=sessions[-1].close,
+            budget=Decimal(10000),
+            data_source=source,
+            benchmark="SPY",
+            timestep="day",
+            slippage=Decimal(0),
+            risk_free_rate=0.0,
             warmup_trading_days=warmup_trading_days,
         )
         return len(pd.read_parquet(result.run_dir / "equity.parquet"))
@@ -661,9 +718,15 @@ def test_run_backtest_records_warmup_trading_days_in_settings(tmp_path: Path) ->
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "explicit", start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
         warmup_trading_days=10,
     )
     settings = json.loads((result.run_dir / "settings.json").read_text())
@@ -681,9 +744,15 @@ def test_run_backtest_defaults_warmup_trading_days_to_zero_in_settings(tmp_path:
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "default", start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
     settings = json.loads((result.run_dir / "settings.json").read_text())
     assert settings["warmup_trading_days"] == 0
@@ -709,9 +778,15 @@ def test_run_backtest_rejects_negative_warmup_trading_days_with_value_error(tmp_
 
     with pytest.raises(ValueError, match="trading_days must be >= 0"):
         run_backtest(
-            strategy, start=start, end=sessions[-1].close,
-            budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-            slippage=Decimal(0), risk_free_rate=0.0,
+            strategy,
+            start=start,
+            end=sessions[-1].close,
+            budget=Decimal(10000),
+            data_source=source,
+            benchmark="SPY",
+            timestep="day",
+            slippage=Decimal(0),
+            risk_free_rate=0.0,
             warmup_trading_days=-1,
         )
     assert not source.load_calls  # rejected before any data was even requested
@@ -730,9 +805,7 @@ def test_run_backtest_captures_warnings_logged_during_the_eager_data_load(tmp_pa
     class WarningOnLoadDataSource(FakeBacktestDataSource):
         def load(self, assets, start, end, timestep) -> None:
             super().load(assets, start, end, timestep)
-            logging.getLogger("trading_agent_framework.backtesting.data.yahoo").warning(
-                "No Yahoo data for %s in range %s to %s", "GONE", start.date(), end.date()
-            )
+            logging.getLogger("trading_agent_framework.backtesting.data.yahoo").warning("No Yahoo data for %s in range %s to %s", "GONE", start.date(), end.date())
 
     sessions = _sessions(date(2026, 1, 5), 2)
     source = WarningOnLoadDataSource()
@@ -744,9 +817,15 @@ def test_run_backtest_captures_warnings_logged_during_the_eager_data_load(tmp_pa
     strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path / "warn_on_load", start)
 
     result = run_backtest(
-        strategy, start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     log_content = (result.run_dir / "backtest.log").read_text(encoding="utf-8")
@@ -766,17 +845,29 @@ def test_run_backtest_records_fee_totals_in_settings(tmp_path: Path) -> None:
     source, sessions = _four_session_source()
     start = sessions[0].open - timedelta(hours=1)
     result = run_backtest(
-        _placeholder_strategy(BuyOnceStrategy, tmp_path, start), start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        fees=TradingFeeFactory(BrokerKind.IBKR), slippage=Decimal(0), risk_free_rate=0.0,
+        _placeholder_strategy(BuyOnceStrategy, tmp_path, start),
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        fees=TradingFeeFactory(BrokerKind.IBKR),
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     [fill] = pd.read_parquet(result.run_dir / "trades.parquet").to_dict("records")
     expected = {
-        "broker": "ibkr", "buy_orders": 1, "sell_orders": 0,
-        "buy_shares": 5.0, "sell_shares": 0.0,
-        "buy_value": pytest.approx(fill["price"] * 5), "sell_value": 0.0,
-        "buy_fees": 1.01, "sell_fees": 0.0,  # IBKR: max(1, 5 * 0.005) + CAT 0.000015
+        "broker": "ibkr",
+        "buy_orders": 1,
+        "sell_orders": 0,
+        "buy_shares": 5.0,
+        "sell_shares": 0.0,
+        "buy_value": pytest.approx(fill["price"] * 5),
+        "sell_value": 0.0,
+        "buy_fees": 1.01,
+        "sell_fees": 0.0,  # IBKR: max(1, 5 * 0.005) + CAT 0.000015
     }
     assert result.settings["fees"] == expected
     assert json.loads((result.run_dir / "settings.json").read_text())["fees"] == expected
@@ -787,23 +878,42 @@ def test_run_backtest_records_zero_fee_totals_without_trades(tmp_path: Path) -> 
     source, sessions = _four_session_source()
     start = sessions[0].open - timedelta(hours=1)
     result = run_backtest(
-        _placeholder_strategy(IdleStrategy, tmp_path, start), start=start, end=sessions[-1].close,
-        budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day",
-        slippage=Decimal(0), risk_free_rate=0.0,
+        _placeholder_strategy(IdleStrategy, tmp_path, start),
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
     )
 
     assert result.settings["fees"] == {
-        "broker": None, "buy_orders": 0, "sell_orders": 0,
-        "buy_shares": 0.0, "sell_shares": 0.0, "buy_value": 0.0, "sell_value": 0.0,
-        "buy_fees": 0.0, "sell_fees": 0.0,
+        "broker": None,
+        "buy_orders": 0,
+        "sell_orders": 0,
+        "buy_shares": 0.0,
+        "sell_shares": 0.0,
+        "buy_value": 0.0,
+        "sell_value": 0.0,
+        "buy_fees": 0.0,
+        "sell_fees": 0.0,
     }
 
 
 def _fill(side: OrderSide, quantity: str, price: str, fee: str) -> FillRecord:
     return FillRecord(
-        time=datetime(2026, 1, 5, 16, tzinfo=UTC), identifier="x", symbol="AAPL", side=side,
-        order_type=OrderType.MARKET, quantity=Decimal(quantity), filled_quantity=Decimal(quantity),
-        price=Decimal(price), trade_cost=Decimal(fee), trade_slippage=Decimal(0),
+        time=datetime(2026, 1, 5, 16, tzinfo=UTC),
+        identifier="x",
+        symbol="AAPL",
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(quantity),
+        filled_quantity=Decimal(quantity),
+        price=Decimal(price),
+        trade_cost=Decimal(fee),
+        trade_slippage=Decimal(0),
     )
 
 
@@ -816,6 +926,12 @@ def test_fee_totals_sum_each_side_separately() -> None:
 
     assert _fee_totals(fills, TradingFeeFactory(BrokerKind.ALPACA)) == {
         "broker": "alpaca",
-        "buy_orders": 2, "buy_shares": 15.0, "buy_value": 1510.0, "buy_fees": 2.02,
-        "sell_orders": 1, "sell_shares": 15.0, "sell_value": 1650.0, "sell_fees": 2.05,
+        "buy_orders": 2,
+        "buy_shares": 15.0,
+        "buy_value": 1510.0,
+        "buy_fees": 2.02,
+        "sell_orders": 1,
+        "sell_shares": 15.0,
+        "sell_value": 1650.0,
+        "sell_fees": 2.05,
     }

@@ -118,10 +118,7 @@ def _meta(models: list[tuple[str, str, str]], started: str, finished: str) -> di
     return {
         "started_at": started,
         "finished_at": finished,
-        "models": [
-            {"key": key, "display_name": name, "start_function": f"vllmStart{key}", "port": 8000 + i, "served_name": served}
-            for i, (key, name, served) in enumerate(models)
-        ],
+        "models": [{"key": key, "display_name": name, "start_function": f"vllmStart{key}", "port": 8000 + i, "served_name": served} for i, (key, name, served) in enumerate(models)],
         "vllm_versions": {key: "0.30.0" for key, _, _ in models},
         "repeats": 2,
         "timeout_s": 360.0,
@@ -132,16 +129,27 @@ def _meta(models: list[tuple[str, str, str]], started: str, finished: str) -> di
 
 def _summary(key: str, name: str, **fields: Any) -> dict[str, Any]:
     entry = {
-        "key": key, "display_name": name, "ran": True, "error": None,
-        "overall": 0.5, "mean_partial": 0.9, "categories": {"reasoning": 0.5, "tools": 0.5},
+        "key": key,
+        "display_name": name,
+        "ran": True,
+        "error": None,
+        "overall": 0.5,
+        "mean_partial": 0.9,
+        "categories": {"reasoning": 0.5, "tools": 0.5},
         # Keys sorted alphabetically, like the real file -- NOT in meta.json's scenario order.
         "scenarios": {
             "reasoning.headline_trap": {"passed": 2, "runs": 2, "mean_partial": 1.0},
             "reasoning.rsi_signal": {"passed": 0, "runs": 2, "mean_partial": 0.8},
             "tools.limit_order": {"passed": 1, "runs": 2, "mean_partial": 0.9},
         },
-        "runs_passed": 3, "runs_total": 6, "text_tool_calls": 0, "avg_tool_calls": 3.24,
-        "median_run_s": 4.9, "median_tokens_per_s": 131.7, "timeouts": 0, "errors": 0,
+        "runs_passed": 3,
+        "runs_total": 6,
+        "text_tool_calls": 0,
+        "avg_tool_calls": 3.24,
+        "median_run_s": 4.9,
+        "median_tokens_per_s": 131.7,
+        "timeouts": 0,
+        "errors": 0,
     }
     entry.update(fields)
     return entry
@@ -164,11 +172,22 @@ def record(
             {"type": "max_tool_calls", "passed": True, "reason": "4 tool calls (max 10)"},
         ]
     return {
-        "scenario_id": scenario_id, "category": scenario_id.split(".")[0], "repeat": repeat,
-        "status": status, "passed": passed, "partial": partial, "checks": checks,
+        "scenario_id": scenario_id,
+        "category": scenario_id.split(".")[0],
+        "repeat": repeat,
+        "status": status,
+        "passed": passed,
+        "partial": partial,
+        "checks": checks,
         "metrics": {
-            "total_s": 6.906, "tool_calls": 4, "model_calls": 5, "tool_arg_errors": 0, "text_tool_calls": 0,
-            "completion_tokens": 882, "reasoning_chars": 2506, "tokens_per_s": 121.35,
+            "total_s": 6.906,
+            "tool_calls": 4,
+            "model_calls": 5,
+            "tool_arg_errors": 0,
+            "text_tool_calls": 0,
+            "completion_tokens": 882,
+            "reasoning_chars": 2506,
+            "tokens_per_s": 121.35,
         },
         "error": error,
         "trace": {"sessions": [{"index": 1, "prompt": "p", "messages": [{"role": "human", "content": "x" * 50}]}]},
@@ -184,51 +203,90 @@ def build_results_tree(base: Path) -> Path:
     OLDER (glm + gptoss where gptoss did not run), IN_PROGRESS (no summary.json),
     a non-timestamp folder and a stray file. Returns `base`."""
     latest = base / LATEST
-    write_json(latest / "meta.json", _meta(
-        [("glm", "GLM-4.7-Flash", "glm-4.7-flash"), ("qwen3627b", "Qwen3.6-27B-AWQ", "qwen3.6-27b-awq")],
-        "2026-09-27T13:22:43", "2026-09-27T16:08:15",
-    ))
-    write_json(latest / "summary.json", [
-        _summary("glm", "GLM-4.7-Flash"),
-        _summary(
-            "qwen3627b", "Qwen3.6-27B-AWQ",
-            overall=0.83, mean_partial=0.99, categories={"reasoning": 0.75, "tools": 1.0},
-            scenarios={
-                "reasoning.headline_trap": {"passed": 2, "runs": 2, "mean_partial": 1.0},
-                "reasoning.rsi_signal": {"passed": 1, "runs": 2, "mean_partial": 0.96},
-                "tools.limit_order": {"passed": 2, "runs": 2, "mean_partial": 1.0},
-            },
-            runs_passed=5, text_tool_calls=1, avg_tool_calls=3.51, median_run_s=29.7,
-            median_tokens_per_s=44.5, timeouts=1,
+    write_json(
+        latest / "meta.json",
+        _meta(
+            [("glm", "GLM-4.7-Flash", "glm-4.7-flash"), ("qwen3627b", "Qwen3.6-27B-AWQ", "qwen3.6-27b-awq")],
+            "2026-09-27T13:22:43",
+            "2026-09-27T16:08:15",
         ),
-    ])
-    _write_jsonl(latest / "qwen3627b.jsonl", [
-        record("reasoning.rsi_signal", 2, passed=False, partial=0.0, status="timeout", error="run exceeded 360s", checks=[]),
-        record("reasoning.headline_trap", 1, passed=True, partial=1.0),
-        "{not json",
-        record("reasoning.rsi_signal", 1, passed=True, partial=1.0),
-        record("tools.limit_order", 1, passed=True, partial=1.0),
-    ])
-    _write_jsonl(latest / "glm.jsonl", [
-        record("reasoning.rsi_signal", 1, passed=False, partial=0.8),
-        record("reasoning.rsi_signal", 2, passed=False, partial=0.8),
-    ])
+    )
+    write_json(
+        latest / "summary.json",
+        [
+            _summary("glm", "GLM-4.7-Flash"),
+            _summary(
+                "qwen3627b",
+                "Qwen3.6-27B-AWQ",
+                overall=0.83,
+                mean_partial=0.99,
+                categories={"reasoning": 0.75, "tools": 1.0},
+                scenarios={
+                    "reasoning.headline_trap": {"passed": 2, "runs": 2, "mean_partial": 1.0},
+                    "reasoning.rsi_signal": {"passed": 1, "runs": 2, "mean_partial": 0.96},
+                    "tools.limit_order": {"passed": 2, "runs": 2, "mean_partial": 1.0},
+                },
+                runs_passed=5,
+                text_tool_calls=1,
+                avg_tool_calls=3.51,
+                median_run_s=29.7,
+                median_tokens_per_s=44.5,
+                timeouts=1,
+            ),
+        ],
+    )
+    _write_jsonl(
+        latest / "qwen3627b.jsonl",
+        [
+            record("reasoning.rsi_signal", 2, passed=False, partial=0.0, status="timeout", error="run exceeded 360s", checks=[]),
+            record("reasoning.headline_trap", 1, passed=True, partial=1.0),
+            "{not json",
+            record("reasoning.rsi_signal", 1, passed=True, partial=1.0),
+            record("tools.limit_order", 1, passed=True, partial=1.0),
+        ],
+    )
+    _write_jsonl(
+        latest / "glm.jsonl",
+        [
+            record("reasoning.rsi_signal", 1, passed=False, partial=0.8),
+            record("reasoning.rsi_signal", 2, passed=False, partial=0.8),
+        ],
+    )
     (latest / "glm.vllm.log").write_text("vllm log\n", encoding="utf-8")
 
     older = base / OLDER
-    write_json(older / "meta.json", _meta(
-        [("glm", "GLM-4.7-Flash", "glm-4.7-flash"), ("gptoss", "Gpt-OSS-20b", "gpt-oss-20b")],
-        "2026-09-25T23:36:46", "2026-09-26T00:46:00",
-    ))
-    write_json(older / "summary.json", [
-        _summary("glm", "GLM-4.7-Flash"),
-        {
-            "key": "gptoss", "display_name": "Gpt-OSS-20b", "ran": False, "error": "vLLM server failed to start",
-            "overall": None, "mean_partial": None, "categories": {}, "scenarios": {},
-            "runs_passed": 0, "runs_total": 0, "text_tool_calls": 0, "avg_tool_calls": None,
-            "median_run_s": None, "median_tokens_per_s": None, "timeouts": 0, "errors": 0,
-        },
-    ])
+    write_json(
+        older / "meta.json",
+        _meta(
+            [("glm", "GLM-4.7-Flash", "glm-4.7-flash"), ("gptoss", "Gpt-OSS-20b", "gpt-oss-20b")],
+            "2026-09-25T23:36:46",
+            "2026-09-26T00:46:00",
+        ),
+    )
+    write_json(
+        older / "summary.json",
+        [
+            _summary("glm", "GLM-4.7-Flash"),
+            {
+                "key": "gptoss",
+                "display_name": "Gpt-OSS-20b",
+                "ran": False,
+                "error": "vLLM server failed to start",
+                "overall": None,
+                "mean_partial": None,
+                "categories": {},
+                "scenarios": {},
+                "runs_passed": 0,
+                "runs_total": 0,
+                "text_tool_calls": 0,
+                "avg_tool_calls": None,
+                "median_run_s": None,
+                "median_tokens_per_s": None,
+                "timeouts": 0,
+                "errors": 0,
+            },
+        ],
+    )
     _write_jsonl(older / "glm.jsonl", [record("reasoning.rsi_signal", 1, passed=False, partial=0.8)])
 
     write_json(base / IN_PROGRESS / "meta.json", _meta([("glm", "GLM-4.7-Flash", "glm-4.7-flash")], "2026-09-28T09:00:00", ""))
@@ -391,7 +449,7 @@ def test_the_default_sits_next_to_the_project_root_not_the_cwd(tmp_path: Path) -
 Add to `MODULES` in `tests/dashboard/test_package_imports.py` (after `"trading_agent_framework.dashboard.reader",`):
 
 ```python
-    "trading_agent_framework.dashboard.benchmark_reader",
+("trading_agent_framework.dashboard.benchmark_reader",)
 ```
 
 - [ ] **Step 3: Run the tests to verify they fail**
@@ -584,9 +642,7 @@ def _build_run(ref: BenchmarkRunRef, meta: dict[str, Any], summary: Any) -> Benc
         repeats=int(meta["repeats"]),
         timeout_s=float(meta["timeout_s"]),
         scenarios=tuple(str(scenario) for scenario in meta["scenarios"]),
-        models=tuple(
-            _build_model(entry, meta_models.get(entry["key"], {}), versions.get(entry["key"])) for entry in summary
-        ),
+        models=tuple(_build_model(entry, meta_models.get(entry["key"], {}), versions.get(entry["key"])) for entry in summary),
     )
 
 
@@ -602,9 +658,7 @@ def _build_model(entry: dict[str, Any], meta_model: dict[str, Any], vllm_version
         mean_partial=_opt_float(entry.get("mean_partial")),
         categories={str(name): float(score) for name, score in (entry.get("categories") or {}).items()},
         scenarios={
-            str(scenario_id): ScenarioScore(
-                passed=int(score["passed"]), runs=int(score["runs"]), mean_partial=float(score["mean_partial"])
-            )
+            str(scenario_id): ScenarioScore(passed=int(score["passed"]), runs=int(score["runs"]), mean_partial=float(score["mean_partial"]))
             for scenario_id, score in (entry.get("scenarios") or {}).items()
         },
         runs_passed=_opt_int(entry.get("runs_passed")),
@@ -676,7 +730,11 @@ def test_scenario_runs_are_filtered_and_sorted_by_repeat(results: Path) -> None:
     assert (first.status, first.passed, first.partial) == ("ok", True, 1.0)
     assert first.checks[0] == Check(type="called", passed=True, reason="found")
     assert (first.total_s, first.tool_calls, first.model_calls, first.tokens_per_s, first.completion_tokens) == (
-        6.906, 4, 5, 121.35, 882,
+        6.906,
+        4,
+        5,
+        121.35,
+        882,
     )
 
 
@@ -770,7 +828,7 @@ def load_scenario_runs(ref: BenchmarkRunRef, model_key: str, scenario_id: str) -
                     if record["scenario_id"] != scenario_id:
                         continue
                     runs.append(_build_scenario_run(record))
-                except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+                except json.JSONDecodeError, KeyError, TypeError, ValueError:
                     skipped += 1
     except OSError as exc:
         raise BenchmarkReadError(f"Cannot read {path.name}: {exc}") from exc
@@ -786,10 +844,7 @@ def _build_scenario_run(record: dict[str, Any]) -> ScenarioRun:
         passed=bool(record["passed"]),
         partial=float(record["partial"]),
         error=record.get("error"),
-        checks=tuple(
-            Check(type=str(check["type"]), passed=bool(check["passed"]), reason=str(check.get("reason", "")))
-            for check in record.get("checks") or []
-        ),
+        checks=tuple(Check(type=str(check["type"]), passed=bool(check["passed"]), reason=str(check.get("reason", ""))) for check in record.get("checks") or []),
         total_s=_opt_float(metrics.get("total_s")),
         tool_calls=_opt_int(metrics.get("tool_calls")),
         model_calls=_opt_int(metrics.get("model_calls")),
@@ -892,11 +947,16 @@ from trading_agent_framework.dashboard.benchmark_reader import BENCHMARK_DIR_FLA
 # Streamlit reads .streamlit/config.toml from the working directory, not the app's, so the dark
 # trading theme travels as flags. User-supplied args come later and win.
 THEME_ARGS = [
-    "--theme.base", "dark",
-    "--theme.backgroundColor", "#0b0e14",
-    "--theme.secondaryBackgroundColor", "#131722",
-    "--theme.textColor", "#d1d4dc",
-    "--theme.primaryColor", "#22d3ee",
+    "--theme.base",
+    "dark",
+    "--theme.backgroundColor",
+    "#0b0e14",
+    "--theme.secondaryBackgroundColor",
+    "#131722",
+    "--theme.textColor",
+    "#d1d4dc",
+    "--theme.primaryColor",
+    "#22d3ee",
 ]
 
 
@@ -1249,9 +1309,7 @@ def _pct(value: float | None) -> float | None:
     return None if value is None else round(value * 100, 4)
 
 
-def benchmark_category_chart(
-    models: Sequence[BenchmarkModel], categories: Sequence[str], title: str = "Scores by category"
-) -> go.Figure:
+def benchmark_category_chart(models: Sequence[BenchmarkModel], categories: Sequence[str], title: str = "Scores by category") -> go.Figure:
     """Grouped horizontal bars: one group per category, one bar (trace) per model."""
     labels = [category.capitalize() for category in categories]
     fig = go.Figure()
@@ -1391,10 +1449,7 @@ def benchmark_summary_frame(models: Sequence[BenchmarkModel], categories: Sequen
 def render_benchmark_summary_table(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> None:
     frame = benchmark_summary_frame(models, categories)
     score_columns = ["Overall", *(category.capitalize() for category in categories)]
-    column_config = {
-        column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%")
-        for column in score_columns
-    }
+    column_config = {column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%") for column in score_columns}
     column_config |= {
         "Avg tool calls": st.column_config.NumberColumn(format="%.2f"),
         "Median run (s)": st.column_config.NumberColumn(format="%.1f"),
@@ -1511,9 +1566,7 @@ def test_drill_down_defaults_to_the_winners_worst_scenario(results: Path, monkey
     assert any("1 malformed line" in caption.value for caption in at.caption)
 
 
-def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(
-    results: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_switching_to_an_older_run_warns_about_the_model_that_did_not_run(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     at = _app(results, monkeypatch)
     at.sidebar.selectbox[0].set_value(OLDER).run()
 
@@ -1561,7 +1614,7 @@ def test_the_models_sidebar_has_no_backtesting_buttons(results: Path, monkeypatc
 Add to `MODULES` in `tests/dashboard/test_package_imports.py`:
 
 ```python
-    "trading_agent_framework.dashboard._pages.models",
+("trading_agent_framework.dashboard._pages.models",)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1574,9 +1627,7 @@ Expected: FAIL — every test reports an exception from the script (`ModuleNotFo
 In `src/trading_agent_framework/dashboard/components/metric_cards.py`, change the signature and colour choice of `render_metric_card`:
 
 ```python
-def render_metric_card(
-    label: str, value: float | str, fmt: str = ".2f", is_pct: bool = True, tone: str | None = None
-) -> None:
+def render_metric_card(label: str, value: float | str, fmt: str = ".2f", is_pct: bool = True, tone: str | None = None) -> None:
     """Render a single KPI metric card. Use inside st.columns().
 
     `tone` ("positive"/"negative") overrides the colour, which otherwise follows the sign of a numeric value.
@@ -1644,10 +1695,7 @@ def page_models() -> None:
 
     refs = br.scan_benchmark_runs(results_dir)
     if not refs:
-        st.info(
-            f"No complete benchmark run found in `{results_dir}`. Run the benchmark, or point the "
-            "dashboard at its results with `uv run dashboard --benchmark-dir PATH`."
-        )
+        st.info(f"No complete benchmark run found in `{results_dir}`. Run the benchmark, or point the dashboard at its results with `uv run dashboard --benchmark-dir PATH`.")
         return
 
     loaded: dict[str, BenchmarkRun | br.BenchmarkReadError] = {}
@@ -1728,14 +1776,10 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
         render_metric_card("🏆 Best overall", f"{best.display_name} · {(best.overall or 0.0):.0%}")
     with cols[1]:
         fastest = max(timed, key=lambda m: m.median_tokens_per_s) if timed else None
-        render_metric_card(
-            "⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—"
-        )
+        render_metric_card("⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—")
     with cols[2]:
         quickest = min(quick, key=lambda m: m.median_run_s) if quick else None
-        render_metric_card(
-            "⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—"
-        )
+        render_metric_card("⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—")
     with cols[3]:
         render_metric_card("🛠 Text tool calls", str(text_calls), tone="negative" if text_calls else "positive")
 
@@ -1756,9 +1800,7 @@ def _render_drill_down(run: BenchmarkRun, ran: Sequence[BenchmarkModel]) -> None
     left, right = st.columns(2)
     with left:
         # Keys are scoped to the run, so switching runs resets both pickers.
-        model_key = st.selectbox(
-            "Model", keys, index=keys.index(best.key), format_func=names.__getitem__, key=f"drill_model_{run.ref.run_id}"
-        )
+        model_key = st.selectbox("Model", keys, index=keys.index(best.key), format_func=names.__getitem__, key=f"drill_model_{run.ref.run_id}")
     model = next(m for m in ran if m.key == model_key)
     scenarios = list(run.scenarios)
     with right:
@@ -1865,8 +1907,8 @@ def test_backtesting_is_the_default_tab_with_its_sidebar(run_dir: Path) -> None:
 Add to `MODULES` in `tests/dashboard/test_package_imports.py`:
 
 ```python
-    "trading_agent_framework.dashboard._pages.backtesting",
-    "trading_agent_framework.dashboard.app",
+("trading_agent_framework.dashboard._pages.backtesting",)
+("trading_agent_framework.dashboard.app",)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -1920,8 +1962,7 @@ from trading_agent_framework.dashboard.reader import load_description, save_desc
 
 
 @st.dialog("Edit Description", width="large")
-def edit_description_dialog():
-    ...  # copied unchanged from app.py
+def edit_description_dialog(): ...  # copied unchanged from app.py
 
 
 def page_backtesting():
@@ -1970,10 +2011,7 @@ def main():
     )
     apply_theme()
     st.logo(str(ASSETS / "logo.svg"), icon_image=str(ASSETS / "logo-icon.svg"), size="large")
-    pages = [
-        st.Page(page, title=title, url_path=url_path, default=(i == 0))
-        for i, (title, url_path, page) in enumerate(NAV_PAGES)
-    ]
+    pages = [st.Page(page, title=title, url_path=url_path, default=(i == 0)) for i, (title, url_path, page) in enumerate(NAV_PAGES)]
     st.navigation(pages, position="top").run()
 
 

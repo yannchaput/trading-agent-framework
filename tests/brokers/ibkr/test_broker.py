@@ -44,8 +44,12 @@ def broker(ib: FakeIB) -> Iterator[IbkrBroker]:
     data = FakeStockHistoricalDataClient()
     data.trades = {"AAPL": make_alpaca_trade("AAPL", 100.5)}
     built = IbkrBroker(
-        "s", connection, market_data=AlpacaMarketData(data, FakeTradingClient()), client_id=1,
-        clock=FakeClock(et(2026, 9, 22, 10)), ack_timeout=0.2,
+        "s",
+        connection,
+        market_data=AlpacaMarketData(data, FakeTradingClient()),
+        client_id=1,
+        clock=FakeClock(et(2026, 9, 22, 10)),
+        ack_timeout=0.2,
     )
     yield built
     connection.disconnect()
@@ -358,7 +362,10 @@ def test_from_settings_connects_and_checks_the_account(ib: FakeIB) -> None:
     connection = IbkrConnection(SETTINGS, ib_factory=lambda: ib)
 
     built = IbkrBroker.from_settings(
-        "s", SETTINGS, data=AlpacaCredentials("k", "s"), connection=connection,
+        "s",
+        SETTINGS,
+        data=AlpacaCredentials("k", "s"),
+        connection=connection,
         market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
     )
     try:
@@ -375,7 +382,10 @@ def test_from_settings_disconnects_when_the_account_check_fails(ib: FakeIB) -> N
 
     with pytest.raises(ConfigurationError, match="BROKER_API_IS_PAPER"):
         IbkrBroker.from_settings(
-            "s", live, data=AlpacaCredentials("k", "s"), connection=connection,
+            "s",
+            live,
+            data=AlpacaCredentials("k", "s"),
+            connection=connection,
             market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
         )
 
@@ -390,7 +400,10 @@ def test_from_settings_disconnects_when_connection_start_itself_fails() -> None:
 
     with pytest.raises(BrokerError, match="boom"):
         IbkrBroker.from_settings(
-            "s", SETTINGS, data=AlpacaCredentials("k", "s"), connection=connection,
+            "s",
+            SETTINGS,
+            data=AlpacaCredentials("k", "s"),
+            connection=connection,
             market_data=AlpacaMarketData(FakeStockHistoricalDataClient(), FakeTradingClient()),
         )
 

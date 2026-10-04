@@ -11,12 +11,8 @@ from trading_agent_framework.core.strategy import Strategy
 _START = et(2026, 9, 14, 9, 0)
 
 
-def _strategy(
-    tmp_path: Path, mode: TradingMode = TradingMode.PAPER, name: str = "momentum"
-) -> Strategy:
-    return Strategy(
-        FakeBroker(FakeClock(_START), strategy_name=name), mode=mode, project_root=tmp_path
-    )
+def _strategy(tmp_path: Path, mode: TradingMode = TradingMode.PAPER, name: str = "momentum") -> Strategy:
+    return Strategy(FakeBroker(FakeClock(_START), strategy_name=name), mode=mode, project_root=tmp_path)
 
 
 def test_memory_is_opened_lazily_and_cached(tmp_path: Path) -> None:

@@ -47,8 +47,12 @@ def test_get_last_price_without_data_returns_an_error() -> None:
 def test_get_quote_returns_bid_ask_and_mid() -> None:
     strategy, broker = _strategy()
     broker.quotes["SPY"] = Quote(
-        asset=Asset("SPY"), bid=Decimal("450"), ask=Decimal("451"),
-        bid_size=None, ask_size=None, timestamp=datetime(2026, 9, 14, 14, tzinfo=UTC),
+        asset=Asset("SPY"),
+        bid=Decimal("450"),
+        ask=Decimal("451"),
+        bid_size=None,
+        ask_size=None,
+        timestamp=datetime(2026, 9, 14, 14, tzinfo=UTC),
     )
     tools = _tools(strategy)
 

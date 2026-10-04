@@ -60,9 +60,7 @@ def conform_order(order: Order) -> Order:
         raise OrderValidationError(f"order {order.identifier} has no quantity")
     whole = order.quantity.to_integral_value(rounding=ROUND_FLOOR)
     if whole < 1:
-        raise OrderValidationError(
-            f"order {order.identifier} for {order.quantity} {order.asset.symbol} is below one whole share (IBKR trades whole shares only)"
-        )
+        raise OrderValidationError(f"order {order.identifier} for {order.quantity} {order.asset.symbol} is below one whole share (IBKR trades whole shares only)")
     if whole != order.quantity:
         logger.warning("IBKR trades whole shares only: %s quantity %s floored to %s", order.asset.symbol, order.quantity, whole)
         order.quantity = whole
@@ -152,7 +150,7 @@ def map_status_event(status: str) -> OrderEvent | None:
 def identifier_from_order_ref(order_ref: str, strategy_name: str) -> str | None:
     prefix = f"{strategy_name}:"
     if order_ref.startswith(prefix) and len(order_ref) > len(prefix):
-        return order_ref[len(prefix):]
+        return order_ref[len(prefix) :]
     return None
 
 

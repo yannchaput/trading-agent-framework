@@ -67,9 +67,7 @@ class FakeBacktestDataSource(BacktestDataSource):
         return [s for s in self._sessions if first_date <= s.open.astimezone(_MARKET_TZ).date() <= last_date]
 
 
-def make_close_indexed_frame(
-    closes: list[float], *, start: datetime, freq: str = "1D"
-) -> pd.DataFrame:
+def make_close_indexed_frame(closes: list[float], *, start: datetime, freq: str = "1D") -> pd.DataFrame:
     """An OHLCV frame indexed by bar CLOSE (see `data/base.py`'s convention).
     high = close + 1, low = close - 1, matching `tests/fakes.py:make_bars_frame`'s shape."""
     index = pd.date_range(start, periods=len(closes), freq=freq, name="timestamp")

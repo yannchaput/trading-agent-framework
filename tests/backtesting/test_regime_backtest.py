@@ -43,9 +43,37 @@ def _sessions(first_day: date, count: int) -> list[MarketSession]:
 NYSE_HOLIDAYS = frozenset(
     date(*ymd)
     for ymd in [
-        (2024, 1, 1), (2024, 1, 15), (2024, 2, 19), (2024, 3, 29), (2024, 5, 27), (2024, 6, 19), (2024, 7, 4), (2024, 9, 2), (2024, 11, 28), (2024, 12, 25),
-        (2025, 1, 1), (2025, 1, 9), (2025, 1, 20), (2025, 2, 17), (2025, 4, 18), (2025, 5, 26), (2025, 6, 19), (2025, 7, 4), (2025, 9, 1), (2025, 11, 27), (2025, 12, 25),
-        (2026, 1, 1), (2026, 1, 19), (2026, 2, 16), (2026, 4, 3), (2026, 5, 25), (2026, 6, 19), (2026, 7, 3), (2026, 9, 7), (2026, 11, 26), (2026, 12, 25),
+        (2024, 1, 1),
+        (2024, 1, 15),
+        (2024, 2, 19),
+        (2024, 3, 29),
+        (2024, 5, 27),
+        (2024, 6, 19),
+        (2024, 7, 4),
+        (2024, 9, 2),
+        (2024, 11, 28),
+        (2024, 12, 25),
+        (2025, 1, 1),
+        (2025, 1, 9),
+        (2025, 1, 20),
+        (2025, 2, 17),
+        (2025, 4, 18),
+        (2025, 5, 26),
+        (2025, 6, 19),
+        (2025, 7, 4),
+        (2025, 9, 1),
+        (2025, 11, 27),
+        (2025, 12, 25),
+        (2026, 1, 1),
+        (2026, 1, 19),
+        (2026, 2, 16),
+        (2026, 4, 3),
+        (2026, 5, 25),
+        (2026, 6, 19),
+        (2026, 7, 3),
+        (2026, 9, 7),
+        (2026, 11, 26),
+        (2026, 12, 25),
     ]
 )
 
@@ -61,11 +89,7 @@ def test_the_regime_warmup_covers_min_bars_sessions_for_every_2025_start_date() 
     min_bars = Strategy.regime_params.min_bars
     window = warmup_calendar_days(min_bars + REGIME_WARMUP_SLACK)
     starts = [date(2025, 1, 1) + timedelta(days=offset) for offset in range(365)]
-    short = {
-        start: count
-        for start in starts
-        if start.weekday() < 5 and start not in NYSE_HOLIDAYS and (count := _sessions_between(start - timedelta(days=window), start)) < min_bars
-    }
+    short = {start: count for start in starts if start.weekday() < 5 and start not in NYSE_HOLIDAYS and (count := _sessions_between(start - timedelta(days=window), start)) < min_bars}
     assert short == {}
     # The unslacked window does fall short somewhere (the reviewer's 2025-07-07 included), so the test has teeth.
     assert _sessions_between(date(2025, 7, 7) - timedelta(days=warmup_calendar_days(min_bars)), date(2025, 7, 7)) < min_bars
@@ -92,7 +116,11 @@ def test_a_daily_run_widens_the_warmup_to_the_regime_history(tmp_path: Path, mon
     source = FakeBacktestDataSource()
 
     _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, fees=FEES, warmup_trading_days=requested, timestep="day",
+        start=start,
+        end=end,
+        fees=FEES,
+        warmup_trading_days=requested,
+        timestep="day",
         data_source=lambda window_start, window_end: windows.append((window_start, window_end)) or source,
     )
 
@@ -105,9 +133,7 @@ def test_a_daily_run_widens_the_warmup_to_the_regime_history(tmp_path: Path, mon
 
 @pytest.mark.parametrize("requested", [0, 10, 400])
 @pytest.mark.parametrize("as_instance", [False, True])
-def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_regime_window(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, as_instance: bool
-) -> None:
+def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_regime_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, as_instance: bool) -> None:
     captured: dict[str, object] = {}
     windows: list[tuple[datetime, datetime]] = []
     monkeypatch.setattr("trading_agent_framework.backtesting.runner.run_backtest", lambda strategy, **kwargs: captured.update(kwargs))
@@ -118,7 +144,13 @@ def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_re
 
     # The runner's benchmark argument stays as given; the regime reads `strategy.benchmark_symbol` (SPY).
     _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, fees=FEES, warmup_trading_days=requested, timestep="minute", benchmark="QQQ", data_source=data_source,
+        start=start,
+        end=end,
+        fees=FEES,
+        warmup_trading_days=requested,
+        timestep="minute",
+        benchmark="QQQ",
+        data_source=data_source,
     )
 
     assert captured["warmup_trading_days"] == requested  # not raised for the regime
@@ -142,7 +174,13 @@ def test_a_daily_backtest_has_a_regime_from_its_first_session_and_never_looks_ah
     end = sessions[302].close
 
     result = _strategy(tmp_path, start).run_backtesting(
-        start=start, end=end, budget=Decimal(10000), data_source=source, benchmark="SPY", timestep="day", fees=FEES,
+        start=start,
+        end=end,
+        budget=Decimal(10000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="day",
+        fees=FEES,
     )
 
     assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(273 + REGIME_WARMUP_SLACK)), end)]

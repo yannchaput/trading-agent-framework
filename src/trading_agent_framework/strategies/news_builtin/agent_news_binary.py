@@ -280,7 +280,7 @@ class NewsBinaryStrategy(Strategy):
             if "market_value" not in position:
                 try:
                     price = self.get_last_price(position["symbol"])
-                except (BrokerError, BacktestError):
+                except BrokerError, BacktestError:
                     price = None
                 if price is not None:
                     position["market_value"] = round(position["quantity"] * float(price), 2)

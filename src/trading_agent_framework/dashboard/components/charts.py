@@ -673,7 +673,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
                 line=dict(color="#0891b2", width=2),
                 hovertemplate="$%{y:,.0f}<extra>Portfolio Value</extra>",
             ),
-            row=1, col=1,
+            row=1,
+            col=1,
         )
 
     # ── Buy markers (green ▲) ──
@@ -689,7 +690,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
                 hovertemplate=("<b>BUY</b> %{customdata[0]}<br>Qty: %{customdata[1]:.0f}<br>Price: $%{customdata[2]:,.2f}<br>Cost: $%{customdata[3]:,.2f}<br>Portfolio: $%{y:,.0f}<extra></extra>"),
                 customdata=[(b["symbol"], b["qty"], b["price"], b["cost"]) for b in buys],
             ),
-            row=1, col=1,
+            row=1,
+            col=1,
         )
 
     # ── Sell markers (red ▼) ──
@@ -705,7 +707,8 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
                 hovertemplate=("<b>SELL</b> %{customdata[0]}<br>Qty: %{customdata[1]:.0f}<br>Price: $%{customdata[2]:,.2f}<br>Cost: $%{customdata[3]:,.2f}<br>Portfolio: $%{y:,.0f}<extra></extra>"),
                 customdata=[(s["symbol"], s["qty"], s["price"], s["cost"]) for s in sells],
             ),
-            row=1, col=1,
+            row=1,
+            col=1,
         )
 
     # ── Market regime: a step line on its own row, and one band per run on both rows ──
@@ -722,23 +725,37 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
                 hovertemplate="%{text}<extra>Regime</extra>",
                 showlegend=False,
             ),
-            row=2, col=1,
+            row=2,
+            col=1,
         )
         chart_end = max(pd.to_datetime([regime["times"][-1], *[v["time"] for v in values], *[t["time"] for t in trades]], utc=True))
         # One update_layout for all bands: add_vrect re-processes the growing shapes tuple on every call (quadratic).
         fig.update_layout(
             shapes=[
                 dict(
-                    type="rect", xref=f"x{row if row > 1 else ''}", yref=f"y{row if row > 1 else ''} domain", x0=start, x1=stop, y0=0, y1=1,
-                    fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]), opacity=opacity, line_width=0, layer="below",
+                    type="rect",
+                    xref=f"x{row if row > 1 else ''}",
+                    yref=f"y{row if row > 1 else ''} domain",
+                    x0=start,
+                    x1=stop,
+                    y0=0,
+                    y1=1,
+                    fillcolor=REGIME_BAND_COLORS.get(value, REGIME_BAND_COLORS[0]),
+                    opacity=opacity,
+                    line_width=0,
+                    layer="below",
                 )
                 for start, stop, value in _regime_runs(regime["times"], regime["values"], chart_end)
                 for row, opacity in _REGIME_BAND_OPACITY.items()
             ]
         )
         fig.update_yaxes(
-            range=[-1.3, 1.3], tickvals=[-1, 0, 1], ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
-            title_text=REGIME_PANE, row=2, col=1,
+            range=[-1.3, 1.3],
+            tickvals=[-1, 0, 1],
+            ticktext=[REGIME_AXIS_LABELS[v] for v in (-1, 0, 1)],
+            title_text=REGIME_PANE,
+            row=2,
+            col=1,
         )
 
     fig.update_yaxes(title_text="Portfolio Value ($)", row=1, col=1)
@@ -819,11 +836,13 @@ def agent_calls_chart(calls: pd.DataFrame, title: str = "Agent calls") -> go.Fig
     hover = calls["agent"].tolist()
     fig.add_trace(
         go.Bar(x=calls["ts"], y=calls["latency_ms"] / 1000, text=hover, name="Latency (s)", marker_color="#0891b2"),
-        row=1, col=1,
+        row=1,
+        col=1,
     )
     fig.add_trace(
         go.Bar(x=calls["ts"], y=calls["total_tokens"], text=hover, name="Total tokens", marker_color="#6366f1"),
-        row=2, col=1,
+        row=2,
+        col=1,
     )
     fig.update_layout(
         title=title,
@@ -847,9 +866,7 @@ def _pct(value: float | None) -> float | None:
     return None if value is None else round(value * 100, 4)
 
 
-def benchmark_category_chart(
-    models: Sequence[BenchmarkModel], categories: Sequence[str], title: str = "Scores by category"
-) -> go.Figure:
+def benchmark_category_chart(models: Sequence[BenchmarkModel], categories: Sequence[str], title: str = "Scores by category") -> go.Figure:
     """Grouped horizontal bars: one group per category, one bar (trace) per model."""
     labels = [category.capitalize() for category in categories]
     fig = go.Figure()

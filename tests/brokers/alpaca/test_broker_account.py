@@ -69,9 +69,7 @@ def test_from_credentials_configures_account_restrictions(monkeypatch: pytest.Mo
     from trading_agent_framework.brokers.alpaca import data as data_module
 
     client = FakeTradingClient()
-    client.account_configuration_response = make_alpaca_account_configuration(
-        no_shorting=False, max_margin_multiplier="4", fractional_trading=False
-    )
+    client.account_configuration_response = make_alpaca_account_configuration(no_shorting=False, max_margin_multiplier="4", fractional_trading=False)
     monkeypatch.setattr(broker_module, "build_trading_client", lambda creds: client)
     monkeypatch.setattr(data_module, "build_trading_client", lambda creds: FakeTradingClient())
     monkeypatch.setattr(data_module, "build_stock_data_client", lambda creds: object())
@@ -104,9 +102,7 @@ def test_get_account_wraps_client_errors() -> None:
 
 def test_configure_account_applies_restrictions_and_pushes_them_back() -> None:
     client = FakeTradingClient()
-    client.account_configuration_response = make_alpaca_account_configuration(
-        no_shorting=False, max_margin_multiplier="4", fractional_trading=False
-    )
+    client.account_configuration_response = make_alpaca_account_configuration(no_shorting=False, max_margin_multiplier="4", fractional_trading=False)
 
     _broker(client).configure_account()
 
@@ -120,9 +116,7 @@ def test_configure_account_accepts_explicit_overrides() -> None:
     client = FakeTradingClient()
     client.account_configuration_response = make_alpaca_account_configuration()
 
-    _broker(client).configure_account(
-        no_shorting=False, max_margin_multiplier="2", fractional_trading=False
-    )
+    _broker(client).configure_account(no_shorting=False, max_margin_multiplier="2", fractional_trading=False)
 
     [pushed] = client.set_account_configuration_calls
     assert pushed.no_shorting is False
@@ -139,9 +133,7 @@ def test_configure_account_wraps_client_errors() -> None:
 
 def test_modify_order_replaces_and_tracks_the_new_order() -> None:
     client = FakeTradingClient()
-    client.replace_response = make_alpaca_order(
-        id=_NEW_ID, type="limit", limit_price="101.00", client_order_id="momentum:x"
-    )
+    client.replace_response = make_alpaca_order(id=_NEW_ID, type="limit", limit_price="101.00", client_order_id="momentum:x")
     broker = _broker(client)
     old = _tracked_limit_order(broker)
 

@@ -108,10 +108,7 @@ def stage2_funnel(snapshots: Sequence[IntradaySnapshot], ranked: Sequence[Ranked
     no_rs = sum(1 for s in snapshots if s.rs <= 0)
     below_vwap = sum(1 for s in snapshots if s.last_close <= s.vwap)
     passing = sum(1 for s in snapshots if s.rvol is not None and s.rvol >= params.rvol_min and s.rs > 0 and s.last_close > s.vwap)
-    return (
-        f"stage 2: {len(snapshots)} with bars | rvol<{params.rvol_min:g}: {no_rvol}, rs<=0: {no_rs}, below vwap: {below_vwap} "
-        f"| pass floor: {passing} | tracked: {len(ranked)}"
-    )
+    return f"stage 2: {len(snapshots)} with bars | rvol<{params.rvol_min:g}: {no_rvol}, rs<=0: {no_rs}, below vwap: {below_vwap} | pass floor: {passing} | tracked: {len(ranked)}"
 
 
 def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParameters, sticky: Collection[str]) -> list[RankedCandidate]:
@@ -126,10 +123,7 @@ def rank_stage2(snapshots: Sequence[IntradaySnapshot], params: VwapPullbackParam
     z_ret = zscores({s.symbol: s.ret for s in passing})
     z_rs = zscores({s.symbol: s.rs for s in passing})
     z_rvol = zscores({s.symbol: s.rvol for s in passing if s.rvol is not None})
-    candidates = [
-        RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3)
-        for s in passing
-    ]
+    candidates = [RankedCandidate(symbol=s.symbol, composite=(z_ret[s.symbol] + z_rs[s.symbol] + z_rvol[s.symbol]) / 3) for s in passing]
     ranked = sorted(candidates, key=lambda c: (-c.composite, c.symbol))[: params.tracked_size]
     # Sticky symbols: a setup that is already impulsing, pulling back or in a trade must keep being
     # tracked even if its ranking fades, otherwise its pullback (the whole point) would never be seen.

@@ -76,9 +76,7 @@ class FakeAgent:
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
         self.tool_calls: list[ToolCallRecord] = []
 
-    def run(
-        self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None
-    ) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         if self.steps:
             self.steps.pop(0)(self.tools, context)

@@ -18,9 +18,7 @@ class AlpacaMarketClock(MarketClock):
 
     LOOKAHEAD_DAYS = 14
 
-    def __init__(
-        self, client: AlpacaTradingClient, now: Callable[[], datetime] | None = None
-    ) -> None:
+    def __init__(self, client: AlpacaTradingClient, now: Callable[[], datetime] | None = None) -> None:
         self._client = client
         self._now = now
         self._sessions: list[MarketSession] = []
@@ -42,9 +40,7 @@ class AlpacaMarketClock(MarketClock):
         return next((s for s in self._sessions if s.close > now), None)
 
     def _refresh(self, start: date) -> None:
-        request = account.build_calendar_request(
-            start, start + timedelta(days=self.LOOKAHEAD_DAYS)
-        )
+        request = account.build_calendar_request(start, start + timedelta(days=self.LOOKAHEAD_DAYS))
         try:
             responses = self._client.get_calendar(filters=request)
         except Exception as exc:

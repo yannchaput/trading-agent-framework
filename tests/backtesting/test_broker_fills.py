@@ -37,9 +37,7 @@ def _broker_with_two_bars(budget: Decimal = Decimal(10000)) -> BacktestBroker:
 
 def test_market_order_fills_on_the_next_bar_not_the_submission_bar() -> None:
     broker, clock, _ = _broker_with_two_bars()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
 
     # Advancing time without a new bar closing yet: still pending (no bar past DAY1 exists yet
     # at exactly DAY1's cutoff -- the fake's only bar closed *at* DAY1, same as last_evaluated).
@@ -68,9 +66,7 @@ def test_order_submitted_mid_bar_formation_skips_that_bar_and_fills_on_the_one_a
     broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=Decimal(10000))
     clock.on_advance = broker.on_advance
 
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
     assert broker._pending[order.identifier].needs_skip is True
 
     # DAY1's bar closes: this is the submitting (in-progress) bar -- must be skipped, not filled.
@@ -103,9 +99,7 @@ def test_fill_updates_cash_and_creates_a_long_position() -> None:
 
 def test_fill_records_a_fill_in_the_ledger() -> None:
     broker, clock, _ = _broker_with_two_bars()
-    order = broker.submit_order(
-        Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10))
-    )
+    order = broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
     clock._now = DAY2
     broker.on_advance(DAY1, DAY2)
 
@@ -123,8 +117,12 @@ def test_fees_and_slippage_reduce_cash_beyond_the_raw_notional() -> None:
     source.set_bars(AAPL, df)
     clock = BacktestClock(start=DAY1, sessions=[])
     broker = BacktestBroker(
-        "momentum", data_source=source, clock=clock, budget=Decimal(10000),
-        fees=IBKR_FEES, slippage=Decimal("0.01"),
+        "momentum",
+        data_source=source,
+        clock=clock,
+        budget=Decimal(10000),
+        fees=IBKR_FEES,
+        slippage=Decimal("0.01"),
     )
     clock.on_advance = broker.on_advance
     broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, quantity=Decimal(10)))
@@ -146,8 +144,12 @@ def test_unfilled_limit_order_stays_pending_and_is_retried_next_bar() -> None:
     clock.on_advance = broker.on_advance
     order = broker.submit_order(
         Order(
-            strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, order_type=OrderType.LIMIT,
-            quantity=Decimal(10), limit_price=Decimal(90),  # never touched by this fixture's bars
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal(10),
+            limit_price=Decimal(90),  # never touched by this fixture's bars
         )
     )
 
@@ -371,9 +373,7 @@ def test_the_fill_time_guard_still_refuses_an_oversized_sell_that_bypassed_submi
 
     oversized = _order(OrderSide.SELL, 15)
     broker.tracker.track_unprocessed(oversized)
-    broker._pending[oversized.identifier] = _PendingOrder(
-        order=oversized, asset=AAPL, last_evaluated=DAY2
-    )
+    broker._pending[oversized.identifier] = _PendingOrder(order=oversized, asset=AAPL, last_evaluated=DAY2)
     _advance(broker, clock, DAY2, DAY3)
 
     assert oversized.status is OrderStatus.ERROR
@@ -447,10 +447,16 @@ def test_a_sell_and_a_buy_submitted_together_both_fill_in_one_jump_when_only_the
 def test_a_limit_order_fills_on_an_intermediate_bar_that_touches_it_within_one_jump() -> None:
     # Only the latest bar used to be checked, so a limit touched mid-jump and recovered by the next tick never filled.
     broker, clock = _minute_broker({AAPL: [100.0, 100.0, 90.0, 100.0, 100.0]})
-    order = broker.submit_order(Order(
-        strategy_name="momentum", asset=AAPL, side=OrderSide.BUY, order_type=OrderType.LIMIT,
-        quantity=Decimal(1), limit_price=Decimal(92),
-    ))
+    order = broker.submit_order(
+        Order(
+            strategy_name="momentum",
+            asset=AAPL,
+            side=OrderSide.BUY,
+            order_type=OrderType.LIMIT,
+            quantity=Decimal(1),
+            limit_price=Decimal(92),
+        )
+    )
 
     clock.wait(4 * 60, _never())
 

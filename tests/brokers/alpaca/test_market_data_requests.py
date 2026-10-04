@@ -41,9 +41,7 @@ def test_parse_timestep_rejects_everything_else(timestep: str) -> None:
     ("length", "timestep", "expected"),
     [(20, "day", 21), (1, "day", 2), (30, "minute", 2), (390, "minute", 2), (391, "minute", 3)],
 )
-def test_sessions_needed_adds_one_for_a_partial_current_session(
-    length: int, timestep: str, expected: int
-) -> None:
+def test_sessions_needed_adds_one_for_a_partial_current_session(length: int, timestep: str, expected: int) -> None:
     assert sessions_needed(length, timestep) == expected
 
 
@@ -61,9 +59,7 @@ def test_sessions_needed_rejects_an_unknown_timestep() -> None:
     ("length", "timestep", "expected"),
     [(30, "minute", date(2026, 8, 28)), (20, "day", date(2026, 7, 30))],
 )
-def test_calendar_lookback_leaves_room_for_weekends_and_holidays(
-    length: int, timestep: str, expected: date
-) -> None:
+def test_calendar_lookback_leaves_room_for_weekends_and_holidays(length: int, timestep: str, expected: date) -> None:
     # ceil(sessions * 1.5) + 10 calendar days: 2 sessions -> 13 days, 21 sessions -> 42 days
     assert calendar_lookback_start(_END, length, timestep) == expected
 

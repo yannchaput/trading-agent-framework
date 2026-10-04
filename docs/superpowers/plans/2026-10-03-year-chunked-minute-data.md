@@ -359,10 +359,7 @@ class YearChunkedData(BacktestDataSource):
         if self._minute is not None and index < self._chunk:
             fetch_start, _ = chunk_window(self._chunk, self._start, self._end)
             if cutoff < fetch_start:
-                raise BacktestDataError(
-                    f"minute bars requested at {cutoff.isoformat()}, before the current chunk's window "
-                    f"(from {fetch_start.isoformat()}): a backtest clock never goes back a year"
-                )
+                raise BacktestDataError(f"minute bars requested at {cutoff.isoformat()}, before the current chunk's window (from {fetch_start.isoformat()}): a backtest clock never goes back a year")
             return self._minute
         return self._minute_source(index)
 
@@ -441,15 +438,15 @@ Expected: FAIL on `assert isinstance(source, partial)` (it is the `AlpacaBacktes
 In `agent_vwap_pullback.py`, add `from functools import partial` to the stdlib imports and `from trading_agent_framework.backtesting.data.chunked import YearChunkedData` after the `AlpacaBacktestData` import. In `run_backtesting`, replace:
 
 ```python
-            data_source=AlpacaBacktestData,  # minute bars with enough history (Yahoo keeps ~30 days of minutes)
+data_source = (AlpacaBacktestData,)  # minute bars with enough history (Yahoo keeps ~30 days of minutes)
 ```
 
 with:
 
 ```python
-            # Alpaca: minute bars with enough history (Yahoo keeps ~30 days of minutes), one year at a time
-            # (a 5Y window of minutes for 150 symbols in one fetch was OOM-killed at 58 GB)
-            data_source=partial(YearChunkedData, inner=AlpacaBacktestData),
+# Alpaca: minute bars with enough history (Yahoo keeps ~30 days of minutes), one year at a time
+# (a 5Y window of minutes for 150 symbols in one fetch was OOM-killed at 58 GB)
+data_source = (partial(YearChunkedData, inner=AlpacaBacktestData),)
 ```
 
 - [ ] **Step 4: Run the vwap tests to verify they pass**

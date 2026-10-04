@@ -42,18 +42,14 @@ def test_wait_does_nothing_when_wake_is_already_set() -> None:
 
 def test_wait_calls_on_advance_with_previous_and_new_now() -> None:
     calls: list[tuple] = []
-    clock = BacktestClock(
-        start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new))
-    )
+    clock = BacktestClock(start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new)))
     clock.wait(60, threading.Event())
     assert calls == [(et(2026, 1, 5, 9, 30), et(2026, 1, 5, 9, 31))]
 
 
 def test_wait_does_not_call_on_advance_when_it_does_not_move_time() -> None:
     calls: list[tuple] = []
-    clock = BacktestClock(
-        start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new))
-    )
+    clock = BacktestClock(start=et(2026, 1, 5, 9, 30), sessions=[], on_advance=lambda prev, new: calls.append((prev, new)))
     wake = threading.Event()
     wake.set()
     clock.wait(60, wake)

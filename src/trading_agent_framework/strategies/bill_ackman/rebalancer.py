@@ -152,9 +152,7 @@ class Rebalancer:
                     strategy.log_warning(f"No price for {symbol}: not buying it this review")
                     continue
                 plan.append((symbol, difference))
-        earlier_credit = sum(quantity * prices.get(symbol, 0.0) for symbol, quantity in outgoing.items()) - sum(
-            quantity * prices.get(symbol, 0.0) for symbol, quantity in incoming.items()
-        )
+        earlier_credit = sum(quantity * prices.get(symbol, 0.0) for symbol, quantity in outgoing.items()) - sum(quantity * prices.get(symbol, 0.0) for symbol, quantity in incoming.items())
         cash_term = float(account.cash) + proceeds + earlier_credit
         # A second buying power read, after the sells: BacktestBroker's projection credits them once submitted.
         buying_power_now = float(strategy.broker.get_account().buying_power)

@@ -41,8 +41,14 @@ def test_lazy_attributes_resolve_to_the_real_classes_in_process() -> None:
 def test_dir_includes_lazy_and_eager_names() -> None:
     names = dir(backtesting)
     for name in (
-        "BacktestDataSource", "BacktestBroker", "BacktestClock", "CachedDataSource",
-        "YahooBacktestData", "AlpacaBacktestData", "run_backtest", "BacktestResult",
+        "BacktestDataSource",
+        "BacktestBroker",
+        "BacktestClock",
+        "CachedDataSource",
+        "YahooBacktestData",
+        "AlpacaBacktestData",
+        "run_backtest",
+        "BacktestResult",
     ):
         assert name in names
 
@@ -53,15 +59,13 @@ def test_importing_backtesting_package_does_not_import_vectorbt_or_yfinance() ->
     runs in-process, so only a fresh interpreter makes the assertion meaningful."""
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "import trading_agent_framework.backtesting\n"
-            "import sys\n"
-            "assert 'vectorbt' not in sys.modules\n"
-            "assert 'numba' not in sys.modules\n"
-            "assert 'yfinance' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "import trading_agent_framework.backtesting\nimport sys\nassert 'vectorbt' not in sys.modules\nassert 'numba' not in sys.modules\nassert 'yfinance' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -73,13 +77,13 @@ def test_accessing_run_backtest_lazily_imports_vectorbt_is_not_true_until_called
     vectorbt in either, only actually calling compute_metrics does (not exercised here)."""
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "from trading_agent_framework.backtesting import run_backtest\n"
-            "import sys\n"
-            "assert 'vectorbt' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "from trading_agent_framework.backtesting import run_backtest\nimport sys\nassert 'vectorbt' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout
@@ -88,13 +92,13 @@ def test_accessing_run_backtest_lazily_imports_vectorbt_is_not_true_until_called
 def test_accessing_yahoo_backtest_data_does_not_import_yfinance_until_used() -> None:
     result = subprocess.run(
         [
-            sys.executable, "-c",
-            "from trading_agent_framework.backtesting import YahooBacktestData\n"
-            "import sys\n"
-            "assert 'yfinance' not in sys.modules\n"
-            "print('OK')\n",
+            sys.executable,
+            "-c",
+            "from trading_agent_framework.backtesting import YahooBacktestData\nimport sys\nassert 'yfinance' not in sys.modules\nprint('OK')\n",
         ],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert "OK" in result.stdout

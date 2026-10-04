@@ -12,9 +12,7 @@ if TYPE_CHECKING:
 def indicator_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
     """Indicator tool bound to `strategy`."""
 
-    def get_indicator(
-        name: str, symbol: str, timestep: str = "day", params: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    def get_indicator(name: str, symbol: str, timestep: str = "day", params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Compute a pandas-ta-classic indicator (e.g. sma, rsi, bbands) for a symbol."""
         try:
             indicator = getattr(strategy.indicators, name)

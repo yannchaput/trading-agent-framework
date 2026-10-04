@@ -81,7 +81,7 @@ def _decode_entry(raw: object) -> _Entry | None:
     try:
         fetched_at = datetime.fromisoformat(raw["fetched_at"])
         splits = [_decode_split(row) for row in raw["splits"]]
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
     if fetched_at.tzinfo is None or None in splits:
         return None
@@ -143,7 +143,7 @@ class SplitHistory:
         if self._entries is None:
             try:
                 loaded = json.loads(self._cache_file.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+            except OSError, ValueError:
                 loaded = {}  # no file yet, or one truncated by an interrupted write
             decoded = {symbol: _decode_entry(raw) for symbol, raw in loaded.items()} if isinstance(loaded, dict) else {}
             self._entries = {symbol: entry for symbol, entry in decoded.items() if entry is not None}
@@ -151,10 +151,7 @@ class SplitHistory:
 
     def _save(self, entries: dict[str, _Entry]) -> None:
         """Try to persist `entries` (already held in memory); a failed write only costs a refetch next process."""
-        payload = {
-            symbol: {"fetched_at": entry.fetched_at.isoformat(), "splits": [[split_date.isoformat(), ratio] for split_date, ratio in entry.splits]}
-            for symbol, entry in entries.items()
-        }
+        payload = {symbol: {"fetched_at": entry.fetched_at.isoformat(), "splits": [[split_date.isoformat(), ratio] for split_date, ratio in entry.splits]} for symbol, entry in entries.items()}
         temporary: str | None = None
         try:
             self._cache_file.parent.mkdir(parents=True, exist_ok=True)

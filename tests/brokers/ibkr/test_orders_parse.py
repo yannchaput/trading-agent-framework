@@ -96,9 +96,7 @@ def test_parse_portfolio_item() -> None:
 
     assert position is not None
     assert (position.asset, position.quantity, position.side) == (Asset("AAPL"), Decimal(10), PositionSide.LONG)
-    assert (position.avg_fill_price, position.current_price, position.market_value, position.unrealized_pnl) == (
-        Decimal(100), Decimal(101), Decimal(1010), Decimal(10)
-    )
+    assert (position.avg_fill_price, position.current_price, position.market_value, position.unrealized_pnl) == (Decimal(100), Decimal(101), Decimal(1010), Decimal(10))
 
 
 def test_a_flat_portfolio_item_is_no_position() -> None:

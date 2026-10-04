@@ -93,11 +93,7 @@ def test_main_registers_the_strategy() -> None:
 
 def test_the_strategy_package_imports_no_llm_library() -> None:
     # A fresh interpreter: this process has already imported LangChain through other tests.
-    code = (
-        "import sys; import trading_agent_framework.strategies.vwap_pullback; "
-        "bad = [m for m in ('langchain', 'langchain_openai', 'langgraph') if m in sys.modules]; "
-        "assert not bad, bad"
-    )
+    code = "import sys; import trading_agent_framework.strategies.vwap_pullback; bad = [m for m in ('langchain', 'langchain_openai', 'langgraph') if m in sys.modules]; assert not bad, bad"
     subprocess.run([sys.executable, "-c", code], check=True)
 
 

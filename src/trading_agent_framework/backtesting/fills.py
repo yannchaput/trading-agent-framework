@@ -73,7 +73,8 @@ def evaluate_fill(
         return _stop_fill(side, bar, _require(stop_price, "stop_price"))
     if order_type is OrderType.STOP_LIMIT:
         return _stop_limit_fill(
-            side, bar,
+            side,
+            bar,
             _require(stop_price, "stop_price"),
             _require(stop_limit_price, "stop_limit_price"),
         )
@@ -106,9 +107,7 @@ def _stop_fill(side: OrderSide, bar: Bar, stop_price: Decimal) -> FillResult | N
     return FillResult(price=min(bar.open, stop_price))
 
 
-def _stop_limit_fill(
-    side: OrderSide, bar: Bar, stop_price: Decimal, stop_limit_price: Decimal
-) -> FillResult | None:
+def _stop_limit_fill(side: OrderSide, bar: Bar, stop_price: Decimal, stop_limit_price: Decimal) -> FillResult | None:
     if side is OrderSide.BUY:
         if bar.high < stop_price or bar.low > stop_limit_price:
             return None

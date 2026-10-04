@@ -23,11 +23,20 @@ def _build_full_run(base: Path) -> Path:
     ledger = Ledger()
     ledger.record_equity(EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)))
     ledger.record_equity(EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)))
-    ledger.record_fill(FillRecord(
-        time=LATER, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("950"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.0"),
-    ))
+    ledger.record_fill(
+        FillRecord(
+            time=LATER,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("950"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.0"),
+        )
+    )
     ledger.record_line(IndicatorLine(time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"))
 
     report.write_equity(run_dir, ledger.equity, {NOW: Decimal("400.0"), LATER: Decimal("404.0")})
@@ -45,14 +54,28 @@ def _build_full_run(base: Path) -> Path:
     }
     report.write_metrics(run_dir, metrics)
 
-    report.write_settings(run_dir, {
-        "name": "momentum", "mode": "backtesting", "run_ts": "2026-01-05_210000",
-        "backtesting_start": NOW.isoformat(), "backtesting_end": LATER.isoformat(),
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 1.5, "timestep": "day", "sleeptime": "1D",
-        "commission": 0.0, "slippage": 0.0, "warmup_trading_days": 0,
-        "benchmark_symbol": "SPY", "framework_version": "0.1.0", "parameters": {},
-    })
+    report.write_settings(
+        run_dir,
+        {
+            "name": "momentum",
+            "mode": "backtesting",
+            "run_ts": "2026-01-05_210000",
+            "backtesting_start": NOW.isoformat(),
+            "backtesting_end": LATER.isoformat(),
+            "budget": 10000.0,
+            "risk_free_rate": 0.03,
+            "backtesting_data_sources": "yahoo",
+            "backtest_time_seconds": 1.5,
+            "timestep": "day",
+            "sleeptime": "1D",
+            "commission": 0.0,
+            "slippage": 0.0,
+            "warmup_trading_days": 0,
+            "benchmark_symbol": "SPY",
+            "framework_version": "0.1.0",
+            "parameters": {},
+        },
+    )
     return run_dir
 
 
@@ -95,8 +118,15 @@ def test_run_detail_renders_without_exception(run_dir: Path) -> None:
 
 _AGENTS = {
     "trader": {
-        "model": "qwen3-8b", "calls": 2, "tool_calls": 1, "input_tokens": 230, "output_tokens": 30, "reasoning_tokens": None,
-        "total_tokens": 260, "latency_ms_total": 4000.0, "latency_ms_avg": 2000.0,
+        "model": "qwen3-8b",
+        "calls": 2,
+        "tool_calls": 1,
+        "input_tokens": 230,
+        "output_tokens": 30,
+        "reasoning_tokens": None,
+        "total_tokens": 260,
+        "latency_ms_total": 4000.0,
+        "latency_ms_avg": 2000.0,
     }
 }
 
@@ -115,8 +145,7 @@ def _detail_page(run_dir: Path, *, agents: dict | None, with_calls_db: bool) -> 
     if with_calls_db:
         store = LLMStatsStore(llm_stats_db_path(run_dir.parents[3], "momentum", TradingMode.BACKTESTING), run_id=run_dir.name)
         for ts, tokens in ((NOW, 120), (LATER, 140)):
-            store.record(CallRecord(ts=ts, agent="trader", model="qwen3-8b", input_tokens=tokens - 20, output_tokens=20, reasoning_tokens=None,
-                                    total_tokens=tokens, latency_ms=2000.0, tool_calls=0))
+            store.record(CallRecord(ts=ts, agent="trader", model="qwen3-8b", input_tokens=tokens - 20, output_tokens=20, reasoning_tokens=None, total_tokens=tokens, latency_ms=2000.0, tool_calls=0))
     at = AppTest.from_file(str(APP_PATH), default_timeout=30)
     at.session_state["current_page"] = "Run Detail"
     at.session_state["detail_ref"] = scan_runs("logs").runs[0]

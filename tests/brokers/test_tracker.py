@@ -251,9 +251,7 @@ def test_concurrent_processing_of_same_order_lands_in_exactly_one_bucket() -> No
 
     original_add_transaction = order.add_transaction
 
-    def slow_add_transaction(
-        price: Decimal, filled_quantity: Decimal, timestamp: datetime | None = None
-    ) -> None:
+    def slow_add_transaction(price: Decimal, filled_quantity: Decimal, timestamp: datetime | None = None) -> None:
         original_add_transaction(price, filled_quantity, timestamp)
         time.sleep(0.002)
 

@@ -28,9 +28,7 @@ def test_parse_sleeptime_valid(value: int | str, expected: SleepTime) -> None:
     assert parse_sleeptime(value) == expected
 
 
-@pytest.mark.parametrize(
-    "value", ["", "M", "5", "5X", "1.5H", "-5M", "0M", "5 M M", 0, -1, True, 5.0, None]
-)
+@pytest.mark.parametrize("value", ["", "M", "5", "5X", "1.5H", "-5M", "0M", "5 M M", 0, -1, True, 5.0, None])
 def test_parse_sleeptime_invalid(value: object) -> None:
     with pytest.raises(ConfigurationError):
         parse_sleeptime(value)  # ty: ignore[invalid-argument-type]

@@ -210,7 +210,6 @@ In `parameters.py`, add after the `"volatility_targeting"` block:
 In `agent_cross_momentum.py`, below `logger = logging.getLogger(__name__)` add:
 
 ```python
-
 # A position within ±20% of its target value is left alone (no top-up, no trim) to avoid overtrading.
 _REBALANCE_BAND = 0.20
 ```
@@ -222,85 +221,84 @@ In `rebalance()`:
 (b) Replace everything from `        target_symbols = {entry["symbol"] for entry in target}` down to (not including) `        # Phase 2: Buy` with:
 
 ```python
-        target_symbols = {entry["symbol"] for entry in target}
-        target_by_symbol = {entry["symbol"]: entry for entry in target}
-        parking_symbol = self.parameters["parking"]["symbol"]
+target_symbols = {entry["symbol"] for entry in target}
+target_by_symbol = {entry["symbol"]: entry for entry in target}
+parking_symbol = self.parameters["parking"]["symbol"]
 
-        sell_threshold = self.parameters["sell_rank_threshold"]
-        portfolio_value = float(self.portfolio_value or 1.0)
-        min_trade_value = portfolio_value * self.parameters["parking"]["min_trade_pct"]
+sell_threshold = self.parameters["sell_rank_threshold"]
+portfolio_value = float(self.portfolio_value or 1.0)
+min_trade_value = portfolio_value * self.parameters["parking"]["min_trade_pct"]
 
-        current_positions = self.get_positions()
+current_positions = self.get_positions()
 
-        # Phase 1: Sell (exits, trims, excess parking)
-        estimated_sell_proceeds = 0.0
-        hysteresis_value = 0.0
-        parking_position = None
-        for pos in current_positions:
-            symbol = pos.asset.symbol
-            if symbol == parking_symbol:
-                # The parking sleeve is never ranked: it must not be exited as "not ranked" below
-                parking_position = pos
-                continue
-            if symbol in target_symbols:
-                # Trim a target position that sits above its band, so an exposure cut lowers the held book
-                # too, not just new buys; the proceeds are parked or fund this week's buys.
-                entry = target_by_symbol[symbol]
-                target_value = portfolio_value * entry["target_weight"]
-                current_value = float(pos.quantity) * entry["price"]
-                trim_value = current_value - target_value
-                if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
-                    trim_qty = fractional_qty(trim_value / entry["price"])
-                    if trim_qty > 0:
-                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${entry['price']:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
-                        try:
-                            self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
-                            estimated_sell_proceeds += trim_qty * entry["price"]
-                        except Exception as e:
-                            self.log_error(f"Failed to submit trim order for {symbol}: {e}")
-                continue
-
-            rank = all_ranks.get(symbol)
-            if rank is None or rank > sell_threshold:
-                if rank is None:
-                    # The position did not pass the scoring pipeline and was kicked out by the filters (volatility, price or not able to compute indicators)
-                    self.log_warning(f"Selling {symbol} (not ranked — failed filters or price data unavailable)")
-                else:
-                    # The position is ranked but outside the sell threshold (hysteresis band)
-                    self.log_warning(f"Selling {symbol} (rank {rank} > {sell_threshold}) - outside hysteresis band")
+# Phase 1: Sell (exits, trims, excess parking)
+estimated_sell_proceeds = 0.0
+hysteresis_value = 0.0
+parking_position = None
+for pos in current_positions:
+    symbol = pos.asset.symbol
+    if symbol == parking_symbol:
+        # The parking sleeve is never ranked: it must not be exited as "not ranked" below
+        parking_position = pos
+        continue
+    if symbol in target_symbols:
+        # Trim a target position that sits above its band, so an exposure cut lowers the held book
+        # too, not just new buys; the proceeds are parked or fund this week's buys.
+        entry = target_by_symbol[symbol]
+        target_value = portfolio_value * entry["target_weight"]
+        current_value = float(pos.quantity) * entry["price"]
+        trim_value = current_value - target_value
+        if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
+            trim_qty = fractional_qty(trim_value / entry["price"])
+            if trim_qty > 0:
+                self.log_info(f"Trimming {trim_qty} {symbol} @ ${entry['price']:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                 try:
-                    sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
-                    self.submit_order(sell_order)
-                    last_price = self.get_last_price(symbol) or 0.0
-                    estimated_sell_proceeds += float(pos.quantity) * float(last_price)
+                    self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
+                    estimated_sell_proceeds += trim_qty * entry["price"]
                 except Exception as e:
-                    self.log_error(f"Failed to submit sell order for {symbol}: {e}")
-            # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
-            else:
-                self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
-                hysteresis_value += float(pos.quantity) * float(self.get_last_price(symbol) or 0.0)
+                    self.log_error(f"Failed to submit trim order for {symbol}: {e}")
+        continue
 
-        # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
-        stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
-        parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
-        parking_price = float(self.get_last_price(parking_symbol) or 0.0)
-        parking_value = float(parking_position.quantity) * parking_price if parking_position else 0.0
-        if parking_price <= 0:
-            self.log_warning(f"Parking: no price for {parking_symbol} — no parking orders this week")
+    rank = all_ranks.get(symbol)
+    if rank is None or rank > sell_threshold:
+        if rank is None:
+            # The position did not pass the scoring pipeline and was kicked out by the filters (volatility, price or not able to compute indicators)
+            self.log_warning(f"Selling {symbol} (not ranked — failed filters or price data unavailable)")
         else:
-            self.log_info(f"Parking: {parking_symbol} target ${parking_target:,.0f} (current ${parking_value:,.0f})")
-            excess = parking_value - parking_target
-            if parking_value > parking_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
-                # A zero target sells the exact holding, so float flooring leaves no dust behind
-                sell_qty = float(parking_position.quantity) if parking_target == 0 else fractional_qty(excess / parking_price)
-                if sell_qty > 0:
-                    self.log_info(f"Selling {sell_qty} {parking_symbol} @ ${parking_price:.2f} (parking above target)")
-                    try:
-                        self.submit_order(self.create_order(parking_symbol, sell_qty, "sell", time_in_force="day"))
-                        estimated_sell_proceeds += sell_qty * parking_price
-                    except Exception as e:
-                        self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
+            # The position is ranked but outside the sell threshold (hysteresis band)
+            self.log_warning(f"Selling {symbol} (rank {rank} > {sell_threshold}) - outside hysteresis band")
+        try:
+            sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
+            self.submit_order(sell_order)
+            last_price = self.get_last_price(symbol) or 0.0
+            estimated_sell_proceeds += float(pos.quantity) * float(last_price)
+        except Exception as e:
+            self.log_error(f"Failed to submit sell order for {symbol}: {e}")
+    # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
+    else:
+        self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
+        hysteresis_value += float(pos.quantity) * float(self.get_last_price(symbol) or 0.0)
 
+# Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
+stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
+parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
+parking_price = float(self.get_last_price(parking_symbol) or 0.0)
+parking_value = float(parking_position.quantity) * parking_price if parking_position else 0.0
+if parking_price <= 0:
+    self.log_warning(f"Parking: no price for {parking_symbol} — no parking orders this week")
+else:
+    self.log_info(f"Parking: {parking_symbol} target ${parking_target:,.0f} (current ${parking_value:,.0f})")
+    excess = parking_value - parking_target
+    if parking_value > parking_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
+        # A zero target sells the exact holding, so float flooring leaves no dust behind
+        sell_qty = float(parking_position.quantity) if parking_target == 0 else fractional_qty(excess / parking_price)
+        if sell_qty > 0:
+            self.log_info(f"Selling {sell_qty} {parking_symbol} @ ${parking_price:.2f} (parking above target)")
+            try:
+                self.submit_order(self.create_order(parking_symbol, sell_qty, "sell", time_in_force="day"))
+                estimated_sell_proceeds += sell_qty * parking_price
+            except Exception as e:
+                self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
 ```
 
 (c) In Phase 2, replace `if current_value > 0 and abs(diff_value) / target_value < 0.20:` with `if current_value > 0 and abs(diff_value) / target_value < _REBALANCE_BAND:`.
@@ -308,18 +306,17 @@ In `rebalance()`:
 (d) After the Phase 2 `for entry in target:` loop (end of the method), append:
 
 ```python
-
-        # Phase 3: Park what the stock buys left, up to the parking target
-        if parking_price > 0 and parking_value < parking_target * (1 - _REBALANCE_BAND):
-            buy_value = min(parking_target - parking_value, available_cash)
-            if buy_value >= min_trade_value:
-                quantity = fractional_qty(buy_value / parking_price)
-                if quantity > 0:
-                    self.log_info(f"Buying {quantity} {parking_symbol} @ ${parking_price:.2f} (parking)")
-                    try:
-                        self.submit_order(self.create_order(parking_symbol, quantity, "buy", time_in_force="day"))
-                    except Exception as e:
-                        self.log_warning(f"Failed to submit parking buy order for {parking_symbol}: {e}")
+# Phase 3: Park what the stock buys left, up to the parking target
+if parking_price > 0 and parking_value < parking_target * (1 - _REBALANCE_BAND):
+    buy_value = min(parking_target - parking_value, available_cash)
+    if buy_value >= min_trade_value:
+        quantity = fractional_qty(buy_value / parking_price)
+        if quantity > 0:
+            self.log_info(f"Buying {quantity} {parking_symbol} @ ${parking_price:.2f} (parking)")
+            try:
+                self.submit_order(self.create_order(parking_symbol, quantity, "buy", time_in_force="day"))
+            except Exception as e:
+                self.log_warning(f"Failed to submit parking buy order for {parking_symbol}: {e}")
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**

@@ -219,9 +219,7 @@ def test_create_market_order_from_plain_values() -> None:
 
 
 def test_create_limit_order() -> None:
-    order = Strategy(_broker()).create_order(
-        Asset("AAPL"), "2.5", OrderSide.SELL, limit_price=101.25, time_in_force="gtc"
-    )
+    order = Strategy(_broker()).create_order(Asset("AAPL"), "2.5", OrderSide.SELL, limit_price=101.25, time_in_force="gtc")
     assert order.order_type is OrderType.LIMIT
     assert order.limit_price == Decimal("101.25")
     assert order.quantity == Decimal("2.5")
@@ -258,9 +256,7 @@ def test_cancel_open_orders_skips_finished_orders() -> None:
     strategy = Strategy(broker)
     open_order = strategy.submit_order(strategy.create_order("AAPL", 1, "buy"))
     filled = strategy.submit_order(strategy.create_order("TSLA", 1, "buy"))
-    broker.tracker.process_trade_event(
-        filled, OrderEvent.FILLED, price=Decimal("100"), filled_quantity=Decimal(1)
-    )
+    broker.tracker.process_trade_event(filled, OrderEvent.FILLED, price=Decimal("100"), filled_quantity=Decimal(1))
 
     strategy.cancel_open_orders()
 

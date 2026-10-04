@@ -193,9 +193,7 @@ def test_event_item_takes_kind_and_status_from_the_payload() -> None:
 
 
 def test_event_item_falls_back_to_the_subject_type() -> None:
-    row = _event_row(
-        event_type="agent_warning", subject_type="warning", payload_json='{"warning": "w"}'
-    )
+    row = _event_row(event_type="agent_warning", subject_type="warning", payload_json='{"warning": "w"}')
     item = records.event_item(row)
     assert (item["kind"], item["status"]) == ("warning", None)
 
@@ -248,9 +246,7 @@ def test_rank_drops_misses_and_orders_by_score_then_recency() -> None:
     two_terms_late = {"id": "b", "updated_at": "2026-09-14T11:00", "text": "spy breadth"}
     one_term_latest = {"id": "c", "updated_at": "2026-09-14T12:00", "text": "spy"}
     miss = {"id": "d", "updated_at": "2026-09-14T13:00", "text": "gold"}
-    ranked = records.rank(
-        [two_terms_early, one_term_latest, miss, two_terms_late], ["spy", "breadth"]
-    )
+    ranked = records.rank([two_terms_early, one_term_latest, miss, two_terms_late], ["spy", "breadth"])
     assert [item["id"] for item in ranked] == ["b", "a", "c"]
 
 
@@ -272,8 +268,6 @@ Expected: collection error, `ModuleNotFoundError: No module named 'trading_agent
 Append to `src/trading_agent_framework/utils/errors.py`:
 
 ```python
-
-
 class MemoryStoreError(TradingFrameworkError):
     """Raised when the agent memory database cannot be read or written."""
 
@@ -355,9 +349,7 @@ def new_retrieval_id() -> str:
 
 def json_dumps(value: object) -> str:
     """Sorted-key JSON; `Decimal`, `datetime` and other non-JSON values become strings."""
-    return json.dumps(
-        value if value is not None else {}, sort_keys=True, default=str, ensure_ascii=False
-    )
+    return json.dumps(value if value is not None else {}, sort_keys=True, default=str, ensure_ascii=False)
 
 
 def json_loads(value: str | None, default: Any) -> Any:
@@ -450,10 +442,7 @@ def rank(items: Iterable[Mapping[str, Any]], terms: Sequence[str]) -> list[Mappi
 
 def render_retrieval_text(items: Iterable[Mapping[str, Any]]) -> str:
     """Lumibot's `rendered_text` column of `memory_retrievals`."""
-    return "\n\n".join(
-        f"{item['kind']} {item['symbol'] or ''} {item['status'] or ''}: {item['text'] or ''}".strip()
-        for item in items
-    )
+    return "\n\n".join(f"{item['kind']} {item['symbol'] or ''} {item['status'] or ''}: {item['text'] or ''}".strip() for item in items)
 ```
 
 - [ ] **Step 6: Ignore the runtime memory folder**
@@ -516,17 +505,13 @@ from trading_agent_framework.memory.store import DB_FILE_NAME, MemoryStore
 Append to the end of `tests/fakes.py`:
 
 ```python
-
-
 # --- agent memory ---------------------------------------------------------------
 
 MEMORY_START = et(2026, 9, 14, 10, 0)
 MEMORY_WALL_TIME = datetime(2026, 9, 14, 14, 0, 5, tzinfo=UTC)
 
 
-def make_memory_store(
-    directory: Path, clock: FakeClock | None = None, *, fresh: bool = False
-) -> MemoryStore:
+def make_memory_store(directory: Path, clock: FakeClock | None = None, *, fresh: bool = False) -> MemoryStore:
     """A `MemoryStore` at `directory/memory.sqlite`, on fake time (`MEMORY_START` by default)."""
     clock = clock if clock is not None else FakeClock(MEMORY_START)
     return MemoryStore(
@@ -538,9 +523,7 @@ def make_memory_store(
     )
 
 
-def memory_rows(
-    store: MemoryStore, sql: str, params: Sequence[object] = ()
-) -> list[dict[str, Any]]:
+def memory_rows(store: MemoryStore, sql: str, params: Sequence[object] = ()) -> list[dict[str, Any]]:
     """Raw rows from the store's database, read on the test's own connection."""
     conn = sqlite3.connect(store.db_path)
     conn.row_factory = sqlite3.Row
@@ -585,17 +568,13 @@ def _events(store: MemoryStore) -> list[dict[str, Any]]:
 
 
 def test_memory_db_path_mirrors_the_logs_layout() -> None:
-    assert memory_db_path(Path("/root"), "my strat/v2", TradingMode.PAPER) == Path(
-        "/root/memory/my_strat_v2/paper/memory.sqlite"
-    )
+    assert memory_db_path(Path("/root"), "my strat/v2", TradingMode.PAPER) == Path("/root/memory/my_strat_v2/paper/memory.sqlite")
 
 
 def test_constructor_creates_parent_dirs_and_the_schema_in_wal_mode(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path / "a" / "b")
     assert store.db_path == tmp_path / "a" / "b" / DB_FILE_NAME
-    tables = {
-        row["name"] for row in memory_rows(store, "SELECT name FROM sqlite_master WHERE type='table'")
-    }
+    tables = {row["name"] for row in memory_rows(store, "SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {"memory_events", "memory_index", "memory_retrievals"}
     assert memory_rows(store, "PRAGMA journal_mode") == [{"journal_mode": "wal"}]
 
@@ -664,9 +643,7 @@ def test_remember_writes_an_event_and_a_projection(tmp_path: Path) -> None:
 
 
 def test_remember_with_a_custom_kind_takes_the_symbol_from_metadata(tmp_path: Path) -> None:
-    item = make_memory_store(tmp_path).remember(
-        "  SPY breadth is thin  ", kind="macro_view", metadata={"symbol": "spy"}
-    )
+    item = make_memory_store(tmp_path).remember("  SPY breadth is thin  ", kind="macro_view", metadata={"symbol": "spy"})
     assert item["id"].startswith("macro_view_")
     assert (item["kind"], item["symbol"], item["text"]) == ("macro_view", "SPY", "SPY breadth is thin")
 
@@ -698,9 +675,7 @@ def test_event_sequence_increments(tmp_path: Path) -> None:
         ({"text": "x", "tags": [1]}, "tags must be a list of strings"),
     ],
 )
-def test_remember_rejects_bad_input_without_writing(
-    tmp_path: Path, kwargs: dict[str, Any], message: str
-) -> None:
+def test_remember_rejects_bad_input_without_writing(tmp_path: Path, kwargs: dict[str, Any], message: str) -> None:
     store = make_memory_store(tmp_path)
     with pytest.raises(MemoryValidationError, match=message):
         store.remember(**kwargs)
@@ -941,9 +916,7 @@ class MemoryStore:
     def get(self, memory_id: str) -> dict[str, Any] | None:
         """The current state of one memory (full row, JSON decoded), or None."""
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM memory_index WHERE memory_id = ?", (memory_id,)
-            ).fetchone()
+            row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (memory_id,)).fetchone()
         return None if row is None else records.index_item(dict(row))
 
     # --- internals --------------------------------------------------------------------
@@ -1011,9 +984,7 @@ class MemoryStore:
     def _unused_memory_id(conn: sqlite3.Connection, kind: str) -> str:
         while True:
             memory_id = records.new_memory_id(kind)
-            taken = conn.execute(
-                "SELECT 1 FROM memory_index WHERE memory_id = ?", (memory_id,)
-            ).fetchone()
+            taken = conn.execute("SELECT 1 FROM memory_index WHERE memory_id = ?", (memory_id,)).fetchone()
             if taken is None:
                 return memory_id
 
@@ -1096,9 +1067,7 @@ class MemoryStore:
         payload_json = records.json_dumps(payload or {})
         event = {
             "event_id": records.new_event_id(),
-            "sequence": conn.execute(
-                "SELECT COALESCE(MAX(sequence), 0) + 1 FROM memory_events"
-            ).fetchone()[0],
+            "sequence": conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM memory_events").fetchone()[0],
             "timestamp": self._timestamp(),
             "event_type": event_type,
             "subject_id": subject_id,
@@ -1198,12 +1167,18 @@ Append:
 def test_remember_proposal(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     item = store.remember_proposal(
-        "Buy SPY on a pullback", symbol="spy", action="buy", tags=["idea"],
+        "Buy SPY on a pullback",
+        symbol="spy",
+        action="buy",
+        tags=["idea"],
         metadata={"confidence": "low"},
     )
     assert re.fullmatch(r"proposal_[0-9a-f]{8}", item["id"])
     assert (item["kind"], item["status"], item["symbol"], item["tags"]) == (
-        "proposal", "proposed", "SPY", ["idea"],
+        "proposal",
+        "proposed",
+        "SPY",
+        ["idea"],
     )
     assert item["metadata"] == {"symbol": "SPY", "action": "buy", "confidence": "low"}
     assert _events(store)[-1]["event_type"] == "proposal.recorded"
@@ -1219,9 +1194,7 @@ def test_remember_risk_note(tmp_path: Path) -> None:
 
 def test_remember_decision_stores_evidence_as_json(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
-    item = store.remember_decision(
-        "Bought SPY on oversold RSI", symbol="SPY", action="buy", evidence={"rsi": Decimal("28.5")}
-    )
+    item = store.remember_decision("Bought SPY on oversold RSI", symbol="SPY", action="buy", evidence={"rsi": Decimal("28.5")})
     assert (item["kind"], item["status"]) == ("decision", "recorded")
     assert item["metadata"] == {"symbol": "SPY", "action": "buy", "evidence": {"rsi": "28.5"}}
     assert _events(store)[-1]["event_type"] == "decision.recorded"
@@ -1231,9 +1204,7 @@ def test_remember_decision_stores_evidence_as_json(tmp_path: Path) -> None:
     ("outcome", "status"),
     [(None, "proposed"), ({"validated": True}, "validated"), ({"validated": "yes"}, "proposed")],
 )
-def test_remember_lesson_is_validated_only_by_an_explicit_true(
-    tmp_path: Path, outcome: dict[str, Any] | None, status: str
-) -> None:
+def test_remember_lesson_is_validated_only_by_an_explicit_true(tmp_path: Path, outcome: dict[str, Any] | None, status: str) -> None:
     store = make_memory_store(tmp_path)
     item = store.remember_lesson("Don't chase opening gaps", outcome=outcome)
     assert (item["kind"], item["status"]) == ("lesson", status)
@@ -1323,7 +1294,10 @@ def test_record_warning_is_history_only(tmp_path: Path) -> None:
     [row] = _events(store)
     assert event["event_id"] == row["event_id"]
     assert (row["event_type"], row["subject_type"], row["symbol"], row["agent_name"]) == (
-        "position_order_without_memory_thesis", "warning", "SPY", "trader",
+        "position_order_without_memory_thesis",
+        "warning",
+        "SPY",
+        "trader",
     )
     assert row["subject_id"].startswith("warning_")
     assert json.loads(row["payload_json"]) == {
@@ -1349,17 +1323,15 @@ def test_record_order_submitted_links_the_decision_of_the_same_model_call(tmp_pa
         limit_price=Decimal("512.30"),
         client_order_id="momentum-1",
     )
-    decision = store.remember_decision(
-        "Buy SPY", symbol="SPY", action="buy", agent_name="trader", model_call_id="call-7"
-    )
-    event = store.record_order_submitted(
-        order, metadata={"reason": "breakout"}, agent_name="trader", model_call_id="call-7"
-    )
+    decision = store.remember_decision("Buy SPY", symbol="SPY", action="buy", agent_name="trader", model_call_id="call-7")
+    event = store.record_order_submitted(order, metadata={"reason": "breakout"}, agent_name="trader", model_call_id="call-7")
 
     row = _events(store)[-1]
     assert event["event_id"] == row["event_id"]
     assert (row["event_type"], row["subject_type"], row["subject_id"]) == (
-        "order.submitted", "order", f"order_{order.identifier}",
+        "order.submitted",
+        "order",
+        f"order_{order.identifier}",
     )
     assert row["text"] == "Submitted order buy 10 SPY as limit"
     payload = json.loads(row["payload_json"])
@@ -1437,299 +1409,306 @@ def _order_fields(order: Order) -> dict[str, Any]:
 3. Add these methods to `MemoryStore` right after `remember` (still in the `# --- writes` section):
 
 ```python
-    def remember_proposal(
-        self,
-        text: str,
-        *,
-        symbol: str | None = None,
-        action: str | None = None,
-        tags: Sequence[str] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a research proposal or non-final trade idea (`proposal.recorded`)."""
-        symbol = records.normalize_symbol(symbol)
-        return self._create(
-            event_type="proposal.recorded",
-            kind="proposal",
-            status="proposed",
-            text=text,
-            symbol=symbol,
-            tags=tags,
-            metadata={"symbol": symbol, "action": action, **(metadata or {})},
-            agent_name=agent_name,
-            model_call_id=model_call_id,
-            retrieval_id=retrieval_id,
-        )
+def remember_proposal(
+    self,
+    text: str,
+    *,
+    symbol: str | None = None,
+    action: str | None = None,
+    tags: Sequence[str] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a research proposal or non-final trade idea (`proposal.recorded`)."""
+    symbol = records.normalize_symbol(symbol)
+    return self._create(
+        event_type="proposal.recorded",
+        kind="proposal",
+        status="proposed",
+        text=text,
+        symbol=symbol,
+        tags=tags,
+        metadata={"symbol": symbol, "action": action, **(metadata or {})},
+        agent_name=agent_name,
+        model_call_id=model_call_id,
+        retrieval_id=retrieval_id,
+    )
 
-    def remember_risk_note(
-        self,
-        text: str,
-        *,
-        symbol: str | None = None,
-        tags: Sequence[str] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a risk note or bear case (`risk_note.recorded`)."""
-        symbol = records.normalize_symbol(symbol)
-        return self._create(
-            event_type="risk_note.recorded",
-            kind="risk_note",
-            status="active",
-            text=text,
-            symbol=symbol,
-            tags=tags,
-            metadata={"symbol": symbol, **(metadata or {})},
-            agent_name=agent_name,
-            model_call_id=model_call_id,
-            retrieval_id=retrieval_id,
-        )
 
-    def remember_decision(
-        self,
-        text: str,
-        *,
-        symbol: str | None = None,
-        action: str | None = None,
-        evidence: Mapping[str, Any] | None = None,
-        tags: Sequence[str] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record an actual trading decision (`decision.recorded`)."""
-        symbol = records.normalize_symbol(symbol)
-        return self._create(
-            event_type="decision.recorded",
-            kind="decision",
-            status="recorded",
-            text=text,
-            symbol=symbol,
-            tags=tags,
-            metadata={"symbol": symbol, "action": action, "evidence": dict(evidence or {})},
-            agent_name=agent_name,
-            model_call_id=model_call_id,
-            retrieval_id=retrieval_id,
-        )
+def remember_risk_note(
+    self,
+    text: str,
+    *,
+    symbol: str | None = None,
+    tags: Sequence[str] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a risk note or bear case (`risk_note.recorded`)."""
+    symbol = records.normalize_symbol(symbol)
+    return self._create(
+        event_type="risk_note.recorded",
+        kind="risk_note",
+        status="active",
+        text=text,
+        symbol=symbol,
+        tags=tags,
+        metadata={"symbol": symbol, **(metadata or {})},
+        agent_name=agent_name,
+        model_call_id=model_call_id,
+        retrieval_id=retrieval_id,
+    )
 
-    def remember_lesson(
-        self,
-        text: str,
-        *,
-        symbol: str | None = None,
-        outcome: Mapping[str, Any] | None = None,
-        tags: Sequence[str] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a lesson: `lesson.validated` only when `outcome["validated"] is True`."""
-        symbol = records.normalize_symbol(symbol)
-        outcome = dict(outcome or {})
-        status = "validated" if outcome.get("validated") is True else "proposed"
-        return self._create(
-            event_type=f"lesson.{status}",
-            kind="lesson",
-            status=status,
-            text=text,
-            symbol=symbol,
-            tags=tags,
-            metadata={"symbol": symbol, "outcome": outcome},
-            agent_name=agent_name,
-            model_call_id=model_call_id,
-            retrieval_id=retrieval_id,
-        )
 
-    def open_thesis(
-        self,
-        text: str,
-        *,
-        symbol: str | None = None,
-        tags: Sequence[str] | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Open an investment thesis (`thesis.opened`)."""
-        symbol = records.normalize_symbol(symbol)
-        return self._create(
-            event_type="thesis.opened",
+def remember_decision(
+    self,
+    text: str,
+    *,
+    symbol: str | None = None,
+    action: str | None = None,
+    evidence: Mapping[str, Any] | None = None,
+    tags: Sequence[str] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record an actual trading decision (`decision.recorded`)."""
+    symbol = records.normalize_symbol(symbol)
+    return self._create(
+        event_type="decision.recorded",
+        kind="decision",
+        status="recorded",
+        text=text,
+        symbol=symbol,
+        tags=tags,
+        metadata={"symbol": symbol, "action": action, "evidence": dict(evidence or {})},
+        agent_name=agent_name,
+        model_call_id=model_call_id,
+        retrieval_id=retrieval_id,
+    )
+
+
+def remember_lesson(
+    self,
+    text: str,
+    *,
+    symbol: str | None = None,
+    outcome: Mapping[str, Any] | None = None,
+    tags: Sequence[str] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a lesson: `lesson.validated` only when `outcome["validated"] is True`."""
+    symbol = records.normalize_symbol(symbol)
+    outcome = dict(outcome or {})
+    status = "validated" if outcome.get("validated") is True else "proposed"
+    return self._create(
+        event_type=f"lesson.{status}",
+        kind="lesson",
+        status=status,
+        text=text,
+        symbol=symbol,
+        tags=tags,
+        metadata={"symbol": symbol, "outcome": outcome},
+        agent_name=agent_name,
+        model_call_id=model_call_id,
+        retrieval_id=retrieval_id,
+    )
+
+
+def open_thesis(
+    self,
+    text: str,
+    *,
+    symbol: str | None = None,
+    tags: Sequence[str] | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Open an investment thesis (`thesis.opened`)."""
+    symbol = records.normalize_symbol(symbol)
+    return self._create(
+        event_type="thesis.opened",
+        kind="thesis",
+        status="open",
+        text=text,
+        symbol=symbol,
+        tags=tags,
+        metadata={"symbol": symbol, **(metadata or {}), "status": "open"},
+        agent_name=agent_name,
+        model_call_id=model_call_id,
+        retrieval_id=retrieval_id,
+    )
+
+
+def update_thesis(
+    self,
+    thesis_id: str,
+    text: str,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Replace an open thesis's text (`thesis.updated`); symbol and tags carry over."""
+    clean_text = _require_text(text)
+    merged = {"thesis_id": thesis_id, **(metadata or {}), "status": "open"}
+    with self._transaction() as conn:
+        thesis = self._open_thesis_row(conn, thesis_id)
+        return self._write_memory(
+            conn,
+            memory_id=thesis["id"],
+            event_type="thesis.updated",
             kind="thesis",
             status="open",
-            text=text,
-            symbol=symbol,
-            tags=tags,
-            metadata={"symbol": symbol, **(metadata or {}), "status": "open"},
+            text=clean_text,
+            symbol=records.normalize_symbol(merged.get("symbol")) or thesis["symbol"],
+            tags=thesis["tags"],
+            metadata=merged,
             agent_name=agent_name,
             model_call_id=model_call_id,
             retrieval_id=retrieval_id,
         )
 
-    def update_thesis(
-        self,
-        thesis_id: str,
-        text: str,
-        *,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Replace an open thesis's text (`thesis.updated`); symbol and tags carry over."""
-        clean_text = _require_text(text)
-        merged = {"thesis_id": thesis_id, **(metadata or {}), "status": "open"}
-        with self._transaction() as conn:
-            thesis = self._open_thesis_row(conn, thesis_id)
-            return self._write_memory(
-                conn,
-                memory_id=thesis["id"],
-                event_type="thesis.updated",
-                kind="thesis",
-                status="open",
-                text=clean_text,
-                symbol=records.normalize_symbol(merged.get("symbol")) or thesis["symbol"],
-                tags=thesis["tags"],
-                metadata=merged,
-                agent_name=agent_name,
-                model_call_id=model_call_id,
-                retrieval_id=retrieval_id,
-            )
 
-    def close_thesis(
-        self,
-        thesis_id: str,
-        text: str,
-        *,
-        outcome: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Close an open thesis with its outcome/reflection (`thesis.closed`)."""
-        clean_text = _require_text(text)
-        with self._transaction() as conn:
-            thesis = self._open_thesis_row(conn, thesis_id)
-            return self._write_memory(
-                conn,
-                memory_id=thesis["id"],
-                event_type="thesis.closed",
-                kind="thesis",
-                status="closed",
-                text=clean_text,
-                symbol=thesis["symbol"],
-                tags=thesis["tags"],
-                metadata={"thesis_id": thesis_id, "outcome": dict(outcome or {}), "status": "closed"},
-                agent_name=agent_name,
-                model_call_id=model_call_id,
-                retrieval_id=retrieval_id,
-            )
+def close_thesis(
+    self,
+    thesis_id: str,
+    text: str,
+    *,
+    outcome: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Close an open thesis with its outcome/reflection (`thesis.closed`)."""
+    clean_text = _require_text(text)
+    with self._transaction() as conn:
+        thesis = self._open_thesis_row(conn, thesis_id)
+        return self._write_memory(
+            conn,
+            memory_id=thesis["id"],
+            event_type="thesis.closed",
+            kind="thesis",
+            status="closed",
+            text=clean_text,
+            symbol=thesis["symbol"],
+            tags=thesis["tags"],
+            metadata={"thesis_id": thesis_id, "outcome": dict(outcome or {}), "status": "closed"},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
 
-    def record_warning(
-        self,
-        text: str,
-        *,
-        kind: str = "agent_warning",
-        symbol: str | None = None,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a runtime warning; `kind` becomes the event type (history only)."""
-        clean_text = _require_text(text)
-        details = dict(metadata or {})
-        with self._transaction() as conn:
-            return self._append_event(
-                conn,
-                event_type=kind,
-                subject_type="warning",
-                subject_id=records.new_memory_id("warning"),
-                text=clean_text,
-                symbol=symbol,
-                metadata=details,
-                payload={"warning": clean_text, "metadata": details},
-                agent_name=agent_name,
-                model_call_id=model_call_id,
-                retrieval_id=retrieval_id,
-            )
 
-    def record_order_submitted(
-        self,
-        order: Order,
-        *,
-        metadata: Mapping[str, Any] | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-        retrieval_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Record a submitted order (`order.submitted`, history only), linked to the decision
-        recorded in the same model call."""
-        symbol = order.asset.symbol.upper()
-        size = str(order.quantity) if order.quantity is not None else f"${order.notional}"
-        text = f"Submitted order {order.side} {size} {symbol} as {order.order_type}"
-        with self._transaction() as conn:
-            payload = {
-                "kind": "order",
-                "status": "submitted",
-                "symbol": symbol,
-                "side": order.side,
-                "quantity": order.quantity,
-                "order_type": order.order_type,
-                "asset_type": order.asset.asset_type,
-                "order": _order_fields(order),
-                "metadata": dict(metadata or {}),
-                "decision_id": self._decision_for_call(conn, agent_name, model_call_id),
-            }
-            return self._append_event(
-                conn,
-                event_type="order.submitted",
-                subject_type="order",
-                subject_id=f"order_{order.identifier}",
-                text=text,
-                symbol=symbol,
-                metadata=payload,
-                payload=payload,
-                agent_name=agent_name,
-                model_call_id=model_call_id,
-                retrieval_id=retrieval_id,
-            )
+def record_warning(
+    self,
+    text: str,
+    *,
+    kind: str = "agent_warning",
+    symbol: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a runtime warning; `kind` becomes the event type (history only)."""
+    clean_text = _require_text(text)
+    details = dict(metadata or {})
+    with self._transaction() as conn:
+        return self._append_event(
+            conn,
+            event_type=kind,
+            subject_type="warning",
+            subject_id=records.new_memory_id("warning"),
+            text=clean_text,
+            symbol=symbol,
+            metadata=details,
+            payload={"warning": clean_text, "metadata": details},
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
+
+
+def record_order_submitted(
+    self,
+    order: Order,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+    retrieval_id: str | None = None,
+) -> dict[str, Any]:
+    """Record a submitted order (`order.submitted`, history only), linked to the decision
+    recorded in the same model call."""
+    symbol = order.asset.symbol.upper()
+    size = str(order.quantity) if order.quantity is not None else f"${order.notional}"
+    text = f"Submitted order {order.side} {size} {symbol} as {order.order_type}"
+    with self._transaction() as conn:
+        payload = {
+            "kind": "order",
+            "status": "submitted",
+            "symbol": symbol,
+            "side": order.side,
+            "quantity": order.quantity,
+            "order_type": order.order_type,
+            "asset_type": order.asset.asset_type,
+            "order": _order_fields(order),
+            "metadata": dict(metadata or {}),
+            "decision_id": self._decision_for_call(conn, agent_name, model_call_id),
+        }
+        return self._append_event(
+            conn,
+            event_type="order.submitted",
+            subject_type="order",
+            subject_id=f"order_{order.identifier}",
+            text=text,
+            symbol=symbol,
+            metadata=payload,
+            payload=payload,
+            agent_name=agent_name,
+            model_call_id=model_call_id,
+            retrieval_id=retrieval_id,
+        )
 ```
 
 4. Add these helpers to the `# --- internals` section:
 
 ```python
-    @staticmethod
-    def _open_thesis_row(conn: sqlite3.Connection, thesis_id: str) -> dict[str, Any]:
-        row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (thesis_id,)).fetchone()
-        if row is None or row["kind"] != "thesis":
-            raise MemoryValidationError(f"unknown thesis_id {thesis_id!r}")
-        if row["status"] != "open":
-            raise MemoryValidationError(f"thesis {thesis_id!r} is not open (status: {row['status']})")
-        return records.index_item(dict(row))
+@staticmethod
+def _open_thesis_row(conn: sqlite3.Connection, thesis_id: str) -> dict[str, Any]:
+    row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (thesis_id,)).fetchone()
+    if row is None or row["kind"] != "thesis":
+        raise MemoryValidationError(f"unknown thesis_id {thesis_id!r}")
+    if row["status"] != "open":
+        raise MemoryValidationError(f"thesis {thesis_id!r} is not open (status: {row['status']})")
+    return records.index_item(dict(row))
 
-    @staticmethod
-    def _decision_for_call(
-        conn: sqlite3.Connection, agent_name: str | None, model_call_id: str | None
-    ) -> str | None:
-        """The latest decision recorded in the same model call (lumibot's decision provenance)."""
-        if not model_call_id:
-            return None
-        row = conn.execute(
-            """
-            SELECT subject_id FROM memory_events
-            WHERE event_type = 'decision.recorded' AND model_call_id = ?
-              AND (? IS NULL OR agent_name = ?)
-            ORDER BY sequence DESC LIMIT 1
-            """,
-            (model_call_id, agent_name, agent_name),
-        ).fetchone()
-        return None if row is None else row["subject_id"]
+
+@staticmethod
+def _decision_for_call(conn: sqlite3.Connection, agent_name: str | None, model_call_id: str | None) -> str | None:
+    """The latest decision recorded in the same model call (lumibot's decision provenance)."""
+    if not model_call_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT subject_id FROM memory_events
+        WHERE event_type = 'decision.recorded' AND model_call_id = ?
+          AND (? IS NULL OR agent_name = ?)
+        ORDER BY sequence DESC LIMIT 1
+        """,
+        (model_call_id, agent_name, agent_name),
+    ).fetchone()
+    return None if row is None else row["subject_id"]
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -1787,7 +1766,9 @@ def test_search_ranks_by_matching_terms_then_recency(tmp_path: Path) -> None:
     result = store.search("spy breadth")
 
     assert [item["id"] for item in result["results"]] == [
-        two_terms_new["id"], two_terms_old["id"], one_term["id"],
+        two_terms_new["id"],
+        two_terms_old["id"],
+        one_term["id"],
     ]
     assert result["count"] == 3
     assert result["retrieval_id"].startswith("retrieval_")
@@ -1828,7 +1809,9 @@ def test_search_includes_history_once_and_marks_it_superseded(tmp_path: Path) ->
     assert [item["id"] for item in results] == [thesis["id"], opened_event["event_id"]]
     history = results[1]
     assert (history["status"], history["event_type"], history["memory_id"]) == (
-        "superseded", "thesis.opened", thesis["id"],
+        "superseded",
+        "thesis.opened",
+        thesis["id"],
     )
     assert history["text"] == "Long SPY"
 
@@ -1841,7 +1824,9 @@ def test_search_finds_history_only_events(tmp_path: Path) -> None:
 
     [found] = store.search("", kind="order", status="submitted")["results"]
     assert (found["kind"], found["event_type"], found["memory_id"]) == (
-        "order", "order.submitted", f"order_{order.identifier}",
+        "order",
+        "order.submitted",
+        f"order_{order.identifier}",
     )
     [warning] = store.search("without data")["results"]
     assert (warning["kind"], warning["status"]) == ("warning", None)
@@ -1872,7 +1857,11 @@ def test_search_logs_a_retrieval(tmp_path: Path) -> None:
     [row] = memory_rows(store, "SELECT * FROM memory_retrievals")
     assert row["retrieval_id"] == result["retrieval_id"]
     assert (row["query"], row["kind"], row["symbol"], row["status"], row["result_limit"]) == (
-        "spy", None, "SPY", None, 5,
+        "spy",
+        None,
+        "SPY",
+        None,
+        5,
     )
     assert (row["agent_name"], row["model_call_id"], row["strategy"]) == ("analyst", "call-3", "momentum")
     assert (row["timestamp"], row["wall_time"]) == ("2026-09-14T10:00:00-04:00", "2026-09-14T14:00:05Z")
@@ -1904,14 +1893,22 @@ def test_compact_state_lists_open_theses_and_validated_lessons(tmp_path: Path) -
         "held_symbols": ["SPY"],
         "open_theses": [
             {
-                "id": spy["id"], "kind": "thesis", "status": "open", "symbol": "SPY",
-                "updated_at": "2026-09-14T10:00", "text": "Long SPY on breadth",
+                "id": spy["id"],
+                "kind": "thesis",
+                "status": "open",
+                "symbol": "SPY",
+                "updated_at": "2026-09-14T10:00",
+                "text": "Long SPY on breadth",
             }
         ],
         "validated_lessons": [
             {
-                "id": lesson["id"], "kind": "lesson", "status": "validated", "symbol": None,
-                "updated_at": "2026-09-14T10:00", "text": "Don't chase gaps",
+                "id": lesson["id"],
+                "kind": "lesson",
+                "status": "validated",
+                "symbol": None,
+                "updated_at": "2026-09-14T10:00",
+                "text": "Don't chase gaps",
             }
         ],
         "retrieval_policy": RETRIEVAL_POLICY,
@@ -1947,16 +1944,17 @@ def test_compact_state_observes_held_open_theses_once_per_day(tmp_path: Path) ->
     assert len(observed) == 1
     [event] = observed
     assert (event["subject_type"], event["subject_id"], event["symbol"]) == ("thesis", spy["id"], "SPY")
-    assert event["text"] == (
-        "Observed open thesis for SPY: quantity=10 last_price=512.3 market_value=5123.0"
-    )
+    assert event["text"] == ("Observed open thesis for SPY: quantity=10 last_price=512.3 market_value=5123.0")
     assert json.loads(event["payload_json"]) == {
         "kind": "thesis_outcome",
         "status": "observed",
         "thesis_id": spy["id"],
         "symbol": "SPY",
         "position": {
-            "symbol": "SPY", "quantity": "10", "last_price": "512.3", "market_value": "5123.0",
+            "symbol": "SPY",
+            "quantity": "10",
+            "last_price": "512.3",
+            "market_value": "5123.0",
         },
         "observed_date": "2026-09-14",
     }
@@ -1980,10 +1978,7 @@ In `src/trading_agent_framework/memory/store.py`:
 1. After `DB_FILE_NAME = "memory.sqlite"`, add:
 
 ```python
-RETRIEVAL_POLICY = (
-    "If you hold a symbol and plan to add, reduce, or sell it, "
-    "call search_memory for its open thesis first."
-)
+RETRIEVAL_POLICY = "If you hold a symbol and plan to add, reduce, or sell it, call search_memory for its open thesis first."
 ```
 
 2. After `_UPSERT_INDEX`, add:
@@ -2001,177 +1996,168 @@ INSERT INTO memory_retrievals (
 3. In the `# --- reads` section, after `get`, add:
 
 ```python
-    def search(
-        self,
-        query: str,
-        *,
-        limit: int = 10,
-        kind: str | None = None,
-        symbol: str | None = None,
-        status: str | None = None,
-        agent_name: str | None = None,
-        model_call_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Lumibot's search: current memories plus event history, ranked by matching query terms.
+def search(
+    self,
+    query: str,
+    *,
+    limit: int = 10,
+    kind: str | None = None,
+    symbol: str | None = None,
+    status: str | None = None,
+    agent_name: str | None = None,
+    model_call_id: str | None = None,
+) -> dict[str, Any]:
+    """Lumibot's search: current memories plus event history, ranked by matching query terms.
 
-        Every call is logged to `memory_retrievals`.
-        """
-        query_text = str(query or "").strip()
-        normalized_symbol = records.normalize_symbol(symbol)
-        max_results = max(int(limit), 1)
-        with self._transaction() as conn:
-            index_rows = conn.execute(
-                """
-                SELECT * FROM memory_index
-                WHERE (? IS NULL OR kind = ?) AND (? IS NULL OR symbol = ?)
-                  AND (? IS NULL OR status = ?)
-                """,
-                (kind, kind, normalized_symbol, normalized_symbol, status, status),
-            ).fetchall()
-            event_rows = conn.execute(
-                """
-                SELECT * FROM memory_events
-                WHERE subject_id IS NOT NULL AND (? IS NULL OR symbol = ?)
-                  AND event_id NOT IN (SELECT latest_event_id FROM memory_index)
-                """,
-                (normalized_symbol, normalized_symbol),
-            ).fetchall()
-            candidates = [records.index_item(dict(row)) for row in index_rows]
-            for row in event_rows:
-                item = records.event_item(dict(row))
-                if (kind is None or item["kind"] == kind) and (
-                    status is None or item["status"] == status
-                ):
-                    candidates.append(item)
-            ranked = records.rank(candidates, records.query_terms(query_text))
-            selected = ranked[:max_results]
-            retrieval_id = records.new_retrieval_id()
-            conn.execute(
-                _INSERT_RETRIEVAL,
-                (
-                    retrieval_id,
-                    self._timestamp(),
-                    self._wall_time(),
-                    self.strategy_name,
-                    agent_name,
-                    model_call_id,
-                    query_text,
-                    kind,
-                    normalized_symbol,
-                    status,
-                    max_results,
-                    records.json_dumps([item["id"] for item in ranked]),
-                    records.json_dumps([item["id"] for item in selected]),
-                    records.render_retrieval_text(selected),
-                    SCHEMA_VERSION,
-                ),
-            )
-        return {
-            "count": len(ranked),
-            "retrieval_id": retrieval_id,
-            "results": [
-                records.lean_item(item, max_chars=records.SEARCH_TEXT_CHARS) for item in selected
-            ],
-        }
+    Every call is logged to `memory_retrievals`.
+    """
+    query_text = str(query or "").strip()
+    normalized_symbol = records.normalize_symbol(symbol)
+    max_results = max(int(limit), 1)
+    with self._transaction() as conn:
+        index_rows = conn.execute(
+            """
+            SELECT * FROM memory_index
+            WHERE (? IS NULL OR kind = ?) AND (? IS NULL OR symbol = ?)
+              AND (? IS NULL OR status = ?)
+            """,
+            (kind, kind, normalized_symbol, normalized_symbol, status, status),
+        ).fetchall()
+        event_rows = conn.execute(
+            """
+            SELECT * FROM memory_events
+            WHERE subject_id IS NOT NULL AND (? IS NULL OR symbol = ?)
+              AND event_id NOT IN (SELECT latest_event_id FROM memory_index)
+            """,
+            (normalized_symbol, normalized_symbol),
+        ).fetchall()
+        candidates = [records.index_item(dict(row)) for row in index_rows]
+        for row in event_rows:
+            item = records.event_item(dict(row))
+            if (kind is None or item["kind"] == kind) and (status is None or item["status"] == status):
+                candidates.append(item)
+        ranked = records.rank(candidates, records.query_terms(query_text))
+        selected = ranked[:max_results]
+        retrieval_id = records.new_retrieval_id()
+        conn.execute(
+            _INSERT_RETRIEVAL,
+            (
+                retrieval_id,
+                self._timestamp(),
+                self._wall_time(),
+                self.strategy_name,
+                agent_name,
+                model_call_id,
+                query_text,
+                kind,
+                normalized_symbol,
+                status,
+                max_results,
+                records.json_dumps([item["id"] for item in ranked]),
+                records.json_dumps([item["id"] for item in selected]),
+                records.render_retrieval_text(selected),
+                SCHEMA_VERSION,
+            ),
+        )
+    return {
+        "count": len(ranked),
+        "retrieval_id": retrieval_id,
+        "results": [records.lean_item(item, max_chars=records.SEARCH_TEXT_CHARS) for item in selected],
+    }
 
-    def compact_state(
-        self,
-        held: Sequence[HeldPosition] = (),
-        *,
-        max_theses: int = 8,
-        max_lessons: int = 8,
-        max_chars_per_item: int = 900,
-        update_open_thesis_outcomes: bool = True,
-    ) -> dict[str, Any]:
-        """The memory summary injected into agent prompts: open theses, validated lessons and the
-        retrieval policy. Also records a daily `thesis.outcome_observed` for each held open thesis.
-        """
-        held_by_symbol: dict[str, HeldPosition] = {}
-        for position in held:
-            held_symbol = records.normalize_symbol(position.symbol)
-            if held_symbol and position.quantity:
-                held_by_symbol[held_symbol] = position
-        with self._transaction() as conn:
-            theses = self._latest_index_items(conn, "thesis", "open", max_theses)
-            lessons = self._latest_index_items(conn, "lesson", "validated", max_lessons)
-            if update_open_thesis_outcomes:
-                self._observe_open_theses(conn, theses, held_by_symbol)
-        return {
-            "as_of": self._timestamp(),
-            "held_symbols": sorted(held_by_symbol),
-            "open_theses": [records.lean_item(i, max_chars=max_chars_per_item) for i in theses],
-            "validated_lessons": [
-                records.lean_item(i, max_chars=max_chars_per_item) for i in lessons
-            ],
-            "retrieval_policy": RETRIEVAL_POLICY,
-        }
+
+def compact_state(
+    self,
+    held: Sequence[HeldPosition] = (),
+    *,
+    max_theses: int = 8,
+    max_lessons: int = 8,
+    max_chars_per_item: int = 900,
+    update_open_thesis_outcomes: bool = True,
+) -> dict[str, Any]:
+    """The memory summary injected into agent prompts: open theses, validated lessons and the
+    retrieval policy. Also records a daily `thesis.outcome_observed` for each held open thesis.
+    """
+    held_by_symbol: dict[str, HeldPosition] = {}
+    for position in held:
+        held_symbol = records.normalize_symbol(position.symbol)
+        if held_symbol and position.quantity:
+            held_by_symbol[held_symbol] = position
+    with self._transaction() as conn:
+        theses = self._latest_index_items(conn, "thesis", "open", max_theses)
+        lessons = self._latest_index_items(conn, "lesson", "validated", max_lessons)
+        if update_open_thesis_outcomes:
+            self._observe_open_theses(conn, theses, held_by_symbol)
+    return {
+        "as_of": self._timestamp(),
+        "held_symbols": sorted(held_by_symbol),
+        "open_theses": [records.lean_item(i, max_chars=max_chars_per_item) for i in theses],
+        "validated_lessons": [records.lean_item(i, max_chars=max_chars_per_item) for i in lessons],
+        "retrieval_policy": RETRIEVAL_POLICY,
+    }
 ```
 
 4. In the `# --- internals` section, add:
 
 ```python
-    @staticmethod
-    def _latest_index_items(
-        conn: sqlite3.Connection, kind: str, status: str, limit: int
-    ) -> list[dict[str, Any]]:
-        rows = conn.execute(
-            """
-            SELECT * FROM memory_index WHERE kind = ? AND status = ?
-            ORDER BY updated_at DESC LIMIT ?
-            """,
-            (kind, status, max(int(limit), 1)),
-        ).fetchall()
-        return [records.index_item(dict(row)) for row in rows]
+@staticmethod
+def _latest_index_items(conn: sqlite3.Connection, kind: str, status: str, limit: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM memory_index WHERE kind = ? AND status = ?
+        ORDER BY updated_at DESC LIMIT ?
+        """,
+        (kind, status, max(int(limit), 1)),
+    ).fetchall()
+    return [records.index_item(dict(row)) for row in rows]
 
-    def _observe_open_theses(
-        self,
-        conn: sqlite3.Connection,
-        theses: Sequence[Mapping[str, Any]],
-        held_by_symbol: Mapping[str, HeldPosition],
-    ) -> None:
-        """At most one `thesis.outcome_observed` per held open thesis per (strategy-time) day."""
-        today = self._timestamp()[:10]
-        for thesis in theses:
-            position = held_by_symbol.get(thesis["symbol"]) if thesis["symbol"] else None
-            if position is None:
-                continue
-            already_observed = conn.execute(
-                """
-                SELECT 1 FROM memory_events
-                WHERE event_type = 'thesis.outcome_observed' AND subject_id = ?
-                  AND timestamp LIKE ?
-                LIMIT 1
-                """,
-                (thesis["id"], f"{today}%"),
-            ).fetchone()
-            if already_observed is not None:
-                continue
-            symbol = thesis["symbol"]
-            metadata = {
-                "thesis_id": thesis["id"],
+
+def _observe_open_theses(
+    self,
+    conn: sqlite3.Connection,
+    theses: Sequence[Mapping[str, Any]],
+    held_by_symbol: Mapping[str, HeldPosition],
+) -> None:
+    """At most one `thesis.outcome_observed` per held open thesis per (strategy-time) day."""
+    today = self._timestamp()[:10]
+    for thesis in theses:
+        position = held_by_symbol.get(thesis["symbol"]) if thesis["symbol"] else None
+        if position is None:
+            continue
+        already_observed = conn.execute(
+            """
+            SELECT 1 FROM memory_events
+            WHERE event_type = 'thesis.outcome_observed' AND subject_id = ?
+              AND timestamp LIKE ?
+            LIMIT 1
+            """,
+            (thesis["id"], f"{today}%"),
+        ).fetchone()
+        if already_observed is not None:
+            continue
+        symbol = thesis["symbol"]
+        metadata = {
+            "thesis_id": thesis["id"],
+            "symbol": symbol,
+            "status": "observed",
+            "position": {
                 "symbol": symbol,
-                "status": "observed",
-                "position": {
-                    "symbol": symbol,
-                    "quantity": position.quantity,
-                    "last_price": position.last_price,
-                    "market_value": position.market_value,
-                },
-                "observed_date": today,
-            }
-            self._append_event(
-                conn,
-                event_type="thesis.outcome_observed",
-                subject_type="thesis",
-                subject_id=thesis["id"],
-                text=(
-                    f"Observed open thesis for {symbol}: quantity={position.quantity} "
-                    f"last_price={position.last_price} market_value={position.market_value}"
-                ),
-                symbol=symbol,
-                metadata=metadata,
-                payload={"kind": "thesis_outcome", "status": "observed", **metadata},
-            )
+                "quantity": position.quantity,
+                "last_price": position.last_price,
+                "market_value": position.market_value,
+            },
+            "observed_date": today,
+        }
+        self._append_event(
+            conn,
+            event_type="thesis.outcome_observed",
+            subject_type="thesis",
+            subject_id=thesis["id"],
+            text=(f"Observed open thesis for {symbol}: quantity={position.quantity} last_price={position.last_price} market_value={position.market_value}"),
+            symbol=symbol,
+            metadata=metadata,
+            payload={"kind": "thesis_outcome", "status": "observed", **metadata},
+        )
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -2236,7 +2222,11 @@ _REQUIRED = inspect.Parameter.empty
 _LUMIBOT_SIGNATURES = {
     "remember": [("text", _REQUIRED), ("kind", "memory"), ("tags", None)],
     "search_memory": [
-        ("query", _REQUIRED), ("limit", 10), ("kind", None), ("symbol", None), ("status", None),
+        ("query", _REQUIRED),
+        ("limit", 10),
+        ("kind", None),
+        ("symbol", None),
+        ("status", None),
     ],
     "remember_proposal": [("text", _REQUIRED), ("symbol", None), ("action", None), ("tags", None)],
     "remember_risk_note": [("text", _REQUIRED), ("symbol", None), ("tags", None)],
@@ -2301,9 +2291,7 @@ def test_only_remember_decision_mutates_trading(tmp_path: Path) -> None:
         ("open_thesis", {"text": "long SPY", "symbol": "SPY", "tags": ["macro"]}, "thesis", "open"),
     ],
 )
-def test_write_tools_return_a_lean_summary(
-    tmp_path: Path, name: str, kwargs: dict[str, Any], kind: str, status: str
-) -> None:
+def test_write_tools_return_a_lean_summary(tmp_path: Path, name: str, kwargs: dict[str, Any], kind: str, status: str) -> None:
     store = make_memory_store(tmp_path)
     result = _tools(store)[name](**kwargs)
     assert result == {"id": result["id"], "kind": kind, "status": status}
@@ -2317,10 +2305,14 @@ def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:
     tools = _tools(store)
     thesis_id = tools["open_thesis"]("Long SPY", symbol="SPY")["id"]
     assert tools["update_thesis"](thesis_id, "Long SPY, raise target") == {
-        "id": thesis_id, "kind": "thesis", "status": "open",
+        "id": thesis_id,
+        "kind": "thesis",
+        "status": "open",
     }
     assert tools["close_thesis"](thesis_id, "Target hit") == {
-        "id": thesis_id, "kind": "thesis", "status": "closed",
+        "id": thesis_id,
+        "kind": "thesis",
+        "status": "closed",
     }
     assert tools["close_thesis"](thesis_id, "again") == {
         "error": f"thesis '{thesis_id}' is not open (status: closed)",
@@ -2335,9 +2327,7 @@ def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:
         ("open_thesis", ("x", None, "macro"), "tags must be a list of strings"),
     ],
 )
-def test_validation_errors_come_back_as_an_error_dict(
-    tmp_path: Path, name: str, args: tuple[Any, ...], error: str
-) -> None:
+def test_validation_errors_come_back_as_an_error_dict(tmp_path: Path, name: str, args: tuple[Any, ...], error: str) -> None:
     assert _tools(make_memory_store(tmp_path))[name](*args) == {"error": error}
 
 
@@ -2438,9 +2428,7 @@ _CURRENT_CALL: ContextVar[_AgentCall] = ContextVar("memory_agent_call", default=
 
 
 @contextmanager
-def agent_call_context(
-    agent_name: str | None = None, model_call_id: str | None = None
-) -> Iterator[None]:
+def agent_call_context(agent_name: str | None = None, model_call_id: str | None = None) -> Iterator[None]:
     """Attribute memory tool calls made inside this block to `agent_name` / `model_call_id`."""
     token = _CURRENT_CALL.set(_AgentCall(agent_name, model_call_id))
     try:
@@ -2493,35 +2481,21 @@ def memory_tools(store: MemoryStore) -> list[Callable[..., dict[str, Any]]]:
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """Record a non-final trade idea (not an executed decision)."""
-        return _write(
-            lambda: store.remember_proposal(
-                text, symbol=symbol, action=action, tags=tags, **_provenance()
-            )
-        )
+        return _write(lambda: store.remember_proposal(text, symbol=symbol, action=action, tags=tags, **_provenance()))
 
-    def remember_risk_note(
-        text: str, symbol: str | None = None, tags: list[str] | None = None
-    ) -> dict[str, Any]:
+    def remember_risk_note(text: str, symbol: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
         """Record a compact risk note or bear case."""
-        return _write(
-            lambda: store.remember_risk_note(text, symbol=symbol, tags=tags, **_provenance())
-        )
+        return _write(lambda: store.remember_risk_note(text, symbol=symbol, tags=tags, **_provenance()))
 
-    def remember_decision(
-        text: str, symbol: str | None = None, action: str | None = None
-    ) -> dict[str, Any]:
+    def remember_decision(text: str, symbol: str | None = None, action: str | None = None) -> dict[str, Any]:
         """Record an actual trading decision."""
-        return _write(
-            lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance())
-        )
+        return _write(lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance()))
 
     def remember_lesson(text: str, symbol: str | None = None) -> dict[str, Any]:
         """Record a compact lesson for future runs."""
         return _write(lambda: store.remember_lesson(text, symbol=symbol, **_provenance()))
 
-    def open_thesis(
-        text: str, symbol: str | None = None, tags: list[str] | None = None
-    ) -> dict[str, Any]:
+    def open_thesis(text: str, symbol: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
         """Open an investment thesis."""
         return _write(lambda: store.open_thesis(text, symbol=symbol, tags=tags, **_provenance()))
 
@@ -2618,12 +2592,8 @@ from trading_agent_framework.core.strategy import Strategy
 _START = et(2026, 9, 14, 9, 0)
 
 
-def _strategy(
-    tmp_path: Path, mode: TradingMode = TradingMode.PAPER, name: str = "momentum"
-) -> Strategy:
-    return Strategy(
-        FakeBroker(FakeClock(_START), strategy_name=name), mode=mode, project_root=tmp_path
-    )
+def _strategy(tmp_path: Path, mode: TradingMode = TradingMode.PAPER, name: str = "momentum") -> Strategy:
+    return Strategy(FakeBroker(FakeClock(_START), strategy_name=name), mode=mode, project_root=tmp_path)
 
 
 def test_memory_is_opened_lazily_and_cached(tmp_path: Path) -> None:

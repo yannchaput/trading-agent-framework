@@ -329,7 +329,7 @@ def parse_nasdaq_rows(rows: list[dict]) -> list[tuple[str, float]]:
         price_str = row.get("lastsale", "").replace("$", "")
         try:
             price = float(price_str)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             price = 0.0
         if price > 0 and price < THRESHOLDS["price"]:
             continue
@@ -340,9 +340,7 @@ def parse_nasdaq_rows(rows: list[dict]) -> list[tuple[str, float]]:
     return candidates
 
 
-def merge_ticker_candidates(
-    nasdaq_candidates: list[tuple[str, float]], extra_symbols: set[str]
-) -> list[tuple[str, float]]:
+def merge_ticker_candidates(nasdaq_candidates: list[tuple[str, float]], extra_symbols: set[str]) -> list[tuple[str, float]]:
     """Union NASDAQ (symbol, market_cap) candidates with ETF-holdings-only symbols.
 
     Symbols only an ETF source knows about (not in the NASDAQ screener
@@ -385,9 +383,7 @@ def get_ticker_universe() -> list[tuple[str, float]]:
         return []
 
     candidates = parse_nasdaq_rows(rows)
-    console.print(
-        f"  Got {len(rows)} total listed stocks → [green]{len(candidates)} candidates[/green] after pre-filter"
-    )
+    console.print(f"  Got {len(rows)} total listed stocks → [green]{len(candidates)} candidates[/green] after pre-filter")
     return candidates
 
 

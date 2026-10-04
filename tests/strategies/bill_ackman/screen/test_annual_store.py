@@ -257,8 +257,19 @@ def _without(key: str) -> dict[str, object]:
         {**_valid_record(), "schema": str(annual_store.SCHEMA_VERSION)},
     ],
     ids=[
-        "no-fetched-at", "unparseable-fetched-at", "naive-fetched-at", "non-string-fetched-at", "no-flows", "flows-not-a-list", "bad-status", "other-cik", "no-cik",
-        "no-schema", "schema-0", "newer-schema", "schema-as-string",
+        "no-fetched-at",
+        "unparseable-fetched-at",
+        "naive-fetched-at",
+        "non-string-fetched-at",
+        "no-flows",
+        "flows-not-a-list",
+        "bad-status",
+        "other-cik",
+        "no-cik",
+        "no-schema",
+        "schema-0",
+        "newer-schema",
+        "schema-as-string",
     ],
 )
 def test_a_record_file_of_the_wrong_shape_is_a_cache_miss(tmp_path: Path, record: dict[str, object]) -> None:

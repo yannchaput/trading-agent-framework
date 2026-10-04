@@ -53,17 +53,12 @@ def test_get_account_balance_returns_error_on_broker_failure() -> None:
 
 def test_get_positions_lists_every_position() -> None:
     strategy, broker = _strategy()
-    broker.positions = [
-        Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(10), side=PositionSide.LONG,
-                 current_price=Decimal("450.5"), market_value=Decimal("4505"))
-    ]
+    broker.positions = [Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(10), side=PositionSide.LONG, current_price=Decimal("450.5"), market_value=Decimal("4505"))]
     tools = _tools(strategy)
 
     result = tools["get_positions"]()
 
-    assert result["positions"] == [
-        {"symbol": "SPY", "quantity": 10.0, "side": "long", "current_price": 450.5, "market_value": 4505.0}
-    ]
+    assert result["positions"] == [{"symbol": "SPY", "quantity": 10.0, "side": "long", "current_price": 450.5, "market_value": 4505.0}]
 
 
 def test_get_position_without_a_position_returns_none() -> None:
@@ -75,9 +70,7 @@ def test_get_position_without_a_position_returns_none() -> None:
 
 def test_get_position_with_a_position_returns_the_lean_dict() -> None:
     strategy, broker = _strategy()
-    broker.positions = [
-        Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(5), side=PositionSide.LONG)
-    ]
+    broker.positions = [Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(5), side=PositionSide.LONG)]
     tools = _tools(strategy)
 
     result = tools["get_position"]("SPY")

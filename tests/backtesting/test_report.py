@@ -22,12 +22,8 @@ def _session_equity() -> list[EquitySample]:
     trading session, each stamped at that session's own close (NOT raw ledger samples
     -- see `report.write_equity`'s docstring)."""
     return [
-        EquitySample(
-            time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)
-        ),
-        EquitySample(
-            time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)
-        ),
+        EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)),
+        EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)),
     ]
 
 
@@ -35,22 +31,34 @@ def _ledger() -> Ledger:
     ledger = Ledger()
     for sample in _session_equity():
         ledger.record_equity(sample)
-    ledger.record_fill(FillRecord(
-        time=LATER, identifier="abc", symbol="AAPL", side=OrderSide.BUY, order_type=OrderType.MARKET,
-        quantity=Decimal(10), filled_quantity=Decimal(10), price=Decimal("1000"),
-        trade_cost=Decimal("1.0"), trade_slippage=Decimal("0.5"),
-    ))
-    ledger.record_line(IndicatorLine(
-        time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"
-    ))
+    ledger.record_fill(
+        FillRecord(
+            time=LATER,
+            identifier="abc",
+            symbol="AAPL",
+            side=OrderSide.BUY,
+            order_type=OrderType.MARKET,
+            quantity=Decimal(10),
+            filled_quantity=Decimal(10),
+            price=Decimal("1000"),
+            trade_cost=Decimal("1.0"),
+            trade_slippage=Decimal("0.5"),
+        )
+    )
+    ledger.record_line(IndicatorLine(time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"))
     return ledger
 
 
 def test_write_settings_round_trips_through_json(tmp_path: Path) -> None:
     settings = {
-        "name": "momentum", "backtesting_start": NOW.isoformat(), "backtesting_end": LATER.isoformat(),
-        "budget": 10000.0, "risk_free_rate": 0.03, "backtesting_data_sources": "yahoo",
-        "backtest_time_seconds": 1.5, "parameters": {"lookback": 20},
+        "name": "momentum",
+        "backtesting_start": NOW.isoformat(),
+        "backtesting_end": LATER.isoformat(),
+        "budget": 10000.0,
+        "risk_free_rate": 0.03,
+        "backtesting_data_sources": "yahoo",
+        "backtest_time_seconds": 1.5,
+        "parameters": {"lookback": 20},
     }
     path = report.write_settings(tmp_path, settings)
     assert path == tmp_path / "settings.json"
@@ -177,7 +185,9 @@ def test_write_equity_leaves_benchmark_null_when_a_row_is_not_at_a_benchmark_bar
     off_session = [
         EquitySample(
             time=NOW - timedelta(hours=6),  # a pre-open clock advance, not a session close
-            portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0),
+            portfolio_value=Decimal(10000),
+            cash=Decimal(10000),
+            positions_value=Decimal(0),
         ),
         *_session_equity(),
     ]
@@ -194,8 +204,18 @@ def test_write_trades_produces_a_parquet_file_with_the_dashboards_expected_colum
     assert path == tmp_path / "trades.parquet"
     df = pd.read_parquet(path)
     for column in (
-        "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
-        "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+        "time",
+        "symbol",
+        "side",
+        "status",
+        "order_type",
+        "quantity",
+        "filled_quantity",
+        "price",
+        "trade_cost",
+        "trade_slippage",
+        "identifier",
+        "event_kind",
     ):
         assert column in df.columns
     assert df["status"].iloc[0] == "fill"
@@ -247,8 +267,18 @@ def test_write_trades_with_empty_ledger_produces_a_valid_empty_file(tmp_path: Pa
     path = report.write_trades(tmp_path, Ledger())
     df = pd.read_parquet(path)
     for column in (
-        "time", "symbol", "side", "status", "order_type", "quantity", "filled_quantity",
-        "price", "trade_cost", "trade_slippage", "identifier", "event_kind",
+        "time",
+        "symbol",
+        "side",
+        "status",
+        "order_type",
+        "quantity",
+        "filled_quantity",
+        "price",
+        "trade_cost",
+        "trade_slippage",
+        "identifier",
+        "event_kind",
     ):
         assert column in df.columns
     assert len(df) == 0

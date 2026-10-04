@@ -32,9 +32,7 @@ _CURRENT_CALL: ContextVar[_AgentCall | None] = ContextVar("memory_agent_call", d
 
 
 @contextmanager
-def agent_call_context(
-    agent_name: str | None = None, model_call_id: str | None = None, run_id: str | None = None, force_tool: str | None = None
-) -> Iterator[None]:
+def agent_call_context(agent_name: str | None = None, model_call_id: str | None = None, run_id: str | None = None, force_tool: str | None = None) -> Iterator[None]:
     """Attribute memory tool calls made inside this block to `agent_name` / `model_call_id`.
 
     `run_id` scopes one agent run: `remember_decision` records an identical decision only once per run.
@@ -152,41 +150,27 @@ def memory_tools(store: MemoryStore) -> list[Callable[..., dict[str, Any]]]:
         tags: list[str] | None = None,
     ) -> dict[str, Any]:
         """Record a non-final trade idea (not an executed decision)."""
-        return _write(
-            lambda: store.remember_proposal(
-                text, symbol=symbol, action=action, tags=tags, **_provenance()
-            )
-        )
+        return _write(lambda: store.remember_proposal(text, symbol=symbol, action=action, tags=tags, **_provenance()))
 
-    def remember_risk_note(
-        text: str, symbol: str | None = None, tags: list[str] | None = None
-    ) -> dict[str, Any]:
+    def remember_risk_note(text: str, symbol: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
         """Record a compact risk note or bear case."""
-        return _write(
-            lambda: store.remember_risk_note(text, symbol=symbol, tags=tags, **_provenance())
-        )
+        return _write(lambda: store.remember_risk_note(text, symbol=symbol, tags=tags, **_provenance()))
 
-    def remember_decision(
-        text: str, symbol: str | None = None, action: str | None = None
-    ) -> dict[str, Any]:
+    def remember_decision(text: str, symbol: str | None = None, action: str | None = None) -> dict[str, Any]:
         """Record an actual trading decision."""
         call = _CURRENT_CALL.get() or _AgentCall()
         key = (text.strip(), normalize_symbol(symbol), action)
         return decisions.once(
             call.run_id,
             key,
-            lambda: _write(
-                lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance())
-            ),
+            lambda: _write(lambda: store.remember_decision(text, symbol=symbol, action=action, **_provenance())),
         )
 
     def remember_lesson(text: str, symbol: str | None = None) -> dict[str, Any]:
         """Record a compact lesson for future runs."""
         return _write(lambda: store.remember_lesson(text, symbol=symbol, **_provenance()))
 
-    def open_thesis(
-        text: str, symbol: str | None = None, tags: list[str] | None = None
-    ) -> dict[str, Any]:
+    def open_thesis(text: str, symbol: str | None = None, tags: list[str] | None = None) -> dict[str, Any]:
         """Open an investment thesis."""
         return _write(lambda: store.open_thesis(text, symbol=symbol, tags=tags, **_provenance()))
 

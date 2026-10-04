@@ -69,8 +69,10 @@ class TradingFeeFactory:
     def fees(self, *, buy_shares: Decimal, sell_shares: Decimal, buy_value: Decimal, sell_value: Decimal) -> TradeFees:
         """Each side with shares is one order; each side's total is rounded up to the cent."""
         for name, value in (
-            ("buy_shares", buy_shares), ("sell_shares", sell_shares),
-            ("buy_value", buy_value), ("sell_value", sell_value),
+            ("buy_shares", buy_shares),
+            ("sell_shares", sell_shares),
+            ("buy_value", buy_value),
+            ("sell_value", sell_value),
         ):
             if not value.is_finite() or value < 0:
                 raise ValueError(f"{name} must be a finite, non-negative number, got {value}")
@@ -78,12 +80,7 @@ class TradingFeeFactory:
         if buy_shares > 0:
             buy = _ceil_cent(self._commission(buy_shares) + CAT_FEE_PER_SHARE * buy_shares)
         if sell_shares > 0:
-            sell = _ceil_cent(
-                self._commission(sell_shares)
-                + SEC_FEE_RATE * sell_value
-                + min(FINRA_TAF_PER_SHARE * sell_shares, FINRA_TAF_MAX_PER_ORDER)
-                + CAT_FEE_PER_SHARE * sell_shares
-            )
+            sell = _ceil_cent(self._commission(sell_shares) + SEC_FEE_RATE * sell_value + min(FINRA_TAF_PER_SHARE * sell_shares, FINRA_TAF_MAX_PER_ORDER) + CAT_FEE_PER_SHARE * sell_shares)
         return TradeFees(buy=buy, sell=sell)
 
 

@@ -80,8 +80,16 @@ class LLMStatsStore:
             conn.execute(
                 _INSERT,
                 (
-                    self.run_id, call.ts.isoformat(), call.agent, call.model, call.input_tokens, call.output_tokens,
-                    call.reasoning_tokens, call.total_tokens, call.latency_ms, call.tool_calls,
+                    self.run_id,
+                    call.ts.isoformat(),
+                    call.agent,
+                    call.model,
+                    call.input_tokens,
+                    call.output_tokens,
+                    call.reasoning_tokens,
+                    call.total_tokens,
+                    call.latency_ms,
+                    call.tool_calls,
                 ),
             )
 

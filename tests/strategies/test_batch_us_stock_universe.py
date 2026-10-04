@@ -28,6 +28,7 @@ class FakeClock:
         self.sleep_calls.append(seconds)
         self.t += seconds
 
+
 _ISHARES_CSV = (
     "iShares Russell 1000 ETF\n"
     'Fund Holdings as of,"Sep 23, 2026"\n'

@@ -48,10 +48,7 @@ def page_models() -> None:
 
     refs = br.scan_benchmark_runs(results_dir)
     if not refs:
-        st.info(
-            f"No complete benchmark run found in `{results_dir}`. Run the benchmark, or point the "
-            "dashboard at its results with `uv run dashboard --benchmark-dir PATH`."
-        )
+        st.info(f"No complete benchmark run found in `{results_dir}`. Run the benchmark, or point the dashboard at its results with `uv run dashboard --benchmark-dir PATH`.")
         return
 
     loaded: dict[str, BenchmarkRun | br.BenchmarkReadError] = {}
@@ -131,14 +128,10 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
         render_metric_card("🏆 Best overall", f"{best.display_name} · {(best.overall or 0.0):.0%}")
     with cols[1]:
         fastest = max(timed, key=lambda m: m.median_tokens_per_s) if timed else None
-        render_metric_card(
-            "⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—"
-        )
+        render_metric_card("⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—")
     with cols[2]:
         quickest = min(quick, key=lambda m: m.median_run_s) if quick else None
-        render_metric_card(
-            "⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—"
-        )
+        render_metric_card("⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—")
 
 
 def _worst_scenario(model: BenchmarkModel, scenarios: Sequence[str]) -> str:
@@ -157,9 +150,7 @@ def _render_drill_down(run: BenchmarkRun, ran: Sequence[BenchmarkModel]) -> None
     left, right = st.columns(2)
     with left:
         # Keys are scoped to the run, so switching runs resets both pickers.
-        model_key = st.selectbox(
-            "Model", keys, index=keys.index(best.key), format_func=names.__getitem__, key=f"drill_model_{run.ref.run_id}"
-        )
+        model_key = st.selectbox("Model", keys, index=keys.index(best.key), format_func=names.__getitem__, key=f"drill_model_{run.ref.run_id}")
     model = next(m for m in ran if m.key == model_key)
     scenarios = list(run.scenarios)
     with right:

@@ -120,8 +120,13 @@ def test_returns_seven_tools_with_one_line_docstrings() -> None:
     strategy, _ = _strategy()
     tools = trading_tools(strategy)
     assert [t.__name__ for t in tools] == [
-        "submit_order", "cancel_order", "cancel_open_orders",
-        "close_position", "sell_all", "get_orders", "get_order",
+        "submit_order",
+        "cancel_order",
+        "cancel_open_orders",
+        "close_position",
+        "sell_all",
+        "get_orders",
+        "get_order",
     ]
     for tool in tools:
         assert tool.__doc__ is not None
@@ -211,9 +216,7 @@ def test_close_position_without_a_position_reports_no_position() -> None:
 
 def test_sell_all_returns_the_closed_orders() -> None:
     strategy, broker = _strategy()
-    broker.close_all_positions = lambda cancel_orders=True: [
-        Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, order_type=OrderType.MARKET, quantity=Decimal(1))
-    ]
+    broker.close_all_positions = lambda cancel_orders=True: [Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, order_type=OrderType.MARKET, quantity=Decimal(1))]
     tools = _tools(strategy)
 
     result = tools["sell_all"]()
@@ -318,8 +321,12 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:
         """Submit a market, limit, stop or stop-limit order; the type follows from the prices given."""
         try:
             order = strategy.create_order(
-                symbol, quantity, side,
-                limit_price=limit_price, stop_price=stop_price, time_in_force=time_in_force,
+                symbol,
+                quantity,
+                side,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                time_in_force=time_in_force,
             )
             submitted = strategy.submit_order(order)
         except (OrderValidationError, BrokerError) as exc:
@@ -465,17 +472,12 @@ def test_get_account_balance_returns_error_on_broker_failure() -> None:
 
 def test_get_positions_lists_every_position() -> None:
     strategy, broker = _strategy()
-    broker.positions = [
-        Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(10), side=PositionSide.LONG,
-                 current_price=Decimal("450.5"), market_value=Decimal("4505"))
-    ]
+    broker.positions = [Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(10), side=PositionSide.LONG, current_price=Decimal("450.5"), market_value=Decimal("4505"))]
     tools = _tools(strategy)
 
     result = tools["get_positions"]()
 
-    assert result["positions"] == [
-        {"symbol": "SPY", "quantity": 10.0, "side": "long", "current_price": 450.5, "market_value": 4505.0}
-    ]
+    assert result["positions"] == [{"symbol": "SPY", "quantity": 10.0, "side": "long", "current_price": 450.5, "market_value": 4505.0}]
 
 
 def test_get_position_without_a_position_returns_none() -> None:
@@ -487,9 +489,7 @@ def test_get_position_without_a_position_returns_none() -> None:
 
 def test_get_position_with_a_position_returns_the_lean_dict() -> None:
     strategy, broker = _strategy()
-    broker.positions = [
-        Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(5), side=PositionSide.LONG)
-    ]
+    broker.positions = [Position(strategy_name="momentum", asset=Asset("SPY"), quantity=Decimal(5), side=PositionSide.LONG)]
     tools = _tools(strategy)
 
     result = tools["get_position"]("SPY")
@@ -653,8 +653,12 @@ def test_get_last_price_without_data_returns_an_error() -> None:
 def test_get_quote_returns_bid_ask_and_mid() -> None:
     strategy, broker = _strategy()
     broker.quotes["SPY"] = Quote(
-        asset=Asset("SPY"), bid=Decimal("450"), ask=Decimal("451"),
-        bid_size=None, ask_size=None, timestamp=datetime(2026, 9, 14, 14, tzinfo=UTC),
+        asset=Asset("SPY"),
+        bid=Decimal("450"),
+        ask=Decimal("451"),
+        bid_size=None,
+        ask_size=None,
+        timestamp=datetime(2026, 9, 14, 14, tzinfo=UTC),
     )
     tools = _tools(strategy)
 
@@ -900,9 +904,7 @@ if TYPE_CHECKING:
 def indicator_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:
     """Indicator tool bound to `strategy`."""
 
-    def get_indicator(
-        name: str, symbol: str, timestep: str = "day", params: dict[str, Any] | None = None
-    ) -> dict[str, Any]:
+    def get_indicator(name: str, symbol: str, timestep: str = "day", params: dict[str, Any] | None = None) -> dict[str, Any]:
         """Compute a pandas-ta-classic indicator (e.g. sma, rsi, bbands) for a symbol."""
         try:
             indicator = getattr(strategy.indicators, name)
@@ -976,10 +978,19 @@ def test_all_combines_every_domain_in_order(tmp_path: Path) -> None:
 
     memory_names = [tool.__name__ for tool in memory_tools(strategy.memory)]
     expected = memory_names + [
-        "submit_order", "cancel_order", "cancel_open_orders", "close_position", "sell_all",
-        "get_orders", "get_order",
-        "get_account_balance", "get_positions", "get_position",
-        "get_last_price", "get_quote", "get_bars",
+        "submit_order",
+        "cancel_order",
+        "cancel_open_orders",
+        "close_position",
+        "sell_all",
+        "get_orders",
+        "get_order",
+        "get_account_balance",
+        "get_positions",
+        "get_position",
+        "get_last_price",
+        "get_quote",
+        "get_bars",
         "get_indicator",
     ]
     assert names == expected
@@ -1166,9 +1177,16 @@ def test_parse_news_includes_content_only_when_present() -> None:
         {
             "news": [
                 {
-                    "id": 1, "headline": "h", "source": "s", "url": None, "summary": "sum",
-                    "created_at": "2026-09-10T00:00:00Z", "updated_at": "2026-09-10T00:00:00Z",
-                    "symbols": [], "author": "a", "content": "full article text",
+                    "id": 1,
+                    "headline": "h",
+                    "source": "s",
+                    "url": None,
+                    "summary": "sum",
+                    "created_at": "2026-09-10T00:00:00Z",
+                    "updated_at": "2026-09-10T00:00:00Z",
+                    "symbols": [],
+                    "author": "a",
+                    "content": "full article text",
                 }
             ],
             "next_page_token": None,
@@ -1376,9 +1394,7 @@ Append to `tests/brokers/alpaca/test_broker_market_data.py` (add `FakeNewsClient
 
 ```python
 def _broker_with_news(news: FakeNewsClient) -> AlpacaBroker:
-    return AlpacaBroker(
-        "momentum", FakeTradingClient(), clock=FakeClock(_NOW), news_client=news
-    )
+    return AlpacaBroker("momentum", FakeTradingClient(), clock=FakeClock(_NOW), news_client=news)
 
 
 def test_get_news_builds_a_request_and_parses_the_response() -> None:
@@ -1480,52 +1496,52 @@ Change `__init__`'s signature and body:
 Change `from_credentials`:
 
 ```python
-    @classmethod
-    def from_credentials(
-        cls,
-        strategy_name: str,
-        creds: AlpacaCredentials,
-        with_stream: bool = True,
-    ) -> AlpacaBroker:
-        client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
-        data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
-        news_client = cast("market_data.AlpacaNewsClient", build_news_client(creds))
-        stream = build_trading_stream(creds) if with_stream else None
-        return cls(
-            strategy_name, client, stream=stream, is_paper=creds.is_paper,
-            data_client=data_client, news_client=news_client,
-        )
+@classmethod
+def from_credentials(
+    cls,
+    strategy_name: str,
+    creds: AlpacaCredentials,
+    with_stream: bool = True,
+) -> AlpacaBroker:
+    client = cast("orders.AlpacaTradingClient", build_trading_client(creds))
+    data_client = cast("market_data.AlpacaStockDataClient", build_stock_data_client(creds))
+    news_client = cast("market_data.AlpacaNewsClient", build_news_client(creds))
+    stream = build_trading_stream(creds) if with_stream else None
+    return cls(
+        strategy_name,
+        client,
+        stream=stream,
+        is_paper=creds.is_paper,
+        data_client=data_client,
+        news_client=news_client,
+    )
 ```
 
 Add near `_require_data_client` (in the "market data" section):
 
 ```python
-    def _require_news_client(self) -> market_data.AlpacaNewsClient:
-        if self._news_client is None:
-            raise BrokerError(
-                "no news client configured; construct the broker with news_client=... "
-                "or use AlpacaBroker.from_credentials(...)"
-            )
-        return self._news_client
+def _require_news_client(self) -> market_data.AlpacaNewsClient:
+    if self._news_client is None:
+        raise BrokerError("no news client configured; construct the broker with news_client=... or use AlpacaBroker.from_credentials(...)")
+    return self._news_client
 
-    def get_news(
-        self,
-        symbols: Sequence[str] = (),
-        *,
-        start: datetime | None = None,
-        end: datetime,
-        limit: int = 10,
-        include_content: bool = False,
-    ) -> list[dict[str, object]]:
-        client = self._require_news_client()
-        request = market_data.build_news_request(
-            symbols, start=start, end=end, limit=limit, include_content=include_content
-        )
-        try:
-            response = client.get_news(request)
-        except Exception as exc:
-            raise BrokerError(f"Failed to fetch news: {exc}") from exc
-        return market_data.parse_news(response)
+
+def get_news(
+    self,
+    symbols: Sequence[str] = (),
+    *,
+    start: datetime | None = None,
+    end: datetime,
+    limit: int = 10,
+    include_content: bool = False,
+) -> list[dict[str, object]]:
+    client = self._require_news_client()
+    request = market_data.build_news_request(symbols, start=start, end=end, limit=limit, include_content=include_content)
+    try:
+        response = client.get_news(request)
+    except Exception as exc:
+        raise BrokerError(f"Failed to fetch news: {exc}") from exc
+    return market_data.parse_news(response)
 ```
 
 - [ ] **Step 6: Run the tests to verify they pass**
@@ -1639,17 +1655,39 @@ def test_search_news_returns_an_error_dict_on_broker_failure() -> None:
 def test_search_news_without_an_alpaca_broker_returns_an_error() -> None:
     class _OtherBroker(Broker):
         name = "other"
-        def _conform_order(self, order): return order
-        def _submit_order(self, order): return order
-        def cancel_order(self, order): pass
-        def pull_order(self, identifier): return None
-        def pull_orders(self, limit=100): return []
-        def pull_positions(self): return []
-        def get_account(self): raise NotImplementedError
-        def modify_order(self, order, *, limit_price=None, stop_price=None): raise NotImplementedError
-        def close_position(self, asset, fraction=1): return None
-        def close_all_positions(self, cancel_orders=True): return []
-        def sync_open_orders(self): return []
+
+        def _conform_order(self, order):
+            return order
+
+        def _submit_order(self, order):
+            return order
+
+        def cancel_order(self, order):
+            pass
+
+        def pull_order(self, identifier):
+            return None
+
+        def pull_orders(self, limit=100):
+            return []
+
+        def pull_positions(self):
+            return []
+
+        def get_account(self):
+            raise NotImplementedError
+
+        def modify_order(self, order, *, limit_price=None, stop_price=None):
+            raise NotImplementedError
+
+        def close_position(self, asset, fraction=1):
+            return None
+
+        def close_all_positions(self, cancel_orders=True):
+            return []
+
+        def sync_open_orders(self):
+            return []
 
     strategy = Strategy(_OtherBroker("momentum", clock=FakeClock(_now())))
     tool = _tool(strategy)
@@ -1703,9 +1741,7 @@ def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:
         clamped_limit = min(max(int(limit), MIN_LIMIT), MAX_LIMIT)
         symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
         try:
-            articles = strategy.broker.get_news(
-                symbol_list, start=start_dt, end=end_dt, limit=clamped_limit, include_content=include_content
-            )
+            articles = strategy.broker.get_news(symbol_list, start=start_dt, end=end_dt, limit=clamped_limit, include_content=include_content)
         except BrokerError as exc:
             return {"error": str(exc)}
         return {"count": len(articles), "articles": articles}
@@ -1793,8 +1829,6 @@ Expected: `ImportError: cannot import name 'FredCredentials'` / `'MacroDataError
 Append to `src/trading_agent_framework/utils/errors.py`:
 
 ```python
-
-
 class MacroDataError(TradingFrameworkError):
     """Raised when a macro (FRED) data lookup fails."""
 ```
@@ -1804,8 +1838,6 @@ class MacroDataError(TradingFrameworkError):
 Append to `src/trading_agent_framework/config/env.py`:
 
 ```python
-
-
 @dataclass(frozen=True, slots=True)
 class FredCredentials:
     api_key: str = field(repr=False)
@@ -2029,9 +2061,7 @@ def _fetch_series(client: FredSeriesClient, series_id: str, start_date: str | No
         raise MacroDataError(f"Failed to fetch FRED series {series_id!r}: {exc}") from exc
 
 
-def macro_tools(
-    strategy: "Strategy", *, fred_client_factory: Callable[[], FredSeriesClient] = _default_fred_client
-) -> list[Callable[..., dict[str, Any]]]:
+def macro_tools(strategy: "Strategy", *, fred_client_factory: Callable[[], FredSeriesClient] = _default_fred_client) -> list[Callable[..., dict[str, Any]]]:
     """FRED macro tool bound to `strategy`."""
 
     def get_fred_series(series_id: str, start_date: str | None = None, limit: int = 60) -> dict[str, Any]:
@@ -2042,10 +2072,7 @@ def macro_tools(
             series = _fetch_series(fred_client_factory(), series_id, start_date, cutoff)
         except MacroDataError as exc:
             return {"error": str(exc)}
-        observations = [
-            {"date": index.date().isoformat() if hasattr(index, "date") else str(index), "value": float(value)}
-            for index, value in series.items()
-        ]
+        observations = [{"date": index.date().isoformat() if hasattr(index, "date") else str(index), "value": float(value)} for index, value in series.items()]
         return {
             "series_id": series_id,
             "as_of": cutoff.isoformat(),
@@ -2172,12 +2199,8 @@ def test_statement_values_omits_a_field_whose_only_candidate_mismatches_the_anch
     payload = {
         "facts": {
             "us-gaap": {
-                "NetIncomeLoss": {
-                    "units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}
-                },
-                "GrossProfit": {
-                    "units": {"USD": [{"val": 99, "filed": "2026-01-01", "form": "10-K", "end": "2024-12-31", "accn": "a2"}]}
-                },
+                "NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}},
+                "GrossProfit": {"units": {"USD": [{"val": 99, "filed": "2026-01-01", "form": "10-K", "end": "2024-12-31", "accn": "a2"}]}},
             }
         }
     }
@@ -2301,11 +2324,7 @@ BALANCE_SHEET_TAGS: dict[str, list[str]] = {
     ],
 }
 
-_PRIORITY_COMPANY_FACT_TAGS = tuple(
-    dict.fromkeys(
-        tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags
-    )
-)
+_PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
 
 _FORM_PRIORITY = {"10-K": 5, "20-F": 5, "40-F": 5, "10-Q": 4, "8-K": 2}
 
@@ -2442,20 +2461,14 @@ def _same_statement_period(candidate: dict[str, Any], anchor: dict[str, Any]) ->
     return True
 
 
-def statement_values(
-    payload: dict[str, Any], tag_map: dict[str, list[str]], *, as_of: datetime
-) -> dict[str, dict[str, Any]]:
+def statement_values(payload: dict[str, Any], tag_map: dict[str, list[str]], *, as_of: datetime) -> dict[str, dict[str, Any]]:
     """Income-statement / balance-sheet field values as of `as_of`, from a raw company-facts payload.
 
     A field whose best candidate doesn't match the statement's period anchor is omitted, rather
     than mixing facts pulled from different SEC filings or periods.
     """
     facts = payload.get("facts", {}).get("us-gaap", {})
-    field_candidates = {
-        field: candidates
-        for field, tags in tag_map.items()
-        if (candidates := filter_facts_as_of(facts, tags, as_of))
-    }
+    field_candidates = {field: candidates for field, tags in tag_map.items() if (candidates := filter_facts_as_of(facts, tags, as_of))}
     anchor = _statement_anchor(field_candidates)
     if anchor is None:
         return {}
@@ -2464,8 +2477,10 @@ def statement_values(
         for candidate in candidates:
             if _same_statement_period(candidate, anchor):
                 values[field] = {
-                    "value": candidate["value"], "unit": candidate["unit"],
-                    "filed": candidate["filed"], "form": candidate["form"],
+                    "value": candidate["value"],
+                    "unit": candidate["unit"],
+                    "filed": candidate["filed"],
+                    "form": candidate["form"],
                 }
                 break
     return values
@@ -2703,8 +2718,6 @@ Expected: `ModuleNotFoundError: No module named 'trading_agent_framework.fundame
 Append to `src/trading_agent_framework/utils/errors.py`:
 
 ```python
-
-
 class FundamentalsError(TradingFrameworkError):
     """Raised when a SEC EDGAR fundamentals lookup fails."""
 ```
@@ -2945,7 +2958,11 @@ def _tools(client: _FakeEdgarClient) -> dict[str, object]:
 def test_returns_five_tools_with_one_line_docstrings() -> None:
     tools = fundamentals_tools(_strategy(), client=_FakeEdgarClient())
     assert [t.__name__ for t in tools] == [
-        "get_company_facts", "get_income_statement", "get_balance_sheet", "get_filings", "get_filing_document",
+        "get_company_facts",
+        "get_income_statement",
+        "get_balance_sheet",
+        "get_filings",
+        "get_filing_document",
     ]
     for tool in tools:
         assert len(tool.__doc__.splitlines()) == 1
@@ -2953,9 +2970,7 @@ def test_returns_five_tools_with_one_line_docstrings() -> None:
 
 def test_get_company_facts_returns_symbol_cik_and_compact_facts() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_company_facts"]("aapl")
@@ -2975,9 +2990,7 @@ def test_get_company_facts_returns_error_on_unknown_ticker() -> None:
 
 def test_get_income_statement_returns_values_for_the_symbol() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"NetIncomeLoss": {"units": {"USD": [{"val": 10, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_income_statement"]("AAPL")
@@ -2988,9 +3001,7 @@ def test_get_income_statement_returns_values_for_the_symbol() -> None:
 
 def test_get_balance_sheet_returns_values_for_the_symbol() -> None:
     client = _FakeEdgarClient()
-    client.company_facts = {
-        "facts": {"us-gaap": {"Assets": {"units": {"USD": [{"val": 999, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}
-    }
+    client.company_facts = {"facts": {"us-gaap": {"Assets": {"units": {"USD": [{"val": 999, "filed": "2026-01-01", "form": "10-K", "end": "2025-12-31", "accn": "a1"}]}}}}}
     tools = _tools(client)
 
     result = tools["get_balance_sheet"]("AAPL")
@@ -3086,9 +3097,7 @@ def _default_client(strategy: "Strategy") -> SecEdgarClient:
     return SecEdgarClient(user_agent, strategy.project_root / "cache" / "sec")
 
 
-def fundamentals_tools(
-    strategy: "Strategy", *, client: SecEdgarClient | None = None
-) -> list[Callable[..., dict[str, Any]]]:
+def fundamentals_tools(strategy: "Strategy", *, client: SecEdgarClient | None = None) -> list[Callable[..., dict[str, Any]]]:
     """SEC fundamentals tools bound to `strategy`, backed by one shared `SecEdgarClient`."""
     edgar = client if client is not None else _default_client(strategy)
 

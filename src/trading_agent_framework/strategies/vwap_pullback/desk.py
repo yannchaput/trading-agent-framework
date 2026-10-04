@@ -150,9 +150,15 @@ class Desk:
             return {"error": f"no price for {symbol}"}
         try:
             plan = risk.plan_entry(
-                trigger_close=setup.trigger_close, pullback_low=setup.pullback_low, last_price=last, daily_atr=info.daily_atr,
-                equity=account.portfolio_value, buying_power=account.buying_power, cash=account.cash,
-                pending_sell_proceeds=self._pending_sell_proceeds(), params=self._params,
+                trigger_close=setup.trigger_close,
+                pullback_low=setup.pullback_low,
+                last_price=last,
+                daily_atr=info.daily_atr,
+                equity=account.portfolio_value,
+                buying_power=account.buying_power,
+                cash=account.cash,
+                pending_sell_proceeds=self._pending_sell_proceeds(),
+                params=self._params,
             )
         except risk.EntryRefused as exc:
             return {"error": str(exc)}
@@ -161,15 +167,25 @@ class Desk:
         except Exception as exc:  # a broker's _submit_order may re-raise the underlying failure after order.set_error (lumibot contract)
             return {"error": str(exc)}
         # The trade exists from submission (PENDING): it takes a slot, and the fill/cancel hooks find it by order id.
-        state.book.add(Trade(
-            symbol=symbol, entry_order_id=submitted.identifier, planned_quantity=plan.quantity, stop_price=plan.stop_price,
-            r_per_share=plan.r_per_share, entered_at=now,
-        ))
+        state.book.add(
+            Trade(
+                symbol=symbol,
+                entry_order_id=submitted.identifier,
+                planned_quantity=plan.quantity,
+                stop_price=plan.stop_price,
+                r_per_share=plan.r_per_share,
+                entered_at=now,
+            )
+        )
         state.setups[symbol] = mark_in_trade(setup)  # freeze the setup: one trade per symbol per session
         self._strategy.log_info(f"entry {symbol}: {plan.quantity} at limit {plan.limit_price}, stop {plan.stop_price}, R {plan.r_per_share}")
         return {
-            "symbol": symbol, "quantity": int(plan.quantity), "limit_price": float(plan.limit_price),
-            "stop_price": float(plan.stop_price), "r_per_share": float(plan.r_per_share), "status": "entry submitted",
+            "symbol": symbol,
+            "quantity": int(plan.quantity),
+            "limit_price": float(plan.limit_price),
+            "stop_price": float(plan.stop_price),
+            "r_per_share": float(plan.r_per_share),
+            "status": "entry submitted",
         }
 
     def _has_exposure(self, symbol: str) -> bool:

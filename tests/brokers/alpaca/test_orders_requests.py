@@ -30,9 +30,7 @@ def test_get_orders_request_can_ask_for_open_orders_only() -> None:
 
 
 def test_replace_request_rounds_prices_to_alpaca_ticks() -> None:
-    request = orders.build_replace_order_request(
-        limit_price=Decimal("101.005"), stop_price=Decimal("99.999")
-    )
+    request = orders.build_replace_order_request(limit_price=Decimal("101.005"), stop_price=Decimal("99.999"))
     assert request.limit_price == 101.01
     assert request.stop_price == 100.0
 

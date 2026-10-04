@@ -96,9 +96,7 @@ class BacktestBroker(Broker):
 
     def _submit_order(self, order: Order) -> Order:
         if order.notional is not None:
-            raise OrderValidationError(
-                "backtesting only supports quantity-based orders, not notional orders"
-            )
+            raise OrderValidationError("backtesting only supports quantity-based orders, not notional orders")
         if order.order_type is OrderType.TRAIL and (order.trail_price is None) == (order.trail_percent is None):
             raise OrderValidationError("a trailing stop order needs exactly one of trail_price or trail_percent")
         # Reject against the projection (cash/holdings once every pending order fills) *before*
@@ -121,9 +119,7 @@ class BacktestBroker(Broker):
         # forming and must be skipped once before any fill (see `_PendingOrder.needs_skip`).
         needs_skip = found is None or found[1] < now
         trail_reference = found[0].close if order.order_type is OrderType.TRAIL and found is not None else None
-        self._pending[order.identifier] = _PendingOrder(
-            order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference
-        )
+        self._pending[order.identifier] = _PendingOrder(order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference)
         return order
 
     def cancel_order(self, order: Order) -> None:
@@ -165,13 +161,9 @@ class BacktestBroker(Broker):
         """
         now = self.clock.now()
         portfolio_value = self._portfolio_value(now)
-        return AccountBalances(
-            cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash
-        )
+        return AccountBalances(cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash)
 
-    def modify_order(
-        self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None
-    ) -> Order:
+    def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
         if order.identifier not in self._pending:
             raise BacktestError(f"order {order.identifier} is not pending; cannot modify")
         replacement = dataclasses.replace(
@@ -235,12 +227,20 @@ class BacktestBroker(Broker):
         if bar is None:
             return None
         return Quote(
-            asset=asset, bid=bar.close, ask=bar.close, bid_size=None, ask_size=None,
+            asset=asset,
+            bid=bar.close,
+            ask=bar.close,
+            bid_size=None,
+            ask_size=None,
             timestamp=self.clock.now(),
         )
 
     def get_bars(
-        self, assets: Sequence[Asset], length: int, timestep: str = "day", *,
+        self,
+        assets: Sequence[Asset],
+        length: int,
+        timestep: str = "day",
+        *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
         result: dict[Asset, Bars] = {}
@@ -283,9 +283,7 @@ class BacktestBroker(Broker):
 
     # --- shared bar lookup -----------------------------------------------------------------
 
-    def _source_bars(
-        self, asset: Asset, cutoff: datetime, length: int, timestep: str
-    ) -> Bars | None:
+    def _source_bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         """THE gate (design spec, section 5.2): the single place this broker -- and so
         the strategy, whose every price request funnels through `get_bars`,
         `get_last_price`, `get_quote` or the fill engine -- reads a
@@ -315,10 +313,7 @@ class BacktestBroker(Broker):
             latest = bars.df.index.max()
             past_cutoff = bool(latest > cutoff)
         except TypeError as exc:  # e.g. a tz-naive index compared against a tz-aware cutoff
-            raise BacktestDataError(
-                f"{self._data_source.name} returned bars for {asset.symbol} whose index "
-                f"cannot be compared against the {cutoff.isoformat()} cutoff: {exc}"
-            ) from exc
+            raise BacktestDataError(f"{self._data_source.name} returned bars for {asset.symbol} whose index cannot be compared against the {cutoff.isoformat()} cutoff: {exc}") from exc
         if past_cutoff:
             raise BacktestDataError(
                 f"{self._data_source.name} returned a bar for {asset.symbol} closing at "
@@ -327,16 +322,16 @@ class BacktestBroker(Broker):
             )
         return bars
 
-    def _latest_bar_with_time(
-        self, asset: Asset, cutoff: datetime
-    ) -> tuple[fills.Bar, datetime] | None:
+    def _latest_bar_with_time(self, asset: Asset, cutoff: datetime) -> tuple[fills.Bar, datetime] | None:
         bars = self._source_bars(asset, cutoff, 1, self._timestep)
         if bars is None or bars.df.empty:
             return None
         row = bars.df.iloc[-1]
         bar = fills.Bar(
-            open=Decimal(str(row["open"])), high=Decimal(str(row["high"])),
-            low=Decimal(str(row["low"])), close=Decimal(str(row["close"])),
+            open=Decimal(str(row["open"])),
+            high=Decimal(str(row["high"])),
+            low=Decimal(str(row["low"])),
+            close=Decimal(str(row["close"])),
         )
         return bar, bars.df.index[-1].to_pydatetime()
 
@@ -414,10 +409,7 @@ class BacktestBroker(Broker):
             available = held - projection.pending_sells.get(order.asset, Decimal(0))
             if order.quantity > available:
                 pending_note = "" if available == held else f" ({held} held, the rest already pending sale)"
-                return (
-                    f"insufficient position: selling {order.quantity} {symbol}, "
-                    f"available {available}{pending_note}"
-                )
+                return f"insufficient position: selling {order.quantity} {symbol}, available {available}{pending_note}"
             return None
         price = self._estimated_price(order, now)
         if price is None:
@@ -425,10 +417,7 @@ class BacktestBroker(Broker):
         _, fee, notional = self._execution_terms(order, price)
         needed = notional + fee
         if needed > projection.cash:
-            return (
-                f"insufficient buying power: buying {order.quantity} {symbol} needs about "
-                f"{needed} (fees included), buying power is {projection.cash}"
-            )
+            return f"insufficient buying power: buying {order.quantity} {symbol} needs about {needed} (fees included), buying power is {projection.cash}"
         return None
 
     # --- fills: called by BacktestClock.on_advance --------------------------------------
@@ -458,8 +447,10 @@ class BacktestBroker(Broker):
         return [
             (
                 fills.Bar(
-                    open=Decimal(str(row.open)), high=Decimal(str(row.high)),
-                    low=Decimal(str(row.low)), close=Decimal(str(row.close)),
+                    open=Decimal(str(row.open)),
+                    high=Decimal(str(row.high)),
+                    low=Decimal(str(row.low)),
+                    close=Decimal(str(row.close)),
                 ),
                 bar_time.to_pydatetime(),
             )
@@ -494,13 +485,19 @@ class BacktestBroker(Broker):
             if order.order_type is OrderType.TRAIL:
                 reference = pending.trail_reference if pending.trail_reference is not None else bar.open
                 result, pending.trail_reference = fills.evaluate_trailing_stop(
-                    side=order.side, bar=bar, reference=reference,
-                    trail_price=order.trail_price, trail_percent=order.trail_percent,
+                    side=order.side,
+                    bar=bar,
+                    reference=reference,
+                    trail_price=order.trail_price,
+                    trail_percent=order.trail_percent,
                 )
             else:
                 result = fills.evaluate_fill(
-                    order_type=order.order_type, side=order.side, bar=bar,
-                    limit_price=order.limit_price, stop_price=order.stop_price,
+                    order_type=order.order_type,
+                    side=order.side,
+                    bar=bar,
+                    limit_price=order.limit_price,
+                    stop_price=order.stop_price,
                     stop_limit_price=order.stop_limit_price,
                 )
         except ValueError as exc:
@@ -564,16 +561,22 @@ class BacktestBroker(Broker):
         else:
             self._cash += notional - fee
         self._apply_to_position(order.asset, order.side, quantity, execution_price)
-        self.ledger.record_fill(FillRecord(
-            time=bar_time, identifier=order.identifier, symbol=order.asset.symbol,
-            side=order.side, order_type=order.order_type, quantity=order.quantity,
-            filled_quantity=quantity, price=execution_price, trade_cost=fee,
-            trade_slippage=(execution_price - raw_price).copy_abs(),
-        ))
-        order.avg_fill_price = execution_price
-        self.tracker.process_trade_event(
-            order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity
+        self.ledger.record_fill(
+            FillRecord(
+                time=bar_time,
+                identifier=order.identifier,
+                symbol=order.asset.symbol,
+                side=order.side,
+                order_type=order.order_type,
+                quantity=order.quantity,
+                filled_quantity=quantity,
+                price=execution_price,
+                trade_cost=fee,
+                trade_slippage=(execution_price - raw_price).copy_abs(),
+            )
         )
+        order.avg_fill_price = execution_price
+        self.tracker.process_trade_event(order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity)
 
     def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
         existing = self._positions.get(asset)
@@ -584,13 +587,20 @@ class BacktestBroker(Broker):
             self._positions.pop(asset, None)
             return
         self._positions[asset] = Position(
-            strategy_name=self.strategy_name, asset=asset, quantity=new_quantity,
-            side=PositionSide.LONG, avg_fill_price=price,
+            strategy_name=self.strategy_name,
+            asset=asset,
+            quantity=new_quantity,
+            side=PositionSide.LONG,
+            avg_fill_price=price,
         )
 
     def _sample_equity(self, cutoff: datetime) -> None:
         positions_value = self._positions_value(cutoff)
-        self.ledger.record_equity(EquitySample(
-            time=cutoff, portfolio_value=self._cash + positions_value,
-            cash=self._cash, positions_value=positions_value,
-        ))
+        self.ledger.record_equity(
+            EquitySample(
+                time=cutoff,
+                portfolio_value=self._cash + positions_value,
+                cash=self._cash,
+                positions_value=positions_value,
+            )
+        )

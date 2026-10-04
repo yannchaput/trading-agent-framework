@@ -16,8 +16,17 @@ ATR = 2.0  # daily ATR: impulse = 1.6 move, large red body > 0.5
 
 def bar(minute: int, o: float, h: float, low: float, c: float, v: float, *, vwap: float, rs: float = 0.01, rvol: float = 2.0, high_so_far: float | None = None) -> BarContext:
     return BarContext(
-        time=et(2026, 9, 1, 9, 30) + timedelta(minutes=minute), open=o, high=h, low=low, close=c, volume=v,
-        vwap=vwap, rs=rs, rvol=rvol, session_open=100.0, session_high=high_so_far if high_so_far is not None else h,
+        time=et(2026, 9, 1, 9, 30) + timedelta(minutes=minute),
+        open=o,
+        high=h,
+        low=low,
+        close=c,
+        volume=v,
+        vwap=vwap,
+        rs=rs,
+        rvol=rvol,
+        session_open=100.0,
+        session_high=high_so_far if high_so_far is not None else h,
     )
 
 

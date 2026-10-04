@@ -19,7 +19,11 @@ _REQUIRED = inspect.Parameter.empty
 _LUMIBOT_SIGNATURES = {
     "remember": [("text", _REQUIRED), ("kind", "memory"), ("tags", None)],
     "search_memory": [
-        ("query", _REQUIRED), ("limit", 10), ("kind", None), ("symbol", None), ("status", None),
+        ("query", _REQUIRED),
+        ("limit", 10),
+        ("kind", None),
+        ("symbol", None),
+        ("status", None),
     ],
     "remember_proposal": [("text", _REQUIRED), ("symbol", None), ("action", None), ("tags", None)],
     "remember_risk_note": [("text", _REQUIRED), ("symbol", None), ("tags", None)],
@@ -86,9 +90,7 @@ def test_only_remember_decision_mutates_trading(tmp_path: Path) -> None:
         ("open_thesis", {"text": "long SPY", "symbol": "SPY", "tags": ["macro"]}, "thesis", "open"),
     ],
 )
-def test_write_tools_return_a_lean_summary(
-    tmp_path: Path, name: str, kwargs: dict[str, Any], kind: str, status: str
-) -> None:
+def test_write_tools_return_a_lean_summary(tmp_path: Path, name: str, kwargs: dict[str, Any], kind: str, status: str) -> None:
     store = make_memory_store(tmp_path)
     result = _tools(store)[name](**kwargs)
     assert result == {"id": result["id"], "kind": kind, "status": status}
@@ -160,10 +162,14 @@ def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:
     tools = _tools(store)
     thesis_id = tools["open_thesis"]("Long SPY", symbol="SPY")["id"]
     assert tools["update_thesis"](thesis_id, "Long SPY, raise target") == {
-        "id": thesis_id, "kind": "thesis", "status": "open",
+        "id": thesis_id,
+        "kind": "thesis",
+        "status": "open",
     }
     assert tools["close_thesis"](thesis_id, "Target hit") == {
-        "id": thesis_id, "kind": "thesis", "status": "closed",
+        "id": thesis_id,
+        "kind": "thesis",
+        "status": "closed",
     }
     assert tools["close_thesis"](thesis_id, "again") == {
         "error": f"thesis '{thesis_id}' is not open (status: closed)",
@@ -178,9 +184,7 @@ def test_thesis_lifecycle_through_the_tools(tmp_path: Path) -> None:
         ("open_thesis", ("x", None, "macro"), "tags must be a list of strings"),
     ],
 )
-def test_validation_errors_come_back_as_an_error_dict(
-    tmp_path: Path, name: str, args: tuple[Any, ...], error: str
-) -> None:
+def test_validation_errors_come_back_as_an_error_dict(tmp_path: Path, name: str, args: tuple[Any, ...], error: str) -> None:
     assert _tools(make_memory_store(tmp_path))[name](*args) == {"error": error}
 
 

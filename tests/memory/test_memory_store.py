@@ -33,17 +33,13 @@ def _events(store: MemoryStore) -> list[dict[str, Any]]:
 
 
 def test_memory_db_path_mirrors_the_logs_layout() -> None:
-    assert memory_db_path(Path("/root"), "my strat/v2", TradingMode.PAPER) == Path(
-        "/root/memory/my_strat_v2/paper/memory.sqlite"
-    )
+    assert memory_db_path(Path("/root"), "my strat/v2", TradingMode.PAPER) == Path("/root/memory/my_strat_v2/paper/memory.sqlite")
 
 
 def test_constructor_creates_parent_dirs_and_the_schema_in_wal_mode(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path / "a" / "b")
     assert store.db_path == tmp_path / "a" / "b" / DB_FILE_NAME
-    tables = {
-        row["name"] for row in memory_rows(store, "SELECT name FROM sqlite_master WHERE type='table'")
-    }
+    tables = {row["name"] for row in memory_rows(store, "SELECT name FROM sqlite_master WHERE type='table'")}
     assert tables == {"memory_events", "memory_index", "memory_retrievals"}
     assert memory_rows(store, "PRAGMA journal_mode") == [{"journal_mode": "wal"}]
 
@@ -140,9 +136,7 @@ def test_remember_writes_an_event_and_a_projection(tmp_path: Path) -> None:
 
 
 def test_remember_with_a_custom_kind_takes_the_symbol_from_metadata(tmp_path: Path) -> None:
-    item = make_memory_store(tmp_path).remember(
-        "  SPY breadth is thin  ", kind="macro_view", metadata={"symbol": "spy"}
-    )
+    item = make_memory_store(tmp_path).remember("  SPY breadth is thin  ", kind="macro_view", metadata={"symbol": "spy"})
     assert item["id"].startswith("macro_view_")
     assert (item["kind"], item["symbol"], item["text"]) == ("macro_view", "SPY", "SPY breadth is thin")
 
@@ -174,9 +168,7 @@ def test_event_sequence_increments(tmp_path: Path) -> None:
         ({"text": "x", "tags": [1]}, "tags must be a list of strings"),
     ],
 )
-def test_remember_rejects_bad_input_without_writing(
-    tmp_path: Path, kwargs: dict[str, Any], message: str
-) -> None:
+def test_remember_rejects_bad_input_without_writing(tmp_path: Path, kwargs: dict[str, Any], message: str) -> None:
     store = make_memory_store(tmp_path)
     with pytest.raises(MemoryValidationError, match=message):
         store.remember(**kwargs)
@@ -193,12 +185,18 @@ def test_get_returns_none_for_an_unknown_id(tmp_path: Path) -> None:
 def test_remember_proposal(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     item = store.remember_proposal(
-        "Buy SPY on a pullback", symbol="spy", action="buy", tags=["idea"],
+        "Buy SPY on a pullback",
+        symbol="spy",
+        action="buy",
+        tags=["idea"],
         metadata={"confidence": "low"},
     )
     assert re.fullmatch(r"proposal_[0-9a-f]{8}", item["id"])
     assert (item["kind"], item["status"], item["symbol"], item["tags"]) == (
-        "proposal", "proposed", "SPY", ["idea"],
+        "proposal",
+        "proposed",
+        "SPY",
+        ["idea"],
     )
     assert item["metadata"] == {"symbol": "SPY", "action": "buy", "confidence": "low"}
     assert _events(store)[-1]["event_type"] == "proposal.recorded"
@@ -221,9 +219,7 @@ def test_remember_risk_note(tmp_path: Path) -> None:
 
 def test_remember_decision_stores_evidence_as_json(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
-    item = store.remember_decision(
-        "Bought SPY on oversold RSI", symbol="SPY", action="buy", evidence={"rsi": Decimal("28.5")}
-    )
+    item = store.remember_decision("Bought SPY on oversold RSI", symbol="SPY", action="buy", evidence={"rsi": Decimal("28.5")})
     assert (item["kind"], item["status"]) == ("decision", "recorded")
     assert item["metadata"] == {"symbol": "SPY", "action": "buy", "evidence": {"rsi": "28.5"}}
     assert _events(store)[-1]["event_type"] == "decision.recorded"
@@ -233,9 +229,7 @@ def test_remember_decision_stores_evidence_as_json(tmp_path: Path) -> None:
     ("outcome", "status"),
     [(None, "proposed"), ({"validated": True}, "validated"), ({"validated": "yes"}, "proposed")],
 )
-def test_remember_lesson_is_validated_only_by_an_explicit_true(
-    tmp_path: Path, outcome: dict[str, Any] | None, status: str
-) -> None:
+def test_remember_lesson_is_validated_only_by_an_explicit_true(tmp_path: Path, outcome: dict[str, Any] | None, status: str) -> None:
     store = make_memory_store(tmp_path)
     item = store.remember_lesson("Don't chase opening gaps", outcome=outcome)
     assert (item["kind"], item["status"]) == ("lesson", status)
@@ -325,7 +319,10 @@ def test_record_warning_is_history_only(tmp_path: Path) -> None:
     [row] = _events(store)
     assert event["event_id"] == row["event_id"]
     assert (row["event_type"], row["subject_type"], row["symbol"], row["agent_name"]) == (
-        "position_order_without_memory_thesis", "warning", "SPY", "trader",
+        "position_order_without_memory_thesis",
+        "warning",
+        "SPY",
+        "trader",
     )
     assert row["subject_id"].startswith("warning_")
     assert json.loads(row["payload_json"]) == {
@@ -351,17 +348,15 @@ def test_record_order_submitted_links_the_decision_of_the_same_model_call(tmp_pa
         limit_price=Decimal("512.30"),
         client_order_id="momentum-1",
     )
-    decision = store.remember_decision(
-        "Buy SPY", symbol="SPY", action="buy", agent_name="trader", model_call_id="call-7"
-    )
-    event = store.record_order_submitted(
-        order, metadata={"reason": "breakout"}, agent_name="trader", model_call_id="call-7"
-    )
+    decision = store.remember_decision("Buy SPY", symbol="SPY", action="buy", agent_name="trader", model_call_id="call-7")
+    event = store.record_order_submitted(order, metadata={"reason": "breakout"}, agent_name="trader", model_call_id="call-7")
 
     row = _events(store)[-1]
     assert event["event_id"] == row["event_id"]
     assert (row["event_type"], row["subject_type"], row["subject_id"]) == (
-        "order.submitted", "order", f"order_{order.identifier}",
+        "order.submitted",
+        "order",
+        f"order_{order.identifier}",
     )
     assert row["text"] == "Submitted order buy 10 SPY as limit"
     payload = json.loads(row["payload_json"])
@@ -402,12 +397,8 @@ def test_record_order_submitted_without_a_matching_decision(tmp_path: Path) -> N
 
 def test_record_order_submitted_decision_lookup_filters_by_agent_name(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
-    other_agent_decision = store.remember_decision(
-        "Buy SPY (analyst)", agent_name="analyst", model_call_id="call-shared"
-    )
-    trader_decision = store.remember_decision(
-        "Buy SPY (trader)", agent_name="trader", model_call_id="call-shared"
-    )
+    other_agent_decision = store.remember_decision("Buy SPY (analyst)", agent_name="analyst", model_call_id="call-shared")
+    trader_decision = store.remember_decision("Buy SPY (trader)", agent_name="trader", model_call_id="call-shared")
     order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.BUY, quantity=Decimal(10))
 
     store.record_order_submitted(order, agent_name="trader", model_call_id="call-shared")
@@ -420,9 +411,7 @@ def test_record_order_submitted_decision_lookup_filters_by_agent_name(tmp_path: 
 def test_record_order_submitted_decision_lookup_takes_the_latest_of_several(tmp_path: Path) -> None:
     store = make_memory_store(tmp_path)
     store.remember_decision("First thought", agent_name="trader", model_call_id="call-1")
-    latest_decision = store.remember_decision(
-        "Changed my mind", agent_name="trader", model_call_id="call-1"
-    )
+    latest_decision = store.remember_decision("Changed my mind", agent_name="trader", model_call_id="call-1")
     order = Order(strategy_name="momentum", asset=Asset("SPY"), side=OrderSide.SELL, quantity=Decimal(5))
 
     store.record_order_submitted(order, agent_name="trader", model_call_id="call-1")
@@ -447,7 +436,9 @@ def test_search_ranks_by_matching_terms_then_recency(tmp_path: Path) -> None:
     result = store.search("spy breadth")
 
     assert [item["id"] for item in result["results"]] == [
-        two_terms_new["id"], two_terms_old["id"], one_term["id"],
+        two_terms_new["id"],
+        two_terms_old["id"],
+        one_term["id"],
     ]
     assert result["count"] == 3
     assert result["retrieval_id"].startswith("retrieval_")
@@ -488,7 +479,9 @@ def test_search_includes_history_once_and_marks_it_superseded(tmp_path: Path) ->
     assert [item["id"] for item in results] == [thesis["id"], opened_event["event_id"]]
     history = results[1]
     assert (history["status"], history["event_type"], history["memory_id"]) == (
-        "superseded", "thesis.opened", thesis["id"],
+        "superseded",
+        "thesis.opened",
+        thesis["id"],
     )
     assert history["text"] == "Long SPY"
 
@@ -501,7 +494,9 @@ def test_search_finds_history_only_events(tmp_path: Path) -> None:
 
     [found] = store.search("", kind="order", status="submitted")["results"]
     assert (found["kind"], found["event_type"], found["memory_id"]) == (
-        "order", "order.submitted", f"order_{order.identifier}",
+        "order",
+        "order.submitted",
+        f"order_{order.identifier}",
     )
     [warning] = store.search("without data")["results"]
     assert (warning["kind"], warning["status"]) == ("warning", None)
@@ -532,7 +527,11 @@ def test_search_logs_a_retrieval(tmp_path: Path) -> None:
     [row] = memory_rows(store, "SELECT * FROM memory_retrievals")
     assert row["retrieval_id"] == result["retrieval_id"]
     assert (row["query"], row["kind"], row["symbol"], row["status"], row["result_limit"]) == (
-        "spy", None, "SPY", None, 5,
+        "spy",
+        None,
+        "SPY",
+        None,
+        5,
     )
     assert (row["agent_name"], row["model_call_id"], row["strategy"]) == ("analyst", "call-3", "momentum")
     assert (row["timestamp"], row["wall_time"]) == ("2026-09-14T10:00:00-04:00", "2026-09-14T14:00:05Z")
@@ -564,14 +563,22 @@ def test_compact_state_lists_open_theses_and_validated_lessons(tmp_path: Path) -
         "held_symbols": ["SPY"],
         "open_theses": [
             {
-                "id": spy["id"], "kind": "thesis", "status": "open", "symbol": "SPY",
-                "updated_at": "2026-09-14T10:00", "text": "Long SPY on breadth",
+                "id": spy["id"],
+                "kind": "thesis",
+                "status": "open",
+                "symbol": "SPY",
+                "updated_at": "2026-09-14T10:00",
+                "text": "Long SPY on breadth",
             }
         ],
         "validated_lessons": [
             {
-                "id": lesson["id"], "kind": "lesson", "status": "validated", "symbol": None,
-                "updated_at": "2026-09-14T10:00", "text": "Don't chase gaps",
+                "id": lesson["id"],
+                "kind": "lesson",
+                "status": "validated",
+                "symbol": None,
+                "updated_at": "2026-09-14T10:00",
+                "text": "Don't chase gaps",
             }
         ],
         "retrieval_policy": RETRIEVAL_POLICY,
@@ -607,16 +614,17 @@ def test_compact_state_observes_held_open_theses_once_per_day(tmp_path: Path) ->
     assert len(observed) == 1
     [event] = observed
     assert (event["subject_type"], event["subject_id"], event["symbol"]) == ("thesis", spy["id"], "SPY")
-    assert event["text"] == (
-        "Observed open thesis for SPY: quantity=10 last_price=512.3 market_value=5123.0"
-    )
+    assert event["text"] == ("Observed open thesis for SPY: quantity=10 last_price=512.3 market_value=5123.0")
     assert json.loads(event["payload_json"]) == {
         "kind": "thesis_outcome",
         "status": "observed",
         "thesis_id": spy["id"],
         "symbol": "SPY",
         "position": {
-            "symbol": "SPY", "quantity": "10", "last_price": "512.3", "market_value": "5123.0",
+            "symbol": "SPY",
+            "quantity": "10",
+            "last_price": "512.3",
+            "market_value": "5123.0",
         },
         "observed_date": "2026-09-14",
     }

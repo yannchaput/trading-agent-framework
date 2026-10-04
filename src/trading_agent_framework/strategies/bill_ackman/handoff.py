@@ -110,7 +110,7 @@ def _weight(item: Mapping[str, Any], symbol: str) -> float:
         raise HandoffError(f"the weight for {symbol} must be a number")
     try:
         weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         raise HandoffError(f"the weight for {symbol} must be a number, a fraction of portfolio value such as 0.25") from None
     if not math.isfinite(weight):
         raise HandoffError(f"the weight for {symbol} must be a finite number")
@@ -263,9 +263,7 @@ class HandoffRecorder:
             if stage == RANKING:
                 value = validate_ranking(raw, candidates=self._context["candidates"], top_n=params.research_top_n, reason_max_chars=params.reason_max_chars)
             elif stage == VERDICTS_STAGE:
-                value = validate_verdicts(
-                    raw, expected=self._context["expected"], reason_max_chars=params.reason_max_chars, previous=self._context["previous"]
-                )
+                value = validate_verdicts(raw, expected=self._context["expected"], reason_max_chars=params.reason_max_chars, previous=self._context["previous"])
             else:
                 value = validate_portfolio(
                     raw,

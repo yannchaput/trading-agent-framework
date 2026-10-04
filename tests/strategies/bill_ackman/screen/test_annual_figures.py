@@ -268,11 +268,7 @@ def test_annual_figures_reads_cash_from_annual_reports_only() -> None:
 
 def test_annual_figures_keeps_both_share_counts_cover_page_first() -> None:
     payload = _company(
-        gaap={
-            "WeightedAverageNumberOfDilutedSharesOutstanding": _share_units(
-                {"val": 1010, "start": "2026-01-01", "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"}
-            )
-        },
+        gaap={"WeightedAverageNumberOfDilutedSharesOutstanding": _share_units({"val": 1010, "start": "2026-01-01", "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"})},
         dei={
             "EntityCommonStockSharesOutstanding": _share_units(
                 _instant(1000, "2026-01-31", "2026-02-15"),

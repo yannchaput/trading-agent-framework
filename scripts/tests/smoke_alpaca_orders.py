@@ -75,10 +75,7 @@ def _load_credentials() -> AlpacaCredentials:
         raise SmokeTestFailure(f"Invalid credentials in {ENV_FILE}: {exc}") from exc
 
     if not creds.is_paper:
-        raise SmokeTestFailure(
-            "BROKER_API_IS_PAPER is not true in the credentials file. Refusing to run "
-            "this script against a live account."
-        )
+        raise SmokeTestFailure("BROKER_API_IS_PAPER is not true in the credentials file. Refusing to run this script against a live account.")
     return creds
 
 
@@ -98,10 +95,7 @@ def _wait_for_status(
             if order.status is target:
                 return
         time.sleep(POLL_INTERVAL_SECONDS)
-    raise SmokeTestFailure(
-        f"Timed out after {timeout}s waiting for order {identifier} to reach "
-        f"{target} (last observed status: {last_status})"
-    )
+    raise SmokeTestFailure(f"Timed out after {timeout}s waiting for order {identifier} to reach {target} (last observed status: {last_status})")
 
 
 def main() -> int:
@@ -118,9 +112,7 @@ def main() -> int:
     creds = _load_credentials()
     print(f"Paper account confirmed (BROKER_API_IS_PAPER=true). Building {STRATEGY_NAME} broker ...")
 
-    broker = AlpacaBroker.from_credentials(
-        STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=True
-    )
+    broker = AlpacaBroker.from_credentials(STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=True)
     broker.start_stream()
     print(f"Stream started; waiting {STREAM_STARTUP_GRACE_SECONDS}s for it to connect ...")
     time.sleep(STREAM_STARTUP_GRACE_SECONDS)
@@ -148,10 +140,7 @@ def main() -> int:
         print("Calling pull_orders() and checking the order is visible ...")
         pulled = broker.pull_orders()
         if not any(o.identifier == submitted.identifier for o in pulled):
-            raise SmokeTestFailure(
-                f"Order {submitted.identifier} not found in pull_orders() "
-                f"({len(pulled)} orders returned)"
-            )
+            raise SmokeTestFailure(f"Order {submitted.identifier} not found in pull_orders() ({len(pulled)} orders returned)")
         print(f"Order found in pull_orders() ({len(pulled)} orders returned).")
 
         print("Cancelling the order ...")
@@ -177,9 +166,7 @@ def main() -> int:
                 except TradingFrameworkError:
                     logger.exception("cleanup cancel failed")
 
-    print(
-        "\nPASS: submit -> new -> pull_orders -> cancel -> canceled, all confirmed via the stream."
-    )
+    print("\nPASS: submit -> new -> pull_orders -> cancel -> canceled, all confirmed via the stream.")
     return 0
 
 

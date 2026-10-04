@@ -85,15 +85,17 @@ src/trading_agent_framework/
 ```python
 @dataclass(frozen=True, slots=True)
 class MarketSession:
-    open: datetime   # tz-aware
+    open: datetime  # tz-aware
     close: datetime  # tz-aware
 
+
 class MarketClock(ABC):
-    tz: ZoneInfo                                    # market time zone (America/New_York for Alpaca)
+    tz: ZoneInfo  # market time zone (America/New_York for Alpaca)
+
     @abstractmethod
-    def now(self) -> datetime: ...                  # tz-aware, in self.tz
+    def now(self) -> datetime: ...  # tz-aware, in self.tz
     @abstractmethod
-    def next_session(self) -> MarketSession: ...    # first session whose close > now()
+    def next_session(self) -> MarketSession: ...  # first session whose close > now()
     @abstractmethod
     def wait(self, seconds: float, wake: threading.Event) -> None: ...
 ```
@@ -231,12 +233,9 @@ class Strategy:
     minutes_before_opening: int = 60
     minutes_before_closing: int = 1
     minutes_after_closing: int = 0
-    parameters: Mapping[str, Any] = {}          # class defaults, overlaid by the ctor `parameters`
+    parameters: Mapping[str, Any] = {}  # class defaults, overlaid by the ctor `parameters`
 
-    def __init__(self, broker: Broker, *, name: str | None = None,
-                 mode: TradingMode = TradingMode.PAPER,
-                 parameters: Mapping[str, Any] | None = None,
-                 clock: MarketClock | None = None) -> None: ...
+    def __init__(self, broker: Broker, *, name: str | None = None, mode: TradingMode = TradingMode.PAPER, parameters: Mapping[str, Any] | None = None, clock: MarketClock | None = None) -> None: ...
 ```
 
 - `name` defaults to the class name, and `clock` to `broker.clock`.

@@ -39,8 +39,7 @@ def _rows(db: Path) -> list[tuple[str, str, int]]:
 def _seed(tmp_path: Path, mode: TradingMode, run_id: str) -> Path:
     db = llm_stats_db_path(tmp_path, "momentum", mode)
     LLMStatsStore(db, run_id=run_id).record(
-        CallRecord(ts=datetime(2026, 1, 1, tzinfo=_START.tzinfo), agent="old", model=None, input_tokens=1, output_tokens=1, reasoning_tokens=None,
-                   total_tokens=2, latency_ms=1.0, tool_calls=0)
+        CallRecord(ts=datetime(2026, 1, 1, tzinfo=_START.tzinfo), agent="old", model=None, input_tokens=1, output_tokens=1, reasoning_tokens=None, total_tokens=2, latency_ms=1.0, tool_calls=0)
     )
     return db
 

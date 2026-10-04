@@ -39,11 +39,13 @@ def test_prepare_session_runs_stage_one_and_builds_rvol_baselines(tmp_path: Path
         ("CHEAP", "day"): make_bars_frame([3.0] * 71, start=start),
         ("WILD", "day"): make_bars_frame([20.0] * 71, start=start),
         ("SPY", "day"): make_bars_frame([400.0] * 71, start=start),
-        ("AAA", "minute"): pd.concat([
-            _minutes(date(2026, 8, 31), 5, 100),
-            minute_ohlc(et(2026, 9, 1, 9, 29), [(100, 100, 100, 100, 999)]),  # premarket: excluded
-            _minutes(date(2026, 9, 1), 5, 100),
-        ]),
+        ("AAA", "minute"): pd.concat(
+            [
+                _minutes(date(2026, 8, 31), 5, 100),
+                minute_ohlc(et(2026, 9, 1, 9, 29), [(100, 100, 100, 100, 999)]),  # premarket: excluded
+                _minutes(date(2026, 9, 1), 5, 100),
+            ]
+        ),
     }
     state = Scanner(strategy, PARAMS, ["AAA", "BBB", "CHEAP", "WILD"]).prepare_session()
     assert state.day == DAY
@@ -105,9 +107,17 @@ def test_scan_fetches_no_news(tmp_path: Path) -> None:
     state = _state(AAA=CandidateInfo(symbol="AAA", daily_atr=1.0, beta=1.0))
     state.baselines["AAA"] = pd.Series([100.0 * (m + 1) for m in range(390)])
     # An open trade: the symbol whose headlines used to be fetched on every scan.
-    state.book.add(Trade(
-        symbol="AAA", entry_order_id="aaa-entry", planned_quantity=Decimal(1), stop_price=Decimal(99), r_per_share=Decimal(1),
-        entered_at=et(2026, 9, 2, 9, 45), status=TradeStatus.OPEN, quantity=Decimal(1),
-    ))
+    state.book.add(
+        Trade(
+            symbol="AAA",
+            entry_order_id="aaa-entry",
+            planned_quantity=Decimal(1),
+            stop_price=Decimal(99),
+            r_per_share=Decimal(1),
+            entered_at=et(2026, 9, 2, 9, 45),
+            status=TradeStatus.OPEN,
+            quantity=Decimal(1),
+        )
+    )
     Scanner(strategy, PARAMS, ["AAA"]).scan(state)
     assert broker.news.calls == []

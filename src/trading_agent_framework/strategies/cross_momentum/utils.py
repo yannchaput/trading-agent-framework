@@ -292,7 +292,7 @@ def load_breadth_step(path: Path, n_steps: int) -> int | None:
     """
     try:
         data = json.loads(path.read_text())
-    except (OSError, ValueError):  # ValueError covers bad JSON and a file that isn't valid text
+    except OSError, ValueError:  # ValueError covers bad JSON and a file that isn't valid text
         return None
     if not isinstance(data, dict):
         return None
@@ -443,7 +443,7 @@ def _read_raw_entries(path: Path) -> list[dict]:
         return []
     try:
         data = json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+    except json.JSONDecodeError, OSError:
         return []
     if not isinstance(data, list):
         return []
