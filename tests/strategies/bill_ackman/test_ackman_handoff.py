@@ -209,12 +209,12 @@ def test_with_nothing_allowed_the_refusal_says_to_submit_an_empty_list() -> None
 
 
 def test_a_required_holding_must_stay_in_the_portfolio() -> None:
-    with pytest.raises(HandoffError, match="CCC failed once and is kept until a second consecutive fail: include it with a weight of at least 0.05"):
+    with pytest.raises(HandoffError, match="CCC is held and has not failed twice: keep it with a weight of at least 0.05"):
         validate_portfolio([_position("AAA", 0.3)], allowed=["AAA", "CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
 
 
 def test_an_empty_portfolio_is_refused_while_a_holding_is_required() -> None:
-    with pytest.raises(HandoffError, match="CCC failed once"):
+    with pytest.raises(HandoffError, match="CCC is held and has not failed twice"):
         validate_portfolio([], allowed=["CCC"], required=["CCC"], max_positions=5, min_weight=0.05, max_weight=0.35, max_total_weight=0.98, reason_max_chars=300)
 
 
@@ -320,7 +320,7 @@ def test_the_recorder_checks_flips_and_required_holdings_against_what_it_was_arm
     assert tools["submit_verdicts"]([_verdict("AAA", "fail", concern="debt", what_changed="debt doubled")]) == {"status": "recorded"}
 
     recorder.expect_portfolio(["AAA", "CCC"], required=["CCC"])
-    assert "CCC failed once" in tools["submit_portfolio"]([_position("AAA", 0.3)])["error"]
+    assert "CCC is held and has not failed twice" in tools["submit_portfolio"]([_position("AAA", 0.3)])["error"]
     assert tools["submit_portfolio"]([_position("AAA", 0.3), _position("CCC", 0.1)]) == {"status": "recorded"}
 
 

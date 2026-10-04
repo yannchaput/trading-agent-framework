@@ -36,6 +36,8 @@ def test_the_short_seller_knows_the_concerns_its_memory_and_the_news_rule() -> N
         assert phrase in prompts.SHORT_SELLER_SYSTEM
 
 
-def test_the_trader_must_keep_required_holdings_and_is_no_longer_told_to_let_go() -> None:
+def test_the_trader_must_keep_every_required_holding_and_is_no_longer_told_to_let_go() -> None:
     assert "let go" not in prompts.TRADER_SYSTEM
+    assert "failed once while held" not in prompts.TRADER_SYSTEM
+    assert "current holdings that have not failed twice" in prompts.TRADER_SYSTEM
     assert "required" in prompts.TRADER_SYSTEM and "at least at the minimum weight" in prompts.TRADER_SYSTEM

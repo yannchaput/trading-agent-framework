@@ -207,16 +207,28 @@ class RotatingScreen:
 def test_a_rotation_sells_the_old_stock_and_buys_the_new_one_in_the_same_review(tmp_path: Path) -> None:
     manager = _Manager()
 
+    def judge_rotation(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
+        # a held survivor cannot be dropped by the trader: AAA leaves the book by failing once BBB takes over
+        symbols = {entry["fact_sheet"]["symbol"] for entry in context["to_judge"]}
+        tools["submit_verdicts"](
+            [
+                {"symbol": symbol, "verdict": "fail", "reason": "the thesis broke", "concern": "debt", "what_changed": "debt doubled"}
+                if symbol == "AAA" and "BBB" in symbols
+                else {"symbol": symbol, "verdict": "survive", "reason": "the attack failed"}
+                for symbol in symbols
+            ]
+        )
+
     def trade_ranked(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
-        # the first allowed entry the researcher ranked: AAA drops out of the target once it stops being a candidate
         chosen = next(entry["symbol"] for entry in context["allowed"] if entry["research_rank"] is not None)
         tools["submit_portfolio"]([{"symbol": chosen, "weight": 0.9, "reason": "best idea"}])
 
+    manager.scripts["short_seller"] = judge_rotation
     manager.scripts["trader"] = trade_ranked
 
     # One stock at 90% (the default cap is 35%): the SHV left over (8%) is far too small to pay for the switch,
     # so BBB can only be bought in full with the proceeds of the AAA sell submitted in the same review.
-    _run(tmp_path, manager, RotatingScreen(), settings=AckmanParams(max_weight=0.9))
+    _run(tmp_path, manager, RotatingScreen(), settings=AckmanParams(max_weight=0.9, forced_exit_fails=1))
 
     lines = _review_lines(tmp_path)
     assert not any(line["abandoned"] for line in lines)

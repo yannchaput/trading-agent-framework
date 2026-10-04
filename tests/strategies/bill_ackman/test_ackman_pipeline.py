@@ -397,10 +397,60 @@ def test_a_pending_fail_the_trader_drops_is_refused_and_the_holding_is_kept(tmp_
 
     assert h.trader.calls[0]["context"]["required"] == ["HHH"]
     assert h.trader.calls[1]["force_tool"] == "submit_portfolio"
-    assert "HHH failed once and is kept until a second consecutive fail" in h.trader.calls[1]["task"]
+    assert "HHH is held and has not failed twice" in h.trader.calls[1]["task"]
     assert ("HHH", "sell", 60.0) in h.orders  # shrunk from 50% to 20%, not sold out
     (line,) = h.log_lines()
     assert line["required"] == ["HHH"]
+
+
+def test_a_held_survivor_is_required_and_a_portfolio_that_drops_it_is_refused(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([_candidate("AAA", 1)], holdings=[_candidate("HHH")])
+    h = _harness(tmp_path, screen, held={"HHH": 100})
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="survive")]
+    h.trader.steps = [holds(AAA=0.3), holds(AAA=0.3, HHH=0.2)]
+
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert h.trader.calls[0]["context"]["required"] == ["HHH"]  # the held survivor; AAA, a new survivor, is not
+    assert h.trader.calls[1]["force_tool"] == "submit_portfolio"
+    assert "HHH is held and has not failed twice" in h.trader.calls[1]["task"]
+    assert ("HHH", "sell", 60.0) in h.orders  # shrunk from 50% to 20%, not sold out
+    assert any("[trader] 2 allowed: AAA, HHH; required: HHH; forced exits: none" in record.getMessage() for record in caplog.records)
+    (line,) = h.log_lines()
+    assert line["required"] == ["HHH"]
+
+
+def test_a_forced_exit_is_neither_allowed_nor_required(tmp_path: Path) -> None:
+    screen = FakeScreen([_candidate("AAA", 1)], holdings=[_candidate("HHH")])
+    h = _harness(tmp_path, screen, held={"HHH": 100}, state=ReviewState(fail_counts={"HHH": 1}))
+    h.researcher.steps = [ranks("AAA")]
+    h.short_seller.steps = [judges(AAA="survive", HHH="fail")]
+    h.trader.steps = [holds(AAA=0.3)]
+
+    h.run()
+
+    context = h.trader.calls[0]["context"]
+    assert [entry["symbol"] for entry in context["allowed"]] == ["AAA"]
+    assert context["required"] == [] and context["forced_exits"] == ["HHH"]
+    assert ("HHH", "sell", 100.0) in h.orders
+
+
+def test_holdings_to_keep_beyond_max_positions_are_capped_in_holdings_order(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    screen = FakeScreen([], holdings=[_candidate("AAA"), _candidate("BBB"), _candidate("CCC")])
+    h = _harness(tmp_path, screen, held={"AAA": 10, "BBB": 10, "CCC": 10}, params=AckmanParams(max_positions=2))
+    h.short_seller.steps = [judges(AAA="survive", BBB="fail", CCC="survive")]
+    keeps_required: Step = lambda tools, ctx: tools["submit_portfolio"]([{"symbol": s, "weight": 0.1, "reason": "kept"} for s in ctx["required"]])  # noqa: E731
+    h.trader.steps = [keeps_required]
+
+    with caplog.at_level(logging.WARNING):
+        outcome = h.run()
+
+    assert outcome.completed is True and len(h.trader.calls) == 1
+    assert h.trader.calls[0]["context"]["required"] == ["AAA", "BBB"]  # survivors and pending fails alike, in holdings order
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any("3 holdings to keep but max_positions is 2" in message and "left to the trader's choice: CCC" in message for message in warnings)
 
 
 def test_a_forced_exit_starts_its_cooldown(tmp_path: Path) -> None:
@@ -605,16 +655,18 @@ def test_a_configuration_error_from_an_agent_propagates_and_leaves_the_state_alo
     assert h.log_lines() == []
 
 
-def test_a_position_the_screen_does_not_know_can_be_dropped_by_the_trader_and_is_then_sold(tmp_path: Path) -> None:
+def test_a_held_position_the_screen_does_not_know_is_required_once_it_survives(tmp_path: Path) -> None:
     # A dedicated account is assumed, so any position is reviewed; an ETF has no SEC data and reaches the short seller with a reduced sheet.
     screen = FakeScreen([], holding_rejections={"HHH": "no_data"})
     h = _harness(tmp_path, screen, held={"HHH": 100})
     h.short_seller.steps = [judges(HHH="survive")]
-    h.trader.steps = [holds()]  # the trader chooses to hold nothing
+    h.trader.steps = [holds(), holds(HHH=0.3)]  # an empty portfolio is refused: HHH survived and is held
 
     assert h.run().completed
 
-    assert h.orders[0] == ("HHH", "sell", 100.0)
+    assert h.trader.calls[0]["context"]["required"] == ["HHH"]
+    assert "HHH is held and has not failed twice" in h.trader.calls[1]["task"]
+    assert ("HHH", "sell", 40.0) in h.orders  # shrunk from 50% to 30% (5,000 -> 3,000 at $50), not sold out
 
 
 def test_the_counters_survive_a_restart(tmp_path: Path) -> None:
@@ -671,8 +723,8 @@ def test_a_failure_after_a_sell_went_out_abandons_the_review_and_logs_the_orders
     before = ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=1)
     h = _harness(tmp_path, FakeScreen([_candidate("AAA")], holdings=[_candidate("HHH")]), held={"HHH": 100}, state=before)
     h.researcher.steps = [ranks("AAA")]
-    h.short_seller.steps = [judges(AAA="survive", HHH="survive")]
-    h.trader.steps = [holds(AAA=0.3)]  # HHH is dropped: the rebalancer sells it, then sizes the buys
+    h.short_seller.steps = [judges(AAA="survive", HHH="fail")]
+    h.trader.steps = [holds(AAA=0.3)]  # HHH fails a second time: the rebalancer sells it, then sizes the buys
     _account_fails_on_call(h, monkeypatch, 3, BacktestError("data gone"))
 
     outcome = h.run()
@@ -777,7 +829,7 @@ def test_more_pending_fails_than_max_positions_are_capped_so_the_trader_can_stil
     assert {entry["symbol"] for entry in context["allowed"]} == {"AAA", "BBB", "CCC"}  # the left-out one stays allowed
     left_out = ({"AAA", "BBB", "CCC"} - set(context["required"])).pop()
     warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
-    assert any("pending fail" in message and left_out in message for message in warnings)
+    assert any("holdings to keep" in message and left_out in message for message in warnings)
 
 
 def test_a_verdict_given_by_code_is_not_remembered_as_the_short_sellers_previous_verdict(tmp_path: Path) -> None:
@@ -803,4 +855,5 @@ def test_a_cooling_holding_is_judged_but_not_allowed_and_is_sold(tmp_path: Path)
 
     assert "HHH" in [entry["fact_sheet"]["symbol"] for entry in h.short_seller.calls[0]["context"]["to_judge"]]
     assert [entry["symbol"] for entry in h.trader.calls[0]["context"]["allowed"]] == ["AAA"]
+    assert h.trader.calls[0]["context"]["required"] == []  # cooling: not allowed, so not required
     assert ("HHH", "sell", 100.0) in h.orders

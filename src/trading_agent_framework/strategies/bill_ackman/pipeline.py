@@ -200,11 +200,11 @@ class ReviewPipeline:
         )
 
         allowed = [symbol for symbol in outcome.allowed if symbol not in cooling]
-        required = [symbol for symbol in outcome.pending if symbol in allowed]  # first fails: kept until a second one
+        required = [symbol for symbol in holdings if symbol in allowed]  # held and not failed twice: may be shrunk, not dropped
         if len(required) > params.max_positions:  # the trader could not hold them all: require the first max_positions
             left_out = required[params.max_positions :]
             strategy.log_warning(
-                f"[bill_ackman] {len(required)} pending fails but max_positions is {params.max_positions}: "
+                f"[bill_ackman] {len(required)} holdings to keep but max_positions is {params.max_positions}: "
                 f"requiring only {', '.join(required[: params.max_positions])}; left to the trader's choice: {', '.join(left_out)}"
             )
             required = required[: params.max_positions]

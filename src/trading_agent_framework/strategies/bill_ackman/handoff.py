@@ -186,7 +186,8 @@ def validate_portfolio(
 ) -> list[PortfolioPosition]:
     """At most `max_positions` unique stocks from `allowed`, each weight in [min, max], their sum at most `max_total_weight`.
 
-    An empty list is valid: it means everything goes to the parking instrument. Every symbol in `required` must be held.
+    An empty list is valid: it means everything goes to the parking instrument. Every symbol in `required` (a holding that
+    has not failed twice) must be held.
     """
     items = _items(raw, "positions")
     if len(items) > max_positions:
@@ -208,7 +209,7 @@ def validate_portfolio(
     held = {position.symbol for position in positions}
     for symbol in required:
         if symbol not in held:
-            raise HandoffError(f"{symbol} failed once and is kept until a second consecutive fail: include it with a weight of at least {min_weight}")
+            raise HandoffError(f"{symbol} is held and has not failed twice: keep it with a weight of at least {min_weight}")
     total = sum(position.weight for position in positions)
     if total > max_total_weight + _EPS:
         raise HandoffError(f"the weights sum to {total:.4f}: they must sum to at most {max_total_weight:.2f}")
