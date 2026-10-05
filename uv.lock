@@ -2590,19 +2590,12 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-backtesting-yahoo = [
-    { name = "yfinance" },
-]
-
-[package.dev-dependencies]
-batch-universe = [
-    { name = "alpaca-py" },
-    { name = "yfinance" },
-]
 dashboard = [
     { name = "pandas" },
     { name = "streamlit" },
 ]
+
+[package.dev-dependencies]
 dev = [
     { name = "pyright" },
     { name = "pytest" },
@@ -2618,26 +2611,19 @@ requires-dist = [
     { name = "ib-async", specifier = ">=2.1,<3" },
     { name = "langchain", specifier = ">=1.0,<2.0" },
     { name = "langchain-openai", specifier = ">=1.0" },
+    { name = "pandas", marker = "extra == 'dashboard'", specifier = ">=2.0" },
     { name = "pandas-ta-classic", specifier = ">=0.6.52,<0.7" },
     { name = "plotly", specifier = ">=5.0,<6.0" },
     { name = "pyarrow", specifier = ">=18.0" },
     { name = "python-dotenv", specifier = ">=1.2" },
     { name = "rich", specifier = ">=13.9" },
+    { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.40" },
     { name = "vectorbt", specifier = ">=1.1.0,<2.0" },
     { name = "yfinance", specifier = ">=0.2.61" },
-    { name = "yfinance", marker = "extra == 'backtesting-yahoo'", specifier = ">=0.2.61" },
 ]
-provides-extras = ["backtesting-yahoo"]
+provides-extras = ["dashboard"]
 
 [package.metadata.requires-dev]
-batch-universe = [
-    { name = "alpaca-py", specifier = ">=0.43.5" },
-    { name = "yfinance", specifier = ">=0.2" },
-]
-dashboard = [
-    { name = "pandas", specifier = ">=2.0" },
-    { name = "streamlit", specifier = ">=1.40" },
-]
 dev = [
     { name = "pyright", specifier = ">=1.1.414" },
     { name = "pytest", specifier = ">=8.0" },

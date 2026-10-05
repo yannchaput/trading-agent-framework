@@ -1,8 +1,11 @@
 [project]
 name = "trading-agent-framework"
 version = "0.1.2"
-description = "A trading agent harness managing runtime, the broker layer, agent layer, memory etc."
+description = "A trading agent harness managing runtime, the broker layer, agent layer, memory, tools etc."
 readme = "README.md"
+authors = [
+    {name = "Yann Chaput", email = "yannchaput@gmail.com"}
+]
 requires-python = ">=3.14"
 dependencies = [
     "alpaca-py>=0.44.0,<0.45",
@@ -21,7 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-backtesting-yahoo = ["yfinance>=0.2.61"]
+dashboard = ["streamlit>=1.40", "pandas>=2.0"]
 
 [project.scripts]
 agent = "trading_agent_framework.main:main"
@@ -36,7 +39,7 @@ build-backend = "hatchling.build"
 packages = ["src/trading_agent_framework"]
 
 [tool.uv]
-default-groups = "all"
+default-groups = ["dev"]
 
 [dependency-groups]
 dev = [
@@ -45,8 +48,8 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.6",
 ]
-batch-universe =["alpaca-py>=0.43.5", "yfinance>=0.2"]
-dashboard = ["streamlit>=1.40", "pandas>=2.0"]
+#batch-universe =["alpaca-py>=0.43.5", "yfinance>=0.2"]
+#dashboard = ["streamlit>=1.40", "pandas>=2.0"]
 
 [tool.ruff]
 line-length = 200

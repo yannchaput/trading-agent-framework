@@ -40,6 +40,12 @@ def main():
     import subprocess
     import sys
 
+    try:
+        # Fail fast if dashboard dependencies are missing, rather than failing later in the Streamlit runtime.
+        import streamlit as st  # noqa: F401
+    except ImportError as e:
+        raise ImportError("Dashboard dependencies are missing. Please reinstall with the dashboard extra:\n    pip install trading_agent_framework[dashboard]") from e
+
     app_file = Path(__file__).parent / "app.py"
     try:
         sys.exit(subprocess.run(build_command(sys.executable, app_file, sys.argv[1:])).returncode)

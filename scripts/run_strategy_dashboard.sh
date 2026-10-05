@@ -21,6 +21,9 @@ fi
 cd "$PROJECT_DIR"
 echo "We are in the project directory: $(pwd)"
 
+# Synchronize the dependencies with the virtual environment
+uv sync --quiet --extra dashboard
+
 # Install the wheel (and its dependencies) if not already present
 uv pip install -q --upgrade "$WHEEL"
 uv run python -m trading_agent_framework.dashboard.cli

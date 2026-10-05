@@ -1,15 +1,15 @@
 # trading-agent-framework
+
 A trading agent harness managing runtime, the broker layer, agent layer, memory etc.
 
 ## 👷 Commands
-
 
 | Goal | Commands |
 | --- | --- |
 | Upgrade dependencies | `uv lock --upgrade` then `uv sync` to install them in .venv. |
 | Upgrade uv | `uv self update` |
 | To package and distribute | `uv build` |
-| Run a strategy | `uv run agent <strategy_name> <trading_mode>` or `uv run poe <script_name>` where script name is defined in `pyproject.tom`|
+| Run a strategy | `uv run agent <strategy_name> <trading_mode>` or `uv run poe <script_name>` where script name is defined in `pyproject.tom` |
 | Run the dashboard | `uv run dashboard` or `uv run poe dashboard` |
 | Run a batch | `uv run batch-universe` or `uv run poe batch-universe` |
 | Run the ruff linter | `uv run ruff check` |
@@ -24,7 +24,7 @@ A trading agent harness managing runtime, the broker layer, agent layer, memory 
 
 Strategy- and mode-specific env files follow:
 
-```
+```bash
 env/.env.{strategy_name}.{live|paper|backtesting}
 ```
 
@@ -61,7 +61,7 @@ pattern, so a plain `git add` will not pick it up.
 ## ✏️ Environment variables
 
 | Variables | Used by | Required when |
-|---|---|---|
+| --- | --- | --- |
 | `BROKER`, `BROKER_API_IS_PAPER` | broker factory | optional (`alpaca`, `true`) |
 | `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Alpaca trading | `BROKER=alpaca`, paper/live |
 | `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID` | IBKR trading | `BROKER=ibkr` (all have defaults) |
@@ -70,7 +70,7 @@ pattern, so a plain `git add` will not pick it up.
 
 Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.
 
-`FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at https://fred.stlouisfed.org/docs/api/api_key.html.
+`FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at <https://fred.stlouisfed.org/docs/api/api_key.html>.
 
 `SEC_EDGAR_USER_AGENT` is needed if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings) or uses the fundamentals quality screen (`bill_ackman`). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
 
@@ -164,13 +164,14 @@ passes on (SEC and FINRA TAF on sells, CAT on both sides). The run's totals are 
   `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full
   design and its guarantees.
 
-### 📊 Strategy Dashboard   
+### 📊 Strategy Dashboard
 
 Compare backtesting runs across all strategies, and the local vLLM models benchmarked for the agents, in a dark-themed Streamlit web app with two tabs.
 
 **Run:** `uv run dashboard` (Models tab reads `../benchmark-vllm-models/results` by default; override with `uv run dashboard --benchmark-dir PATH`)
 
 **What it shows:**
+
 - **Backtesting tab** — the three pages below, reached from the sidebar:
   - **Scorecard page** — aggregate table of all strategies' latest runs with key metrics (CAGR, Sharpe, Sortino, Max DD, Win Days%, etc.)
   - **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table.
@@ -181,7 +182,7 @@ Compare backtesting runs across all strategies, and the local vLLM models benchm
 
 **Why:** Rapidly compare strategy performance, debug LLM agent behavior (token usage, latency, call counts), and validate that config changes (model, tools, prompts) produce measurable improvements.
 
-### Feedbacks 💰 
+### Feedbacks 💰
 
 | Strategy        | status            | Observations                                   |
 |-----------------|-------------------|-------------------------------------------------|
@@ -191,12 +192,12 @@ Compare backtesting runs across all strategies, and the local vLLM models benchm
 | cross sectional momentum (V5) | retained  | Best candidate so far: robut over a 10 year window and good metrics. Very sensitive to momentum. So either very high whne momentum is there or very low. |
 | opening range breakout | under study | Every day, select candidates breakouts. The rest of the day (or longer) detect sudden drops to sell the goods. This is a short term strategy with immediate earnings. |
 
-
 ## 📈 Strategies
 
-#### 📈 `triple_screen` — NASDAQ Triple Screen
+### 📈 `triple_screen` — NASDAQ Triple Screen
+
 | Field | Value |
-|---|---|
+| --- | --- |
 | **File** | `agent_triple_screen.py` |
 | **Model** | `openai/deepseek-v4-flash` |
 | **Agent** | `triple_screen_portfolio_manager` |
@@ -210,9 +211,10 @@ Alexander Elder's Triple Screen system: Screen 1 (weekly MACD histogram slope), 
 
 Run: `uv run python -m lumibot_trading_agent.main triple_screen backtesting`
 
-#### 📈 `news_sentiment` — News Sentiment
+### 📈 `news_sentiment` — News Sentiment
+
 | Field | Value |
-|---|---|
+| --- | --- |
 | **File** | `agent_news_sentiment.py` |
 | **Model** | `openai/deepseek-v4-pro` |
 | **Agent** | `news_scout` |
@@ -228,9 +230,10 @@ Docs: [news-sentiment-strategy](https://lumibot.lumiwealth.com/agents_canonical_
 
 Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 
-#### 📈 `news_binary` — Alpaca News Built-in
+### 📈 `news_binary` — Alpaca News Built-in
+
 | Field | Value |
-|---|---|
+| --- | --- |
 | **File** | `strategies/news_binary/agent_news_binary.py` |
 | **Model** | from `LLM_MODEL` in the env file |
 | **Agent** | `news_binary` |
@@ -242,27 +245,29 @@ Run: `uv run python -m lumibot_trading_agent.main news_sentiment backtesting`
 
 News-driven trading through the framework's `search_news` tool (broker-agnostic `NewsProvider`; works in backtests, gated on the simulated clock). The agent scans broad-market headlines with `search_news`, reads the most relevant article in full (article content is capped), then holds SPY/QQQ when the regime is bullish or the defensive ETF (SHV) when it is negative or unclear. It uses the framework's memory tools to record decisions and its regime thesis, and compares article timestamps against the simulated datetime.
 
+### 📈 `cross_momentum` — Cross Sectional Momentum (Final Version)
 
-#### 📈 `cross_momentum` — Cross Sectional Momentum (Final Version)
+Final Version of the **cross_momentum** strategy is `V5` drawn from `V2.3c` and `V2` flavors. This strategy keeps a good tradeoff between risk appetence and performance (Sortino, CAGR) and loss (DrawDown).
 
-Final Version of the **cross_momentum** strategy is `V5` drawn from `V2.3c` and ` V2` flavors. This strategy keeps a good tradeoff between risk appetence and performance (Sortino, CAGR) and loss (DrawDown).
-
-__Note:__ The `cross_momentum` strategy can enable a "diagnostic mode" storing key KPIs during backtesting for further analysis.
+**Note:** The `cross_momentum` strategy can enable a "diagnostic mode" storing key KPIs during backtesting for further analysis.
 This utility is hard coded in the method `_compute_and_persist_diagnostics` and is enabled with `enable_diagnostics` parameter. It applies only during backtesting.
-Those diagnostics are useful for forensics. Use 
+Those diagnostics are useful for forensics. Use
+
 ```python
 uv run python -m lumibot_trading_agent.strategies.candidates.cross_momentum.batch_diagnostics_drawdown_episodes logs/agent_cross_momentum_v23/backtesting/2024-01-01_120000_backtesting/diagnostics.parquet
 ```
+
 to analyze the parquet file.
 
-#### 🚴‍♂️ Cross momentum universe batch
+### 🚴‍♂️ Cross momentum universe batch
 
 Run `uv run batch-universe` to retrieve an extended list of US shares and filter them based on market cap, vol, etc.
 The strategy will rely on those symbols as input.
 
-#### 📈 `bill_ackman` — Bill Ackman portfolio (researcher, short seller, trader)
+### 📈 `bill_ackman` — Bill Ackman portfolio (researcher, short seller, trader)
+
 | Field | Value |
-|---|---|
+| --- | --- |
 | **File** | `strategies/bill_ackman/agent_bill_ackman.py` |
 | **Model** | from `LLM_MODEL` in the env file (one model for the three agents) |
 | **Agents** | `researcher`, `short_seller`, `trader` |
@@ -275,7 +280,8 @@ The strategy will rely on those symbols as input.
 
 A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ackman example. Each day code screens the universe for simple, cash-generative, lightly indebted, reasonably priced companies (`strategies/bill_ackman/screen/`), the researcher ranks the best 5, the short seller attacks them and every stock already held, and the trader picks the weights. Code applies a hysteresis (a holding that fails the attack on 2 consecutive days is sold), validates every agent output, and places all orders; money not allocated to stocks is parked in SHV. Run `uv run agent bill_ackman backtesting` (default window `PredefinedWindow.BI_MONTH`); each run writes `reviews.jsonl` (one line per daily review) next to its report. The first run downloads about 5 GB of SEC data once.
 
-#### 📈 `vwap_pullback_continuation` — Intraday VWAP pullback continuation
+### 📈 `vwap_pullback_continuation` — Intraday VWAP pullback continuation
+
 | Field | Value |
 | --- | --- |
 | **File** | `strategies/vwap_pullback/agent_vwap_pullback.py` (`VwapPullbackStrategy`) |
@@ -297,9 +303,10 @@ A strictly intraday long-only strategy: it buys a strong stock that pulls back i
 
 Run: `uv run agent vwap_pullback_continuation backtesting` (default window: the last 5 years, minute bars from Alpaca, fetched one year at a time). Each backtest writes `trades.jsonl` (one line per closed trade, with realised P&L and R) next to its report. The universe file must exist first, or the strategy refuses to start.
 
-#### 📈 `opening_range_breakout` — Agent based opening range breakout strategy (ORB)
+### 📈 `opening_range_breakout` — Agent based opening range breakout strategy (ORB)
+
 | Field | Value |
-|---|---|
+| --- | --- |
 | **File** | `agent_opening_range_breakout.py` |
 | **Model** | `deepseek/deepseek-v4-flash` |
 | **Agent** | `opening_range_breakout` |
@@ -332,7 +339,7 @@ Run: `uv run agent opening_range_breakout backtesting`
 │ Tokens/s (median)    │         131.7 │         195 │              197.7 │                28.9 │                     44.5 │
 │ Timeouts / errors    │           0/0 │         0/0 │                0/0 │                 0/0 │                      1/0 │
 └──────────────────────┴───────────────┴─────────────┴────────────────────┴─────────────────────┴──────────────────────────┘
-                                   Per-scenario results (passed/runs, mean partial score)                                    
+                                   Per-scenario results (passed/runs, mean partial score)
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
 ┃ Scenario                       ┃ GLM-4.7-Flash ┃ Gpt-OSS-20b ┃ Qwen3-30B-Thinking ┃ Qwen3.6-35B-A3B-AWQ ┃ Qwen3.6-27B-AWQ ┃
 ┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
@@ -356,12 +363,13 @@ Run: `uv run agent opening_range_breakout backtesting`
 │ tools.limit_order              │    5/5 (100%) │   3/5 (80%) │         5/5 (100%) │          5/5 (100%) │      5/5 (100%) │
 └────────────────────────────────┴───────────────┴─────────────┴────────────────────┴─────────────────────┴─────────────────┘
 
-__Winner:__
-__Qwen3.6-27B-AWQ__ is the clear winner on all aspects.
+**Winner:**
+**Qwen3.6-27B-AWQ** is the clear winner on all aspects.
 The only oddity is the latency comparable to Qwen3.6-35B-A3B-AWQ when the latter has 4Gb offloaded on the CPU and the former not.
 However Qwen3.6-35B-A3B-AWQ is 35B with 3B MoE. Qwen3.6-27B-AWQ is 27B full dense model loading all parameters at every pass.
 
 ##### Benchmark result applied to news_binary
+
 Ranking for news_binary, worst → best fit
 
 ┌───────────┬─────────────────────┬──────────┬────────┬───────────┬───────┬─────────┬──────────────────┐
@@ -393,6 +401,7 @@ Every model violates the cash/position-sizing constraint at least once (GLM 1/5,
 Recommendation: Qwen3.6-35B-A3B-AWQ for news_binary, provided you add a code-level pre-trade cash/sizing guard — its latency (~30s/decision) is likely acceptable since news-driven decisions aren't sub-second, but confirm that against your actual polling/latency budget.
 
 ##### Benchmark on 'news binary'
+
 1. The strategy trails SPY with both models.
 
 ┌──────────────────┬──────────────┬────────┬──────────────┬────────────────┐
@@ -409,21 +418,24 @@ Recommendation: Qwen3.6-35B-A3B-AWQ for news_binary, provided you add a code-lev
 
 GLM's better Sharpe is mostly a side effect of being in cash half the time, not good calls. For example, it sat in cash through April, when SPY rose 10.5%. Part of that cash was a sizing problem: it often bought 1 SPY or 10 SHV (about $1k) on a $10k account.
 
-2. The two runs are not a clean model comparison.
+1. The two runs are not a clean model comparison.
+
 - The prompt changed between the runs. Four news_binary commits landed between them (f605a9f, 7b31394, dd192d1, 7f85c30). They added a "hawkish = bearish" definition, the line "staying in the current holding needs no signal at all", and a new retry prompt. Qwen ran on a different strategy than GLM did.
 - One run per model. LLM runs aren't deterministic, and the two runs held the same asset on only 20% of days. A 4-point gap from a single path each can't be told apart from noise.
 
-3. Where Qwen lost the ground. It churned QQQ: it sold after dips and bought back days later at similar or higher prices.
+1. Where Qwen lost the ground. It churned QQQ: it sold after dips and bought back days later at similar or higher prices.
+
 - January: bought at 625, sold at 606, bought at 619, sold at 600, bought at 606.
 - July: bought at 718, sold at 703, bought at 702, sold at 694, bought at 690, sold at 670.
 
 Its long QQQ hold from February to May (606 → 712) made about +$1.5k, and the churn gave it all back: realized QQQ profit for the whole run is about −$14. So the gap comes mostly from the prompt's buy/sell switching rules not stopping the churn, not from the model simply being worse. The rule to leave QQQ/SPY needs two bearish signals, but with a run every 3 hours two signals can pile up within a day.
 
-4. Qwen actually ran the workflow better. It had 0 runs that needed the "no decisi117 for GLM, and it stayed more fully invested. That fits your LLM benchmarkranking. Those benchmarks measure reasoning and tool use, not trading P&L. Qwen was also about 8× slower per call (27s vs 3.5s on average).
+1. Qwen actually ran the workflow better. It had 0 runs that needed the "no decisi117 for GLM, and it stayed more fully invested. That fits your LLM benchmarkranking. Those benchmarks measure reasoning and tool use, not trading P&L. Qwen was also about 8× slower per call (27s vs 3.5s on average).
 
-## Supporting documentation:
-* [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
-* [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
-* [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
-* [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
-* [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
+## Supporting documentation
+
+- [Lumibot Agent](https://lumibot.lumiwealth.com/agents.html)
+- [Lumibot observability](https://lumibot.lumiwealth.com/agents_observability.html)
+- [Lumibot environment variables](https://lumibot.lumiwealth.com/environment_variables.html)
+- [Broker configuration](https://lumibot.lumiwealth.com/deployment.html#alpaca-configuration)
+- [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server?tab=readme-ov-file#claude-code-configuration)
