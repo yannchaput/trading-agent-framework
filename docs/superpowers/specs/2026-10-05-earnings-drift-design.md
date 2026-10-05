@@ -34,8 +34,9 @@ universe.
    `sell`). The order mechanics (stop on fill, cancel-and-wait before a sell) live in code behind those tools.
 3. **Code guardrails, each logging a warning when it fires:** max holding period, stop backstop, order tool
    limits, and the baseline mode itself (one startup warning).
-4. **Daily cadence:** `sleeptime = "1D"`, one tick at the open, deciding on the completed reaction day. Day
-   bars only.
+4. **Daily cadence:** one decision cycle per session, right after the close (`after_market_closes`), on the
+   completed reaction day; orders fill at the next open in both backtest and live. Day bars only. (Amended
+   2026-10-05 while planning: a 09:30 tick made every backtest entry fill one session late, see §2.1.)
 5. **Event detection:** SEC 8-K item `2.02` filings (exact `acceptanceDateTime`); the surprise comes from the
    Benzinga "EPS ... Estimate" headline in Alpaca news, parsed in code.
 6. **Trailing stops are tighten-only** once placed.
@@ -74,33 +75,42 @@ strategies/earnings_drift/
 
 ## 2. Daily flow
 
-`sleeptime = "1D"` (one tick per session, at the open).
+`sleeptime = "1D"`; `minutes_after_closing = 0`. The work happens in `after_market_closes`, not at the open.
 
-1. **`before_market_opens`**: `scanner.prepare(session)`. In paper/live it first refreshes every universe
-   name's SEC submissions (about 1,200 requests at SEC's 10/s, ~2 minutes; `minutes_before_opening` is set to 10
-   to cover it; backtests read the cache only). It then builds today's candidates from the previous session's reactions (§3).
-2. **`on_trading_iteration`** (09:30):
-   1. `desk.reconcile()`: settle what hooks may have missed, then the max-hold exits and the stop backstop (§6).
-   2. If there are candidates or holdings: one agent run with the context of §5. Otherwise no agent call.
-      In baseline mode: `desk.baseline_entries(candidates)` instead (§7).
-   3. `desk.ensure_stops()`: the stop backstop again, right after the run.
-   4. Every candidate without a `buy` or `skip` is written to `decisions.jsonl` as `undecided`.
+1. **`after_market_closes`** (16:00 in backtests; paper/live first wait `live_bar_delay_seconds` (300) with
+   `strategy.sleep`, so the day's bar is final):
+   1. `scanner.prepare(today)`: in paper/live it first refreshes every universe name's SEC submissions (about
+      1,200 requests, a few minutes; backtests read the cache once, at the first cycle). It then builds the
+      candidates from **today's** reactions (§3).
+   2. `desk.begin_session(today, candidates, trading_dates)`, then `desk.reconcile()`: settle what hooks may have
+      missed, then the max-hold exits and the stop backstop (§6).
+   3. If there are candidates or holdings: one agent run with the context of §5. Otherwise no agent call. In
+      baseline mode: `desk.baseline_entries()` instead (§7).
+   4. `desk.ensure_stops()`: the stop backstop again, right after the run.
+   5. Every candidate without a `buy` or `skip` is written to `decisions.jsonl` as `undecided`; the state file is saved.
+2. **`on_trading_iteration`** (09:30, `sleeptime = "1D"`): does nothing but raise a pending `FatalStrategyError`
+   recorded by the previous cycle (§5.4, §3.6). The executor swallows every exception from the other hooks, and
+   only `on_trading_iteration` may end a run.
 3. **`on_filled_order` / `on_canceled_order`** forward to the desk: a filled buy gets its trailing stop; a filled
    stop or sell closes the trade into `trades.jsonl`.
 
 ### 2.1 When the buy happens
 
-The agent calls `buy` during the 09:30 tick of the session after the reaction session (an after-close release
-on day D reacts on D+1 and is bought at the open of D+2). `Desk.buy` submits a market BUY, `time_in_force="day"`.
+The agent calls `buy` right after the close of the reaction session R. `Desk.buy` submits a market BUY,
+`time_in_force="day"`, which fills at the open of R+1 in both modes (an after-close release on day D reacts on
+D+1 = R and is bought at the open of D+2).
 
-- **Paper/live:** the executor dispatches order hooks only after `on_trading_iteration` returns, and the agent
-  run may last minutes. `Desk.buy` therefore waits for the fill itself (`wait_for_order_execution`, up to
-  `fill_wait_seconds`) and places the stop at once, inside the tool. A fill that arrives later is protected by
-  the hook.
-- **Backtest:** `Desk.buy` never waits (it would advance the simulated clock in the middle of the agent run). The
-  order fills at the open of that session's day bar (next-bar-open) plus slippage; the hook places the stop once
-  the clock passes that bar's close, and it trails from the next session. **The entry session has no stop in a
+- **Why after the close:** `BacktestBroker` skips the bar that is forming when an order arrives ("nothing fills
+  within the submitting bar", `backtesting/broker.py`). On daily bars an order sent at 09:30 skips that whole day
+  and fills at the next open, one session later than live. An order sent at the exact close of a bar skips
+  nothing. Live, Alpaca queues a DAY market order sent after the close for the next open.
+- **Paper/live:** the entry fills at the R+1 open; the executor dispatches the fill hook while it waits for the
+  close, and the hook places the stop seconds after the open. `Desk.buy` never waits for a fill.
+- **Backtest:** the entry fills at the R+1 open plus slippage; the clock passes that bar's close in one jump, so
+  the hook places the stop at the R+1 close and it trails from R+2. **The entry session has no stop in a
   backtest** (§11).
+- A fix in the shared broker (an order sent at or before a session's open fills at that open) would be more
+  correct for every daily strategy but changes their results; it is out of scope, for its own spec.
 
 ## 3. Events and candidates
 
@@ -113,7 +123,8 @@ plus every older page listed in `filings.files`: form exactly `8-K` (amendments 
 
 **Reaction session** = the first session whose **close** is strictly after `accepted_at`: a release before the
 open reacts that day, one during the session reacts that same day, one after the close reacts the next session.
-`reaction_session(accepted_at, sessions) -> MarketSession | None` is pure over the clock's session list.
+`reaction_date(accepted_at, trading_dates) -> date | None` is pure over the trading dates (the benchmark's daily
+bar dates) and takes every close as 16:00 ET (early closes: §11).
 
 Two 2.02 filings for one symbol with the same reaction session collapse to the earliest.
 
@@ -121,9 +132,10 @@ Two 2.02 filings for one symbol with the same reaction session collapse to the e
 
 Wraps `SecEdgarClient` (`ticker_to_cik`, `get_submissions_payload`, plus the older pages
 `submissions/CIK..-submissions-NNN.json` fetched through `get_json` and cached under `cache/sec/submissions/`).
-Freshness follows the existing `as_of`/`max_age_days` rule with `max_age_days=1`: a backtest never refetches an
-existing file; paper/live refetch daily. An older page is fetched only when its `filingTo` reaches the backtest
-window's warmup start. A symbol with no CIK or a failed fetch is skipped with reason `no_sec_data`.
+Freshness follows the existing `as_of`/`max_age_days` rule with `max_age_days=0` and `as_of` the strategy clock:
+a backtest never refetches a file fetched after its simulated date; paper/live refetch at every cycle. The parsed
+events are kept in memory: a backtest loads them once, paper/live once per cycle. An older page is fetched only when its `filingTo` reaches the backtest
+first cycle's date minus `event_lookback_days`. A symbol with no CIK or a failed fetch is skipped with reason `no_sec_data`.
 
 ### 3.3 Surprise (`surprise.py`, pure)
 
@@ -171,21 +183,24 @@ From the stock's and SPY's daily bars up to and including the reaction session R
 | Not held | no open trade, position or pending order in the symbol | `already_held` |
 | Data | missing bars for R, prev or the 20-session baseline | `no_bars` |
 
-Gates are checked in this order; the first failure is the reason. Only events whose reaction session is the
-**previous** session become candidates, so an event is considered once.
+Checked in this order, the first failure being the reason: `already_held`, `no_surprise_data`, `eps_miss`,
+`no_bars`, `weak_reaction`, `faded`, `low_volume`, `illiquid`. Only events whose reaction session is **today's**
+(the session that just closed) become candidates, so an event is considered once.
 
 ### 3.6 Scanner (`scanner.py`)
 
-`prepare(session)`: events from §3.2 for the universe, kept when their reaction session is the previous session;
-one batched `NewsProvider.get_news(symbols, start=min(accepted_at) − 2h, end=clock.now(), limit=50)` for those
-names (paginated by chunks of 50 symbols if needed); daily bars for those names and SPY through
+`prepare(today)`: the trading dates from the benchmark's daily bars (up to today); events from §3.2 for the
+universe, kept when their reaction date is today; `NewsProvider.get_news(chunk, start=min(accepted_at) − 2h,
+end=clock.now(), limit=news_limit)` for those names in chunks of `news_symbols_per_call` (5) symbols; daily bars for those names and SPY through
 `strategy.get_historical_prices_for_assets` (so backtests go through `_source_bars`); features; gates. Logs one
 summary line: events, candidates, reject counts by reason. A news failure rejects every event that session as
 `no_news`.
 
 **Hollow scan:** if SEC fails for more than half of the universe (with at least 20 failures), the session has no
-candidates and an error is logged; `hollow_scan_streak` increments (reset by a sound scan). A backtest raises
-`FatalStrategyError` at `max_consecutive_hollow_scans` (3).
+candidates, an error is logged and the events are not kept (the next cycle loads them again);
+`hollow_scan_streak` increments (reset by a sound scan). At
+`max_consecutive_hollow_scans` (3) a backtest records a pending fatal reason, raised as `FatalStrategyError` by the
+next morning's `on_trading_iteration` (§2).
 
 ## 4. Fact sheet (`fact_sheet.py`, pure)
 
@@ -231,7 +246,7 @@ buying power, free slots = `max_positions` − open trades).
 
 Per open trade: `symbol, entry_date, entry_price, last_close, pnl_pct, sessions_held, trail_percent,
 stop_status (working | missing | backstop), thesis, reaction_low`. Positions sold by the max-hold guardrail
-in this tick's `reconcile` are not listed. `max_holding_sessions` is never shown or stated in the prompt (a
+in this cycle's `reconcile` are not listed. `max_holding_sessions` is never shown or stated in the prompt (a
 stated cadence changes behaviour; bill_ackman).
 
 ### 5.3 Prompt (`prompts.py`)
@@ -248,8 +263,9 @@ stated cadence changes behaviour; bill_ackman).
 ### 5.4 Agent failures
 
 An `AgentError`, or a run that raised, drops the session's candidates (no late entries) and leaves holdings to
-their stops and the guardrails; `agent_failure_streak` increments (reset by a successful run). A backtest
-raises `FatalStrategyError` at `max_consecutive_agent_failures` (3); paper/live log and carry on.
+their stops and the guardrails; `agent_failure_streak` increments (reset by a successful run). At
+`max_consecutive_agent_failures` (3) a backtest records a pending fatal reason, which the next morning's
+`on_trading_iteration` raises as `FatalStrategyError` (§2); paper/live log and carry on.
 
 ## 6. Desk (`desk.py`)
 
@@ -265,11 +281,11 @@ the symbol is one of today's candidates; not already bought this session; quanti
 `min_trail_percent ≤ trail_percent ≤ max_trail_percent` (3, 15).
 
 `max_quantity(symbol) = floor(min(portfolio_value / max_positions, available) / reaction close)` with
-`available` = the smaller of `buying_power` and (`cash` + proceeds of sells submitted this tick) minus buys
-already submitted this tick (CLAUDE.md's sizing rule).
+`available` = the smaller of `buying_power` and (`cash` + proceeds of sells submitted this cycle) minus buys
+already submitted this cycle (CLAUDE.md's sizing rule).
 
-Then a market BUY (`day`), `Trade` recorded as `pending`, a `buy` line in `decisions.jsonl`. Paper/live: wait for
-the fill up to `fill_wait_seconds` (30) and place the stop (§6.4). Returns the lean order.
+Then a market BUY (`day`), `Trade` recorded as `pending`, a `buy` line in `decisions.jsonl`. It never waits for
+the fill (it comes at the next open, §2.1). Returns the lean order.
 
 ### 6.2 `set_trailing_stop(symbol, trail_percent, reason)`
 
@@ -300,7 +316,7 @@ All log `log_warning("guardrail <name>: ...")`.
 
 | Guardrail | When | Action |
 |---|---|---|
-| `max_hold` | `reconcile()`: `sessions_held ≥ max_holding_sessions` (10; the entry session counts 0) | cancel the stop, wait, market sell, exit reason `max_hold` |
+| `max_hold` | `reconcile()`: `sessions_held ≥ max_holding_sessions` (10). `sessions_held` counts the sessions from the entry fill's session through today, both included, so the sell queued at the 10th close fills at the 11th open | cancel the stop, wait, market sell, exit reason `max_hold` |
 | `stop_backstop` | `reconcile()` and `ensure_stops()`: an open trade with no working stop (errored, cancelled outside, missed hook) | place a stop at the trade's trail, or `default_trail_percent` (8) if none; holdings show `stop_status: backstop` next run |
 | `order_limits` | every desk tool call | `{"error": ...}` to the agent |
 | `orphan` | `reconcile()`: a position with no `Trade` (restart, manual buy) | adopted as an open trade at `default_trail_percent`, `opened_session` = today, stop placed. Only symbols this strategy traded are adopted in a shared account: an orphan in a symbol never traded by this strategy is left alone and logged once |
@@ -343,7 +359,10 @@ fractions in (0, 1]):
 | `min_price`, `min_dollar_volume` | 10, 20,000,000 |
 | `volume_baseline_sessions` | 20 |
 | `surprise_lookback_hours` | 2 |
-| `fill_wait_seconds`, `cancel_wait_seconds` | 30, 30 |
+| `bars_lookback_sessions` | 75 |
+| `news_symbols_per_call`, `news_limit` | 5, 50 |
+| `event_lookback_days` | 10 |
+| `live_bar_delay_seconds`, `cancel_wait_seconds` | 300, 30 |
 | `tool_budget_per_item` | 4 |
 | `agent_temperature` | 0.3 |
 | `max_consecutive_agent_failures`, `max_consecutive_hollow_scans` | 3, 3 |
@@ -366,6 +385,12 @@ fractions in (0, 1]):
 
 - **Entry session unprotected in backtests.** The stop goes on after the entry bar's close; a daily bar cannot
   order the low against the entry. Bias in either direction.
+- **Early closes.** `reaction_date` takes every close as 16:00 ET: a release between an early close (13:00) and
+  16:00 is mapped to that day, scanned before it was filed, and missed. A few days a year, rarely with earnings.
+- **Live bars are IEX, backtest bars SIP.** Relative volume compares IEX with IEX live, SIP with SIP in backtests;
+  the thresholds may need retuning for live.
+- **After-hours order changes, live.** `set_trailing_stop` and `sell` cancel and place orders after the close;
+  the paper smoke run must confirm Alpaca accepts a GTC trailing stop and a DAY market sell sent after hours.
 - **Trailing stop on daily bars.** `fills.evaluate_trailing_stop` checks the level from previous bars before the
   bar's high may raise it, ties against the trader: pessimistic against live, where Alpaca trails tick by tick.
 - **Survivorship bias.** Today's universe; absolute returns are upper bounds; compare modes on the same universe.
@@ -381,7 +406,7 @@ fractions in (0, 1]):
   8-K; duplicate events), `surprise` (Beats/Misses/In-Line, negative EPS, K/M/B sales, `Adj. EPS`, FY, no sales
   part, correction preferred, "Up From" ignored), `reaction` (each formula, degenerate bars), `screening` (each
   gate's boundary and order), `fact_sheet`, `parameters` validation.
-- Desk (backtest broker, fakes): buy → fill → stop; partial fill; paper-mode wait path with a fake clock;
+- Desk (backtest broker, fakes): buy → fill → stop; partial fill;
   every `order_limits` error; tighten-only; refused new stop re-places the old; sell cancels and waits; stop
   filled during the cancel; max hold; backstop; outside cancel; orphan adoption; stop refused twice → market
   sell; a warning per guardrail.
