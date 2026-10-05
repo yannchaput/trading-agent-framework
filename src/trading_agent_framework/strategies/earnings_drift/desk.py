@@ -68,6 +68,10 @@ class Desk:
         # Stops this desk cancelled itself: their CANCELED hook must not be read as an outside cancel.
         self._expected_cancels: set[str] = set()
         self._ignored_orphans: set[str] = set()  # positions of symbols this strategy never traded, logged once
+        # Open trades whose position was absent from the previous reconcile's snapshot (a stale list is not a sale).
+        self._missing_once: set[str] = set()
+        # Trades the last reconcile left alone because their position may not exist: `ensure_stops` places no stop for them.
+        self._suspect: set[str] = set()
         self._today: date | None = None
         self._trading_dates: list[date] = []
         self._candidates: dict[str, Candidate] = {}
@@ -308,9 +312,11 @@ class Desk:
     def reconcile(self) -> list[str]:
         """Settle what hooks missed, adopt orphans, sell what reached the max holding period, back up the stops."""
         with self._lock:
+            self._suspect = set()
             self._settle_missed()
-            self._close_vanished()
-            self._adopt_orphans()
+            positions = self._positions()  # one snapshot for both steps below
+            self._close_vanished(positions)
+            self._adopt_orphans(positions)
             sold: list[str] = []
             for trade in sorted(self._open_trades(), key=lambda t: t.symbol):
                 held = self._sessions_held(trade)
@@ -330,6 +336,7 @@ class Desk:
             for trade in list(self._open_trades()):
                 ok, stop = self._fetch(trade.stop_order_id, trade.symbol)
                 if not ok:
+                    self._strategy.log_warning(f"[earnings_drift] {trade.symbol}: stop {trade.stop_order_id} could not be checked; no stop placed this cycle")
                     continue  # the stop may be live: placing a second one over it is worse than waiting a cycle
                 if stop is not None and stop.is_active():
                     continue
@@ -339,6 +346,9 @@ class Desk:
                 if stop is not None:
                     self._book_partial(trade, stop)
                 if trade.symbol not in self._state.trades:
+                    continue
+                if trade.symbol in self._suspect:
+                    self._strategy.log_warning(f"[earnings_drift] {trade.symbol}: its position may not exist (see the reconcile); no stop placed")
                     continue
                 trade.stop_order_id = None
                 self._strategy.log_warning(f"guardrail stop_backstop: {trade.symbol} has no working stop; placing a {trade.trail_percent}% trail")
@@ -389,17 +399,31 @@ class Desk:
             self._strategy.log_warning(f"[earnings_drift] positions unavailable, orphans and vanished positions not checked: {exc}")
             return None
 
-    def _close_vanished(self) -> None:
-        """An open trade whose position is gone (sold outside the strategy) is closed with reason `unknown`."""
-        positions = self._positions()
+    def _close_vanished(self, positions: dict[str, Position] | None) -> None:
+        """An open trade whose position is absent on two consecutive reconciles (sold outside the strategy) is closed as `unknown`.
+
+        One absence may be a stale or partial positions list (IBKR's client-side cache after a reconnect), so the trade is
+        kept, and no stop is placed for it. A failed stop lookup keeps it too: the stop may be live and must stay tracked.
+        """
         if positions is None:
             return
+        open_symbols = {trade.symbol for trade in self._open_trades()}
+        self._missing_once &= open_symbols
         for trade in list(self._open_trades()):
             if trade.symbol in positions:
+                self._missing_once.discard(trade.symbol)
                 continue
-            # The position is gone whatever the stop's state, so the trade closes; only the cancel needs the stop.
+            if trade.symbol not in self._missing_once:
+                self._missing_once.add(trade.symbol)
+                self._suspect.add(trade.symbol)
+                self._strategy.log_warning(f"[earnings_drift] the {trade.symbol} position is absent from the broker's list; will close as unknown if still absent next cycle")
+                continue
             ok, stop = self._fetch(trade.stop_order_id, trade.symbol)
-            if ok and stop is not None and stop.is_active():
+            if not ok:
+                self._suspect.add(trade.symbol)
+                self._strategy.log_warning(f"[earnings_drift] the {trade.symbol} position is gone but its stop could not be checked; trade kept this cycle")
+                continue
+            if stop is not None and stop.is_active():
                 self._expected_cancels.add(stop.identifier)
                 try:
                     self._strategy.cancel_order(stop)
@@ -420,10 +444,10 @@ class Desk:
                 }
             )
             self._state.trades.pop(trade.symbol, None)
+            self._missing_once.discard(trade.symbol)
 
-    def _adopt_orphans(self) -> None:
+    def _adopt_orphans(self, positions: dict[str, Position] | None) -> None:
         """A long position with no trade: adopted when this strategy once traded the symbol, left alone (logged once) otherwise."""
-        positions = self._positions()
         if positions is None:
             return
         active = [o for o in self._strategy.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
@@ -664,7 +688,7 @@ class Desk:
         try:
             return True, self._strategy.get_order(order_id)
         except Exception as exc:  # strategy.get_order can fall through to a raw SDK lookup
-            self._strategy.log_warning(f"[earnings_drift] {symbol}: lookup of order {order_id} failed, left unchanged this cycle: {exc}")
+            self._strategy.log_warning(f"[earnings_drift] lookup of order {order_id} failed for {symbol}: {exc}")
             return False, None
 
     def _stop_is_working(self, trade: Trade) -> bool:

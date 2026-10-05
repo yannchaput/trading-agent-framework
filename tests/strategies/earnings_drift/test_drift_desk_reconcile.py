@@ -128,7 +128,9 @@ def test_a_position_gone_outside_the_strategy_closes_the_trade_as_unknown(tmp_pa
     rig.advance()
     rig.desk.begin_session(RIG_DATES[2], RIG_DATES[:3], [], {})
     rig.desk.reconcile()
-    assert rig.state.trades == {}
+    assert "AAA" in rig.state.trades  # absent once: could be a stale positions list
+    rig.desk.reconcile()
+    assert rig.state.trades == {}  # absent on two consecutive reconciles
     [line] = rig.lines(rig.trades_path)
     assert line["exit_reason"] == "unknown"
 
@@ -183,18 +185,73 @@ def test_reconcile_keeps_a_trade_whose_stop_lookup_fails_in_the_settle_step(tmp_
     assert trade.stop_order_id == stop_id and trade.state is TradeState.OPEN
 
 
-def test_a_vanished_position_is_closed_even_when_the_stop_lookup_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+def _positions_empty(rig: DeskRig, monkeypatch: pytest.MonkeyPatch, calls: list[int] | None = None, *, times: int | None = None) -> None:
+    """`strategy.get_positions` answers an empty list (a stale snapshot), `times` times (always when None), counting the calls."""
+    real = rig.strategy.get_positions
+    counter = calls if calls is not None else []
+
+    def get_positions():  # noqa: ANN202
+        counter.append(1)
+        if times is None or len(counter) <= times:
+            return []
+        return real()
+
+    monkeypatch.setattr(rig.strategy, "get_positions", get_positions)
+
+
+def test_a_failed_stop_lookup_keeps_a_trade_whose_position_is_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rig = DeskRig(tmp_path)
     rig.open_aaa()
     stop_id = rig.state.trades["AAA"].stop_order_id
-    stop = rig.strategy.get_order(stop_id)  # type: ignore[arg-type]
-    rig.broker.cancel_order(stop)  # type: ignore[arg-type]
-    rig.strategy.submit_order(rig.strategy.create_order("AAA", 10, "sell"))  # sold by hand
-    rig.advance()
-    rig.desk.begin_session(RIG_DATES[2], RIG_DATES[:3], [], {})
+    orders_before = len(rig.strategy.get_orders())
+    _positions_empty(rig, monkeypatch)
+    rig.desk.reconcile()  # absent once
     _lookup_raises_for(rig, monkeypatch, stop_id)
-    with caplog.at_level(logging.WARNING):
-        rig.desk.reconcile()
-    assert rig.state.trades == {}  # the position is gone whatever the stop's state: the trade closes
+    rig.desk.reconcile()  # absent twice, but the stop may be live: nothing changes
+    rig.desk.ensure_stops()
+    trade = rig.state.trades["AAA"]
+    assert trade.state is TradeState.OPEN and trade.stop_order_id == stop_id
+    assert len(rig.strategy.get_orders()) == orders_before and rig.lines(rig.trades_path) == []
+    monkeypatch.undo()
+    _positions_empty(rig, monkeypatch)
+    rig.desk.reconcile()  # the lookup works again: the stop is cancelled and the trade closes
+    assert rig.state.trades == {}
+    assert not rig.strategy.get_order(stop_id).is_active()  # type: ignore[arg-type, union-attr]
     [line] = rig.lines(rig.trades_path)
     assert line["exit_reason"] == "unknown"
+
+
+def test_an_empty_positions_snapshot_on_one_reconcile_closes_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop_id = rig.state.trades["AAA"].stop_order_id
+    orders_before = len(rig.strategy.get_orders())
+    _positions_empty(rig, monkeypatch, times=1)
+    with caplog.at_level(logging.WARNING):
+        rig.desk.reconcile()
+        rig.desk.ensure_stops()  # the strategy calls it again after the agent run
+    assert "will close as unknown if still absent next cycle" in caplog.text
+    trade = rig.state.trades["AAA"]
+    assert trade.state is TradeState.OPEN and trade.stop_order_id == stop_id
+    assert rig.strategy.get_order(stop_id).is_active()  # type: ignore[union-attr]
+    assert len(rig.strategy.get_orders()) == orders_before and rig.lines(rig.trades_path) == []
+    rig.desk.reconcile()  # the real positions are back
+    assert rig.desk._missing_once == set()
+    assert rig.state.trades["AAA"].state is TradeState.OPEN and rig.lines(rig.trades_path) == []
+
+
+def test_reconcile_reads_the_positions_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    calls: list[int] = []
+    real = rig.strategy.get_positions
+
+    def counting():  # noqa: ANN202
+        calls.append(1)
+        return real()
+
+    monkeypatch.setattr(rig.strategy, "get_positions", counting)
+    rig.desk.reconcile()
+    assert len(calls) == 1
+    rig.desk.reconcile()
+    assert len(calls) == 2
