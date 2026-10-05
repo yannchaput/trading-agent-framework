@@ -8,7 +8,7 @@ Runs once per cycle, right after the close. Reads SEC through an `EventProvider`
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -41,12 +41,23 @@ class ScanResult:
 
 
 class Scanner:
-    def __init__(self, strategy: Strategy, params: DriftParams, universe: Sequence[str], source: EventProvider, *, benchmark: str = "SPY") -> None:
+    def __init__(
+        self,
+        strategy: Strategy,
+        params: DriftParams,
+        universe: Sequence[str],
+        source: EventProvider,
+        *,
+        benchmark: str = "SPY",
+        load_as_of: Callable[[], datetime | None] | None = None,
+    ) -> None:
+        """`load_as_of`: the SEC cache's freshness time (a backtest's end); None, or an answer of None, means `now`."""
         self._strategy = strategy
         self._params = params
         self._universe = [symbol.upper() for symbol in universe]
         self._source = source
         self._benchmark = benchmark
+        self._load_as_of: Callable[[], datetime | None] = load_as_of or (lambda: None)
 
     def prepare(self, held: Collection[str]) -> ScanResult:
         strategy, params = self._strategy, self._params
@@ -61,7 +72,9 @@ class Scanner:
             result.trading_dates = [*trading_dates, today]  # today still counts as a session for the holdings
             return result
         if self._source.needs_load():
-            report = self._source.load(self._universe, as_of=now, since=today - timedelta(days=params.event_lookback_days))
+            # The freshness time only: a backtest loads once, so a cached file must be newer than the run's end.
+            as_of = self._load_as_of() or now
+            report = self._source.load(self._universe, as_of=as_of, since=today - timedelta(days=params.event_lookback_days))
             if report.failed:
                 sample = ", ".join(sorted(report.failed)[:5])
                 strategy.log_warning(f"[earnings_drift] SEC submissions failed for {len(report.failed)} of {len(self._universe)} symbols (e.g. {sample})")

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,7 @@ class EarningsDriftStrategy(Strategy):
         self.scanner: Scanner | None = None
         self._state = DriftState()  # replaced by the loaded state in `initialize`
         self._pending_fatal: str | None = None  # raised by the next on_trading_iteration (backtests only)
+        self._backtest_end: datetime | None = None  # set by run_backtesting: the SEC cache's freshness time in a backtest
 
     # --- lifecycle --------------------------------------------------------------------------------
 
@@ -98,7 +100,14 @@ class EarningsDriftStrategy(Strategy):
                 self.log_warning("guardrail baseline: agent disabled, baseline mode (every gated candidate is bought at the default trail)")
         except ConfigurationError as exc:
             raise FatalStrategyError(str(exc)) from exc  # refuse to start rather than fail every cycle
-        self.scanner = Scanner(self, self.settings, self.universe, source, benchmark=self.parameters["benchmark_symbol"])
+        self.scanner = Scanner(
+            self,
+            self.settings,
+            self.universe,
+            source,
+            benchmark=self.parameters["benchmark_symbol"],
+            load_as_of=(lambda: self._backtest_end) if self.is_backtesting else None,
+        )
         self.log_info(f"EarningsDriftStrategy initialized: {len(self.universe)} symbols, agent {'on' if self.settings.agent_enabled else 'off (baseline)'}")
 
     def on_trading_iteration(self) -> None:
@@ -192,7 +201,16 @@ class EarningsDriftStrategy(Strategy):
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=self.settings.agent_enabled,
         )
-        return super().run_backtesting(**{**defaults, **overrides})
+        arguments = {**defaults, **overrides}
+        self._backtest_end = _run_end(arguments["end"])
+        return super().run_backtesting(**arguments)
+
+
+def _run_end(end: Any) -> datetime | None:
+    """The instant a backtest's events must be known by: a bare-midnight `end` covers that whole day (CLAUDE.md); None if naive."""
+    if not isinstance(end, datetime) or end.tzinfo is None:
+        return None  # run_backtest refuses a naive end itself
+    return end + timedelta(days=1) if end.timetz().replace(tzinfo=None) == time() else end
 
 
 def _sec_client(project_root: Path) -> SecEdgarClient:

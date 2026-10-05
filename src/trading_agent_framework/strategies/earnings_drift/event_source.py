@@ -1,8 +1,9 @@
 """SEC submissions for the universe, reduced to earnings events and kept in memory (spec §3.2).
 
 The only module of the strategy that talks to SEC EDGAR. Every payload goes through `SecEdgarClient`'s cache with
-`max_age_days=0` against the strategy clock: a backtest never refetches a file fetched after its simulated date,
-paper/live refetch at every load. A backtest loads once (`reload_every_cycle=False`), paper/live at every cycle.
+`max_age_days=0` against the load's `as_of`: a file fetched after `as_of` is served, an older one is fetched again.
+A backtest loads once (`reload_every_cycle=False`) with `as_of` = the run's end (the scanner's `load_as_of`), so a file
+fetched before the end is refreshed; paper/live load at every cycle with `as_of` = now, so they always refetch.
 Older pages (`filings.files`) never change and are cached for good.
 """
 

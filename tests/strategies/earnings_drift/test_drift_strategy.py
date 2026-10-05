@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,7 +13,9 @@ from tests.strategies.earnings_drift.test_drift_scanner import StaticEvents
 
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.scanner import ScanResult
@@ -268,3 +271,52 @@ def test_the_agent_and_the_baseline_keep_separate_state_files(tmp_path: Path) ->
     assert (tmp_path / "data" / "earnings_drift_state_paper.json").exists() and (tmp_path / "data" / "earnings_drift_baseline_state_paper.json").exists()
     again, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
     assert again._state.traded_symbols == {"AAA"}  # the baseline's save did not overwrite it
+
+
+# --- A4: the backtest override and the SEC freshness as_of ------------------------------------------
+
+
+def _captured_backtest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: DriftParams, **overrides: Any) -> tuple[EarningsDriftStrategy, dict[str, Any]]:
+    captured: dict[str, Any] = {}
+
+    def run_backtesting(self: Strategy, **kwargs: Any) -> None:
+        captured.update(kwargs)
+
+    monkeypatch.setattr(Strategy, "run_backtesting", run_backtesting)
+    broker = FakeBroker(FakeClock(et(2026, 9, 1, 16, 0), [make_session(DAY)]), "earnings_drift")
+    strategy = EarningsDriftStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA", "BBB"], project_root=tmp_path, settings=settings, event_source=StaticEvents([]))
+    strategy.run_backtesting(**overrides)
+    return strategy, captured
+
+
+@pytest.mark.parametrize("agent_enabled", [True, False])
+def test_run_backtesting_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent_enabled: bool) -> None:
+    strategy, kwargs = _captured_backtest(tmp_path, monkeypatch, DriftParams(agent_enabled=agent_enabled))
+    assert kwargs["slippage"] == Decimal("0.0005") and kwargs["data_source"] is AlpacaBacktestData
+    assert [asset.symbol for asset in kwargs["preload_assets"]] == ["AAA", "BBB", "SPY"]
+    assert kwargs["timestep"] == "day" and kwargs["warmup_trading_days"] == 283 and kwargs["benchmark"] == "SPY"
+    assert kwargs["agent_telemetry"] is agent_enabled
+    assert kwargs["start"] == EarningsDriftStrategy.parameters["backtesting_start"] and kwargs["budget"] == Decimal(10000)
+    end = EarningsDriftStrategy.parameters["backtesting_end"]
+    assert kwargs["end"] == end
+    assert strategy._backtest_end == end + timedelta(days=1)  # a bare-midnight end covers that whole day
+
+
+def test_run_backtesting_records_an_overridden_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    end = et(2026, 6, 30, 16, 0)
+    strategy, kwargs = _captured_backtest(tmp_path, monkeypatch, DriftParams(), end=end)
+    assert kwargs["end"] == end and strategy._backtest_end == end
+
+
+def test_a_backtest_loads_sec_events_as_of_its_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, _ = _captured_backtest(tmp_path, monkeypatch, DriftParams(live_bar_delay_seconds=0), end=et(2026, 9, 23, 16, 0))
+    strategy._agents = cast(AgentManager, _Manager(_Handle()))
+    strategy.initialize()
+    assert strategy.scanner is not None
+    assert strategy.scanner._load_as_of() == et(2026, 9, 23, 16, 0)
+
+
+def test_paper_loads_sec_events_as_of_now(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    assert strategy.scanner is not None
+    assert strategy.scanner._load_as_of() is None  # the scanner then uses its clock's now

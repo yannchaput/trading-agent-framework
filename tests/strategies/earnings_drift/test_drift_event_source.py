@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -86,3 +87,20 @@ def test_needs_load_once_in_a_backtest_every_cycle_live_and_after_discard(tmp_pa
 def test_is_hollow(loaded: int, failed: int, hollow: bool) -> None:
     report = LoadReport(loaded=loaded, failed={f"S{i}": "error" for i in range(failed)})
     assert report.is_hollow(0.5, 20) is hollow
+
+
+def test_a_cached_submissions_file_is_refetched_only_for_an_as_of_after_its_fetch_time(tmp_path: Path) -> None:
+    """`max_age_days=0`: a file is fresh for every `as_of` up to its fetch time, stale after it."""
+    requests: list[str] = []
+    source = _source(tmp_path, requests)
+    submissions = "/submissions/CIK0000029989.json"
+    source.load(["OMC"], as_of=datetime(2026, 5, 1, tzinfo=UTC), since=date(2026, 6, 1))
+    assert requests.count(submissions) == 1
+    (cached,) = tmp_path.rglob("CIK0000029989.json")
+    fetched_at = datetime(2026, 6, 1, 12, 0, tzinfo=UTC).timestamp()
+    os.utime(cached, (fetched_at, fetched_at))  # as if fetched on 2026-06-01
+    source.load(["OMC"], as_of=datetime(2026, 5, 15, tzinfo=UTC), since=date(2026, 6, 1))
+    source.load(["OMC"], as_of=datetime(2026, 6, 1, 11, 0, tzinfo=UTC), since=date(2026, 6, 1))
+    assert requests.count(submissions) == 1  # an as_of before the fetch: served from the cache
+    source.load(["OMC"], as_of=datetime(2026, 9, 23, tzinfo=UTC), since=date(2026, 6, 1))
+    assert requests.count(submissions) == 2  # an as_of after the fetch: the 8-Ks filed since may be missing, fetched again

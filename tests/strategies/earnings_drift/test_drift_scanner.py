@@ -5,6 +5,7 @@ from collections.abc import Collection, Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -44,12 +45,16 @@ class StaticEvents:
     def __init__(self, events: list[EarningsEvent], report: LoadReport | None = None, *, reload_every_cycle: bool = False) -> None:
         self.events, self.report, self.loads, self.reload = events, report or LoadReport(loaded=3), 0, reload_every_cycle
         self.loaded = False
+        self.as_ofs: list[datetime] = []
+        self.sinces: list[date] = []
 
     def needs_load(self) -> bool:
         return not self.loaded or self.reload
 
     def load(self, symbols: Sequence[str], *, as_of: datetime, since: date) -> LoadReport:
         self.loads += 1
+        self.as_ofs.append(as_of)
+        self.sinces.append(since)
         self.loaded = True
         return self.report
 
@@ -81,7 +86,16 @@ EVENTS = [
 ]
 
 
-def _scanner(tmp_path: Path, source: StaticEvents, *, news: object | None = None, frames: dict | None = None, now: datetime | None = None, params: DriftParams | None = None) -> Scanner:
+def _scanner(
+    tmp_path: Path,
+    source: StaticEvents,
+    *,
+    news: object | None = None,
+    frames: dict | None = None,
+    now: datetime | None = None,
+    params: DriftParams | None = None,
+    **scanner_options: Any,
+) -> Scanner:
     clock = FakeClock(now or SESSIONS[-1].close, SESSIONS)
     broker = BacktestBroker(
         "earnings_drift",
@@ -92,7 +106,7 @@ def _scanner(tmp_path: Path, source: StaticEvents, *, news: object | None = None
         news_source=news if news is not None else FakeNewsProvider(NEWS),  # type: ignore[arg-type]
     )
     strategy = Strategy(broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
-    return Scanner(strategy, params or DriftParams(), ["AAA", "BBB", "CCC"], source)
+    return Scanner(strategy, params or DriftParams(), ["AAA", "BBB", "CCC"], source, **scanner_options)
 
 
 def test_prepare_finds_today_s_candidates_and_rejections(tmp_path: Path) -> None:
@@ -209,3 +223,26 @@ def test_no_benchmark_bar_today_gives_no_candidates_and_counts_today(tmp_path: P
     frames[("SPY", "day")] = FRAMES[("SPY", "day")].iloc[:-1]
     result = _scanner(tmp_path, StaticEvents(EVENTS), frames=frames).prepare(held=set())
     assert result.candidates == [] and result.trading_dates[-1] == TODAY
+
+
+# --- A4: the SEC freshness as_of can be the backtest's end ------------------------------------------
+
+
+def test_events_load_as_of_now_by_default(tmp_path: Path) -> None:
+    source = StaticEvents(EVENTS)
+    _scanner(tmp_path, source).prepare(held=set())
+    assert source.as_ofs == [NOW] and source.sinces == [TODAY - timedelta(days=10)]
+
+
+def test_events_load_as_of_the_injected_time_but_since_still_counts_from_today(tmp_path: Path) -> None:
+    run_end = et(2026, 12, 31, 0, 0)
+    source = StaticEvents(EVENTS)
+    result = _scanner(tmp_path, source, load_as_of=lambda: run_end).prepare(held=set())
+    assert source.as_ofs == [run_end] and source.sinces == [TODAY - timedelta(days=10)]
+    assert [c.symbol for c in result.candidates] == ["AAA"]  # every other clock use is still now
+
+
+def test_a_load_as_of_that_answers_none_falls_back_to_now(tmp_path: Path) -> None:
+    source = StaticEvents(EVENTS)
+    _scanner(tmp_path, source, load_as_of=lambda: None).prepare(held=set())
+    assert source.as_ofs == [NOW]
