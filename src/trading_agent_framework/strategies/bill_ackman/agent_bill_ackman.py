@@ -36,8 +36,8 @@ class BillAckmanStrategy(Strategy):
     sleeptime = "5D"  # one review every 5 trading sessions (`D` counts sessions): weekly
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.SEMI_DECADE)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.SEMI_DECADE)[1],
         "benchmark_symbol": "SPY",
         # a year of daily bars before the first simulated day, so price_return_12m (TRADING_DAYS_PER_YEAR + 1 closes) exists from day one
         "warmup_trading_days": 260,
