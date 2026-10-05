@@ -377,7 +377,8 @@ fractions in (0, 1]):
   `warmup_trading_days` 283, `budget` 10000, `slippage` 0.0005.
 - `run_backtesting` defaults: `data_source=AlpacaBacktestData` (SIP), `timestep="day"`, `preload_assets` =
   universe + SPY, `agent_telemetry=True`, the news source defaulting as for every strategy. The 5-year baseline
-  run passes `start/end` from `PredefinedWindow.SEMI_DECADE` and `settings=DriftParams(agent_enabled=False)`.
+  runs as its own registered strategy, `earnings_drift_baseline` (`DriftParams(agent_enabled=False)`,
+  `PredefinedWindow.SEMI_DECADE`, its own logs and state file; env file `env/.env.earnings_drift_baseline.<mode>`, else `env/.env`).
 - `ConfigurationError` in `initialize` (no `SEC_EDGAR_USER_AGENT`; no model in agent mode) becomes
   `FatalStrategyError`: the strategy refuses to start.
 

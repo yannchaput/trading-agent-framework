@@ -297,6 +297,20 @@ A strictly intraday long-only strategy: it buys a strong stock that pulls back i
 
 Run: `uv run agent vwap_pullback_continuation backtesting` (default window: the last 5 years, minute bars from Alpaca, fetched one year at a time). Each backtest writes `trades.jsonl` (one line per closed trade, with realised P&L and R) next to its report. The universe file must exist first, or the strategy refuses to start.
 
+#### 📈 `earnings_drift` — Post-earnings announcement drift (PEAD)
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/earnings_drift/agent_earnings_drift.py` (`EarningsDriftStrategy`) |
+| **Model** | `LLM_*` (one agent, `"drift"`); none for `earnings_drift_baseline` |
+| **Tools** | `buy`, `set_trailing_stop`, `sell`, `skip` (the desk), `search_news`, `get_filings`, `get_filing_document`, market data |
+| **Asset universe** | the `cross_momentum` universe file (`uv run batch-universe`) |
+| **Agent frequency** | once per session, right after the close; orders fill at the next open |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.earnings_drift.<mode>` (`env/.env.earnings_drift_baseline.<mode>` for the baseline, else `env/.env`): `LLM_*`, `SEC_EDGAR_USER_AGENT`, `ALPACA_NEWS_*`, `ALPACA_DATA_*` (daily bars, also for backtests), plus the broker keys in paper/live |
+
+Long only, 1 to 10 sessions. After each close, code finds the stocks that reacted today to an earnings release (SEC 8-K item 2.02), reads the Benzinga "EPS ... Estimate" headline and keeps an event only when EPS beat, the abnormal return against SPY is at least 3%, the stock held at least half its intraday gain and closed in the upper half of its range, on at least twice its 20-day volume, with a $10 price and $20M of daily dollar volume. The agent then buys or skips each candidate with a trailing stop of its choice (3% to 15%), and reviews its holdings (sell, or tighten the stop). Code guards every order: candidates only, sizes up to `max_quantity` (portfolio value / 8 positions), stops tighten-only, a stop on every fill, a sale after 10 sessions. Each guardrail logs a warning. `uv run agent earnings_drift_baseline backtesting` runs the same pipeline without the agent (every candidate, an 8% trail) over 5 years, to measure what the agent adds (`earnings_drift` itself defaults to a 1-year window). Each run writes `trades.jsonl` and `decisions.jsonl` next to its report. The universe file must exist first, or the strategy refuses to start.
+
 #### 📈 `opening_range_breakout` — Agent based opening range breakout strategy (ORB)
 | Field | Value |
 |---|---|
