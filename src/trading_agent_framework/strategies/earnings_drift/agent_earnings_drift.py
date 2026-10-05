@@ -127,11 +127,11 @@ class EarningsDriftStrategy(Strategy):
             scan = self.scanner.prepare(held=desk.exposed_symbols())
         except Exception as exc:  # the guardrails below never depend on the scan: carry on with an empty one
             self.log_error(f"[earnings_drift] scan failed ({type(exc).__name__}: {exc}); no candidates this cycle, the guardrails still run")
-            scan = ScanResult(today=self.get_datetime().astimezone(MARKET_TZ).date(), trading_dates=[])
+            scan = ScanResult(today=self.get_datetime().astimezone(MARKET_TZ).date(), trading_dates=[], hollow=True)  # a failed scan counts as a hollow one
         if scan.hollow:
             state.hollow_scan_streak += 1
             if self.is_backtesting and state.hollow_scan_streak >= settings.max_consecutive_hollow_scans:
-                self._pending_fatal = f"{state.hollow_scan_streak} hollow scans in a row (SEC unreachable?), aborting the backtest"
+                self._pending_fatal = f"{state.hollow_scan_streak} failed or hollow scans in a row (SEC unreachable?), aborting the backtest"
         else:
             state.hollow_scan_streak = 0
         try:

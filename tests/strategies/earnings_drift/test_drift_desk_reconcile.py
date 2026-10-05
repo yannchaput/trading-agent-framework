@@ -8,9 +8,28 @@ import pytest
 from tests.strategies.earnings_drift.drift_helpers import RIG_DATES, DeskRig
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType
-from trading_agent_framework.strategies.earnings_drift.book import TradeState
+from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog, TradeState
+from trading_agent_framework.strategies.earnings_drift.desk import Desk
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.utils.errors import BrokerError
+
+
+def test_an_empty_date_list_keeps_the_known_dates_so_max_hold_still_fires(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path, params=DriftParams(max_holding_sessions=2))
+    rig.open_aaa()  # filled day 1; the dates known so far are days 0 and 1
+    rig.advance()  # day 2: a cycle whose scan failed begins with no dates at all
+    rig.deliver()
+    rig.desk.begin_session(RIG_DATES[2], [], [], {})
+    assert rig.desk._trading_dates == RIG_DATES[:3]
+    assert rig.desk.reconcile() == ["AAA"]  # 2 sessions held
+    assert rig.state.trades["AAA"].exit_reason == "max_hold"
+
+
+def test_a_first_session_with_no_dates_knows_today(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    fresh = Desk(rig.strategy, DriftParams(), DriftState(), trade_log=JsonlLog(lambda: None), decision_log=JsonlLog(lambda: None))
+    fresh.begin_session(RIG_DATES[0], [], [], {})
+    assert fresh._trading_dates == [RIG_DATES[0]]
 
 
 def _lookup_raises_for(rig: DeskRig, monkeypatch: pytest.MonkeyPatch, order_id: str | None) -> None:

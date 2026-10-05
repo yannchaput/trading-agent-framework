@@ -84,7 +84,8 @@ class Desk:
     def begin_session(self, today: date, trading_dates: Sequence[date], candidates: Sequence[Candidate], rejections: Mapping[str, str]) -> None:
         with self._lock:
             self._today = today
-            self._trading_dates = sorted(set(trading_dates))
+            # An empty list (a cycle whose scan failed) keeps the dates already known and adds today, so `sessions_held` still counts.
+            self._trading_dates = sorted(set(trading_dates)) if trading_dates else sorted({*self._trading_dates, today})
             self._candidates = {candidate.symbol: candidate for candidate in candidates}
             self._decided = set()
             self._cycle_buys = Decimal(0)

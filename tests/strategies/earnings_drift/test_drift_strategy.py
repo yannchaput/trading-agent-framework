@@ -150,7 +150,7 @@ def test_three_hollow_scans_end_a_backtest_the_next_morning(tmp_path: Path) -> N
     _stub_cycle(strategy, hollow=True)
     for _ in range(3):
         strategy.after_market_closes()
-    with pytest.raises(FatalStrategyError, match="3 hollow scans in a row"):
+    with pytest.raises(FatalStrategyError, match="3 failed or hollow scans in a row"):
         strategy.on_trading_iteration()
 
 
@@ -190,3 +190,64 @@ def test_an_unexpected_agent_exception_still_runs_the_tail(tmp_path: Path, caplo
     assert steps == ["prepare", "begin", "reconcile", "ensure", "undecided", "save"]
     assert "RuntimeError" in caplog.text and "boom" in caplog.text
     strategy.on_trading_iteration()  # an unexpected exception is not an agent failure: no fatal error is pending
+
+
+def _scans(strategy: EarningsDriftStrategy, kinds: str) -> None:
+    """Each cycle's scan in turn: `f` raises, `h` is hollow, `s` is sound."""
+    assert strategy.scanner is not None
+    pending = list(kinds)
+
+    def prepare(held: set[str]) -> ScanResult:
+        kind = pending.pop(0)
+        if kind == "f":
+            raise RuntimeError("benchmark fetch failed")
+        return ScanResult(DAY, [DAY], [], {}, hollow=kind == "h")
+
+    strategy.scanner.prepare = prepare  # type: ignore[method-assign]
+
+
+def _cycles(strategy: EarningsDriftStrategy, count: int) -> None:
+    for _ in range(count):
+        strategy.after_market_closes()
+
+
+def test_three_failed_scans_end_a_backtest_the_next_morning(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+    _stub_cycle(strategy)
+    _scans(strategy, "fff")
+    _cycles(strategy, 3)
+    with pytest.raises(FatalStrategyError, match="3 failed or hollow scans in a row"):
+        strategy.on_trading_iteration()
+
+
+def test_two_failed_scans_do_not_end_a_backtest(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+    _stub_cycle(strategy)
+    _scans(strategy, "ff")
+    _cycles(strategy, 2)
+    strategy.on_trading_iteration()
+
+
+def test_failed_scans_never_end_a_paper_run(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    _stub_cycle(strategy)
+    _scans(strategy, "ffff")
+    _cycles(strategy, 4)
+    strategy.on_trading_iteration()
+
+
+def test_failed_and_hollow_scans_share_one_streak(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+    _stub_cycle(strategy)
+    _scans(strategy, "fhf")
+    _cycles(strategy, 3)
+    with pytest.raises(FatalStrategyError, match="3 failed or hollow scans in a row"):
+        strategy.on_trading_iteration()
+
+
+def test_a_sound_scan_resets_the_failed_scan_streak(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+    _stub_cycle(strategy)
+    _scans(strategy, "ffsff")
+    _cycles(strategy, 5)
+    strategy.on_trading_iteration()
