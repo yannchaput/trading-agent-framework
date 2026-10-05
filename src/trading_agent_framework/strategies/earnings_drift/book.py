@@ -80,6 +80,11 @@ class Trade:
             entry_price, reaction_low = _dec(data.get("entry_price")), _dec(data.get("reaction_low"))
         except InvalidOperation as exc:
             raise ValueError(f"invalid number in trade {data.get('symbol')!r}") from exc
+        for number in (quantity, trail, entry_price, reaction_low):
+            if number is not None and not number.is_finite():
+                raise ValueError(f"non-finite number in trade {data.get('symbol')!r}")
+        if quantity < 0 or trail <= 0:
+            raise ValueError(f"quantity must be >= 0 and trail_percent > 0 in trade {data.get('symbol')!r}")
         opened = data.get("opened_on")
         if not isinstance(data["symbol"], str) or not isinstance(data["entry_order_id"], str) or not isinstance(data["thesis"], str):
             raise TypeError("symbol, entry_order_id and thesis must be strings")
@@ -136,6 +141,8 @@ class StateStore:
             if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
                 raise ValueError("missing or other version")
             trades = {symbol: Trade.from_json(data) for symbol, data in raw.get("trades", {}).items()}
+            if any(symbol != trade.symbol for symbol, trade in trades.items()):
+                raise ValueError("a trade is filed under another symbol")
             traded = raw.get("traded_symbols", [])
             if not isinstance(traded, list) or not all(isinstance(s, str) for s in traded):
                 raise ValueError("invalid traded_symbols")
@@ -151,7 +158,6 @@ class StateStore:
 
     def save(self, state: DriftState) -> None:
         """Write the state atomically (temporary file in the same directory, then replace); an I/O error is logged."""
-        temporary: str | None = None
         payload = {
             "version": STATE_VERSION,
             "trades": {symbol: trade.to_json() for symbol, trade in state.trades.items()},
@@ -159,13 +165,20 @@ class StateStore:
             "hollow_scan_streak": state.hollow_scan_streak,
             "traded_symbols": sorted(state.traded_symbols),
         }
+        temporary: str | None = None
         try:
+            text = json.dumps(payload, default=str)
             self._path.parent.mkdir(parents=True, exist_ok=True)
             descriptor, temporary = tempfile.mkstemp(dir=self._path.parent, prefix=f"{self._path.name}.", suffix=".tmp")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle)
+            try:
+                handle = os.fdopen(descriptor, "w", encoding="utf-8")
+            except BaseException:
+                os.close(descriptor)
+                raise
+            with handle:
+                handle.write(text)
             os.replace(temporary, self._path)
-        except OSError as exc:
+        except (OSError, TypeError, ValueError) as exc:
             logger.log_warning(f"state could not be saved to {self._path}: {exc}")
             if temporary is not None:
                 Path(temporary).unlink(missing_ok=True)
@@ -188,10 +201,11 @@ class JsonlLog:
         if path is None:
             return
         try:
+            line = json.dumps(record, default=str) + "\n"
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, default=str) + "\n")
-        except OSError as exc:
+                handle.write(line)
+        except (OSError, TypeError, ValueError) as exc:
             logger.log_warning(f"could not append to {path}: {exc}")
 
 
