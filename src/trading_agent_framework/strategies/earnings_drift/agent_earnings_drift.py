@@ -3,7 +3,8 @@
 Once per session, right after the close (`after_market_closes`): `Scanner.prepare` builds today's candidates
 (SEC 8-K item 2.02, Benzinga surprise, reaction-day gates), `Desk.reconcile` applies the guardrails, then the agent
 decides (or, in baseline mode, code buys every candidate). Orders fill at the next open. `on_trading_iteration`
-only raises a fatal error recorded by the previous cycle: the executor swallows exceptions from every other hook.
+raises a fatal error recorded by the previous cycle (the executor swallows exceptions from every other hook), and in
+paper/live runs `Desk.recover` at the open, so a fill missed during a restart gets its stop at once.
 See docs/superpowers/specs/2026-10-05-earnings-drift-design.md.
 """
 
@@ -37,7 +38,7 @@ from trading_agent_framework.utils.errors import AgentError, ConfigurationError,
 
 
 class EarningsDriftStrategy(Strategy):
-    sleeptime = "1D"  # on_trading_iteration only raises a pending fatal error; the work is in after_market_closes
+    sleeptime = "1D"  # on_trading_iteration raises a pending fatal error and, in paper/live, recovers the desk; the work is in after_market_closes
     minutes_after_closing = 0  # at the exact close: a backtest order then fills at the next open, not a session later
     AGENT_NAME = "drift"
 
@@ -114,6 +115,12 @@ class EarningsDriftStrategy(Strategy):
     def on_trading_iteration(self) -> None:
         if self._pending_fatal is not None:
             raise FatalStrategyError(self._pending_fatal)
+        if self.is_backtesting or self.desk is None:
+            return  # a backtest delivers every fill; its cycle settles anything else
+        try:
+            self.desk.recover()  # an entry filled at the open while the process was down gets its stop now
+        except Exception as exc:  # the next cycle's reconcile retries; nothing here may stop the run
+            self.log_error(f"[earnings_drift] recovery at the open failed ({type(exc).__name__}: {exc}); the cycle after the close retries")
 
     def after_market_closes(self) -> None:
         if not self.is_backtesting and self.settings.live_bar_delay_seconds > 0:

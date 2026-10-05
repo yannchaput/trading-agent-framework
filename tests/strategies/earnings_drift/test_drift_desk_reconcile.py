@@ -274,3 +274,34 @@ def test_reconcile_reads_the_positions_once(tmp_path: Path, monkeypatch: pytest.
     assert len(calls) == 1
     rig.desk.reconcile()
     assert len(calls) == 2
+
+
+# --- A6: recover() at the open after a restart ------------------------------------------------------
+
+
+def test_recover_protects_an_entry_that_filled_while_its_hook_was_lost(tmp_path: Path) -> None:
+    saves: list[int] = []
+    rig = DeskRig(tmp_path, save=lambda: saves.append(1))
+    rig.desk.buy("AAA", 10, 8.0, "x")
+    rig.advance()  # the entry fills at the open; the process was down, the hook never reaches the desk
+    saves.clear()
+    rig.desk.recover()
+    trade = rig.state.trades["AAA"]
+    assert trade.state is TradeState.OPEN and trade.quantity == D(10)
+    stop = rig.strategy.get_order(trade.stop_order_id)  # type: ignore[arg-type]
+    assert stop is not None and stop.is_active() and stop.order_type is OrderType.TRAIL and not trade.backstop
+    assert saves  # the state is saved
+    orders = len(rig.strategy.get_orders())
+    rig.desk.recover()  # idempotent
+    assert len(rig.strategy.get_orders()) == orders and rig.state.trades["AAA"].stop_order_id == stop.identifier
+
+
+def test_recover_replaces_a_stop_that_ended_while_the_process_was_down(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    rig.broker.cancel_order(stop)  # type: ignore[arg-type]  # its CANCELED hook never reaches the desk
+    rig.desk.recover()
+    trade = rig.state.trades["AAA"]
+    assert trade.stop_order_id != stop.identifier and trade.backstop  # type: ignore[union-attr]
+    assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]

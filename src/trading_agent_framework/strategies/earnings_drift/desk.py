@@ -1,7 +1,7 @@
 """Every order earnings_drift places (spec §6): the agent's buy / trail / sell, stops on fills, the guardrails.
 
 The only module of the strategy that submits or cancels orders. The agent reaches it through `tools.py`, the
-strategy through `reconcile` / `ensure_stops` / `baseline_entries` and the order hooks. Tool paths return
+strategy through `reconcile` / `ensure_stops` / `recover` / `baseline_entries` and the order hooks. Tool paths return
 `{"error": ...}` (logging a warning that names the guardrail) instead of raising; hook paths log and never raise.
 A filled position is never left without a stop: a stop refused twice is replaced by an immediate market sell.
 
@@ -331,6 +331,17 @@ class Desk:
             self.ensure_stops()
             self._save_state()
             return sold
+
+    def recover(self) -> None:
+        """Paper/live at the open: settle the fills and ends whose hooks were lost (a restart), then back up the stops.
+
+        A fill at the open while the process was down is never delivered (`sync_open_orders` adopts only open orders):
+        without this the trade would stay pending, its shares without a stop, until the cycle after the close.
+        """
+        with self._lock:
+            self._settle_missed()
+            self.ensure_stops()
+            self._save_state()
 
     def ensure_stops(self) -> None:
         """Every open trade not being sold has a working stop: a missing one is placed again (`stop_backstop`)."""

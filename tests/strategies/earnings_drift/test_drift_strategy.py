@@ -331,3 +331,37 @@ def test_the_dollar_volume_gate_is_scaled_only_outside_a_backtest(tmp_path: Path
     assert strategy.scanner is not None
     assert strategy.scanner._gate_params.min_dollar_volume == pytest.approx(threshold)
     assert strategy.scanner._gate_params.min_rel_volume == 2.0  # a ratio of same-feed volumes: unchanged
+
+
+# --- A6: paper/live recover the desk at the open ----------------------------------------------------
+
+
+def test_paper_recovers_the_desk_at_the_open(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    assert strategy.desk is not None
+    calls: list[str] = []
+    strategy.desk.recover = lambda: calls.append("recover")  # type: ignore[method-assign]
+    strategy.on_trading_iteration()
+    assert calls == ["recover"]
+
+
+def test_a_backtest_does_not_recover_at_the_open(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+    assert strategy.desk is not None
+    calls: list[str] = []
+    strategy.desk.recover = lambda: calls.append("recover")  # type: ignore[method-assign]
+    strategy.on_trading_iteration()
+    assert calls == []
+
+
+def test_a_failing_recover_is_logged_and_does_not_escape(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    assert strategy.desk is not None
+
+    def boom() -> None:
+        raise RuntimeError("broker down")
+
+    strategy.desk.recover = boom  # type: ignore[method-assign]
+    with caplog.at_level(logging.ERROR):
+        strategy.on_trading_iteration()
+    assert "RuntimeError" in caplog.text and "broker down" in caplog.text
