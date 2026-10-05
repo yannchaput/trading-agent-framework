@@ -9,6 +9,7 @@ from rich.text import Text
 
 import trading_agent_framework as tr
 from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
@@ -17,6 +18,8 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
+from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
+from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
@@ -53,9 +56,35 @@ def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
     return BillAckmanStrategy(broker=broker, mode=mode, universe=universe)
 
 
+def _build_earnings_drift(broker: Broker, mode: TradingMode) -> Strategy | None:
+    universe = load_cross_momentum_universe()
+    if not universe:
+        Console().print("Universe file not found — run `uv run batch-universe` before executing this strategy.", style="bold red")
+        return None
+    return EarningsDriftStrategy(broker=broker, mode=mode, universe=universe)
+
+
+def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """The code-only baseline over 5 years: every gated candidate, the default trail, no LLM."""
+    universe = load_cross_momentum_universe()
+    if not universe:
+        Console().print("Universe file not found — run `uv run batch-universe` before executing this strategy.", style="bold red")
+        return None
+    start, end = backtest_window(PredefinedWindow.SEMI_DECADE)
+    return EarningsDriftStrategy(
+        broker=broker,
+        mode=mode,
+        universe=universe,
+        settings=DriftParams(agent_enabled=False),
+        parameters={"backtesting_start": start, "backtesting_end": end},
+    )
+
+
 AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
     "bill_ackman": _build_bill_ackman,
     "cross_momentum": _build_cross_momentum,
+    "earnings_drift": _build_earnings_drift,
+    "earnings_drift_baseline": _build_earnings_drift_baseline,
     "news_binary": _build_news_binary,
     "vwap_pullback_continuation": _build_vwap_pullback,
 }
