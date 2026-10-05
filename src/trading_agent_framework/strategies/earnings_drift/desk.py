@@ -131,7 +131,8 @@ class Desk:
                 self._strategy.log_warning(f"[earnings_drift] account unavailable, no buy can be sized: {exc}")
                 return 0
             cap = account.portfolio_value / self._params.max_positions
-            available = min(account.buying_power, account.cash + self._cycle_sell_proceeds) - self._cycle_buys
+            # `buying_power` already nets the pending orders (this cycle's buys included); raw `cash` does not.
+            available = min(account.buying_power, account.cash + self._cycle_sell_proceeds - self._cycle_buys)
             budget = min(cap, available)
             if price <= 0 or budget <= 0:
                 return 0

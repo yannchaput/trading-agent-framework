@@ -211,3 +211,27 @@ def test_holdings_context_lists_open_trades(tmp_path: Path) -> None:
         "thesis": "beat and raise",
         "reaction_low": 99.0,
     }
+
+
+# --- A1: the cycle's buys are deducted once (buying_power already nets them) ---------------------
+
+
+def test_a_cycle_buy_is_counted_once_in_max_quantity(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=2), budget=D("10000"))
+    assert rig.desk.max_quantity("AAA") == 50  # the 5000 slot cap at 100
+    assert "error" not in rig.desk.buy("AAA", 50, 8.0, "x")
+    account = rig.broker.get_account()
+    assert account.cash == D("10000") and account.buying_power == D("5000")  # the broker already nets the pending buy
+    assert rig.desk.max_quantity("BBB") == 100  # the second 5000 slot at 50, not 0
+    assert "error" not in rig.desk.buy("BBB", 100, 8.0, "y")
+
+
+def test_sell_proceeds_are_credited_and_cycle_buys_deducted_once(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), budget=D("10000"))
+    rig.open_aaa(quantity=50)  # filled at 101: cash 4950
+    rig.desk.begin_session(RIG_DATES[1], RIG_DATES[:2], [make_candidate("BBB", day=RIG_DATES[1], close=50.0)], {})
+    assert rig.desk.max_quantity("BBB") == 99  # 4950 left, before any sell
+    assert rig.desk.sell("AAA", "rotate")["side"] == "sell"  # 50 x 102 = 5100 credited
+    assert rig.desk.max_quantity("BBB") == 201  # the whole 10050 slot
+    assert "error" not in rig.desk.buy("BBB", 100, 8.0, "y")
+    assert rig.desk.max_quantity("BBB") == 101  # 10050 - 5000 committed = 5050, deducted once
