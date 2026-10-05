@@ -43,6 +43,11 @@ def test_a_trade_round_trips_through_json() -> None:
     assert Trade.from_json(json.loads(json.dumps(trade.to_json()))) == trade
 
 
+def test_the_state_file_is_named_after_the_strategy(tmp_path: Path) -> None:
+    assert state_path(tmp_path, TradingMode.LIVE, name="earnings_drift") == tmp_path / "data" / "earnings_drift_state_live.json"
+    assert state_path(tmp_path, TradingMode.PAPER, name="earnings_drift_baseline") == tmp_path / "data" / "earnings_drift_baseline_state_paper.json"
+
+
 def test_state_round_trips_and_is_versioned(tmp_path: Path) -> None:
     path = state_path(tmp_path, TradingMode.PAPER)
     assert path == tmp_path / "data" / "earnings_drift_state_paper.json"

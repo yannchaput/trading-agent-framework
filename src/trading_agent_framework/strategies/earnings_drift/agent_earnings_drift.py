@@ -71,7 +71,7 @@ class EarningsDriftStrategy(Strategy):
     # --- lifecycle --------------------------------------------------------------------------------
 
     def initialize(self) -> None:
-        store = StateStore(state_path(self.project_root, self.trading_mode))
+        store = StateStore(state_path(self.project_root, self.trading_mode, self.name))
         if self.is_backtesting:
             store.wipe()  # one run's trades must not leak into the next; paper and live state is never wiped
         self._state = store.load()

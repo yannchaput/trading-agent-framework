@@ -1,7 +1,7 @@
 """What earnings_drift remembers between cycles, and its two run logs (spec §8).
 
 `StateStore` keeps the open trades, the failure streaks and the symbols this strategy has ever traded (the orphan
-rule) in one small JSON file per mode, written atomically. A missing, unreadable or invalid file is an empty state
+rule) in one small JSON file per strategy name and mode, written atomically. A missing, unreadable or invalid file is an empty state
 (with a warning). `JsonlLog` appends JSON lines to the run directory. Neither raises on an I/O problem: bookkeeping
 must not stop a cycle.
 """
@@ -114,9 +114,9 @@ class DriftState:
     traded_symbols: set[str] = field(default_factory=set)  # every symbol this strategy has bought (orphan adoption)
 
 
-def state_path(project_root: Path, mode: TradingMode) -> Path:
-    """`<project_root>/data/earnings_drift_state_<mode>.json`."""
-    return project_root / "data" / f"earnings_drift_state_{mode.value}.json"
+def state_path(project_root: Path, mode: TradingMode, name: str = "earnings_drift") -> Path:
+    """`<project_root>/data/<name>_state_<mode>.json`: one file per strategy name, so the agent and the baseline never share one."""
+    return project_root / "data" / f"{name}_state_{mode.value}.json"
 
 
 def _streak(value: Any) -> int:

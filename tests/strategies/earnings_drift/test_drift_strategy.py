@@ -53,8 +53,10 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "TestApp test@example.com")
 
 
-def _strategy(tmp_path: Path, *, mode: TradingMode = TradingMode.BACKTESTING, settings: DriftParams | None = None, handle: _Handle | None = None) -> tuple[EarningsDriftStrategy, _Manager]:
-    broker = FakeBroker(FakeClock(et(2026, 9, 1, 16, 0), [make_session(DAY)]), "earnings_drift")
+def _strategy(
+    tmp_path: Path, *, mode: TradingMode = TradingMode.BACKTESTING, settings: DriftParams | None = None, handle: _Handle | None = None, name: str = "earnings_drift"
+) -> tuple[EarningsDriftStrategy, _Manager]:
+    broker = FakeBroker(FakeClock(et(2026, 9, 1, 16, 0), [make_session(DAY)]), name)
     strategy = EarningsDriftStrategy(broker, mode=mode, universe=["AAA"], project_root=tmp_path, settings=settings or DriftParams(live_bar_delay_seconds=0), event_source=StaticEvents([]))
     manager = _Manager(handle or _Handle())
     strategy._agents = cast(AgentManager, manager)
@@ -251,3 +253,18 @@ def test_a_sound_scan_resets_the_failed_scan_streak(tmp_path: Path) -> None:
     _scans(strategy, "ffsff")
     _cycles(strategy, 5)
     strategy.on_trading_iteration()
+
+
+def test_the_agent_and_the_baseline_keep_separate_state_files(tmp_path: Path) -> None:
+    agent, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    assert agent.desk is not None
+    agent._state.traded_symbols.add("AAA")
+    agent.desk.save()
+    baseline, _ = _strategy(tmp_path, mode=TradingMode.PAPER, name="earnings_drift_baseline", settings=DriftParams(agent_enabled=False, live_bar_delay_seconds=0))
+    assert baseline.desk is not None
+    assert baseline._state.traded_symbols == set()  # the agent's state is not the baseline's
+    baseline._state.traded_symbols.add("BBB")
+    baseline.desk.save()
+    assert (tmp_path / "data" / "earnings_drift_state_paper.json").exists() and (tmp_path / "data" / "earnings_drift_baseline_state_paper.json").exists()
+    again, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
+    assert again._state.traded_symbols == {"AAA"}  # the baseline's save did not overwrite it
