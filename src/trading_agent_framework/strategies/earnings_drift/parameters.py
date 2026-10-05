@@ -19,7 +19,8 @@ class DriftParams:
     min_close_location: float = 0.5
     min_rel_volume: float = 2.0
     min_price: float = 10.0
-    min_dollar_volume: float = 20_000_000.0
+    min_dollar_volume: float = 20_000_000.0  # on consolidated (SIP) volume, as backtests read it
+    live_volume_share: float = 0.03  # paper/live bars are IEX's ~2-3% of it: min_dollar_volume is scaled by this there
     volume_baseline_sessions: int = 20
     bars_lookback_sessions: int = 75  # daily bars read per name: the 60-session run-up plus margin
     surprise_lookback_hours: float = 2.0  # news is read from this long before the 8-K's acceptance...
@@ -47,6 +48,7 @@ class DriftParams:
             self.min_rel_volume,
             self.min_price,
             self.min_dollar_volume,
+            self.live_volume_share,
             self.surprise_lookback_hours,
             self.surprise_window_hours,
             self.live_bar_delay_seconds,
@@ -62,6 +64,7 @@ class DriftParams:
             "min_close_location must be in [0, 1]": not 0 <= self.min_close_location <= 1,
             "min_rel_volume must be above 0": not self.min_rel_volume > 0,
             "min_price and min_dollar_volume must be at least 0": self.min_price < 0 or self.min_dollar_volume < 0,
+            "live_volume_share must be in (0, 1]": not 0 < self.live_volume_share <= 1,
             "volume_baseline_sessions must be at least 2": self.volume_baseline_sessions < 2,
             "bars_lookback_sessions must exceed volume_baseline_sessions + 1": self.bars_lookback_sessions <= self.volume_baseline_sessions + 1,
             "surprise_lookback_hours must be at least 0": self.surprise_lookback_hours < 0,

@@ -246,3 +246,25 @@ def test_a_load_as_of_that_answers_none_falls_back_to_now(tmp_path: Path) -> Non
     source = StaticEvents(EVENTS)
     _scanner(tmp_path, source, load_as_of=lambda: None).prepare(held=set())
     assert source.as_ofs == [NOW]
+
+
+# --- A5: live dollar volume is IEX's share of the consolidated volume -------------------------------
+
+THIN = 50_000.0  # x 100 = a 5M 20-day dollar volume: under the 20M gate, above 3% of it (0.6M)
+
+
+def _thin_frames() -> dict:
+    frames = dict(FRAMES)
+    frames[("AAA", "day")] = _frame([(100.0, 100.5, 99.5, 100.0, THIN)] * 30 + [(106.0, 110.0, 105.0, 109.0, 5 * THIN)])
+    return frames
+
+
+def test_a_thin_name_is_illiquid_on_consolidated_volume(tmp_path: Path) -> None:
+    result = _scanner(tmp_path, StaticEvents(EVENTS), frames=_thin_frames(), volume_share=1.0).prepare(held=set())
+    assert result.candidates == [] and result.rejections["AAA"] == "illiquid"
+
+
+def test_the_dollar_volume_gate_scales_with_the_feed_s_volume_share(tmp_path: Path) -> None:
+    result = _scanner(tmp_path, StaticEvents(EVENTS), frames=_thin_frames(), volume_share=0.03).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+    assert result.candidates[0].reaction.dollar_volume_20d == pytest.approx(5_000_000.0)  # the features themselves are not scaled

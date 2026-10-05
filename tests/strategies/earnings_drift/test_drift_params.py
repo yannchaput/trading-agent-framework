@@ -16,6 +16,7 @@ def test_defaults_match_the_spec() -> None:
     assert params.tool_budget_per_item == 4
     assert (params.surprise_lookback_hours, params.surprise_window_hours, params.news_limit) == (2.0, 24.0, 50)
     assert not hasattr(params, "news_symbols_per_call")
+    assert params.live_volume_share == 0.03
 
 
 @pytest.mark.parametrize(
@@ -36,6 +37,9 @@ def test_defaults_match_the_spec() -> None:
         ({"surprise_window_hours": -1.0}, "surprise_window_hours"),
         ({"surprise_window_hours": float("inf")}, "finite"),
         ({"live_bar_delay_seconds": -1.0}, "live_bar_delay_seconds"),
+        ({"live_volume_share": 0.0}, "live_volume_share"),
+        ({"live_volume_share": 1.5}, "live_volume_share"),
+        ({"live_volume_share": float("nan")}, "finite"),
         ({"sec_hollow_fraction": 1.5}, "sec_hollow_fraction"),
         ({"agent_temperature": 3.0}, "agent_temperature"),
     ],
@@ -47,3 +51,7 @@ def test_invalid_values_are_refused(overrides: dict[str, object], message: str) 
 
 def test_zero_live_delay_and_no_temperature_are_allowed() -> None:
     DriftParams(live_bar_delay_seconds=0.0, agent_temperature=None)
+
+
+def test_a_full_volume_share_is_allowed() -> None:
+    assert DriftParams(live_volume_share=1.0).live_volume_share == 1.0

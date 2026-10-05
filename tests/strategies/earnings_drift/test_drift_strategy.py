@@ -320,3 +320,14 @@ def test_paper_loads_sec_events_as_of_now(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
     assert strategy.scanner is not None
     assert strategy.scanner._load_as_of() is None  # the scanner then uses its clock's now
+
+
+# --- A5: the dollar-volume gate in paper/live ------------------------------------------------------
+
+
+@pytest.mark.parametrize(("mode", "threshold"), [(TradingMode.BACKTESTING, 20_000_000.0), (TradingMode.PAPER, 600_000.0)])
+def test_the_dollar_volume_gate_is_scaled_only_outside_a_backtest(tmp_path: Path, mode: TradingMode, threshold: float) -> None:
+    strategy, _ = _strategy(tmp_path, mode=mode)
+    assert strategy.scanner is not None
+    assert strategy.scanner._gate_params.min_dollar_volume == pytest.approx(threshold)
+    assert strategy.scanner._gate_params.min_rel_volume == 2.0  # a ratio of same-feed volumes: unchanged

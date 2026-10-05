@@ -107,6 +107,7 @@ class EarningsDriftStrategy(Strategy):
             source,
             benchmark=self.parameters["benchmark_symbol"],
             load_as_of=(lambda: self._backtest_end) if self.is_backtesting else None,
+            volume_share=1.0 if self.is_backtesting else self.settings.live_volume_share,  # SIP backtests, IEX paper/live
         )
         self.log_info(f"EarningsDriftStrategy initialized: {len(self.universe)} symbols, agent {'on' if self.settings.agent_enabled else 'off (baseline)'}")
 

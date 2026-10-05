@@ -9,7 +9,7 @@ Runs once per cycle, right after the close. Reads SEC through an `EventProvider`
 from __future__ import annotations
 
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -50,10 +50,18 @@ class Scanner:
         *,
         benchmark: str = "SPY",
         load_as_of: Callable[[], datetime | None] | None = None,
+        volume_share: float = 1.0,
     ) -> None:
-        """`load_as_of`: the SEC cache's freshness time (a backtest's end); None, or an answer of None, means `now`."""
+        """`load_as_of`: the SEC cache's freshness time (a backtest's end); None, or an answer of None, means `now`.
+
+        `volume_share`: the bar feed's share of the consolidated volume (1.0 for SIP backtests, `live_volume_share`
+        for IEX in paper/live); `min_dollar_volume` is scaled by it. `rel_volume` compares same-feed volumes: unscaled.
+        """
+        if not 0 < volume_share <= 1:
+            raise ValueError(f"volume_share must be in (0, 1], got {volume_share}")
         self._strategy = strategy
         self._params = params
+        self._gate_params = replace(params, min_dollar_volume=params.min_dollar_volume * volume_share)
         self._universe = [symbol.upper() for symbol in universe]
         self._source = source
         self._benchmark = benchmark
@@ -122,7 +130,7 @@ class Scanner:
         picked = pick_surprise(window)
         frame = bars.get(event.symbol)
         reaction = reaction_features(frame, benchmark, today, baseline_sessions=self._params.volume_baseline_sessions) if frame is not None else None
-        reason = gate(picked.surprise if picked else None, reaction, self._params, held=False)
+        reason = gate(picked.surprise if picked else None, reaction, self._gate_params, held=False)
         if reason is not None or picked is None or reaction is None:
             return reason, None
         headlines = []
