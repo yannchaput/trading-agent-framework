@@ -56,9 +56,7 @@ class DriftParams:
             "thresholds must be finite": not all(math.isfinite(value) for value in floats),
             "max_positions must be at least 1": self.max_positions < 1,
             "max_holding_sessions must be at least 1": self.max_holding_sessions < 1,
-            "trail percents must satisfy 0 < min <= default <= max <= 100": not (
-                0 < self.min_trail_percent <= self.default_trail_percent <= self.max_trail_percent <= 100
-            ),
+            "trail percents must satisfy 0 < min <= default <= max <= 100": not (0 < self.min_trail_percent <= self.default_trail_percent <= self.max_trail_percent <= 100),
             "min_hold_ratio must be in [0, 1]": not 0 <= self.min_hold_ratio <= 1,
             "min_close_location must be in [0, 1]": not 0 <= self.min_close_location <= 1,
             "min_rel_volume must be above 0": not self.min_rel_volume > 0,
@@ -70,10 +68,8 @@ class DriftParams:
             "event_lookback_days must be at least 0": self.event_lookback_days < 0,
             "live_bar_delay_seconds and cancel_wait_seconds must be at least 0": self.live_bar_delay_seconds < 0 or self.cancel_wait_seconds < 0,
             "tool_budget_per_item must be at least 1": self.tool_budget_per_item < 1,
-            "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None
-            and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
-            "max_consecutive_agent_failures and max_consecutive_hollow_scans must be at least 1": self.max_consecutive_agent_failures < 1
-            or self.max_consecutive_hollow_scans < 1,
+            "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
+            "max_consecutive_agent_failures and max_consecutive_hollow_scans must be at least 1": self.max_consecutive_agent_failures < 1 or self.max_consecutive_hollow_scans < 1,
             "sec_hollow_fraction must be in (0, 1]": not 0 < self.sec_hollow_fraction <= 1,
             "sec_hollow_min_failures must be at least 1": self.sec_hollow_min_failures < 1,
             "reason_max_chars must be at least 1": self.reason_max_chars < 1,
