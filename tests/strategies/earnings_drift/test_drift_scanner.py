@@ -1,7 +1,7 @@
 # tests/strategies/earnings_drift/test_drift_scanner.py
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal as D
 from pathlib import Path
@@ -81,7 +81,7 @@ EVENTS = [
 ]
 
 
-def _scanner(tmp_path: Path, source: StaticEvents, *, news: object | None = None, frames: dict | None = None, now: datetime | None = None) -> Scanner:
+def _scanner(tmp_path: Path, source: StaticEvents, *, news: object | None = None, frames: dict | None = None, now: datetime | None = None, params: DriftParams | None = None) -> Scanner:
     clock = FakeClock(now or SESSIONS[-1].close, SESSIONS)
     broker = BacktestBroker(
         "earnings_drift",
@@ -92,7 +92,7 @@ def _scanner(tmp_path: Path, source: StaticEvents, *, news: object | None = None
         news_source=news if news is not None else FakeNewsProvider(NEWS),  # type: ignore[arg-type]
     )
     strategy = Strategy(broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
-    return Scanner(strategy, DriftParams(), ["AAA", "BBB", "CCC"], source)
+    return Scanner(strategy, params or DriftParams(), ["AAA", "BBB", "CCC"], source)
 
 
 def test_prepare_finds_today_s_candidates_and_rejections(tmp_path: Path) -> None:
@@ -141,11 +141,67 @@ def test_a_news_failure_rejects_the_events_as_no_news(tmp_path: Path) -> None:
     assert result.rejections == {"AAA": "no_news", "BBB": "no_news", "CCC": "no_news"}
 
 
-def test_news_is_asked_in_chunks_from_before_the_first_release(tmp_path: Path) -> None:
-    news = FakeNewsProvider(NEWS)
-    _scanner(tmp_path, StaticEvents(EVENTS), news=news).prepare(held=set())
-    assert [call[0] for call in news.calls] == [("AAA", "BBB", "CCC")]
-    assert news.calls[0][1] == RELEASE - timedelta(hours=2) and news.calls[0][2] == SESSIONS[-1].close
+class _NewestFirstNews:
+    """Alpaca's shape: the newest `limit` articles tagged with any of `symbols` within `[start, end]`, newest first."""
+
+    def __init__(self, articles: list[dict[str, object]], *, failing: Collection[str] = ()) -> None:
+        self.articles, self.failing = articles, set(failing)
+        self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int]] = []
+
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):  # noqa: ANN001, ANN201
+        self.calls.append((tuple(symbols), start, end, limit))
+        if self.failing & set(symbols):
+            raise BrokerError("news down for " + ", ".join(sorted(self.failing & set(symbols))))
+        wanted = set(symbols)
+        rows = []
+        for article in self.articles:
+            created = datetime.fromisoformat(str(article["created_at"]))
+            if wanted & set(article["symbols"]) and (start is None or created >= start) and created <= end:  # type: ignore[call-overload]
+                rows.append((created, article))
+        return [article for _, article in sorted(rows, key=lambda pair: pair[0], reverse=True)[:limit]]
+
+
+NOW = SESSIONS[-1].close
+FRIDAY_AFTER_CLOSE = et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 16, 30)  # TODAY is a Monday: this one reacts today too
+
+
+def test_newer_articles_of_other_symbols_do_not_push_the_earnings_headline_out(tmp_path: Path) -> None:
+    busy = [_headline("BBB", f"BBB analyst note {i}", RELEASE + timedelta(minutes=10 + i)) for i in range(60)]
+    news = _NewestFirstNews([*NEWS["AAA"], *NEWS["CCC"], *busy])
+    result = _scanner(tmp_path, StaticEvents(EVENTS), news=news).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]  # a query shared with BBB (limit 50, newest first) lost it
+
+
+def test_news_is_asked_once_per_event_symbol_around_its_release(tmp_path: Path) -> None:
+    events = [_event("AAA", RELEASE), _event("BBB", FRIDAY_AFTER_CLOSE), _event("CCC", RELEASE)]
+    news = _NewestFirstNews([])
+    _scanner(tmp_path, StaticEvents(events), news=news).prepare(held=set())
+    assert news.calls == [
+        (("AAA",), RELEASE - timedelta(hours=2), NOW, 50),  # the 24-hour window would end after now: cut at now
+        (("BBB",), FRIDAY_AFTER_CLOSE - timedelta(hours=2), FRIDAY_AFTER_CLOSE + timedelta(hours=24), 50),
+        (("CCC",), RELEASE - timedelta(hours=2), NOW, 50),
+    ]
+    assert all(end <= NOW for _, _, end, _ in news.calls)
+
+
+def test_the_surprise_window_is_a_parameter(tmp_path: Path) -> None:
+    news = _NewestFirstNews([])
+    scanner = _scanner(tmp_path, StaticEvents([_event("BBB", FRIDAY_AFTER_CLOSE)]), news=news, params=DriftParams(surprise_window_hours=6.0, surprise_lookback_hours=1.0))
+    scanner.prepare(held=set())
+    assert news.calls == [(("BBB",), FRIDAY_AFTER_CLOSE - timedelta(hours=1), FRIDAY_AFTER_CLOSE + timedelta(hours=6), 50)]
+
+
+def test_a_news_failure_for_one_symbol_rejects_only_that_symbol(tmp_path: Path) -> None:
+    news = _NewestFirstNews([*NEWS["AAA"], *NEWS["CCC"]], failing={"BBB"})
+    result = _scanner(tmp_path, StaticEvents(EVENTS), news=news).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+    assert result.rejections == {"BBB": "no_news", "CCC": "weak_reaction"}
+
+
+def test_an_article_after_now_is_never_read(tmp_path: Path) -> None:
+    late = _headline("AAA", "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", NOW + timedelta(minutes=5))
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", RELEASE)]), news=_NewestFirstNews([late])).prepare(held=set())
+    assert result.candidates == [] and result.rejections == {"AAA": "no_surprise_data"}
 
 
 def test_no_benchmark_bar_today_gives_no_candidates_and_counts_today(tmp_path: Path) -> None:

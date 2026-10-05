@@ -26,6 +26,7 @@ from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
 from trading_agent_framework.strategies.earnings_drift.event_source import EventSource
 from trading_agent_framework.strategies.earnings_drift.events import reaction_date
+from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.surprise import articles_for, pick_surprise
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError, TradingFrameworkError
@@ -34,8 +35,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"
 SYMBOLS = ["OMC", "AAPL", "MSFT", "JPM", "NFLX", "CAT", "KO", "UNH"]
 LOOKBACK_DAYS = 120
-NEWS_BEFORE = timedelta(hours=2)
-NEWS_AFTER = timedelta(days=1)
+_PARAMS = DriftParams()  # the scanner's news window and limit: one query per event, from 2 h before to 24 h after the release
+NEWS_BEFORE = timedelta(hours=_PARAMS.surprise_lookback_hours)
+NEWS_AFTER = timedelta(hours=_PARAMS.surprise_window_hours)
 
 
 def main() -> int:
@@ -67,7 +69,7 @@ def main() -> int:
     parsed = 0
     for event in sorted(events, key=lambda e: e.accepted_at):
         start, end = event.accepted_at - NEWS_BEFORE, event.accepted_at + NEWS_AFTER
-        articles = news.get_news([event.symbol], start=start, end=end, limit=50)
+        articles = news.get_news([event.symbol], start=start, end=end, limit=_PARAMS.news_limit)
         picked = pick_surprise(articles_for(articles, event.symbol, start=start, end=end))
         parsed += picked is not None
         when = event.accepted_at.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M")

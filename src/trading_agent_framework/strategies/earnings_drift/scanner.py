@@ -104,8 +104,8 @@ class Scanner:
             return "already_held", None
         if news is None or event.symbol not in news:
             return "no_news", None
-        lookback = timedelta(hours=self._params.surprise_lookback_hours)
-        window = articles_for(news[event.symbol], event.symbol, start=event.accepted_at - lookback, end=now)
+        start, end = self._news_window(event, now)
+        window = articles_for(news[event.symbol], event.symbol, start=start, end=end)
         picked = pick_surprise(window)
         frame = bars.get(event.symbol)
         reaction = reaction_features(frame, benchmark, today, baseline_sessions=self._params.volume_baseline_sessions) if frame is not None else None
@@ -119,8 +119,18 @@ class Scanner:
                 headlines.append((created.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), str(article.get("headline") or "")))
         return None, Candidate(event=event, reaction_day=today, surprise=picked, reaction=reaction, headlines=tuple(headlines))
 
+    def _news_window(self, event: EarningsEvent, now: datetime) -> tuple[datetime, datetime]:
+        """From `surprise_lookback_hours` before the release to `surprise_window_hours` after it, never beyond `now`."""
+        start = event.accepted_at - timedelta(hours=self._params.surprise_lookback_hours)
+        return start, min(now, event.accepted_at + timedelta(hours=self._params.surprise_window_hours))
+
     def _news(self, events: Sequence[EarningsEvent], now: datetime) -> dict[str, list[Mapping[str, Any]]] | None:
-        """Articles per event symbol, read in chunks; a failed chunk's symbols are missing (`no_news`); None without a provider."""
+        """Articles per event symbol, one query each; a failed query's symbol is missing (`no_news`); None without a provider.
+
+        One symbol and a narrow window per query: the provider answers the newest `news_limit` articles first, so a
+        query shared by several symbols, or reaching far past the release, drops the oldest ones, and the earnings
+        headline is among the first articles after the release.
+        """
         try:
             provider = self._strategy.broker.news_provider()
         except BrokerError as exc:
@@ -129,19 +139,13 @@ class Scanner:
         if provider is None:
             self._strategy.log_warning("[earnings_drift] this broker has no news provider: every event is rejected as no_news")
             return None
-        start = min(event.accepted_at for event in events) - timedelta(hours=self._params.surprise_lookback_hours)
-        symbols = sorted({event.symbol for event in events})
         found: dict[str, list[Mapping[str, Any]]] = {}
-        size = self._params.news_symbols_per_call
-        for first in range(0, len(symbols), size):
-            chunk = symbols[first : first + size]
+        for event in events:
+            start, end = self._news_window(event, now)
             try:
-                articles = provider.get_news(chunk, start=start, end=now, limit=self._params.news_limit)
+                found[event.symbol] = list(provider.get_news([event.symbol], start=start, end=end, limit=self._params.news_limit))
             except BrokerError as exc:
-                self._strategy.log_warning(f"[earnings_drift] news failed for {', '.join(chunk)}: {exc}")
-                continue
-            for symbol in chunk:
-                found[symbol] = list(articles)
+                self._strategy.log_warning(f"[earnings_drift] news failed for {event.symbol}: {exc}")
         return found
 
     def _bars(self, symbols: Sequence[str]) -> dict[str, pd.DataFrame]:
