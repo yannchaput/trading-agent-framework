@@ -189,6 +189,46 @@ class Desk:
             self._log_decision(symbol, "skip", reason=self._clip(reason))
             return {"symbol": symbol, "status": "skipped"}
 
+    def set_trailing_stop(self, symbol: str, trail_percent: object, reason: str) -> dict[str, Any]:
+        with self._lock:
+            symbol = str(symbol).strip().upper()
+            trade = self._state.trades.get(symbol)
+            if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
+                return self._refuse("order_limits", f"set_trailing_stop {symbol}: no open position (or it is being sold)")
+            trail = _number(trail_percent)
+            low, high = self._params.min_trail_percent, self._params.max_trail_percent
+            if trail is None or not Decimal(str(low)) <= trail <= Decimal(str(high)):
+                return self._refuse("order_limits", f"set_trailing_stop {symbol}: trail_percent must be between {low} and {high} (got {trail_percent!r})")
+            if trail > trade.trail_percent:
+                return self._refuse("order_limits", f"set_trailing_stop {symbol}: tighten-only, {trail}% is wider than the current {trade.trail_percent}%")
+            if trail == trade.trail_percent:
+                return {"symbol": symbol, "trail_percent": float(trail), "status": "unchanged"}
+            released = self._release_stop(trade)
+            if released == ALREADY_CLOSED:
+                return {"status": ALREADY_CLOSED}
+            if released is not None:
+                return {"error": released}
+            old = trade.trail_percent
+            if self._submit_stop(trade, trail) is None:
+                self._protect(trade, old)
+                self._save_state()
+                return {"error": f"the new stop was refused; the {old}% trail was placed again"}
+            trade.trail_percent, trade.backstop = trail, False
+            self._log_decision(symbol, "trail", trail_percent=float(trail), reason=self._clip(reason))
+            self._save_state()
+            return {"symbol": symbol, "trail_percent": float(trail), "status": "stop replaced"}
+
+    def sell(self, symbol: str, reason: str) -> dict[str, Any]:
+        with self._lock:
+            symbol = str(symbol).strip().upper()
+            trade = self._state.trades.get(symbol)
+            if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
+                return self._refuse("order_limits", f"sell {symbol}: no open position (or it is being sold)")
+            result = self._exit(trade, "agent_sell")
+            if "error" not in result:
+                self._log_decision(symbol, "sell", reason=self._clip(reason))
+            return result
+
     # --- baseline and end of cycle ----------------------------------------------------------------
 
     def baseline_entries(self) -> list[str]:
@@ -225,6 +265,39 @@ class Desk:
                     self._entry_filled(trade, order)
             else:
                 self._close(trade, order)
+            self._save_state()
+
+    def on_order_canceled(self, order: Order) -> None:
+        """An order ended unfilled (cancelled or expired): settle an entry, re-protect after a lost stop or exit sell."""
+        with self._lock:
+            if order.identifier in self._expected_cancels:
+                self._expected_cancels.discard(order.identifier)
+                return
+            trade = self._trade_for(order)
+            if trade is None:
+                return
+            if order.identifier == trade.entry_order_id:
+                if trade.state is TradeState.PENDING:
+                    if order.filled_quantity > 0:
+                        self._entry_filled(trade, order)  # keep what filled, protected
+                    else:
+                        self._state.trades.pop(trade.symbol, None)
+                        self._strategy.log_info(f"[earnings_drift] entry for {trade.symbol} ended {order.status.value} unfilled")
+            elif order.identifier == trade.stop_order_id:
+                trade.stop_order_id = None
+                self._book_partial(trade, order)
+                if trade.symbol in self._state.trades:
+                    self._strategy.log_warning(f"guardrail stop_backstop: the stop for {trade.symbol} was cancelled outside the strategy; placing it again")
+                    trade.backstop = True
+                    self._protect(trade, trade.trail_percent)
+            elif order.identifier == trade.exit_order_id:
+                reason = trade.exit_reason or "agent_sell"
+                trade.exit_order_id, trade.exit_reason = None, None
+                self._book_partial(trade, order, reason)
+                if trade.symbol in self._state.trades:
+                    self._strategy.log_warning(f"guardrail stop_backstop: the {reason} sell of {trade.symbol} ended {order.status.value}; placing the stop again")
+                    trade.backstop = True
+                    self._protect(trade, trade.trail_percent)
             self._save_state()
 
     # --- internals -------------------------------------------------------------------------------
@@ -326,6 +399,52 @@ class Desk:
         self._strategy.log_info(f"[earnings_drift] {trade.symbol}: {sold} shares sold by {order.identifier} before it ended; {trade.quantity} left")
         if trade.quantity <= 0:
             self._close(trade, order, reason)
+
+    def _release_stop(self, trade: Trade) -> str | None:
+        """Cancel the trade's working stop and wait for it: None once released, `ALREADY_CLOSED`, or an error message.
+
+        Brokers refuse a sell above held minus pending sells, so the stop must go before any other exit sell. If the
+        stop filled while the cancel was on its way (or before; its hook not seen yet), the trade is already out. The
+        wait dispatches order hooks; in a backtest the cancel is synchronous, so it returns without moving the clock.
+        """
+        order = self._lookup(trade.stop_order_id)
+        if order is None:
+            trade.stop_order_id = None
+            return None
+        if order.is_filled():
+            return ALREADY_CLOSED
+        if order.is_active():
+            self._expected_cancels.add(order.identifier)
+            try:
+                self._strategy.cancel_order(order)
+            except BrokerError as exc:
+                self._expected_cancels.discard(order.identifier)
+                if order.is_filled():  # Alpaca raises when cancelling an already-filled order
+                    return ALREADY_CLOSED
+                return f"could not cancel the stop: {exc}"
+            self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
+            if order.is_filled():
+                return ALREADY_CLOSED
+            if order.is_active():
+                return "the stop cancel was not confirmed in time; nothing else was changed"
+        trade.stop_order_id = None
+        self._book_partial(trade, order)
+        return None if trade.symbol in self._state.trades else ALREADY_CLOSED
+
+    def _exit(self, trade: Trade, exit_reason: str) -> dict[str, Any]:
+        """Release the stop, then a market sell of the whole trade at the next open; the stop goes back if the sell is refused."""
+        released = self._release_stop(trade)
+        if released == ALREADY_CLOSED:
+            return {"status": ALREADY_CLOSED}
+        if released is not None:
+            return {"error": released}
+        order = self._market_sell(trade, exit_reason)
+        if order is None:
+            self._protect(trade, trade.trail_percent)
+            self._save_state()
+            return {"error": "the sell was refused; the stop was placed again"}
+        self._save_state()
+        return _lean(order)
 
     def _protect(self, trade: Trade, trail: Decimal) -> bool:
         """Place the trade's trailing stop (two attempts); a market sell when both are refused. True when a stop is working."""

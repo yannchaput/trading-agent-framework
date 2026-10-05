@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+import logging
+from decimal import Decimal as D
+from pathlib import Path
+
+import pytest
+from tests.strategies.earnings_drift.drift_helpers import DeskRig
+
+from trading_agent_framework.entities.enums import OrderType
+from trading_agent_framework.utils.errors import OrderValidationError
+
+
+def _open(tmp_path: Path) -> DeskRig:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    return rig
+
+
+def test_tightening_replaces_the_stop(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    old = rig.state.trades["AAA"].stop_order_id
+    result = rig.desk.set_trailing_stop("AAA", 5.0, "lock in gains")
+    assert result == {"symbol": "AAA", "trail_percent": 5.0, "status": "stop replaced"}
+    trade = rig.state.trades["AAA"]
+    assert trade.trail_percent == D("5.0") and trade.stop_order_id != old
+    assert rig.strategy.get_order(old).is_canceled()  # type: ignore[union-attr]
+    new = rig.strategy.get_order(trade.stop_order_id)  # type: ignore[arg-type]
+    assert new is not None and new.is_active() and new.trail_percent == D("5.0")
+
+
+def test_widening_is_refused_and_the_same_trail_is_unchanged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = _open(tmp_path)
+    with caplog.at_level(logging.WARNING):
+        assert "tighten-only" in rig.desk.set_trailing_stop("AAA", 9.0, "more room")["error"]
+    assert "guardrail order_limits" in caplog.text
+    assert rig.desk.set_trailing_stop("AAA", 8.0, "same")["status"] == "unchanged"
+    assert "between" in rig.desk.set_trailing_stop("AAA", 2.0, "too tight")["error"]
+    assert "no open position" in rig.desk.set_trailing_stop("BBB", 5.0, "x")["error"]
+
+
+def test_a_refused_new_stop_puts_the_old_trail_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    real_submit = rig.strategy.submit_order
+
+    def refuse_five(order):  # noqa: ANN001, ANN202
+        if order.order_type is OrderType.TRAIL and order.trail_percent == D("5.0"):
+            raise OrderValidationError("no")
+        return real_submit(order)
+
+    monkeypatch.setattr(rig.strategy, "submit_order", refuse_five)
+    assert "the 8.0% trail was placed again" in rig.desk.set_trailing_stop("AAA", 5.0, "x")["error"]
+    trade = rig.state.trades["AAA"]
+    stop = rig.strategy.get_order(trade.stop_order_id)  # type: ignore[arg-type]
+    assert trade.trail_percent == D("8.0") and stop is not None and stop.is_active() and stop.trail_percent == D("8.0")
+
+
+def test_sell_cancels_the_stop_and_sells_at_the_next_open(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    stop_id = rig.state.trades["AAA"].stop_order_id
+    result = rig.desk.sell("AAA", "thesis broken")
+    assert result["side"] == "sell"
+    assert rig.strategy.get_order(stop_id).is_canceled()  # type: ignore[union-attr]
+    assert rig.desk.free_slots() == 8  # a pending exit frees its slot
+    assert "no open position" in rig.desk.sell("AAA", "again")["error"]  # being sold
+    rig.next_close()
+    [line] = rig.lines(rig.trades_path)
+    assert line["exit_reason"] == "agent_sell" and D(line["exit_price"]) == D("102.0")
+
+
+def test_sell_after_the_stop_filled_sells_nothing(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    rig.next_close()
+    rig.advance()  # day 3: the stop fills at the broker; its hook has not reached the desk yet
+    sells_before = [o for o in rig.strategy.get_orders() if o.side.value == "sell"]
+    assert rig.desk.sell("AAA", "x") == {"status": "already_closed"}
+    assert rig.desk.set_trailing_stop("AAA", 5.0, "x") == {"status": "already_closed"}
+    assert [o for o in rig.strategy.get_orders() if o.side.value == "sell"] == sells_before
+
+
+def test_a_stop_cancelled_outside_is_placed_again(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = _open(tmp_path)
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    rig.broker.cancel_order(stop)  # type: ignore[arg-type]
+    with caplog.at_level(logging.WARNING):
+        rig.desk.on_order_canceled(stop)  # type: ignore[arg-type]
+    assert "guardrail stop_backstop" in caplog.text
+    trade = rig.state.trades["AAA"]
+    assert trade.stop_order_id != stop.identifier and trade.backstop  # type: ignore[union-attr]
+    assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]
+
+
+def test_the_desk_s_own_cancel_hook_is_ignored(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    rig.desk.set_trailing_stop("AAA", 5.0, "x")
+    new_id = rig.state.trades["AAA"].stop_order_id
+    rig.desk.on_order_canceled(stop)  # type: ignore[arg-type]  # delivered late, as the executor would
+    assert rig.state.trades["AAA"].stop_order_id == new_id
+
+
+def test_an_unfilled_entry_that_ends_is_dropped_and_a_partial_one_is_protected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = DeskRig(tmp_path)
+    rig.desk.buy("AAA", 10, 8.0, "x")
+    rig.desk.buy("BBB", 10, 8.0, "y")
+    aaa = rig.strategy.get_order(rig.state.trades["AAA"].entry_order_id)
+    bbb = rig.strategy.get_order(rig.state.trades["BBB"].entry_order_id)
+    protected: list[str] = []
+    monkeypatch.setattr(rig.desk, "_protect", lambda trade, trail: protected.append(trade.symbol) or True)
+    rig.broker.cancel_order(aaa)  # type: ignore[arg-type]
+    rig.desk.on_order_canceled(aaa)  # type: ignore[arg-type]
+    bbb.filled_quantity, bbb.avg_fill_price = D(4), D("50.1")  # type: ignore[union-attr]
+    rig.broker.cancel_order(bbb)  # type: ignore[arg-type]
+    rig.desk.on_order_canceled(bbb)  # type: ignore[arg-type]
+    assert "AAA" not in rig.state.trades
+    assert rig.state.trades["BBB"].quantity == D(4) and protected == ["BBB"]
