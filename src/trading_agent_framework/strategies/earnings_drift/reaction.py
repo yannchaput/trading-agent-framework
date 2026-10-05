@@ -6,9 +6,11 @@ every backtest source at its close (16:00 ET): both fall on the session's date.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import date
 
+import numpy as np
 import pandas as pd
 
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -49,14 +51,16 @@ def _runup(closes: pd.Series, sessions: int) -> float | None:
     """The close before the reaction day against the close `sessions` sessions earlier; None without the history."""
     if len(closes) < sessions + 2:
         return None
-    base = float(closes.iloc[-(sessions + 2)])
-    return float(closes.iloc[-2]) / base - 1 if base > 0 else None
+    base, before = float(closes.iloc[-(sessions + 2)]), float(closes.iloc[-2])
+    return before / base - 1 if math.isfinite(base) and math.isfinite(before) and base > 0 else None
 
 
 def _atr_pct(rows: pd.DataFrame, length: int = 14) -> float | None:
     if len(rows) < length + 1:
         return None
     window = rows.iloc[-(length + 1) :]
+    if not np.isfinite(window[["high", "low", "close"]].to_numpy(dtype=float)).all():
+        return None
     previous = window["close"].shift(1)
     true_range = pd.concat([window["high"] - window["low"], (window["high"] - previous).abs(), (window["low"] - previous).abs()], axis=1).max(axis=1)
     close = float(window["close"].iloc[-1])
@@ -75,19 +79,25 @@ def reaction_features(stock: pd.DataFrame, benchmark: pd.DataFrame, day: date, *
     prev_close = float(previous["close"])
     open_, high, low, close = (float(reaction[key]) for key in ("open", "high", "low", "close"))
     baseline = rows.iloc[-(baseline_sessions + 1) : -1]
-    mean_volume = float(baseline["volume"].mean())
+    mean_volume = float(baseline["volume"].mean(skipna=False))
     bench_prev = float(bench["close"].iloc[-2])
+    bench_close = float(bench["close"].iloc[-1])
+    dollar_volume = float((baseline["close"] * baseline["volume"]).mean(skipna=False))
+    volume = float(reaction["volume"])
+    # NaN and inf compare False against every guard below, so a bad cell would otherwise flow into the features
+    if not all(math.isfinite(value) for value in (open_, high, low, close, prev_close, volume, mean_volume, dollar_volume, bench_prev, bench_close)):
+        return None
     if prev_close <= 0 or mean_volume <= 0 or bench_prev <= 0:
         return None
     return_pct = close / prev_close - 1
     return ReactionFeatures(
         gap_pct=open_ / prev_close - 1,
         return_pct=return_pct,
-        abnormal_pct=return_pct - (float(bench["close"].iloc[-1]) / bench_prev - 1),
+        abnormal_pct=return_pct - (bench_close / bench_prev - 1),
         hold_ratio=(close - prev_close) / (high - prev_close) if high > prev_close else None,
         close_location=(close - low) / (high - low) if high > low else 0.5,
-        rel_volume=float(reaction["volume"]) / mean_volume,
-        dollar_volume_20d=float((baseline["close"] * baseline["volume"]).mean()),
+        rel_volume=volume / mean_volume,
+        dollar_volume_20d=dollar_volume,
         runup_20d_pct=_runup(rows["close"], 20),
         runup_60d_pct=_runup(rows["close"], 60),
         atr14_pct=_atr_pct(rows),

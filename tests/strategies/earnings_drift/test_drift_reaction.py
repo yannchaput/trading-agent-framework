@@ -78,3 +78,48 @@ def test_sixty_session_runup_with_enough_history() -> None:
     rows = [(c, c + 1, c - 1, c, 1e6) for c in closes]
     stock = pd.DataFrame(rows, columns=stock.columns, index=stock.index)
     assert reaction_features(stock, spy, sessions[-1].open.date()).runup_60d_pct == pytest.approx(0.25)  # type: ignore[union-attr]
+
+
+def _with_cell(frame: pd.DataFrame, row: int, column: str, value: float) -> pd.DataFrame:
+    changed = frame.copy()
+    changed.iloc[row, changed.columns.get_loc(column)] = value
+    return changed
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf")], ids=["nan", "inf"])
+@pytest.mark.parametrize(
+    ("which", "row", "column"),
+    [
+        ("stock", -1, "open"),
+        ("stock", -1, "high"),
+        ("stock", -1, "low"),
+        ("stock", -1, "close"),
+        ("stock", -1, "volume"),
+        ("stock", -2, "close"),
+        ("stock", -10, "volume"),
+        ("stock", -10, "close"),
+        ("bench", -1, "close"),
+        ("bench", -2, "close"),
+    ],
+)
+def test_a_non_finite_input_gives_no_features(which: str, row: int, column: str, value: float) -> None:
+    stock, bench = (_with_cell(STOCK, row, column, value), SPY) if which == "stock" else (STOCK, _with_cell(SPY, row, column, value))
+    assert reaction_features(stock, bench, DAY) is None
+
+
+def test_a_non_finite_old_close_leaves_the_other_features_intact() -> None:
+    baseline = reaction_features(STOCK, SPY, DAY)
+    assert baseline is not None
+    outside = reaction_features(_with_cell(STOCK, -26, "close", float("nan")), SPY, DAY)
+    assert outside == baseline  # 25 sessions back is read by no feature
+    runup_base = reaction_features(_with_cell(STOCK, -22, "close", float("nan")), SPY, DAY)
+    assert runup_base is not None and runup_base.runup_20d_pct is None
+    assert runup_base.gap_pct == baseline.gap_pct and runup_base.atr14_pct == baseline.atr14_pct
+
+
+def test_a_non_finite_bar_in_the_atr_window_gives_no_atr() -> None:
+    baseline = reaction_features(STOCK, SPY, DAY)
+    assert baseline is not None
+    features = reaction_features(_with_cell(STOCK, -10, "high", float("nan")), SPY, DAY)
+    assert features is not None and features.atr14_pct is None
+    assert features.return_pct == baseline.return_pct and features.runup_20d_pct == baseline.runup_20d_pct
