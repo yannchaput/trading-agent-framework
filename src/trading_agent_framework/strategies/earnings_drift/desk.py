@@ -253,6 +253,10 @@ class Desk:
             if refusal is not None:
                 return self._refuse("order_limits", f"buy {symbol}: {refusal}")
             assert candidate is not None and shares is not None and trail is not None
+            # Recorded before the broker is asked: an order that reached it although the client raised (a timeout) can
+            # still fill, and `traded_symbols` is what lets the reconcile adopt such a position and give it a stop.
+            self._state.traded_symbols.add(symbol)
+            self._save_state()
             try:
                 order = self._strategy.submit_order(self._strategy.create_order(symbol, shares, "buy"))
             except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
@@ -267,7 +271,6 @@ class Desk:
                 accession_number=candidate.event.accession_number,
                 reaction_low=Decimal(str(candidate.reaction.reaction_low)),
             )
-            self._state.traded_symbols.add(symbol)
             self._cycle_buys += shares * Decimal(str(candidate.reaction.close))
             self._decided.add(symbol)
             self._log_decision(symbol, decision, quantity=int(shares), trail_percent=float(trail), reason=thesis)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -75,14 +76,18 @@ def rig_frame(rows: list[tuple[float, float, float, float, float]]) -> pd.DataFr
 class DeskRig:
     """A `Desk` over a real `BacktestBroker` on daily bars, starting at day 0's close (the cycle's time)."""
 
-    def __init__(self, tmp_path: Path, *, params: DriftParams | None = None, candidates: list[Candidate] | None = None, budget: Decimal = Decimal("100000")) -> None:
+    def __init__(
+        self, tmp_path: Path, *, params: DriftParams | None = None, candidates: list[Candidate] | None = None, budget: Decimal = Decimal("100000"), save: Callable[[], None] | None = None
+    ) -> None:
         self.clock = FakeClock(RIG_SESSIONS[0].close, RIG_SESSIONS)
         frames = {("AAA", "day"): rig_frame(AAA_ROWS), ("BBB", "day"): rig_frame(BBB_ROWS)}
         self.broker = BacktestBroker("earnings_drift", data_source=FrameDataSource(frames, RIG_SESSIONS), clock=self.clock, budget=budget, timestep="day")
         self.strategy = Strategy(self.broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
         self.state = DriftState()
         self.trades_path, self.decisions_path = tmp_path / "trades.jsonl", tmp_path / "decisions.jsonl"
-        self.desk = Desk(self.strategy, params or DriftParams(), self.state, trade_log=JsonlLog(lambda: self.trades_path), decision_log=JsonlLog(lambda: self.decisions_path))
+        self.desk = Desk(
+            self.strategy, params or DriftParams(), self.state, save=save or (lambda: None), trade_log=JsonlLog(lambda: self.trades_path), decision_log=JsonlLog(lambda: self.decisions_path)
+        )
         self.day = 0
         self.delivered: set[str] = set()
         default = [make_candidate("AAA", day=RIG_DATES[0], close=100.0, reaction_low=99.0), make_candidate("BBB", day=RIG_DATES[0], close=50.0, abnormal_pct=0.04)]

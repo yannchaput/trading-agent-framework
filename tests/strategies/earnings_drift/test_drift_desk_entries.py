@@ -94,6 +94,26 @@ def test_a_broker_refusal_is_returned_as_an_error(tmp_path: Path, monkeypatch: p
     assert rig.state.trades == {}
 
 
+def test_an_unconfirmed_buy_is_recorded_before_submission_so_it_can_be_adopted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    saved: list[set[str]] = []
+    rig = DeskRig(tmp_path, save=lambda: saved.append(set(rig.state.traded_symbols)))
+
+    def raises(order):  # noqa: ANN001, ANN202
+        raise OrderValidationError("timeout")
+
+    monkeypatch.setattr(rig.strategy, "submit_order", raises)
+    result = rig.desk.buy("AAA", 10, 8.0, "x")
+    assert "error" in result and rig.state.trades == {}
+    assert "AAA" in rig.state.traded_symbols
+    assert saved and saved[0] == {"AAA"}  # persisted before the submit, not after
+
+
+def test_a_refused_buy_does_not_record_the_symbol(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    assert "error" in rig.desk.buy("AAA", 126, 8.0, "x")
+    assert rig.state.traded_symbols == set()
+
+
 def test_the_entry_fills_at_the_next_open_and_gets_its_trailing_stop(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path)
     rig.open_aaa()
