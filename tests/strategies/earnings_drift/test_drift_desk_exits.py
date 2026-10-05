@@ -114,3 +114,45 @@ def test_an_unfilled_entry_that_ends_is_dropped_and_a_partial_one_is_protected(t
     rig.desk.on_order_canceled(bbb)  # type: ignore[arg-type]
     assert "AAA" not in rig.state.trades
     assert rig.state.trades["BBB"].quantity == D(4) and protected == ["BBB"]
+
+
+def test_a_cancel_not_confirmed_in_time_does_not_hide_a_late_cancel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = _open(tmp_path)
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    sells_before = [o.identifier for o in rig.strategy.get_orders() if o.side.value == "sell"]
+    real_cancel = rig.strategy.cancel_order
+    monkeypatch.setattr(rig.strategy, "cancel_order", lambda order: None)
+    monkeypatch.setattr(rig.strategy, "wait_for_order_execution", lambda order, timeout=None: False)
+    with caplog.at_level(logging.WARNING):
+        assert "not confirmed in time" in rig.desk.sell("AAA", "x")["error"]
+    assert "AAA" in caplog.text
+    assert [o.identifier for o in rig.strategy.get_orders() if o.side.value == "sell"] == sells_before
+    assert stop.identifier not in rig.desk._expected_cancels  # type: ignore[union-attr]  # noqa: SLF001
+    monkeypatch.setattr(rig.strategy, "cancel_order", real_cancel)
+    rig.broker.cancel_order(stop)  # type: ignore[arg-type]  # the cancel lands late
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        rig.desk.on_order_canceled(stop)  # type: ignore[arg-type]
+    assert "guardrail stop_backstop" in caplog.text
+    trade = rig.state.trades["AAA"]
+    new = rig.strategy.get_order(trade.stop_order_id)  # type: ignore[arg-type]
+    assert trade.stop_order_id != stop.identifier and trade.backstop  # type: ignore[union-attr]
+    assert new is not None and new.is_active() and new.order_type is OrderType.TRAIL
+
+
+def test_a_failed_stop_lookup_sells_and_places_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    stop_id = rig.state.trades["AAA"].stop_order_id
+    real_get = rig.strategy.get_order
+
+    def failing_get(identifier: str):  # noqa: ANN202
+        if identifier == stop_id:
+            raise RuntimeError("503")
+        return real_get(identifier)
+
+    monkeypatch.setattr(rig.strategy, "get_order", failing_get)
+    orders_before = [o.identifier for o in rig.strategy.get_orders()]
+    assert "could not look up the stop" in rig.desk.sell("AAA", "x")["error"]
+    assert "could not look up the stop" in rig.desk.set_trailing_stop("AAA", 5.0, "x")["error"]
+    assert [o.identifier for o in rig.strategy.get_orders()] == orders_before
+    assert rig.state.trades["AAA"].stop_order_id == stop_id

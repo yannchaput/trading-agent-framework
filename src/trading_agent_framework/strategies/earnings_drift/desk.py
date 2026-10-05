@@ -407,7 +407,13 @@ class Desk:
         stop filled while the cancel was on its way (or before; its hook not seen yet), the trade is already out. The
         wait dispatches order hooks; in a backtest the cancel is synchronous, so it returns without moving the clock.
         """
-        order = self._lookup(trade.stop_order_id)
+        order = None
+        if trade.stop_order_id:
+            try:
+                order = self._strategy.get_order(trade.stop_order_id)
+            except Exception as exc:  # a failed lookup is not "no stop": the stop may be live, so nothing else is sent
+                self._strategy.log_warning(f"[earnings_drift] {trade.symbol}: could not look up the stop {trade.stop_order_id}: {exc}")
+                return f"could not look up the stop: {exc}"
         if order is None:
             trade.stop_order_id = None
             return None
@@ -426,6 +432,9 @@ class Desk:
             if order.is_filled():
                 return ALREADY_CLOSED
             if order.is_active():
+                # A cancel that lands later must not be read as the desk's own: it goes through `on_order_canceled`'s stop path.
+                self._expected_cancels.discard(order.identifier)
+                self._strategy.log_warning(f"[earnings_drift] {trade.symbol}: the stop cancel was not confirmed in {self._params.cancel_wait_seconds}s; the stop stays tracked")
                 return "the stop cancel was not confirmed in time; nothing else was changed"
         trade.stop_order_id = None
         self._book_partial(trade, order)
