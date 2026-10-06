@@ -263,6 +263,16 @@ def test_get_news_builds_a_request_and_parses_the_response() -> None:
     assert request.symbols == "SPY"
 
 
+def test_get_news_passes_the_sort_through_to_the_request() -> None:
+    news = FakeNewsClient()
+    broker = _broker_with_news(news)
+
+    broker.get_news(["SPY"], start=None, end=_NOW, limit=5, sort="asc")
+    broker.get_news(["SPY"], start=None, end=_NOW, limit=5)
+
+    assert [request.sort for request in news.news_requests] == ["asc", None]
+
+
 def test_get_news_without_a_configured_client_raises() -> None:
     broker = AlpacaBroker("momentum", FakeTradingClient(), clock=FakeClock(_NOW))
 

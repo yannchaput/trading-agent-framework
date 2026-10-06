@@ -272,11 +272,12 @@ class AlpacaBroker(Broker):
         end: datetime,
         limit: int = 10,
         include_content: bool = False,
+        sort: str | None = None,
     ) -> list[dict[str, object]]:
         provider = self.news_provider()
         if provider is None:
             raise BrokerError("no news client configured; construct the broker with news_client=... or use AlpacaBroker.from_credentials(...)")
-        return provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content)
+        return provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content, sort=sort)
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
         return self._market_data.get_last_price(asset)

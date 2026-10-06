@@ -34,8 +34,9 @@ class AlpacaNewsProvider:
         end: datetime,
         limit: int = 10,
         include_content: bool = False,
+        sort: str | None = None,
     ) -> list[dict[str, object]]:
-        request = market_data.build_news_request(symbols, start=start, end=end, limit=limit, include_content=include_content)
+        request = market_data.build_news_request(symbols, start=start, end=end, limit=limit, include_content=include_content, sort=sort)
         try:
             response = self._client.get_news(request)
         except Exception as exc:

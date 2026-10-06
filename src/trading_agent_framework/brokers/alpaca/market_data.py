@@ -115,9 +115,7 @@ def _symbols(assets: Sequence[Asset]) -> list[str]:
 _FEEDS = {"iex": DataFeed.IEX, "sip": DataFeed.SIP}
 
 
-def build_bars_request(
-    assets: Sequence[Asset], timestep: str, start: datetime, end: datetime, *, feed: str = "iex"
-) -> StockBarsRequest:
+def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, end: datetime, *, feed: str = "iex") -> StockBarsRequest:
     """`feed` is `"iex"` (live/paper) or `"sip"` (backtests: all exchanges, but never data under 15 minutes old)."""
     if feed not in _FEEDS:
         raise ValueError(f"unknown feed {feed!r}: expected one of {sorted(_FEEDS)}")
@@ -146,13 +144,18 @@ def build_news_request(
     end: datetime,
     limit: int,
     include_content: bool,
+    sort: str | None = None,
 ) -> NewsRequest:
+    """`sort`: None leaves Alpaca's default (newest first); "asc" is oldest first, "desc" newest first."""
+    if sort not in (None, "asc", "desc"):
+        raise ValueError(f"sort must be 'asc', 'desc' or None, got {sort!r}")
     return NewsRequest(
         symbols=",".join(to_alpaca_symbol(symbol) for symbol in symbols) if symbols else None,
         start=start.astimezone(UTC).replace(tzinfo=None) if start else None,
         end=end.astimezone(UTC).replace(tzinfo=None),
         limit=min(max(int(limit), 1), MAX_NEWS_LIMIT),
         include_content=include_content,
+        sort=sort,
     )
 
 

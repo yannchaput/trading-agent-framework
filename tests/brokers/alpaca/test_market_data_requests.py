@@ -163,3 +163,23 @@ def test_build_news_request_with_no_symbols_omits_them() -> None:
 
     assert request.symbols is None
     assert request.start is None
+
+
+@pytest.mark.parametrize("sort", ["asc", "desc"])
+def test_build_news_request_maps_the_sort_order(sort: str) -> None:
+    request = build_news_request(["AAPL"], start=None, end=_END, limit=5, include_content=False, sort=sort)
+
+    assert request.sort == sort
+
+
+def test_build_news_request_without_a_sort_leaves_the_field_unset() -> None:
+    default = build_news_request(["AAPL"], start=None, end=_END, limit=5, include_content=False)
+    explicit = build_news_request(["AAPL"], start=None, end=_END, limit=5, include_content=False, sort=None)
+
+    assert default.sort is None and explicit.sort is None
+    assert default.model_dump() == explicit.model_dump()
+
+
+def test_build_news_request_rejects_an_unknown_sort() -> None:
+    with pytest.raises(ValueError, match="sort"):
+        build_news_request(["AAPL"], start=None, end=_END, limit=5, include_content=False, sort="newest")

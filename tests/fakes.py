@@ -935,9 +935,25 @@ class FakeNewsProvider:
     def __init__(self, articles: dict[str, list[dict[str, object]]] | None = None) -> None:
         self.articles = articles or {}
         self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int, bool]] = []
+        self.sorts: list[str | None] = []  # the `sort` of each call, parallel to `calls` (kept apart so the 5-tuple unpacks stay valid)
 
-    def get_news(self, symbols: Sequence[str] = (), *, start: datetime | None = None, end: datetime, limit: int = 10, include_content: bool = False) -> list[dict[str, object]]:
+    def get_news(
+        self,
+        symbols: Sequence[str] = (),
+        *,
+        start: datetime | None = None,
+        end: datetime,
+        limit: int = 10,
+        include_content: bool = False,
+        sort: str | None = None,
+    ) -> list[dict[str, object]]:
+        """`sort` None keeps insertion order; "asc"/"desc" order the in-window articles by `created_at` before `limit`, as Alpaca does."""
+        if sort not in (None, "asc", "desc"):
+            raise ValueError(f"sort must be 'asc', 'desc' or None, got {sort!r}")
         self.calls.append((tuple(symbols), start, end, limit, include_content))
+        self.sorts.append(sort)
         rows = [a for symbol in symbols for a in self.articles.get(symbol, [])]
         in_window = [a for a in rows if (start is None or datetime.fromisoformat(str(a["created_at"])) >= start) and datetime.fromisoformat(str(a["created_at"])) <= end]
+        if sort is not None:
+            in_window = sorted(in_window, key=lambda a: datetime.fromisoformat(str(a["created_at"])), reverse=sort == "desc")
         return in_window[:limit]

@@ -24,6 +24,16 @@ def test_get_news_builds_a_request_and_parses_the_response() -> None:
     assert request.limit == 5
 
 
+def test_get_news_passes_the_sort_into_the_request() -> None:
+    client = FakeNewsClient()
+    provider = AlpacaNewsProvider(client)
+
+    provider.get_news(["AAPL"], start=None, end=_NOW, limit=5, sort="asc")
+    provider.get_news(["AAPL"], start=None, end=_NOW, limit=5)
+
+    assert [request.sort for request in client.news_requests] == ["asc", None]
+
+
 def test_get_news_wraps_client_failures_as_broker_error() -> None:
     client = FakeNewsClient()
     client.raises = RuntimeError("rate limited")
