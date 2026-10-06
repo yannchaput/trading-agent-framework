@@ -55,8 +55,8 @@ class EventSource:
         for symbol in symbols:
             try:
                 events[symbol.upper()] = self._symbol_events(symbol, as_of=as_of, since=since)
-            except FundamentalsError as exc:
-                failed[symbol.upper()] = str(exc)
+            except (FundamentalsError, OSError, AttributeError, TypeError) as exc:  # a malformed 200 body or a cache I/O error fails one symbol
+                failed[symbol.upper()] = str(exc) or type(exc).__name__
         self._events = events
         return LoadReport(loaded=len(events), failed=failed)
 

@@ -159,3 +159,19 @@ def test_a_key_that_differs_from_the_trades_symbol_loads_empty_with_a_warning(tm
     with caplog.at_level(logging.WARNING):
         assert StateStore(path).load() == DriftState()
     assert "empty state" in caplog.text
+
+
+@pytest.mark.parametrize("backstop", ["false", 0, 1, None, "yes"])
+def test_a_backstop_flag_that_is_not_a_bool_loads_empty_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture, backstop: object) -> None:
+    path = tmp_path / "state.json"
+    data = {**_trade().to_json(), "backstop": backstop}
+    path.write_text(json.dumps({"version": STATE_VERSION, "trades": {"AAA": data}}))
+    with caplog.at_level(logging.WARNING):
+        assert StateStore(path).load() == DriftState()
+    assert "empty state" in caplog.text
+
+
+def test_a_missing_backstop_flag_is_false(tmp_path: Path) -> None:
+    data = _trade().to_json()
+    del data["backstop"]
+    assert Trade.from_json(data).backstop is False

@@ -268,3 +268,18 @@ def test_the_dollar_volume_gate_scales_with_the_feed_s_volume_share(tmp_path: Pa
     result = _scanner(tmp_path, StaticEvents(EVENTS), frames=_thin_frames(), volume_share=0.03).prepare(held=set())
     assert [c.symbol for c in result.candidates] == ["AAA"]
     assert result.candidates[0].reaction.dollar_volume_20d == pytest.approx(5_000_000.0)  # the features themselves are not scaled
+
+
+# --- B3: the picked headline is always shown -------------------------------------------------------
+
+
+def test_the_picked_headline_comes_first_and_is_never_cut(tmp_path: Path) -> None:
+    first = NEWS["AAA"][0]
+    notes = [_headline("AAA", f"AAA note {i}", RELEASE + timedelta(minutes=2 + i)) for i in range(5)]
+    correction = _headline("AAA", "CORRECTION: AAA Q3 EPS $1.50 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", RELEASE + timedelta(minutes=30))
+    news = FakeNewsProvider({"AAA": [first, *notes, correction]})
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", RELEASE)]), news=news).prepare(held=set())
+    [candidate] = result.candidates
+    assert candidate.surprise.surprise.eps_actual == D("1.50")
+    assert [text for _, text in candidate.headlines] == [correction["headline"], first["headline"], "AAA note 0", "AAA note 1", "AAA note 2"]
+    assert candidate.headlines[0][0] == f"{TODAY.isoformat()} 07:30"

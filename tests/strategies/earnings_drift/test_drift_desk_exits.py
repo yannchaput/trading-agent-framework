@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from tests.strategies.earnings_drift.drift_helpers import DeskRig
 
-from trading_agent_framework.entities.enums import OrderType
+from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.utils.errors import OrderValidationError
 
 
@@ -156,3 +156,62 @@ def test_a_failed_stop_lookup_sells_and_places_nothing(tmp_path: Path, monkeypat
     assert "could not look up the stop" in rig.desk.set_trailing_stop("AAA", 5.0, "x")["error"]
     assert [o.identifier for o in rig.strategy.get_orders()] == orders_before
     assert rig.state.trades["AAA"].stop_order_id == stop_id
+
+
+# --- B5: truthful messages when the stop could not be put back --------------------------------------
+
+
+def _refusing(rig: DeskRig, monkeypatch: pytest.MonkeyPatch, *, market_sells_refused: int, trails_refused: bool = True, trail_refused_below: D | None = None) -> None:
+    """Refuse the first `market_sells_refused` market sells, and every trailing stop (or only those tighter than a trail)."""
+    real_submit = rig.strategy.submit_order
+    refused = {"market": 0}
+
+    def submit(order):  # noqa: ANN001, ANN202
+        if order.order_type is OrderType.TRAIL and trails_refused and (trail_refused_below is None or order.trail_percent < trail_refused_below):
+            raise OrderValidationError("stops are down")
+        if order.order_type is OrderType.MARKET and order.side is OrderSide.SELL and refused["market"] < market_sells_refused:
+            refused["market"] += 1
+            raise OrderValidationError("sells are down")
+        return real_submit(order)
+
+    monkeypatch.setattr(rig.strategy, "submit_order", submit)
+
+
+def test_a_refused_sell_whose_stop_cannot_come_back_says_a_backstop_sell_was_sent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    _refusing(rig, monkeypatch, market_sells_refused=1)
+    result = rig.desk.sell("AAA", "thesis broken")
+    assert "backstop market sell" in result["error"] and "placed again" not in result["error"]
+    trade = rig.state.trades["AAA"]
+    assert trade.exit_reason == "backstop_sell" and trade.exit_order_id is not None
+    assert [line["decision"] for line in rig.lines(rig.decisions_path)] == ["buy"]
+
+
+def test_a_refused_sell_with_nothing_placed_says_the_position_has_no_stop(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    _refusing(rig, monkeypatch, market_sells_refused=2)
+    result = rig.desk.sell("AAA", "thesis broken")
+    assert "no stop" in result["error"] and "placed again" not in result["error"]
+    assert rig.state.trades["AAA"].exit_order_id is None and rig.state.trades["AAA"].stop_order_id is None
+
+
+def test_a_refused_sell_whose_stop_comes_back_says_so(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    _refusing(rig, monkeypatch, market_sells_refused=1, trails_refused=False)
+    assert rig.desk.sell("AAA", "x") == {"error": "the sell was refused; the stop was placed again"}
+
+
+def test_a_refused_new_trail_whose_old_one_cannot_come_back_says_a_backstop_sell_was_sent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = _open(tmp_path)
+    _refusing(rig, monkeypatch, market_sells_refused=0)
+    result = rig.desk.set_trailing_stop("AAA", 5.0, "tighten")
+    assert "backstop market sell" in result["error"] and "placed again" not in result["error"]
+    assert rig.state.trades["AAA"].exit_reason == "backstop_sell"
+
+
+def test_a_sell_that_finds_the_trade_already_closed_logs_no_sell_decision(tmp_path: Path) -> None:
+    rig = _open(tmp_path)
+    rig.next_close()
+    rig.advance()  # day 3: the stop fills at the broker; its hook has not reached the desk yet
+    assert rig.desk.sell("AAA", "x") == {"status": "already_closed"}
+    assert [line["decision"] for line in rig.lines(rig.decisions_path)] == ["buy"]

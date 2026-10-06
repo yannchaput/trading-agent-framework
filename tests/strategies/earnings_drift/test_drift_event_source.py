@@ -104,3 +104,34 @@ def test_a_cached_submissions_file_is_refetched_only_for_an_as_of_after_its_fetc
     assert requests.count(submissions) == 1  # an as_of before the fetch: served from the cache
     source.load(["OMC"], as_of=datetime(2026, 9, 23, tzinfo=UTC), since=date(2026, 6, 1))
     assert requests.count(submissions) == 2  # an as_of after the fetch: the 8-Ks filed since may be missing, fetched again
+
+
+def test_a_malformed_submissions_body_fails_only_its_symbol(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("company_tickers.json"):
+            return httpx.Response(200, json=_TICKERS)
+        if request.url.path == "/submissions/CIK0000320193.json":
+            return httpx.Response(200, json=[1, 2, 3])  # a 200 whose body is a JSON list
+        if request.url.path == "/submissions/CIK0000029989.json":
+            return httpx.Response(200, json=_RECENT)
+        return httpx.Response(404)
+
+    client = SecEdgarClient("TestApp test@example.com", tmp_path, min_request_interval_seconds=0.0, transport=httpx.MockTransport(handler))
+    source = EventSource(client, reload_every_cycle=False)
+    report = source.load(["AAPL", "OMC"], as_of=NOW, since=date(2026, 6, 1))
+    assert report.loaded == 1 and set(report.failed) == {"AAPL"} and report.failed["AAPL"]
+    assert [e.accession_number for e in source.all_events()] == ["acc-new"]
+
+
+def test_a_cache_os_error_fails_only_its_symbol(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = _source(tmp_path, [])
+    real = source._client.get_submissions_payload
+
+    def flaky(cik: str, **kwargs: object):  # noqa: ANN202
+        if cik == "0000320193":
+            raise OSError("disk full")
+        return real(cik, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(source._client, "get_submissions_payload", flaky)
+    report = source.load(["AAPL", "OMC"], as_of=NOW, since=date(2026, 6, 1))
+    assert report.loaded == 1 and report.failed == {"AAPL": "disk full"}

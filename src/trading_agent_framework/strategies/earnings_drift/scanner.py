@@ -133,11 +133,14 @@ class Scanner:
         reason = gate(picked.surprise if picked else None, reaction, self._gate_params, held=False)
         if reason is not None or picked is None or reaction is None:
             return reason, None
-        headlines = []
-        for article in window[:_MAX_HEADLINES]:
-            created = article_time(article)
-            if created is not None:
-                headlines.append((created.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), str(article.get("headline") or "")))
+        # The headline the surprise came from first (a later CORRECTION must never be cut), then the others oldest first.
+        headlines = [(picked.created_at.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), picked.headline)]
+        for article in window:
+            if len(headlines) >= _MAX_HEADLINES:
+                break
+            created, text = article_time(article), str(article.get("headline") or "")
+            if created is not None and (created, text) != (picked.created_at, picked.headline):
+                headlines.append((created.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), text))
         return None, Candidate(event=event, reaction_day=today, surprise=picked, reaction=reaction, headlines=tuple(headlines))
 
     def _news_window(self, event: EarningsEvent, now: datetime) -> tuple[datetime, datetime]:

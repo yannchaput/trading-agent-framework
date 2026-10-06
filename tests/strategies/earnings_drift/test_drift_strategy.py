@@ -194,7 +194,7 @@ def test_an_unexpected_agent_exception_still_runs_the_tail(tmp_path: Path, caplo
         strategy.after_market_closes()
     assert steps == ["prepare", "begin", "reconcile", "ensure", "undecided", "save"]
     assert "RuntimeError" in caplog.text and "boom" in caplog.text
-    strategy.on_trading_iteration()  # an unexpected exception is not an agent failure: no fatal error is pending
+    strategy.on_trading_iteration()  # one failure: no fatal error is pending yet
 
 
 def _scans(strategy: EarningsDriftStrategy, kinds: str) -> None:
@@ -365,3 +365,19 @@ def test_a_failing_recover_is_logged_and_does_not_escape(tmp_path: Path, caplog:
     with caplog.at_level(logging.ERROR):
         strategy.on_trading_iteration()
     assert "RuntimeError" in caplog.text and "broker down" in caplog.text
+
+
+# --- B1: a run that raised counts as an agent failure ------------------------------------------------
+
+
+def test_three_unexpected_agent_exceptions_end_a_backtest_the_next_morning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path, handle=_Handle(RuntimeError("boom")))
+    _stub_cycle(strategy)
+    with caplog.at_level(logging.ERROR):
+        for _ in range(2):
+            strategy.after_market_closes()
+        strategy.on_trading_iteration()  # two failures: carry on
+        strategy.after_market_closes()
+    assert "RuntimeError" in caplog.text and strategy._state.agent_failure_streak == 3
+    with pytest.raises(FatalStrategyError, match="3 agent runs failed in a row"):
+        strategy.on_trading_iteration()

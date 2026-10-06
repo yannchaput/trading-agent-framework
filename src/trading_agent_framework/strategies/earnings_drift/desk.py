@@ -226,9 +226,9 @@ class Desk:
                 return {"error": released}
             old = trade.trail_percent
             if self._submit_stop(trade, trail) is None:
-                self._protect(trade, old)
+                protected = self._protect(trade, old)
                 self._save_state()
-                return {"error": f"the new stop was refused; the {old}% trail was placed again"}
+                return {"error": f"the new stop was refused; the {old}% trail was placed again" if protected else self._unprotected("the new stop was refused", trade)}
             trade.trail_percent, trade.backstop = trail, False
             self._log_decision(symbol, "trail", trail_percent=float(trail), reason=self._clip(reason))
             self._save_state()
@@ -243,7 +243,7 @@ class Desk:
             if symbol in self._suspect:
                 return self._refuse("order_limits", f"sell {symbol}: position not confirmed by the broker this cycle")
             result = self._exit(trade, "agent_sell")
-            if "error" not in result:
+            if "error" not in result and result.get("status") != ALREADY_CLOSED:
                 self._log_decision(symbol, "sell", reason=self._clip(reason))
             return result
 
@@ -652,9 +652,9 @@ class Desk:
             return {"error": released}
         order = self._market_sell(trade, exit_reason)
         if order is None:
-            self._protect(trade, trade.trail_percent)
+            protected = self._protect(trade, trade.trail_percent)
             self._save_state()
-            return {"error": "the sell was refused; the stop was placed again"}
+            return {"error": "the sell was refused; the stop was placed again" if protected else self._unprotected("the sell was refused", trade)}
         self._save_state()
         return _lean(order)
 
@@ -666,12 +666,18 @@ class Desk:
         self._market_sell(trade, "backstop_sell")
         return False
 
+    @staticmethod
+    def _unprotected(what: str, trade: Trade) -> str:
+        """The message when `_protect` could not put a stop back: its backstop market sell was sent, or nothing was."""
+        if trade.exit_order_id is not None:
+            return f"{what} and the stop could not be put back; a backstop market sell of the whole position was submitted for the next open"
+        return f"{what}, the stop could not be put back and the backstop market sell failed too: the position has no stop"
+
     def _submit_stop(self, trade: Trade, trail: Decimal) -> Order | None:
         if trade.quantity <= 0:
             return None
-        order = self._strategy.create_order(trade.symbol, trade.quantity, "sell", trail_percent=trail, time_in_force="gtc")
-        try:
-            submitted = self._strategy.submit_order(order)
+        try:  # building the order too: an exception must reach the second attempt and the backstop sell, never the hook
+            submitted = self._strategy.submit_order(self._strategy.create_order(trade.symbol, trade.quantity, "sell", trail_percent=trail, time_in_force="gtc"))
         except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
             self._strategy.log_warning(f"[earnings_drift] stop for {trade.symbol} refused: {exc}")
             return None

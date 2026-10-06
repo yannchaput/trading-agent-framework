@@ -88,6 +88,9 @@ class Trade:
         opened = data.get("opened_on")
         if not isinstance(data["symbol"], str) or not isinstance(data["entry_order_id"], str) or not isinstance(data["thesis"], str):
             raise TypeError("symbol, entry_order_id and thesis must be strings")
+        backstop = data.get("backstop", False)
+        if not isinstance(backstop, bool):  # bool("false") is True: a hand-edited flag must not be guessed
+            raise ValueError(f"backstop must be true or false in trade {data.get('symbol')!r}")
         return cls(
             symbol=data["symbol"],
             entry_order_id=data["entry_order_id"],
@@ -101,7 +104,7 @@ class Trade:
             stop_order_id=data.get("stop_order_id"),
             exit_order_id=data.get("exit_order_id"),
             exit_reason=data.get("exit_reason"),
-            backstop=bool(data.get("backstop", False)),
+            backstop=backstop,
             reaction_low=reaction_low,
         )
 

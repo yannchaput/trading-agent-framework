@@ -235,3 +235,21 @@ def test_sell_proceeds_are_credited_and_cycle_buys_deducted_once(tmp_path: Path)
     assert rig.desk.max_quantity("BBB") == 201  # the whole 10050 slot
     assert "error" not in rig.desk.buy("BBB", 100, 8.0, "y")
     assert rig.desk.max_quantity("BBB") == 101  # 10050 - 5000 committed = 5050, deducted once
+
+
+def test_a_stop_order_that_cannot_even_be_built_falls_back_to_the_backstop_sell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = DeskRig(tmp_path)
+    assert "error" not in rig.desk.buy("AAA", 10, 8.0, "x")
+    real_create = rig.strategy.create_order
+    attempts: list[int] = []
+
+    def create(symbol, quantity, side, **kwargs):  # noqa: ANN001, ANN003, ANN202
+        if kwargs.get("trail_percent") is not None:
+            attempts.append(1)
+            raise ValueError("bad trail order")
+        return real_create(symbol, quantity, side, **kwargs)
+
+    monkeypatch.setattr(rig.strategy, "create_order", create)
+    rig.next_close()  # the fill hook must not raise
+    trade = rig.state.trades["AAA"]
+    assert len(attempts) == 2 and trade.stop_order_id is None and trade.exit_reason == "backstop_sell"

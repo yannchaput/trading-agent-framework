@@ -19,7 +19,7 @@ class Candidate:
     reaction_day: date
     surprise: PickedSurprise
     reaction: ReactionFeatures
-    headlines: tuple[tuple[str, str], ...] = ()  # (ET minute, headline), oldest first, at most 5
+    headlines: tuple[tuple[str, str], ...] = ()  # (ET minute, headline): the picked one first, then the others oldest first, at most 5
 
     @property
     def symbol(self) -> str:

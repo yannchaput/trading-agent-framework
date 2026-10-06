@@ -174,14 +174,12 @@ class EarningsDriftStrategy(Strategy):
         budget = self.settings.tool_budget_per_item * (len(candidates) + len(holdings))
         try:
             result = self.agents[self.AGENT_NAME].run(TASK_PROMPT, context=context, tool_budget=budget)
-        except AgentError as exc:
+        except Exception as exc:  # an AgentError or a run that raised anything else (spec §5.4): both count toward the abort
             state.agent_failure_streak += 1
-            self.log_error(f"[earnings_drift] agent run failed ({state.agent_failure_streak} in a row); today's candidates are dropped: {exc}")
+            kind = "failed" if isinstance(exc, AgentError) else f"raised {type(exc).__name__}"
+            self.log_error(f"[earnings_drift] agent run {kind} ({state.agent_failure_streak} in a row); today's candidates are dropped: {exc}")
             if self.is_backtesting and state.agent_failure_streak >= self.settings.max_consecutive_agent_failures:
-                self._pending_fatal = f"{state.agent_failure_streak} agent runs failed in a row, aborting the backtest; last error: {exc}"
-            return
-        except Exception as exc:  # not an agent failure (it does not count toward the abort): log it and let the tail run
-            self.log_error(f"[earnings_drift] agent run raised {type(exc).__name__}: {exc}; today's candidates are dropped")
+                self._pending_fatal = f"{state.agent_failure_streak} agent runs failed in a row, aborting the backtest; last error: {type(exc).__name__}: {exc}"
             return
         state.agent_failure_streak = 0
         self.log_info(f"[earnings_drift] agent: {len(candidates)} candidates, {len(holdings)} holdings, {len(result.tool_calls)} tool calls")
