@@ -17,7 +17,7 @@ import pandas as pd
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.earnings_drift.event_source import EventProvider
-from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent, events_reacting_on
+from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent, events_reacting_on, news_window
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.reaction import bar_dates, reaction_features
 from trading_agent_framework.strategies.earnings_drift.screening import Candidate, gate
@@ -95,11 +95,14 @@ class Scanner:
         if not events:
             strategy.log_info(f"[earnings_drift] no earnings reactions on {today}")
             return result
-        news = self._news(events, now)
+        window = news_window(today, trading_dates, now)
+        if window is None:  # not reachable when there are events (they react on a trading date with a previous one), but stay total
+            strategy.log_warning(f"[earnings_drift] no news window for {today}: every event is rejected as no_news")
+        news = self._news(events, window) if window is not None else None
         bars = self._bars([event.symbol for event in events])
         held_symbols = {symbol.upper() for symbol in held}
         for event in events:
-            reason, candidate = self._judge(event, today, now, news, bars, frame, held_symbols)
+            reason, candidate = self._judge(event, today, window, news, bars, frame, held_symbols)
             if candidate is not None:
                 result.candidates.append(candidate)
             elif reason is not None:
@@ -115,7 +118,7 @@ class Scanner:
         self,
         event: EarningsEvent,
         today: date,
-        now: datetime,
+        window: tuple[datetime, datetime] | None,
         news: Mapping[str, list[Mapping[str, Any]]] | None,
         bars: Mapping[str, pd.DataFrame],
         benchmark: pd.DataFrame,
@@ -123,11 +126,10 @@ class Scanner:
     ) -> tuple[str | None, Candidate | None]:
         if event.symbol in held:
             return "already_held", None
-        if news is None or event.symbol not in news:
+        if news is None or window is None or event.symbol not in news:
             return "no_news", None
-        start, end = self._news_window(event, now)
-        window = articles_for(news[event.symbol], event.symbol, start=start, end=end)
-        picked = pick_surprise(window)
+        articles = articles_for(news[event.symbol], event.symbol, start=window[0], end=window[1])
+        picked = pick_surprise(articles)
         frame = bars.get(event.symbol)
         reaction = reaction_features(frame, benchmark, today, baseline_sessions=self._params.volume_baseline_sessions) if frame is not None else None
         reason = gate(picked.surprise if picked else None, reaction, self._gate_params, held=False)
@@ -135,7 +137,7 @@ class Scanner:
             return reason, None
         # The headline the surprise came from first (a later CORRECTION must never be cut), then the others oldest first.
         headlines = [(picked.created_at.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), picked.headline)]
-        for article in window:
+        for article in articles:
             if len(headlines) >= _MAX_HEADLINES:
                 break
             created, text = article_time(article), str(article.get("headline") or "")
@@ -143,17 +145,13 @@ class Scanner:
                 headlines.append((created.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M"), text))
         return None, Candidate(event=event, reaction_day=today, surprise=picked, reaction=reaction, headlines=tuple(headlines))
 
-    def _news_window(self, event: EarningsEvent, now: datetime) -> tuple[datetime, datetime]:
-        """From `surprise_lookback_hours` before the release to `surprise_window_hours` after it, never beyond `now`."""
-        start = event.accepted_at - timedelta(hours=self._params.surprise_lookback_hours)
-        return start, min(now, event.accepted_at + timedelta(hours=self._params.surprise_window_hours))
-
-    def _news(self, events: Sequence[EarningsEvent], now: datetime) -> dict[str, list[Mapping[str, Any]]] | None:
+    def _news(self, events: Sequence[EarningsEvent], window: tuple[datetime, datetime]) -> dict[str, list[Mapping[str, Any]]] | None:
         """Articles per event symbol, one query each; a failed query's symbol is missing (`no_news`); None without a provider.
 
-        One symbol and a narrow window per query: the provider answers the newest `news_limit` articles first, so a
-        query shared by several symbols, or reaching far past the release, drops the oldest ones, and the earnings
-        headline is among the first articles after the release.
+        `window` is the reaction session's (`news_window`: previous close to this close, never past now), the same for
+        every event: SEC's acceptance time is not a reliable release time, so it anchors nothing. One symbol per query
+        and OLDEST first: the provider's default is newest first, which with `news_limit` articles drops the oldest, and
+        the earnings headline is among the first articles after the release.
         """
         try:
             provider = self._strategy.broker.news_provider()
@@ -163,11 +161,11 @@ class Scanner:
         if provider is None:
             self._strategy.log_warning("[earnings_drift] this broker has no news provider: every event is rejected as no_news")
             return None
+        start, end = window
         found: dict[str, list[Mapping[str, Any]]] = {}
         for event in events:
-            start, end = self._news_window(event, now)
             try:
-                found[event.symbol] = list(provider.get_news([event.symbol], start=start, end=end, limit=self._params.news_limit))
+                found[event.symbol] = list(provider.get_news([event.symbol], start=start, end=end, limit=self._params.news_limit, sort="asc"))
             except BrokerError as exc:
                 self._strategy.log_warning(f"[earnings_drift] news failed for {event.symbol}: {exc}")
         return found

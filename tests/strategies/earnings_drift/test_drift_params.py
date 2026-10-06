@@ -14,7 +14,8 @@ def test_defaults_match_the_spec() -> None:
     assert (params.min_price, params.min_dollar_volume) == (10.0, 20_000_000.0)
     assert params.live_bar_delay_seconds == 300.0
     assert params.tool_budget_per_item == 4
-    assert (params.surprise_lookback_hours, params.surprise_window_hours, params.news_limit) == (2.0, 24.0, 50)
+    assert params.news_limit == 50
+    assert not hasattr(params, "surprise_lookback_hours") and not hasattr(params, "surprise_window_hours")
     assert not hasattr(params, "news_symbols_per_call")
     assert params.live_volume_share == 0.03
 
@@ -33,9 +34,6 @@ def test_defaults_match_the_spec() -> None:
         ({"volume_baseline_sessions": 1}, "volume_baseline_sessions"),
         ({"bars_lookback_sessions": 20}, "bars_lookback_sessions"),
         ({"news_limit": 0}, "news_limit"),
-        ({"surprise_window_hours": 0.0}, "surprise_window_hours"),
-        ({"surprise_window_hours": -1.0}, "surprise_window_hours"),
-        ({"surprise_window_hours": float("inf")}, "finite"),
         ({"live_bar_delay_seconds": -1.0}, "live_bar_delay_seconds"),
         ({"live_volume_share": 0.0}, "live_volume_share"),
         ({"live_volume_share": 1.5}, "live_volume_share"),

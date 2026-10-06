@@ -23,9 +23,7 @@ class DriftParams:
     live_volume_share: float = 0.03  # paper/live bars are IEX's ~2-3% of it: min_dollar_volume is scaled by this there
     volume_baseline_sessions: int = 20
     bars_lookback_sessions: int = 75  # daily bars read per name: the 60-session run-up plus margin
-    surprise_lookback_hours: float = 2.0  # news is read from this long before the 8-K's acceptance...
-    surprise_window_hours: float = 24.0  # ...to this long after it (never beyond now), one query per event symbol
-    news_limit: int = 50
+    news_limit: int = 50  # articles per event symbol, read oldest first over the reaction session
     event_lookback_days: int = 10  # older SEC submission pages are read back to the cycle's date minus this
     live_bar_delay_seconds: float = 300.0  # paper/live wait after the close, so the daily bar is final
     cancel_wait_seconds: float = 30.0
@@ -49,8 +47,6 @@ class DriftParams:
             self.min_price,
             self.min_dollar_volume,
             self.live_volume_share,
-            self.surprise_lookback_hours,
-            self.surprise_window_hours,
             self.live_bar_delay_seconds,
             self.cancel_wait_seconds,
             self.sec_hollow_fraction,
@@ -67,8 +63,6 @@ class DriftParams:
             "live_volume_share must be in (0, 1]": not 0 < self.live_volume_share <= 1,
             "volume_baseline_sessions must be at least 2": self.volume_baseline_sessions < 2,
             "bars_lookback_sessions must exceed volume_baseline_sessions + 1": self.bars_lookback_sessions <= self.volume_baseline_sessions + 1,
-            "surprise_lookback_hours must be at least 0": self.surprise_lookback_hours < 0,
-            "surprise_window_hours must be above 0": not self.surprise_window_hours > 0,
             "news_limit must be at least 1": self.news_limit < 1,
             "event_lookback_days must be at least 0": self.event_lookback_days < 0,
             "live_bar_delay_seconds and cancel_wait_seconds must be at least 0": self.live_bar_delay_seconds < 0 or self.cancel_wait_seconds < 0,

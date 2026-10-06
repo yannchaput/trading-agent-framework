@@ -14,6 +14,7 @@ from tests.fakes import FakeClock, FakeNewsProvider, FrameDataSource, et, weekda
 from trading_agent_framework.backtesting.broker import BacktestBroker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
+from trading_agent_framework.strategies.earnings_drift import scanner as scanner_module
 from trading_agent_framework.strategies.earnings_drift.event_source import LoadReport
 from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
@@ -145,7 +146,7 @@ def test_a_hollow_load_gives_no_candidates_and_is_retried(tmp_path: Path) -> Non
 
 
 class _BrokenNews:
-    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):  # noqa: ANN001, ANN201
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False, sort=None):  # noqa: ANN001, ANN201
         raise BrokerError("news down")
 
 
@@ -156,14 +157,14 @@ def test_a_news_failure_rejects_the_events_as_no_news(tmp_path: Path) -> None:
 
 
 class _NewestFirstNews:
-    """Alpaca's shape: the newest `limit` articles tagged with any of `symbols` within `[start, end]`, newest first."""
+    """Alpaca's shape: the first `limit` articles tagged with any of `symbols` within `[start, end]`, newest first unless `sort="asc"`."""
 
     def __init__(self, articles: list[dict[str, object]], *, failing: Collection[str] = ()) -> None:
         self.articles, self.failing = articles, set(failing)
-        self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int]] = []
+        self.calls: list[tuple[tuple[str, ...], datetime | None, datetime, int, str | None]] = []
 
-    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):  # noqa: ANN001, ANN201
-        self.calls.append((tuple(symbols), start, end, limit))
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False, sort=None):  # noqa: ANN001, ANN201
+        self.calls.append((tuple(symbols), start, end, limit, sort))
         if self.failing & set(symbols):
             raise BrokerError("news down for " + ", ".join(sorted(self.failing & set(symbols))))
         wanted = set(symbols)
@@ -172,11 +173,13 @@ class _NewestFirstNews:
             created = datetime.fromisoformat(str(article["created_at"]))
             if wanted & set(article["symbols"]) and (start is None or created >= start) and created <= end:  # type: ignore[call-overload]
                 rows.append((created, article))
-        return [article for _, article in sorted(rows, key=lambda pair: pair[0], reverse=True)[:limit]]
+        return [article for _, article in sorted(rows, key=lambda pair: pair[0], reverse=sort != "asc")[:limit]]
 
 
 NOW = SESSIONS[-1].close
-FRIDAY_AFTER_CLOSE = et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 16, 30)  # TODAY is a Monday: this one reacts today too
+PREVIOUS_CLOSE = SESSIONS[-2].close  # TODAY is a Monday: the previous session is Friday's
+FRIDAY_AFTER_CLOSE = et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 16, 30)  # this one reacts today too
+WIRE = "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate"
 
 
 def test_newer_articles_of_other_symbols_do_not_push_the_earnings_headline_out(tmp_path: Path) -> None:
@@ -186,23 +189,64 @@ def test_newer_articles_of_other_symbols_do_not_push_the_earnings_headline_out(t
     assert [c.symbol for c in result.candidates] == ["AAA"]  # a query shared with BBB (limit 50, newest first) lost it
 
 
-def test_news_is_asked_once_per_event_symbol_around_its_release(tmp_path: Path) -> None:
+def test_a_crowded_window_does_not_cut_the_earnings_headline_because_news_is_read_oldest_first(tmp_path: Path) -> None:
+    """MSFT: 60 articles of the same symbol after the wire; a newest-first limit of 50 returned only those."""
+    crowd = [_headline("AAA", f"AAA analyst note {i}", RELEASE + timedelta(minutes=10 + i)) for i in range(60)]
+    news = _NewestFirstNews([*NEWS["AAA"], *crowd])
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", RELEASE)]), news=news).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+    assert [call[4] for call in news.calls] == ["asc"]
+
+
+def test_a_wire_published_hours_before_the_8k_acceptance_time_is_found(tmp_path: Path) -> None:
+    """JPM, UNH: SEC's acceptance time trails the real release by ~4 h; the window must not hang on it."""
+    wire = _headline("AAA", WIRE, et(TODAY.year, TODAY.month, TODAY.day, 6, 46))
+    accepted = et(TODAY.year, TODAY.month, TODAY.day, 10, 30)  # the wire is 3 h 44 min earlier: before accepted_at - 2 h
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", accepted)]), news=_NewestFirstNews([wire])).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+    assert result.candidates[0].surprise.surprise.eps_actual == D("1.52")
+
+
+def test_an_after_close_wire_before_a_late_8k_acceptance_time_is_found(tmp_path: Path) -> None:
+    """OMC, AAPL: the wire comes minutes after Friday's close, SEC's acceptance time hours later; the reaction is Monday's."""
+    wire = _headline("AAA", WIRE, et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 16, 5))
+    accepted = et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 20, 7)
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", accepted)]), news=_NewestFirstNews([wire])).prepare(held=set())
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+
+
+def test_a_headline_before_the_previous_close_or_after_now_is_not_read(tmp_path: Path) -> None:
+    too_early = _headline("AAA", WIRE, PREVIOUS_CLOSE - timedelta(minutes=1))
+    too_late = _headline("AAA", WIRE, NOW + timedelta(minutes=5))
+    result = _scanner(tmp_path, StaticEvents([_event("AAA", RELEASE)]), news=_NewestFirstNews([too_early, too_late])).prepare(held=set())
+    assert result.candidates == [] and result.rejections == {"AAA": "no_surprise_data"}
+
+
+def test_news_is_asked_once_per_event_symbol_over_the_reaction_session_oldest_first(tmp_path: Path) -> None:
     events = [_event("AAA", RELEASE), _event("BBB", FRIDAY_AFTER_CLOSE), _event("CCC", RELEASE)]
     news = _NewestFirstNews([])
     _scanner(tmp_path, StaticEvents(events), news=news).prepare(held=set())
+    # The same window for every event, whatever its 8-K time: Friday's close to today's close (which is `now`).
     assert news.calls == [
-        (("AAA",), RELEASE - timedelta(hours=2), NOW, 50),  # the 24-hour window would end after now: cut at now
-        (("BBB",), FRIDAY_AFTER_CLOSE - timedelta(hours=2), FRIDAY_AFTER_CLOSE + timedelta(hours=24), 50),
-        (("CCC",), RELEASE - timedelta(hours=2), NOW, 50),
+        (("AAA",), PREVIOUS_CLOSE, NOW, 50, "asc"),
+        (("BBB",), PREVIOUS_CLOSE, NOW, 50, "asc"),
+        (("CCC",), PREVIOUS_CLOSE, NOW, 50, "asc"),
     ]
-    assert all(end <= NOW for _, _, end, _ in news.calls)
+    assert all(end <= NOW for _, _, end, _, _ in news.calls)
 
 
-def test_the_surprise_window_is_a_parameter(tmp_path: Path) -> None:
+def test_the_news_limit_is_a_parameter(tmp_path: Path) -> None:
     news = _NewestFirstNews([])
-    scanner = _scanner(tmp_path, StaticEvents([_event("BBB", FRIDAY_AFTER_CLOSE)]), news=news, params=DriftParams(surprise_window_hours=6.0, surprise_lookback_hours=1.0))
-    scanner.prepare(held=set())
-    assert news.calls == [(("BBB",), FRIDAY_AFTER_CLOSE - timedelta(hours=1), FRIDAY_AFTER_CLOSE + timedelta(hours=6), 50)]
+    _scanner(tmp_path, StaticEvents([_event("BBB", FRIDAY_AFTER_CLOSE)]), news=news, params=DriftParams(news_limit=7)).prepare(held=set())
+    assert news.calls == [(("BBB",), PREVIOUS_CLOSE, NOW, 7, "asc")]
+
+
+def test_events_are_rejected_as_no_news_when_there_is_no_news_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scanner_module, "news_window", lambda day, dates, now: None)
+    news = _NewestFirstNews([*NEWS["AAA"]])
+    result = _scanner(tmp_path, StaticEvents(EVENTS), news=news).prepare(held=set())
+    assert result.candidates == [] and result.rejections == {"AAA": "no_news", "BBB": "no_news", "CCC": "no_news"}
+    assert news.calls == []
 
 
 def test_a_news_failure_for_one_symbol_rejects_only_that_symbol(tmp_path: Path) -> None:
@@ -213,7 +257,7 @@ def test_a_news_failure_for_one_symbol_rejects_only_that_symbol(tmp_path: Path) 
 
 
 def test_an_article_after_now_is_never_read(tmp_path: Path) -> None:
-    late = _headline("AAA", "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", NOW + timedelta(minutes=5))
+    late = _headline("AAA", WIRE, NOW + timedelta(minutes=5))
     result = _scanner(tmp_path, StaticEvents([_event("AAA", RELEASE)]), news=_NewestFirstNews([late])).prepare(held=set())
     assert result.candidates == [] and result.rejections == {"AAA": "no_surprise_data"}
 
