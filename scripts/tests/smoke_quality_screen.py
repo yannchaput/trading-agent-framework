@@ -92,11 +92,11 @@ def main() -> int:
         return 1
 
     print(f"\nCandidates ({len(result.candidates)}), screened in {elapsed:.1f}s:")
-    print(f"{'#':>2} {'symbol':<6} {'score':>5} {'fcf yield':>9} {'fcf margin':>10} {'margin sd':>9} {'growth':>7} {'debt x':>7} {'mkt cap $B':>10}  fiscal year / filed")
+    print(f"{'#':>2} {'symbol':<6} {'fcf yield':>9} {'fcf margin':>10} {'margin sd':>9} {'growth':>7} {'debt x':>7} {'mkt cap $B':>10}  fiscal year / filed")
     for c in result.candidates:
         debt = f"{c.net_debt_to_operating_income:.2f}" + ("" if c.debt_reported else "*")
         print(
-            f"{c.rank:>2} {c.symbol:<6} {c.score:5.2f} {c.fcf_yield:9.2%} {c.fcf_margin:10.2%} {c.operating_margin_stdev:9.2%} "
+            f"{c.rank:>2} {c.symbol:<6} {c.fcf_yield:9.2%} {c.fcf_margin:10.2%} {c.operating_margin_stdev:9.2%} "
             f"{c.revenue_growth:7.2%} {debt:>7} {float(c.market_cap) / 1e9:10.1f}  {c.fiscal_year_end} / {c.filed}"
         )
     print("  (* = no debt figure reported: counted as zero)")
