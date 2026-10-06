@@ -194,14 +194,17 @@ Checked in this order, the first failure being the reason: `already_held`, `no_s
 ### 3.6 Scanner (`scanner.py`)
 
 `prepare(today)`: the trading dates from the benchmark's daily bars (up to today); events from §3.2 for the
-universe, kept when their reaction date is today; one `NewsProvider.get_news([event.symbol],
-start=accepted_at − surprise_lookback_hours (2 h), end=min(clock.now(), accepted_at + surprise_window_hours (24 h)),
-limit=news_limit)` per event; daily bars for those names and SPY through
+universe, kept when their reaction date is today; one `NewsProvider.get_news([event.symbol], start=previous
+session's close, end=min(clock.now(), today's close), limit=news_limit, sort="asc")` per event (the window is
+`events.news_window(today, trading_dates, now)`, the same for every event of the day); daily bars for those names and SPY through
 `strategy.get_historical_prices_for_assets` (so backtests go through `_source_bars`); features; gates. Logs one
 summary line: events, candidates, reject counts by reason. A failed news query rejects only its symbol as
-`no_news`. One symbol and a narrow window per query because the provider answers the newest `limit` articles
-first: a query shared by several symbols, or reaching far past the release, cuts the oldest articles, and the
-Benzinga EPS headline is among the first after the release (busy names were rejected as `no_surprise_data`).
+`no_news`. The window is anchored on the reaction session, not on the 8-K: SEC's acceptance time can trail the
+real release by about 4 hours (JPM, UNH, OMC and AAPL wires came 4 hours before SEC's time, which put them before
+a window of `accepted_at − 2 h`), so it anchors nothing here. Articles are read oldest first (`sort="asc"`), one
+symbol per query: Alpaca's default is newest first, so `limit` cuts the OLDEST articles of a busy window, and the
+Benzinga EPS headline is among the first after the release (MSFT's wire was cut by 50 newer articles). On the
+smoke sample (8 events) a read-only check of this window found the headline for all 8, against 3 with the old one.
 
 **Hollow scan:** if SEC fails for more than half of the universe (with at least 20 failures), the session has no
 candidates, an error is logged and the events are not kept (the next cycle loads them again);
@@ -368,9 +371,8 @@ fractions in (0, 1]):
 | `min_price`, `min_dollar_volume` | 10, 20,000,000 |
 | `live_volume_share` | 0.03 (paper/live scale `min_dollar_volume` by it, §11) |
 | `volume_baseline_sessions` | 20 |
-| `surprise_lookback_hours`, `surprise_window_hours` | 2, 24 |
 | `bars_lookback_sessions` | 75 |
-| `news_limit` | 50 |
+| `news_limit` | 50 (articles per event symbol, read oldest first over the reaction session) |
 | `event_lookback_days` | 10 |
 | `live_bar_delay_seconds`, `cancel_wait_seconds` | 300, 30 |
 | `tool_budget_per_item` | 4 |
@@ -413,6 +415,11 @@ fractions in (0, 1]):
 - **Trailing stop on daily bars.** `fills.evaluate_trailing_stop` checks the level from previous bars before the
   bar's high may raise it, ties against the trader: pessimistic against live, where Alpaca trails tick by tick.
 - **Survivorship bias.** Today's universe; absolute returns are upper bounds; compare modes on the same universe.
+- **SEC acceptance times are not release times.** The reaction session is still derived from `acceptanceDateTime`
+  (§3.1), which can trail the real release by hours: a midday release shifted late could be assigned to the wrong
+  session (a release before the close recorded after it is assigned the next session, whose news window starts after
+  the wire: no headline, rejected `no_surprise_data`). The news window (§3.6) does not depend on it; the reaction
+  date still does.
 - **Benzinga coverage.** Events without a parsable headline are rejected (`no_surprise_data`); the smoke script
   measures that share before the first backtest.
 - **Today's fee rates** over past periods (as every backtest).
