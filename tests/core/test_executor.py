@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import signal
 from dataclasses import replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import cast
 
@@ -454,3 +454,68 @@ def test_a_failing_regime_refresh_never_costs_the_session(caplog: pytest.LogCapt
     assert strategy.errors == []  # not a strategy hook: on_bot_crash is not called
     assert len(strategy.times("on_trading_iteration")) == 4
     assert "Market regime refresh failed" in caplog.text
+
+
+# --- iteration_start_time ---------------------------------------------------------------
+
+
+class Noon(Recorder):
+    sleeptime = "1D"
+    iteration_start_time = time(12, 0)
+
+
+def test_iteration_start_time_moves_the_iteration_and_leaves_the_other_hooks_alone() -> None:
+    strategy = _run(Noon, sessions=2)
+    assert strategy.times("on_trading_iteration") == [et(2026, 9, 14, 12), et(2026, 9, 15, 12)]
+    assert strategy.times("before_market_opens") == [et(2026, 9, 14, 8, 30), et(2026, 9, 15, 8, 30)]
+    assert strategy.times("before_starting_trading") == [et(2026, 9, 14, 9, 30), et(2026, 9, 15, 9, 30)]
+    assert strategy.times("before_market_closes") == [et(2026, 9, 14, 15, 59), et(2026, 9, 15, 15, 59)]
+
+
+def test_a_start_before_the_iteration_start_time_waits_for_it() -> None:
+    assert _run(Noon, start=et(2026, 9, 14, 10, 15)).times("on_trading_iteration") == [et(2026, 9, 14, 12)]
+
+
+def test_a_start_after_the_iteration_start_time_iterates_at_once() -> None:
+    # 2026-10-06: the bot restarted at 15:36 ET on a rebalance day; it must still run that session.
+    assert _run(Noon, start=et(2026, 9, 14, 15, 36)).times("on_trading_iteration") == [et(2026, 9, 14, 15, 36)]
+
+
+def test_a_start_after_the_closing_window_runs_no_iteration() -> None:
+    strategy = _run(Noon, start=et(2026, 9, 14, 16, 30), sessions=1)
+    assert strategy.times("on_trading_iteration") == []
+
+
+def test_an_iteration_start_time_before_the_open_changes_nothing() -> None:
+    class Early(Recorder):
+        sleeptime = "1D"
+        iteration_start_time = time(8, 0)
+
+    assert _run(Early).times("on_trading_iteration") == [et(2026, 9, 14, 9, 30)]
+
+
+def test_an_interval_sleeptime_starts_its_grid_at_the_iteration_start_time() -> None:
+    class FromNoon(Recorder):
+        sleeptime = "2H"
+        iteration_start_time = time(12, 0)
+
+    assert _run(FromNoon).times("on_trading_iteration") == [et(2026, 9, 14, 12), et(2026, 9, 14, 14)]
+
+
+def test_an_early_close_session_still_iterates_at_the_start_time() -> None:
+    session = replace(weekday_sessions(MONDAY, 1)[0], close=et(2026, 9, 14, 13))
+    strategy = Noon(FakeBroker(FakeClock(et(2026, 9, 14, 7), [session])))
+    strategy.executor.run()
+    assert strategy.times("on_trading_iteration") == [et(2026, 9, 14, 12)]
+
+
+def test_an_iteration_start_time_in_the_closing_window_skips_the_iterations(caplog: pytest.LogCaptureFixture) -> None:
+    class Late(Recorder):
+        sleeptime = "1D"
+        iteration_start_time = time(15, 59)
+
+    caplog.set_level(logging.INFO)
+    strategy = _run(Late)
+    assert strategy.times("on_trading_iteration") == []
+    assert strategy.times("before_market_closes") == [et(2026, 9, 14, 15, 59)]
+    assert any("iteration_start_time" in record.getMessage() for record in caplog.records)

@@ -2,7 +2,7 @@
 
 `StrategyExecutor.run()` walks the market calendar one session at a time:
 market regime refresh -> before_market_opens -> before_starting_trading ->
-on_trading_iteration every `sleeptime` -> before_market_closes ->
+on_trading_iteration every `sleeptime` (from `iteration_start_time` when set) -> before_market_closes ->
 after_market_closes. Every wait goes
 through the strategy's `MarketClock`, so a simulated clock can later drive the
 very same loop for backtesting. Order events are dispatched on the executor
@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 from trading_agent_framework.core.events import OrderEventQueue, QueuedOrderEvent
 from trading_agent_framework.core.timing import next_tick, parse_sleeptime
 from trading_agent_framework.entities.enums import OrderEvent
-from trading_agent_framework.utils.clock import MarketSession
+from trading_agent_framework.utils.clock import MARKET_TZ, MarketSession
 from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
 
 if TYPE_CHECKING:
@@ -175,7 +175,17 @@ class StrategyExecutor:
     def _trade(self, session: MarketSession) -> None:
         strategy = self.strategy
         stop_at = session.close - timedelta(minutes=strategy.minutes_before_closing)
-        tick = max(session.open, self._now())
+        start = self._iteration_start(session)
+        if start >= stop_at:
+            logger.info(
+                "No iteration for %s this session: iteration_start_time %s is not before %s",
+                strategy.name,
+                start.isoformat(),
+                stop_at.isoformat(),
+            )
+            self.wait_until(stop_at)
+            return
+        tick = max(start, self._now())
         while not self._stop.is_set():
             self.wait_until(min(tick, stop_at))
             if self._stop.is_set() or self._now() >= stop_at:
@@ -197,6 +207,14 @@ class StrategyExecutor:
                     strategy.sleeptime,
                     skipped,
                 )
+
+    def _iteration_start(self, session: MarketSession) -> datetime:
+        """The session's first iteration time: the open, or `iteration_start_time` (market time) when later."""
+        start_time = self.strategy.iteration_start_time
+        if start_time is None:
+            return session.open
+        session_date = session.open.astimezone(MARKET_TZ).date()
+        return max(session.open, datetime.combine(session_date, start_time, tzinfo=MARKET_TZ))
 
     def _iteration_due(self, sessions: int) -> bool:
         last = self._last_iteration_session

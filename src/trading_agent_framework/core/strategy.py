@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
@@ -88,6 +88,9 @@ class Strategy:
     minutes_before_closing: int = 1
     # Triggers after_market_closes() hook immediately when the session closes (no delay)
     minutes_after_closing: int = 0
+    # First on_trading_iteration() of each session at this market time (America/New_York); None = at the open.
+    # The other hooks keep their times; a start at or after the closing window skips that session's iterations.
+    iteration_start_time: time | None = None
     parameters: Mapping[str, Any] = MappingProxyType({})
 
     # backtesting defaults (Strategy.run_backtesting()), overridable per call
