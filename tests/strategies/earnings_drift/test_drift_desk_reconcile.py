@@ -309,6 +309,66 @@ def test_recover_replaces_a_stop_that_ended_while_the_process_was_down(tmp_path:
     assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]
 
 
+def _cancel_stop_unseen(rig: DeskRig) -> str:
+    """Cancel AAA's stop at the broker without the desk hearing of it; returns the stop's id."""
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    rig.broker.cancel_order(stop)  # type: ignore[arg-type]
+    return stop.identifier  # type: ignore[union-attr]
+
+
+def test_recover_places_no_stop_for_a_position_absent_from_the_brokers_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop_id = _cancel_stop_unseen(rig)  # a restart: `_suspect` is empty and no reconcile has run
+    monkeypatch.setattr(rig.strategy, "get_positions", lambda: [])  # closed by hand while the process was down
+    orders_before = [order.identifier for order in rig.strategy.get_orders()]
+    with caplog.at_level(logging.WARNING):
+        rig.desk.recover()
+    assert [order.identifier for order in rig.strategy.get_orders()] == orders_before  # nothing sent: no short opened
+    trade = rig.state.trades["AAA"]
+    assert trade.stop_order_id is None or trade.stop_order_id == stop_id
+    assert not trade.backstop and trade.exit_order_id is None
+    assert "stop_backstop" in caplog.text and "AAA" in caplog.text
+
+
+def test_recover_places_no_stop_when_the_positions_fetch_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    _cancel_stop_unseen(rig)
+
+    def fails():  # noqa: ANN202
+        raise BrokerError("positions down")
+
+    monkeypatch.setattr(rig.strategy, "get_positions", fails)
+    orders_before = [order.identifier for order in rig.strategy.get_orders()]
+    with caplog.at_level(logging.WARNING):
+        rig.desk.recover()  # does not raise
+    assert [order.identifier for order in rig.strategy.get_orders()] == orders_before
+    assert not rig.state.trades["AAA"].backstop
+    assert "positions unavailable at the open" in caplog.text
+
+
+def test_recover_still_backs_up_a_stop_for_a_confirmed_position(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop_id = _cancel_stop_unseen(rig)
+    rig.desk.recover()  # the real positions list holds AAA
+    trade = rig.state.trades["AAA"]
+    assert trade.stop_order_id != stop_id and trade.backstop
+    assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]
+
+
+def test_recover_replaces_a_stale_suspect_set_with_its_own_snapshot(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop_id = _cancel_stop_unseen(rig)
+    rig.desk._suspect = {"AAA"}  # left over from last night's reconcile, where AAA was absent once
+    rig.desk.recover()  # AAA's position is present now
+    trade = rig.state.trades["AAA"]
+    assert trade.stop_order_id != stop_id and trade.backstop
+    assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]
+
+
 # --- A7: order direction and suspect trades ---------------------------------------------------------
 
 

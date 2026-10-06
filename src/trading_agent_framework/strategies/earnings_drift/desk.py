@@ -351,9 +351,23 @@ class Desk:
 
         A fill at the open while the process was down is never delivered (`sync_open_orders` adopts only open orders):
         without this the trade would stay pending, its shares without a stop, until the cycle after the close.
+
+        `_suspect` is memory only, so a restart starts it empty: the positions snapshot is taken here, after the fills are
+        settled (an entry just filled is protected by then) and before the backstop, and a trade whose position is absent
+        or unknown gets no stop (a sell for shares that are gone can open a short). `_missing_once`, the close rule, stays
+        the reconcile's.
         """
         with self._lock:
             self._settle_missed()
+            positions = self._positions()
+            open_symbols = {trade.symbol for trade in self._open_trades()}
+            if positions is None:
+                self._suspect = open_symbols
+                self._strategy.log_warning("guardrail stop_backstop: positions unavailable at the open, no stop placed until the next reconcile")
+            else:
+                self._suspect = {symbol for symbol in open_symbols if symbol not in positions}
+                if self._suspect:
+                    self._strategy.log_warning(f"guardrail stop_backstop: {', '.join(sorted(self._suspect))} absent from the broker's positions at the open, no stop placed until the next reconcile")
             self.ensure_stops()
             self._save_state()
 

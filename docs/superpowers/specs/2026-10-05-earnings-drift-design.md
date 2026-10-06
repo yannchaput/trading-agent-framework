@@ -91,7 +91,7 @@ strategies/earnings_drift/
 2. **`on_trading_iteration`** (09:30, `sleeptime = "1D"`): raises a pending `FatalStrategyError` recorded by the
    previous cycle (§5.4, §3.6); the executor swallows every exception from the other hooks, and only
    `on_trading_iteration` may end a run. In paper/live it then runs `desk.recover()` (settle the fills and ends
-   whose hooks were lost, then the stop backstop, then save; an exception is logged with its type and never
+   whose hooks were lost, then a positions snapshot, then the stop backstop (no stop for a trade whose position is absent or unknown), then save; an exception is logged with its type and never
    escapes): an entry that filled at the open while the process was down (`sync_open_orders` adopts only open
    orders) gets its stop at once instead of after the close. Never in a backtest, which delivers every fill.
 3. **`on_filled_order` / `on_canceled_order`** forward to the desk: a filled buy gets its trailing stop; a filled
