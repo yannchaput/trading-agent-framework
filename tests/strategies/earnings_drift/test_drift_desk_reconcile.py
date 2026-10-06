@@ -7,7 +7,9 @@ from pathlib import Path
 import pytest
 from tests.strategies.earnings_drift.drift_helpers import RIG_DATES, DeskRig
 
-from trading_agent_framework.entities.enums import OrderSide, OrderType
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog, TradeState
 from trading_agent_framework.strategies.earnings_drift.desk import Desk
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
@@ -305,3 +307,71 @@ def test_recover_replaces_a_stop_that_ended_while_the_process_was_down(tmp_path:
     trade = rig.state.trades["AAA"]
     assert trade.stop_order_id != stop.identifier and trade.backstop  # type: ignore[union-attr]
     assert rig.strategy.get_order(trade.stop_order_id).is_active()  # type: ignore[arg-type, union-attr]
+
+
+# --- A7: order direction and suspect trades ---------------------------------------------------------
+
+
+def test_a_short_position_of_a_traded_symbol_is_neither_adopted_nor_exposed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = DeskRig(tmp_path)
+    rig.state.traded_symbols.add("BBB")
+    short = Position("earnings_drift", Asset("BBB"), D(10), PositionSide.SHORT, avg_fill_price=D(50))  # IBKR: abs(qty), side SHORT
+    monkeypatch.setattr(rig.strategy, "get_positions", lambda: [short])
+    rig.desk.reconcile()
+    assert rig.state.trades == {} and rig.strategy.get_orders() == []
+    assert rig.desk.exposed_symbols() == set()
+
+
+def test_max_hold_does_not_sell_a_trade_whose_position_is_unconfirmed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path, params=DriftParams(max_holding_sessions=2))
+    rig.open_aaa()
+    rig.next_close()  # 2 sessions held
+    stop_id = rig.state.trades["AAA"].stop_order_id
+    orders_before = len(rig.strategy.get_orders())
+    _positions_empty(rig, monkeypatch, times=1)
+    with caplog.at_level(logging.WARNING):
+        assert rig.desk.reconcile() == []
+    assert "guardrail max_hold: AAA" in caplog.text and "sale delayed" in caplog.text
+    trade = rig.state.trades["AAA"]
+    assert trade.exit_order_id is None and trade.stop_order_id == stop_id
+    assert len(rig.strategy.get_orders()) == orders_before
+    assert rig.strategy.get_order(stop_id).is_active()  # type: ignore[arg-type, union-attr]
+    assert rig.desk.reconcile() == ["AAA"]  # the position is confirmed again: sold now
+
+
+def test_a_failed_positions_fetch_keeps_an_absent_trade_suspect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    _positions_empty(rig, monkeypatch)
+    rig.desk.reconcile()  # absent once: suspect
+    stop = rig.strategy.get_order(rig.state.trades["AAA"].stop_order_id)  # type: ignore[arg-type]
+    rig.broker.cancel_order(stop)  # type: ignore[arg-type]  # its hook never reaches the desk
+    monkeypatch.undo()
+
+    def fails():  # noqa: ANN202
+        raise BrokerError("positions down")
+
+    monkeypatch.setattr(rig.strategy, "get_positions", fails)
+    orders_before = len(rig.strategy.get_orders())
+    with caplog.at_level(logging.WARNING):
+        rig.desk.reconcile()
+        rig.desk.ensure_stops()
+    assert len(rig.strategy.get_orders()) == orders_before  # no stop over a position that may not exist
+    assert "AAA" in rig.desk._missing_once and "AAA" in rig.state.trades
+    assert "may not exist" in caplog.text
+
+
+def test_sell_and_set_trailing_stop_refuse_a_suspect_trade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+    rig.open_aaa()
+    stop_id = rig.state.trades["AAA"].stop_order_id
+    _positions_empty(rig, monkeypatch, times=1)
+    rig.desk.reconcile()  # absent once: suspect for this cycle
+    orders_before = len(rig.strategy.get_orders())
+    with caplog.at_level(logging.WARNING):
+        sold = rig.desk.sell("AAA", "thesis broken")
+        trailed = rig.desk.set_trailing_stop("AAA", 5.0, "tighten")
+    assert "not confirmed by the broker" in sold["error"] and "not confirmed by the broker" in trailed["error"]
+    assert caplog.text.count("guardrail order_limits") == 2
+    assert len(rig.strategy.get_orders()) == orders_before and rig.strategy.get_order(stop_id).is_active()  # type: ignore[arg-type, union-attr]
+    assert [line["decision"] for line in rig.lines(rig.decisions_path)] == ["buy"]  # no sell or trail decision logged

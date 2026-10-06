@@ -18,7 +18,7 @@ from datetime import date
 from decimal import ROUND_FLOOR, Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
-from trading_agent_framework.entities.enums import OrderSide, OrderType
+from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog, Trade, TradeState, sessions_held
 from trading_agent_framework.strategies.earnings_drift.fact_sheet import fact_sheet
@@ -37,6 +37,11 @@ _DATA_ERRORS = (BrokerError, BacktestError)
 
 def _lean(order: Order) -> dict[str, Any]:
     return {"identifier": order.identifier, "symbol": order.asset.symbol, "side": order.side.value, "quantity": float(order.quantity or 0), "status": order.status.value}
+
+
+def _is_long(position: Position) -> bool:
+    """A long holding: IBKR reports a short as a positive quantity with `side=SHORT`."""
+    return position.side is PositionSide.LONG and position.quantity > 0
 
 
 def _number(value: object) -> Decimal | None:
@@ -70,7 +75,7 @@ class Desk:
         self._ignored_orphans: set[str] = set()  # positions of symbols this strategy never traded, logged once
         # Open trades whose position was absent from the previous reconcile's snapshot (a stale list is not a sale).
         self._missing_once: set[str] = set()
-        # Trades the last reconcile left alone because their position may not exist: `ensure_stops` places no stop for them.
+        # Trades the last reconcile left alone because their position may not exist: no stop, no max-hold sale, no agent sell or trail.
         self._suspect: set[str] = set()
         self._today: date | None = None
         self._trading_dates: list[date] = []
@@ -107,7 +112,7 @@ class Desk:
         with self._lock:
             symbols = set(self._state.trades)
             try:
-                symbols |= {position.asset.symbol for position in self._strategy.get_positions() if position.quantity > 0}
+                symbols |= {position.asset.symbol for position in self._strategy.get_positions() if _is_long(position)}
             except _DATA_ERRORS as exc:
                 self._strategy.log_warning(f"[earnings_drift] positions unavailable, only this strategy's trades count as held: {exc}")
             return symbols
@@ -204,6 +209,8 @@ class Desk:
             trade = self._state.trades.get(symbol)
             if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
                 return self._refuse("order_limits", f"set_trailing_stop {symbol}: no open position (or it is being sold)")
+            if symbol in self._suspect:
+                return self._refuse("order_limits", f"set_trailing_stop {symbol}: position not confirmed by the broker this cycle")
             trail = _number(trail_percent)
             low, high = self._params.min_trail_percent, self._params.max_trail_percent
             if trail is None or not Decimal(str(low)) <= trail <= Decimal(str(high)):
@@ -233,6 +240,8 @@ class Desk:
             trade = self._state.trades.get(symbol)
             if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
                 return self._refuse("order_limits", f"sell {symbol}: no open position (or it is being sold)")
+            if symbol in self._suspect:
+                return self._refuse("order_limits", f"sell {symbol}: position not confirmed by the broker this cycle")
             result = self._exit(trade, "agent_sell")
             if "error" not in result:
                 self._log_decision(symbol, "sell", reason=self._clip(reason))
@@ -317,12 +326,17 @@ class Desk:
             self._suspect = set()
             self._settle_missed()
             positions = self._positions()  # one snapshot for both steps below
+            if positions is None:
+                self._suspect |= self._missing_once  # still unconfirmed: no stop and no sale for them this cycle
             self._close_vanished(positions)
             self._adopt_orphans(positions)
             sold: list[str] = []
             for trade in sorted(self._open_trades(), key=lambda t: t.symbol):
                 held = self._sessions_held(trade)
                 if held < self._params.max_holding_sessions:
+                    continue
+                if trade.symbol in self._suspect:
+                    self._strategy.log_warning(f"guardrail max_hold: {trade.symbol} held {held} sessions, but its position is absent from the broker's list: sale delayed")
                     continue
                 self._strategy.log_warning(f"guardrail max_hold: {trade.symbol} held {held} sessions; selling at the next open")
                 result = self._exit(trade, "max_hold")
@@ -407,7 +421,7 @@ class Desk:
 
     def _positions(self) -> dict[str, Position] | None:
         try:
-            return {p.asset.symbol: p for p in self._strategy.get_positions() if p.quantity > 0}
+            return {p.asset.symbol: p for p in self._strategy.get_positions() if _is_long(p)}
         except _DATA_ERRORS as exc:
             self._strategy.log_warning(f"[earnings_drift] positions unavailable, orphans and vanished positions not checked: {exc}")
             return None
