@@ -28,6 +28,7 @@ class FakeStrategy:
         self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
         self.orders = []
         self.warnings: list[str] = []
+        self.infos: list[str] = []
 
     def get_positions(self):
         return self._positions
@@ -50,7 +51,8 @@ class FakeStrategy:
 
     _price_or_zero = CrossMomentumStrategy._price_or_zero
 
-    def log_info(self, *args, **kwargs): ...
+    def log_info(self, message, *args, **kwargs):
+        self.infos.append(message)
 
     def log_warning(self, message, *args, **kwargs):
         self.warnings.append(message)
@@ -224,3 +226,49 @@ def test_a_failing_quote_for_a_hysteresis_holding_does_not_abort_the_rebalance()
 
     assert _orders(fake, "AAA", "buy") == [3.0]
     assert any("HYS" in message for message in fake.warnings)
+
+
+def test_a_target_already_held_at_its_target_value_logs_a_holding_line():
+    fake = FakeStrategy(cash=700.0, positions=[_held("AAA", 3.0)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 4)], {"AAA": 4})
+
+    assert _orders(fake, "AAA", "buy") == []
+    assert "Holding AAA (rank 4, $300 vs target $300): no buy needed" in fake.infos
+
+
+def test_a_target_above_its_target_but_inside_the_trim_band_logs_a_holding_line():
+    fake = FakeStrategy(cash=690.0, positions=[_held("AAA", 3.1)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 2)], {"AAA": 2})
+
+    assert "Holding AAA (rank 2, $310 vs target $300): no buy needed" in fake.infos
+
+
+def test_a_target_that_gets_a_buy_has_no_holding_line():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert not any(line.startswith("Holding") for line in fake.infos)
+
+
+def test_the_summary_counts_targets_held_kept_and_sold():
+    fake = FakeStrategy(
+        cash=500.0,
+        positions=[_held("AAA", 3.0), _held("KEEP", 10.0), _held("OLD", 10.0)],
+        last_prices={"AAA": 100.0, "BBB": 50.0, "KEEP": 10.0, "OLD": 10.0, "SHV": 50.0},
+    )
+    target = [_target("AAA", 0.3, 100.0, 1), _target("BBB", 0.2, 50.0, 2)]
+
+    CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2, "KEEP": 30})  # OLD is unranked -> sold
+
+    assert "Rebalance summary: 2 targets (1 already held, 1 not held), 1 kept under hysteresis, 1 sold" in fake.infos
+
+
+def test_no_summary_when_there_is_no_target():
+    fake = FakeStrategy(cash=1000.0, last_prices={"SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [], {})
+
+    assert fake.infos == []

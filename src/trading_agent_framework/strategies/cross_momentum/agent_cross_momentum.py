@@ -393,6 +393,8 @@ class CrossMomentumStrategy(Strategy):
         # Phase 1: Sell (exits, trims, excess parking)
         estimated_sell_proceeds = 0.0
         hysteresis_value = 0.0
+        kept_count = 0
+        sold_count = 0
         parking_position = None
         for pos in current_positions:
             symbol = pos.asset.symbol
@@ -429,6 +431,7 @@ class CrossMomentumStrategy(Strategy):
                 try:
                     sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
                     self.submit_order(sell_order)
+                    sold_count += 1
                     last_price = self.get_last_price(symbol) or 0.0
                     estimated_sell_proceeds += float(pos.quantity) * float(last_price)
                 except Exception as e:
@@ -437,6 +440,7 @@ class CrossMomentumStrategy(Strategy):
             else:
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
                 hysteresis_value += float(pos.quantity) * self._price_or_zero(symbol)
+                kept_count += 1
 
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
         stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
@@ -481,12 +485,9 @@ class CrossMomentumStrategy(Strategy):
             # Compute the difference between target and current value position
             diff_value = target_value - current_value
 
-            # If the position is already above target, skip buying
-            if diff_value <= 0:
-                continue
-
-            # If the current position is within ±20% of the target value, skip buying to avoid overtrading
-            if current_value > 0 and abs(diff_value) / target_value < _REBALANCE_BAND:
+            # Skip buying if the position is already above target, or within ±20% of the target value (avoids overtrading)
+            if diff_value <= 0 or (current_value > 0 and abs(diff_value) / target_value < _REBALANCE_BAND):
+                self.log_info(f"Holding {symbol} (rank {entry['rank']}, ${current_value:,.0f} vs target ${target_value:,.0f}): no buy needed")
                 continue
 
             # Compute the fractional quantity to buy taking into account the existing position
@@ -536,6 +537,10 @@ class CrossMomentumStrategy(Strategy):
                         self.submit_order(self.create_order(parking_symbol, quantity, "buy", time_in_force="day"))
                     except Exception as e:
                         self.log_warning(f"Failed to submit parking buy order for {parking_symbol}: {e}")
+
+        # The target positions never get a line unless they are bought, so say how the book is made up
+        held_targets = sum(1 for pos in current_positions if pos.asset.symbol in target_symbols)
+        self.log_info(f"Rebalance summary: {len(target)} targets ({held_targets} already held, {len(target) - held_targets} not held), {kept_count} kept under hysteresis, {sold_count} sold")
 
     # ── Main iteration ────────────────────────────────────────────────────────
 
