@@ -4,9 +4,14 @@ from datetime import date, datetime, time
 
 import pandas as pd
 import pytest
+from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.strategies.cross_momentum.utils import completed_bars
+from trading_agent_framework.config import TradingMode
+from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
+from trading_agent_framework.strategies.cross_momentum.utils import completed_bars, parse_rebalance_time
 from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import ConfigurationError
 
 MONDAY, TUESDAY = date(2026, 10, 5), date(2026, 10, 6)
 
@@ -27,3 +32,33 @@ def test_completed_bars_without_a_bar_for_today_changes_nothing():
     frame = _frame([date(2026, 10, 2), MONDAY], 16)
 
     pd.testing.assert_frame_equal(completed_bars(frame, TUESDAY), frame)
+
+
+def test_the_default_rebalance_time_is_noon():
+    assert CONFIG["rebalance_time"] == "12:00"
+
+
+def test_parse_rebalance_time_reads_hh_mm():
+    assert parse_rebalance_time("12:00") == time(12, 0)
+    assert parse_rebalance_time("10:30") == time(10, 30)
+
+
+@pytest.mark.parametrize("value", ["noon", "25:00", "12:00+02:00", ""])
+def test_parse_rebalance_time_rejects_anything_else(value):
+    with pytest.raises(ConfigurationError, match="rebalance_time"):
+        parse_rebalance_time(value)
+
+
+def _strategy(**parameters):
+    broker = FakeBroker(FakeClock(et(2026, 10, 6, 7), []))
+    return CrossMomentumStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA"], parameters=parameters)
+
+
+def test_the_strategy_iterates_at_its_rebalance_time():
+    assert _strategy().iteration_start_time == time(12, 0)
+    assert _strategy(rebalance_time="10:30").iteration_start_time == time(10, 30)
+
+
+def test_a_malformed_rebalance_time_fails_at_construction():
+    with pytest.raises(ConfigurationError, match="rebalance_time"):
+        _strategy(rebalance_time="noon")

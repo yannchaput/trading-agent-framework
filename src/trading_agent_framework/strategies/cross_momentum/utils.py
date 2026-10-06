@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 
 from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import ConfigurationError
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power  # noqa: F401  (moved to utils/helpers.py; re-exported)
 
 if TYPE_CHECKING:
@@ -29,6 +30,17 @@ _MAX_HISTORY_ENTRIES = 70
 
 # Path to the pre-computed US stock universe (produced by batch_us_stock_universe.py)
 _UNIVERSE_FILE = Path("data/universe/us_stock_universe.json")
+
+
+def parse_rebalance_time(value: str) -> time:
+    """`HH:MM` in market time (America/New_York): when the executor runs each session's iteration."""
+    try:
+        parsed = time.fromisoformat(value)
+    except (TypeError, ValueError):
+        raise ConfigurationError(f"rebalance_time must be HH:MM in market time, got {value!r}") from None
+    if parsed.tzinfo is not None:
+        raise ConfigurationError(f"rebalance_time is market time and takes no UTC offset, got {value!r}")
+    return parsed
 
 
 def compute_return_from_prices(

@@ -10,7 +10,7 @@ Implements:
   1. Load pre-computed universe (monthly batch)
   2. Daily: compute portfolio risk diagnostics (if enabled)
   3. Daily: record portfolio equity for realized-vol tracking
-  4. Weekly (Friday): filter, score, rank, select top N, weight by inverse vol
+  4. Weekly (Tuesday, at rebalance_time): filter, score, rank, select top N on completed sessions, weight by inverse vol
   5. Portfolio risk overlay (beta/vol/corr) — first exposure leg
   6. Breadth overlay (share of scored stocks above their 100d SMA, stepped, with hysteresis) — second leg
   7. Fast/slow volatility targeting (equity-curve-based) — third exposure leg
@@ -62,6 +62,7 @@ from .utils import (
     momentum_score,
     next_breadth_step,
     parse_insufficient_buying_power,
+    parse_rebalance_time,
     save_breadth_step,
     save_equity_history,
 )
@@ -115,6 +116,8 @@ class CrossMomentumStrategy(Strategy):
     ):
         super().__init__(broker, mode=mode, **kwargs)
         self.parameters = {**CONFIG, **self.parameters}
+        # The executor runs each session's iteration, so the Tuesday rebalance, at this market time
+        self.iteration_start_time = parse_rebalance_time(self.parameters["rebalance_time"])
 
         if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
