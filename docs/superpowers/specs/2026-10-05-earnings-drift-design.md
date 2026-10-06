@@ -88,9 +88,12 @@ strategies/earnings_drift/
       baseline mode: `desk.baseline_entries()` instead (§7).
    4. `desk.ensure_stops()`: the stop backstop again, right after the run.
    5. Every candidate without a `buy` or `skip` is written to `decisions.jsonl` as `undecided`; the state file is saved.
-2. **`on_trading_iteration`** (09:30, `sleeptime = "1D"`): does nothing but raise a pending `FatalStrategyError`
-   recorded by the previous cycle (§5.4, §3.6). The executor swallows every exception from the other hooks, and
-   only `on_trading_iteration` may end a run.
+2. **`on_trading_iteration`** (09:30, `sleeptime = "1D"`): raises a pending `FatalStrategyError` recorded by the
+   previous cycle (§5.4, §3.6); the executor swallows every exception from the other hooks, and only
+   `on_trading_iteration` may end a run. In paper/live it then runs `desk.recover()` (settle the fills and ends
+   whose hooks were lost, then a positions snapshot, then the stop backstop (no stop for a trade whose position is absent or unknown), then save; an exception is logged with its type and never
+   escapes): an entry that filled at the open while the process was down (`sync_open_orders` adopts only open
+   orders) gets its stop at once instead of after the close. Never in a backtest, which delivers every fill.
 3. **`on_filled_order` / `on_canceled_order`** forward to the desk: a filled buy gets its trailing stop; a filled
    stop or sell closes the trade into `trades.jsonl`.
 
@@ -132,8 +135,9 @@ Two 2.02 filings for one symbol with the same reaction session collapse to the e
 
 Wraps `SecEdgarClient` (`ticker_to_cik`, `get_submissions_payload`, plus the older pages
 `submissions/CIK..-submissions-NNN.json` fetched through `get_json` and cached under `cache/sec/submissions/`).
-Freshness follows the existing `as_of`/`max_age_days` rule with `max_age_days=0` and `as_of` the strategy clock:
-a backtest never refetches a file fetched after its simulated date; paper/live refetch at every cycle. The parsed
+Freshness follows the existing `as_of`/`max_age_days` rule with `max_age_days=0`: a file fetched after `as_of` is
+served, an older one is fetched again. Paper/live load with `as_of` = now, so they refetch at every cycle; a
+backtest loads once with `as_of` = the run's end (§11), so a file fetched before the end is refreshed. The parsed
 events are kept in memory: a backtest loads them once, paper/live once per cycle. An older page is fetched only when its `filingTo` reaches the backtest
 first cycle's date minus `event_lookback_days`. A symbol with no CIK or a failed fetch is skipped with reason `no_sec_data`.
 
@@ -190,11 +194,14 @@ Checked in this order, the first failure being the reason: `already_held`, `no_s
 ### 3.6 Scanner (`scanner.py`)
 
 `prepare(today)`: the trading dates from the benchmark's daily bars (up to today); events from §3.2 for the
-universe, kept when their reaction date is today; `NewsProvider.get_news(chunk, start=min(accepted_at) − 2h,
-end=clock.now(), limit=news_limit)` for those names in chunks of `news_symbols_per_call` (5) symbols; daily bars for those names and SPY through
+universe, kept when their reaction date is today; one `NewsProvider.get_news([event.symbol],
+start=accepted_at − surprise_lookback_hours (2 h), end=min(clock.now(), accepted_at + surprise_window_hours (24 h)),
+limit=news_limit)` per event; daily bars for those names and SPY through
 `strategy.get_historical_prices_for_assets` (so backtests go through `_source_bars`); features; gates. Logs one
-summary line: events, candidates, reject counts by reason. A news failure rejects every event that session as
-`no_news`.
+summary line: events, candidates, reject counts by reason. A failed news query rejects only its symbol as
+`no_news`. One symbol and a narrow window per query because the provider answers the newest `limit` articles
+first: a query shared by several symbols, or reaching far past the release, cuts the oldest articles, and the
+Benzinga EPS headline is among the first after the release (busy names were rejected as `no_surprise_data`).
 
 **Hollow scan:** if SEC fails for more than half of the universe (with at least 20 failures), the session has no
 candidates, an error is logged and the events are not kept (the next cycle loads them again);
@@ -281,8 +288,9 @@ the symbol is one of today's candidates; not already bought this session; quanti
 `min_trail_percent ≤ trail_percent ≤ max_trail_percent` (3, 15).
 
 `max_quantity(symbol) = floor(min(portfolio_value / max_positions, available) / reaction close)` with
-`available` = the smaller of `buying_power` and (`cash` + proceeds of sells submitted this cycle) minus buys
-already submitted this cycle (CLAUDE.md's sizing rule).
+`available = min(buying_power, cash + proceeds of sells submitted this cycle − buys already submitted this cycle)`
+(CLAUDE.md's sizing rule): the buys are deducted from the cash side only, since `buying_power` already nets every
+pending order (the backtest broker's projection, Alpaca's open orders).
 
 Then a market BUY (`day`), `Trade` recorded as `pending`, a `buy` line in `decisions.jsonl`. It never waits for
 the fill (it comes at the next open, §2.1). Returns the lean order.
@@ -334,8 +342,9 @@ Everything else (reconcile, guardrails, logs) is identical.
 
 ## 8. State and logs (`book.py`)
 
-`data/earnings_drift_state_<mode>.json`: `{version: 1, trades: [...open/pending...], agent_failure_streak,
-hollow_scan_streak}`. Wiped at `initialize` in backtesting only; paper/live survive restarts and `reconcile`
+`data/{strategy name}_state_<mode>.json` (`earnings_drift_state_<mode>.json`, and a distinct
+`earnings_drift_baseline_state_<mode>.json` for the baseline, so both can run on one account without managing each
+other's trades): `{version: 1, trades: [...open/pending...], agent_failure_streak, hollow_scan_streak}`. Wiped at `initialize` in backtesting only; paper/live survive restarts and `reconcile`
 squares them with the broker (a trade whose position is gone is closed with reason `unknown`). A malformed or
 other-version file loads as empty state with a warning.
 
@@ -357,10 +366,11 @@ fractions in (0, 1]):
 | `min_trail_percent`, `default_trail_percent`, `max_trail_percent` | 3, 8, 15 |
 | `min_abnormal_pct`, `min_hold_ratio`, `min_close_location`, `min_rel_volume` | 0.03, 0.5, 0.5, 2.0 |
 | `min_price`, `min_dollar_volume` | 10, 20,000,000 |
+| `live_volume_share` | 0.03 (paper/live scale `min_dollar_volume` by it, §11) |
 | `volume_baseline_sessions` | 20 |
-| `surprise_lookback_hours` | 2 |
+| `surprise_lookback_hours`, `surprise_window_hours` | 2, 24 |
 | `bars_lookback_sessions` | 75 |
-| `news_symbols_per_call`, `news_limit` | 5, 50 |
+| `news_limit` | 50 |
 | `event_lookback_days` | 10 |
 | `live_bar_delay_seconds`, `cancel_wait_seconds` | 300, 30 |
 | `tool_budget_per_item` | 4 |
@@ -377,7 +387,9 @@ fractions in (0, 1]):
   `warmup_trading_days` 283, `budget` 10000, `slippage` 0.0005.
 - `run_backtesting` defaults: `data_source=AlpacaBacktestData` (SIP), `timestep="day"`, `preload_assets` =
   universe + SPY, `agent_telemetry=True`, the news source defaulting as for every strategy. The 5-year baseline
-  run passes `start/end` from `PredefinedWindow.SEMI_DECADE` and `settings=DriftParams(agent_enabled=False)`.
+  runs as its own registered strategy, `earnings_drift_baseline` (`DriftParams(agent_enabled=False)`,
+  `PredefinedWindow.SEMI_DECADE`, its own logs and its own state file `data/earnings_drift_baseline_state_<mode>.json`
+  (§8); env file `env/.env.earnings_drift_baseline.<mode>`, else `env/.env`).
 - `ConfigurationError` in `initialize` (no `SEC_EDGAR_USER_AGENT`; no model in agent mode) becomes
   `FatalStrategyError`: the strategy refuses to start.
 
@@ -387,10 +399,17 @@ fractions in (0, 1]):
   order the low against the entry. Bias in either direction.
 - **Early closes.** `reaction_date` takes every close as 16:00 ET: a release between an early close (13:00) and
   16:00 is mapped to that day, scanned before it was filed, and missed. A few days a year, rarely with earnings.
-- **Live bars are IEX, backtest bars SIP.** Relative volume compares IEX with IEX live, SIP with SIP in backtests;
-  the thresholds may need retuning for live.
+- **Live bars are IEX, backtest bars SIP.** Relative volume compares IEX with IEX live, SIP with SIP in backtests
+  (a ratio, scale free). Dollar volume is not: IEX is ~2-3% of consolidated volume, so paper/live evaluate the gates
+  with `min_dollar_volume × live_volume_share` (0.03; the scanner's `volume_share`, 1.0 in backtests). The share is
+  an average: thresholds may still need retuning for live.
+- **SEC freshness in backtests.** A backtest loads the events once; it uses the run's end as the cache's `as_of`
+  (a bare-midnight end means through that day, so the next midnight), so a submissions file fetched before the end
+  is fetched again and no 8-K filed late in the window is missing. Every other clock use stays the simulated now.
 - **After-hours order changes, live.** `set_trailing_stop` and `sell` cancel and place orders after the close;
-  the paper smoke run must confirm Alpaca accepts a GTC trailing stop and a DAY market sell sent after hours.
+  the paper smoke run must confirm Alpaca accepts a GTC trailing stop and a DAY market sell sent after hours. The
+  same must be confirmed for IBKR on a paper account (IB Gateway) before running it there: a DAY MKT order and a GTC
+  TRAIL order sent after the close.
 - **Trailing stop on daily bars.** `fills.evaluate_trailing_stop` checks the level from previous bars before the
   bar's high may raise it, ties against the trader: pessimistic against live, where Alpaca trails tick by tick.
 - **Survivorship bias.** Today's universe; absolute returns are upper bounds; compare modes on the same universe.

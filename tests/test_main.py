@@ -6,11 +6,19 @@ from tests.fakes import FakeBroker, FakeClock, et
 from trading_agent_framework import main as main_module
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
 
 def test_registry_lists_the_strategies() -> None:
-    assert set(main_module.AGENT_STRATEGIES) == {"bill_ackman", "cross_momentum", "news_binary", "vwap_pullback_continuation"}
+    assert set(main_module.AGENT_STRATEGIES) == {
+        "bill_ackman",
+        "cross_momentum",
+        "earnings_drift",
+        "earnings_drift_baseline",
+        "news_binary",
+        "vwap_pullback_continuation",
+    }
 
 
 def test_news_binary_builder_returns_the_strategy() -> None:
@@ -90,3 +98,18 @@ def test_a_configuration_error_exits_cleanly_in_paper_mode(monkeypatch: pytest.M
         main_module._run_strategy(Console(), TradingMode.PAPER, "news_binary")
 
     assert excinfo.value.code == 1
+
+
+def test_earnings_drift_builders(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module, "load_cross_momentum_universe", lambda: ["AAA"])
+    agent = main_module._build_earnings_drift(FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="earnings_drift"), TradingMode.BACKTESTING)
+    baseline = main_module._build_earnings_drift_baseline(FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="earnings_drift_baseline"), TradingMode.BACKTESTING)
+    assert isinstance(agent, EarningsDriftStrategy) and agent.settings.agent_enabled
+    assert isinstance(baseline, EarningsDriftStrategy) and not baseline.settings.agent_enabled
+    assert baseline.parameters["backtesting_start"] < agent.parameters["backtesting_start"]  # 5 years against 1
+
+
+def test_earnings_drift_builder_returns_none_without_a_universe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main_module, "load_cross_momentum_universe", lambda: [])
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="earnings_drift")
+    assert main_module._build_earnings_drift(broker, TradingMode.BACKTESTING) is None
