@@ -49,6 +49,7 @@ from .utils import (
     apply_filters,
     breadth_exposure,
     breadth_share,
+    close_series,
     compute_atr_from_df,
     compute_return_from_prices,
     compute_volatility_exposure,
@@ -250,6 +251,7 @@ class CrossMomentumStrategy(Strategy):
             "trading_days": trading_days,
             "atr": atr,
             "closes": closes,
+            "close_series": close_series(df),
         }
 
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
@@ -327,7 +329,7 @@ class CrossMomentumStrategy(Strategy):
         selected = scored[:top_n]
 
         # Store closes for the selected stocks (consumed by portfolio risk overlay)
-        self.vars.target_closes = {entry["symbol"]: entry["closes"] for entry in selected}
+        self.vars.target_closes = {entry["symbol"]: entry["close_series"] for entry in selected}
 
         selected = inverse_volatility_weights(
             selected,
@@ -358,6 +360,34 @@ class CrossMomentumStrategy(Strategy):
         exposure = breadth_exposure(step, config["exposures"])
         self.log_info(f"Breadth: {breadth:.0%} of stocks above their {config['sma_window']}d SMA -> step {step} (exposure {exposure:.0%})")
         return exposure
+
+    def _risk_exposure(self, target: list[dict]) -> float:
+        """Exposure multiplier from the portfolio risk overlay: beta/vol/corr of the target stocks against SPY.
+
+        1.0 without targets or SPY data. The overlay aligns the series by session date; a target whose last bar
+        is dated differently from SPY's is still logged, because on 2026-10-06 half of them were a session short
+        for a reason never established.
+        """
+        if not target or not self.vars.target_closes:
+            return 1.0
+        self.vars.alpaca_rate_limiter.wait()
+        spy_bars = self.get_historical_prices("SPY", length=300, timestep="day")
+        if spy_bars is None or spy_bars.empty:
+            self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
+            return 1.0
+        spy = close_series(spy_bars.pandas_df)
+        spy_last = spy.index[-1]
+        off_date = {symbol: series.index[-1] for symbol, series in self.vars.target_closes.items() if len(series) and series.index[-1] != spy_last}
+        if off_date:
+            listed = ", ".join(f"{symbol} {day}" for symbol, day in sorted(off_date.items()))
+            self.log_warning(f"Risk overlay: last bar date differs from SPY's {spy_last}: {listed}")
+        target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
+        risk_state, risk_exposure, metrics = compute_risk_overlay(self.vars.target_closes, target_weights, spy)
+        self.log_info(
+            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_63d')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
+            f"obs={metrics.get('observations')}, exposure={risk_exposure:.0%})"
+        )
+        return risk_exposure
 
     def _price_or_zero(self, symbol: str) -> float:
         """Last price for valuing a holding, or 0.0 if the lookup fails or returns nothing.
@@ -580,32 +610,8 @@ class CrossMomentumStrategy(Strategy):
 
         target, all_ranks = self.compute_target_portfolio()
 
-        # Step 3: Portfolio Risk Overlay — compute beta/vol/corr from
-        # today's target stocks' historical closes. This is the "hypothetical
-        # risk of today's portfolio" leg.
-        risk_exposure = 1.0
-        risk_metrics = {}
-        if target and self.vars.target_closes:
-            self.vars.alpaca_rate_limiter.wait()
-            spy_bars = self.get_historical_prices("SPY", length=300, timestep="day")
-            spy_closes = None
-            if spy_bars is not None and not spy_bars.empty:
-                spy_df = spy_bars.pandas_df if hasattr(spy_bars, "pandas_df") else spy_bars
-                if spy_df is not None and not spy_df.empty:
-                    spy_closes = spy_df["close"].tolist()
-
-            if spy_closes is None:
-                self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
-            else:
-                target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
-                risk_state, risk_exposure, risk_metrics = compute_risk_overlay(
-                    self.vars.target_closes,
-                    target_weights,
-                    spy_closes,
-                )
-                self.log_info(
-                    f"Risk overlay: {risk_state.upper()} (beta={risk_metrics.get('beta_63d')}, vol={risk_metrics.get('vol_20d')}, corr={risk_metrics.get('corr_20d')}, exposure={risk_exposure:.0%})"
-                )
+        # Step 3: Portfolio Risk Overlay — beta/vol/corr of today's target stocks against SPY, aligned by date.
+        risk_exposure = self._risk_exposure(target)
 
         # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
         breadth_leg = self._breadth_exposure()

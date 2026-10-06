@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pandas as pd
 
+from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power  # noqa: F401  (moved to utils/helpers.py; re-exported)
 
 if TYPE_CHECKING:
@@ -181,6 +182,17 @@ def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
     if len(tr_values) < period:
         return None
     return sum(tr_values[-period:]) / period
+
+
+def close_series(df: pd.DataFrame) -> pd.Series:
+    """Closes indexed by session date in market time, one per date (the last), oldest first.
+
+    Live Alpaca daily bars are stamped at midnight market time and backtest bars at the close; both map to the
+    same date, so series from either source can be joined on it.
+    """
+    dates = [ts.date() for ts in pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)]
+    series = pd.Series(df["close"].to_numpy(dtype=float), index=pd.Index(dates))
+    return series.loc[~series.index.duplicated(keep="last")].sort_index()
 
 
 def diagnostics_to_dict(diag: PortfolioRiskDiagnostics) -> dict:

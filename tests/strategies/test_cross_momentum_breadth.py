@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
+import pandas as pd
 import pytest
 
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
@@ -276,6 +277,7 @@ def _indicator(symbol, closes):
         "ret_3m": 0.05,
         "atr": None,
         "closes": closes,
+        "close_series": pd.Series(closes),
     }
 
 
