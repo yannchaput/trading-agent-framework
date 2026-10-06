@@ -9,7 +9,8 @@ NOT part of the automated test suite: the suite never touches the network. Run i
 scripts (or from the environment); without either the script prints `SKIP:` and exits 0, so the aggregate runner
 `scripts/tests/run_smoke_tests.sh` reports it as skipped. The script is read-only. For a few large caps over the last 120
 days it prints each 8-K item 2.02 event, its reaction date and the parsed Benzinga surprise, then the share of events
-with a parsable headline. It fails only when no event is found at all or no surprise parses.
+with a parsable headline (news is read as the scanner does: the reaction session, oldest first). It fails only when no
+event is found at all or no surprise parses.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider
 from trading_agent_framework.config.env import AlpacaCredentials
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
 from trading_agent_framework.strategies.earnings_drift.event_source import EventSource
-from trading_agent_framework.strategies.earnings_drift.events import reaction_date
+from trading_agent_framework.strategies.earnings_drift.events import news_window, reaction_date
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.surprise import articles_for, pick_surprise
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -35,9 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ENV_FILE = PROJECT_ROOT / "env" / ".env.alpaca.integration-tests"
 SYMBOLS = ["OMC", "AAPL", "MSFT", "JPM", "NFLX", "CAT", "KO", "UNH"]
 LOOKBACK_DAYS = 120
-_PARAMS = DriftParams()  # the scanner's news window and limit: one query per event, from 2 h before to 24 h after the release
-NEWS_BEFORE = timedelta(hours=_PARAMS.surprise_lookback_hours)
-NEWS_AFTER = timedelta(hours=_PARAMS.surprise_window_hours)
+NEWS_LIMIT = DriftParams().news_limit  # the scanner's per-query limit; it reads oldest first, over the reaction session (`news_window`)
 
 
 def main() -> int:
@@ -68,12 +67,16 @@ def main() -> int:
     weekdays = [day for day in (since + timedelta(days=i) for i in range((now.date() - since).days + 2)) if day.weekday() < 5]
     parsed = 0
     for event in sorted(events, key=lambda e: e.accepted_at):
-        start, end = event.accepted_at - NEWS_BEFORE, event.accepted_at + NEWS_AFTER
-        articles = news.get_news([event.symbol], start=start, end=end, limit=_PARAMS.news_limit)
-        picked = pick_surprise(articles_for(articles, event.symbol, start=start, end=end))
-        parsed += picked is not None
         when = event.accepted_at.astimezone(MARKET_TZ).strftime("%Y-%m-%d %H:%M")
         reacts = reaction_date(event.accepted_at, weekdays)
+        window = news_window(reacts, weekdays, now) if reacts is not None else None
+        if window is None:
+            print(f"{event.symbol:5} {when} -> reacts {reacts}: no news window")
+            continue
+        start, end = window  # as the scanner: the reaction session's, not anchored on the 8-K's (late) acceptance time
+        articles = news.get_news([event.symbol], start=start, end=end, limit=NEWS_LIMIT, sort="asc")
+        picked = pick_surprise(articles_for(articles, event.symbol, start=start, end=end))
+        parsed += picked is not None
         if picked is None:
             print(f"{event.symbol:5} {when} -> reacts {reacts}: no surprise headline")
         else:
