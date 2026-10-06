@@ -1,7 +1,7 @@
 # tests/strategies/earnings_drift/test_drift_events.py
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from tests.fakes import et
 
@@ -9,6 +9,7 @@ from trading_agent_framework.strategies.earnings_drift.events import (
     EarningsEvent,
     earnings_events,
     events_reacting_on,
+    news_window,
     older_pages,
     reaction_date,
     release_timing,
@@ -108,3 +109,46 @@ def test_release_timing() -> None:
     assert release_timing(et(2026, 9, 2, 16, 5), date(2026, 9, 3)) == "after_close"
     assert release_timing(et(2026, 9, 3, 7, 0), date(2026, 9, 3)) == "before_open"
     assert release_timing(et(2026, 9, 3, 11, 0), date(2026, 9, 3)) == "during_session"
+
+
+# --- news_window: previous session close .. reaction close, never past now ---------------------------
+
+
+def test_news_window_runs_from_the_previous_close_to_the_reaction_close() -> None:
+    now = et(2026, 9, 3, 16, 5)
+    assert news_window(date(2026, 9, 3), DATES, now) == (et(2026, 9, 2, 16, 0), et(2026, 9, 3, 16, 0))
+
+
+def test_news_window_on_a_monday_starts_at_friday_s_close() -> None:
+    now = et(2026, 9, 7, 16, 30)
+    assert news_window(date(2026, 9, 7), DATES, now) == (et(2026, 9, 4, 16, 0), et(2026, 9, 7, 16, 0))
+
+
+def test_news_window_follows_the_clock_change_in_new_york() -> None:
+    dates = [date(2026, 10, 29), date(2026, 10, 30), date(2026, 11, 2)]  # DST ends Sun 1 Nov: Friday closes at 20:00Z, Monday at 21:00Z
+    start, end = news_window(date(2026, 11, 2), dates, et(2026, 11, 2, 17, 0))  # type: ignore[misc]
+    assert start.astimezone(UTC) == datetime(2026, 10, 30, 20, 0, tzinfo=UTC)
+    assert end.astimezone(UTC) == datetime(2026, 11, 2, 21, 0, tzinfo=UTC)
+
+
+def test_news_window_never_ends_after_now() -> None:
+    now = et(2026, 9, 3, 11, 0)
+    assert news_window(date(2026, 9, 3), DATES, now) == (et(2026, 9, 2, 16, 0), now)
+
+
+def test_news_window_does_not_depend_on_the_order_of_the_dates() -> None:
+    assert news_window(date(2026, 9, 3), list(reversed(DATES)), et(2026, 9, 3, 17, 0)) == (et(2026, 9, 2, 16, 0), et(2026, 9, 3, 16, 0))
+
+
+def test_news_window_is_none_for_an_unknown_day_or_the_first_date() -> None:
+    now = et(2026, 9, 7, 17, 0)
+    assert news_window(date(2026, 9, 5), DATES, now) is None  # a Saturday: not a trading date
+    assert news_window(date(2026, 9, 1), DATES, now) is None  # no previous date
+    assert news_window(date(2026, 9, 3), [], now) is None
+
+
+def test_news_window_reaches_back_past_an_sec_time_that_trails_the_release() -> None:
+    """The window knows nothing of the 8-K: a release hours before the SEC acceptance time is still inside it."""
+    accepted = et(2026, 9, 3, 10, 30)  # SEC's time; the wire went out at 06:46 ET
+    start, end = news_window(date(2026, 9, 3), DATES, et(2026, 9, 3, 16, 5))  # type: ignore[misc]
+    assert start <= accepted - timedelta(hours=4) <= end
