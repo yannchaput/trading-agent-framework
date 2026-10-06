@@ -8,7 +8,7 @@ import json
 import logging
 import math
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -193,6 +193,16 @@ def close_series(df: pd.DataFrame) -> pd.Series:
     dates = [ts.date() for ts in pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)]
     series = pd.Series(df["close"].to_numpy(dtype=float), index=pd.Index(dates))
     return series.loc[~series.index.duplicated(keep="last")].sort_index()
+
+
+def completed_bars(df: pd.DataFrame, today: date) -> pd.DataFrame:
+    """`df` without its bars dated `today` (market time): while a session is open its daily bar is partial.
+
+    The strategy only iterates between its start time and the close, so a bar dated today is always partial
+    there. In backtests the data gate already hides it and this is a no-op.
+    """
+    dates = [ts.date() for ts in pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)]
+    return df.loc[[d != today for d in dates]]
 
 
 def diagnostics_to_dict(diag: PortfolioRiskDiagnostics) -> dict:

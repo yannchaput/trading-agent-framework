@@ -4,7 +4,7 @@ On 2026-10-06 about half of the target series ended a session before SPY's; alig
 every return was paired with the wrong day, and the overlay read NORMAL (beta 1.35) instead of CRITICAL (2.8).
 """
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from types import SimpleNamespace
 
 import numpy as np
@@ -148,11 +148,18 @@ def test_close_series_keeps_one_value_per_date():
 class FakeStrategy:
     """Just enough of `Strategy` for `_risk_exposure`."""
 
-    def __init__(self, target_closes, spy):
+    def __init__(self, target_closes, spy, now=None):
         self.vars = SimpleNamespace(target_closes=target_closes, alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
         self._spy = spy
         self.infos: list[str] = []
         self.warnings: list[str] = []
+        # Default: the day after the last date in DATES, so no test bar counts as today's partial bar.
+        self._now = now or datetime.combine(DATES[-1] + timedelta(days=1), time(12), tzinfo=MARKET_TZ)
+
+    _market_date = CrossMomentumStrategy._market_date
+
+    def get_datetime(self):
+        return self._now
 
     def get_historical_prices(self, ticker, length, timestep):
         if self._spy is None:
@@ -195,3 +202,14 @@ def test_risk_exposure_without_targets_is_neutral():
     fake = FakeStrategy({}, None)
 
     assert CrossMomentumStrategy._risk_exposure(fake, []) == 1.0
+
+
+def test_risk_exposure_drops_spys_partial_bar_for_today():
+    stocks, spy = _market()
+    completed = {symbol: series.iloc[:-1] for symbol, series in stocks.items()}  # every target through yesterday
+    today_noon = datetime.combine(DATES[-1], time(12), tzinfo=MARKET_TZ)
+    fake = FakeStrategy(completed, spy, now=today_noon)  # SPY also carries today's (partial) bar
+
+    CrossMomentumStrategy._risk_exposure(fake, _target(completed))
+
+    assert fake.warnings == []  # SPY's last date is yesterday too once today's bar is gone

@@ -23,7 +23,7 @@ import calendar
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,6 +50,7 @@ from .utils import (
     breadth_exposure,
     breadth_share,
     close_series,
+    completed_bars,
     compute_atr_from_df,
     compute_return_from_prices,
     compute_volatility_exposure,
@@ -72,6 +73,9 @@ logger = logging.getLogger(__name__)
 
 # A position within ±20% of its target value is left alone (no top-up, no trim) to avoid overtrading.
 _REBALANCE_BAND = 0.20
+
+# Daily bars behind every computation (scores, filters, breadth, risk overlay), all from completed sessions.
+_HISTORY_BARS = 300
 
 
 class CrossMomentumStrategy(Strategy):
@@ -197,11 +201,15 @@ class CrossMomentumStrategy(Strategy):
         dt = self.get_datetime()
         return dt.weekday() == self.parameters["day_of_week"]
 
+    def _market_date(self) -> date:
+        """Today's date in market time: the date of the session whose daily bar is still forming."""
+        return self.get_datetime().astimezone(MARKET_TZ).date()
+
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
         self.vars.alpaca_rate_limiter.wait()
         try:
-            bars = self.get_historical_prices(ticker, length=300, timestep="day")
+            bars = self.get_historical_prices(ticker, length=_HISTORY_BARS + 1, timestep="day")
         except BrokerError as exc:
             self.log_warning(f"Skipping {ticker}: failed to fetch bars ({exc})")
             return None
@@ -211,6 +219,12 @@ class CrossMomentumStrategy(Strategy):
         df = bars.pandas_df if hasattr(bars, "pandas_df") else bars
         if not isinstance(df, pd.DataFrame) or df.empty:
             self.log_error("The Bars instance has not the right type: consider using a pandas Dataframe.")
+            return None
+
+        # Completed sessions only: today's bar is partial, and it made the same Tuesday's decision depend on the
+        # hour it ran (2026-10-06). One extra bar is fetched so the window stays _HISTORY_BARS long.
+        df = completed_bars(df, self._market_date()).tail(_HISTORY_BARS)
+        if df.empty:
             return None
 
         closes = df["close"].tolist()
@@ -371,11 +385,14 @@ class CrossMomentumStrategy(Strategy):
         if not target or not self.vars.target_closes:
             return 1.0
         self.vars.alpaca_rate_limiter.wait()
-        spy_bars = self.get_historical_prices("SPY", length=300, timestep="day")
+        spy_bars = self.get_historical_prices("SPY", length=_HISTORY_BARS + 1, timestep="day")
         if spy_bars is None or spy_bars.empty:
             self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
             return 1.0
-        spy = close_series(spy_bars.pandas_df)
+        spy = close_series(completed_bars(spy_bars.pandas_df, self._market_date()).tail(_HISTORY_BARS))
+        if spy.empty:
+            self.log_warning("Risk overlay: no completed SPY session — defaulting to NORMAL (100% exposure)")
+            return 1.0
         spy_last = spy.index[-1]
         off_date = {symbol: series.index[-1] for symbol, series in self.vars.target_closes.items() if len(series) and series.index[-1] != spy_last}
         if off_date:
