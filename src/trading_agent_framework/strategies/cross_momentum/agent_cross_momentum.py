@@ -437,6 +437,12 @@ class CrossMomentumStrategy(Strategy):
 
         current_positions = self.get_positions()
 
+        # Size at the last trade: an entry's "price" is the last COMPLETED close, a session old by now.
+        prices = {entry["symbol"]: self._price_or_zero(entry["symbol"]) for entry in target}
+        for symbol, price in prices.items():
+            if price <= 0:
+                self.log_warning(f"No price for {symbol}: no buy or trim this week")
+
         # Phase 1: Sell (exits, trims, excess parking)
         estimated_sell_proceeds = 0.0
         hysteresis_value = 0.0
@@ -453,16 +459,19 @@ class CrossMomentumStrategy(Strategy):
                 # Trim a target position that sits above its band, so an exposure cut lowers the held book
                 # too, not just new buys; the proceeds are parked or fund this week's buys.
                 entry = target_by_symbol[symbol]
+                price = prices[symbol]
+                if price <= 0:
+                    continue
                 target_value = portfolio_value * entry["target_weight"]
-                current_value = float(pos.quantity) * entry["price"]
+                current_value = float(pos.quantity) * price
                 trim_value = current_value - target_value
                 if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
-                    trim_qty = fractional_qty(trim_value / entry["price"])
+                    trim_qty = fractional_qty(trim_value / price)
                     if trim_qty > 0:
-                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${entry['price']:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
+                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                         try:
                             self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
-                            estimated_sell_proceeds += trim_qty * entry["price"]
+                            estimated_sell_proceeds += trim_qty * price
                         except Exception as e:
                             self.log_error(f"Failed to submit trim order for {symbol}: {e}")
                 continue
@@ -523,11 +532,14 @@ class CrossMomentumStrategy(Strategy):
                 break
 
             symbol = entry["symbol"]
+            price = prices[symbol]
+            if price <= 0:
+                continue
             target_weight = entry["target_weight"]
             target_value = portfolio_value * target_weight
 
             current_pos = next((p for p in current_positions if p.asset.symbol == symbol), None)
-            current_value = float(current_pos.quantity) * entry["price"] if current_pos else 0.0
+            current_value = float(current_pos.quantity) * price if current_pos else 0.0
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value
@@ -538,17 +550,17 @@ class CrossMomentumStrategy(Strategy):
                 continue
 
             # Compute the fractional quantity to buy taking into account the existing position
-            raw_qty = diff_value / entry["price"]
+            raw_qty = diff_value / price
             quantity = fractional_qty(raw_qty)
             # Current position is already above target, skip buying
             if quantity <= 0:
                 continue
 
-            cost = quantity * entry["price"]
+            cost = quantity * price
             # If the cost exceeds the remaining spendable cash (the reserve is already excluded), reduce the quantity to fit
             if cost > available_cash:
-                quantity = fractional_qty(available_cash / entry["price"])
-                cost = quantity * entry["price"]
+                quantity = fractional_qty(available_cash / price)
+                cost = quantity * price
             # quantity can be equal to 0 for very tiny amount passed to fractional_qty
             if quantity <= 0:
                 continue
@@ -556,7 +568,7 @@ class CrossMomentumStrategy(Strategy):
             # cost <= available_cash here (fractional_qty floors), so available_cash stays non-negative
             available_cash -= cost
 
-            self.log_info(f"Buying {quantity} {symbol} @ ${entry['price']:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
+            self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
             try:
                 buy_order = self.create_order(symbol, quantity, "buy", time_in_force="day")
                 self.submit_order(buy_order)
