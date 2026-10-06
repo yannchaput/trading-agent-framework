@@ -182,11 +182,13 @@ FRIDAY_AFTER_CLOSE = et(DATES[-2].year, DATES[-2].month, DATES[-2].day, 16, 30) 
 WIRE = "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate"
 
 
-def test_newer_articles_of_other_symbols_do_not_push_the_earnings_headline_out(tmp_path: Path) -> None:
-    busy = [_headline("BBB", f"BBB analyst note {i}", RELEASE + timedelta(minutes=10 + i)) for i in range(60)]
-    news = _NewestFirstNews([*NEWS["AAA"], *NEWS["CCC"], *busy])
+def test_other_symbols_articles_before_the_wire_do_not_push_it_out_of_the_query(tmp_path: Path) -> None:
+    """One shared query (AAA, BBB, CCC; oldest first, limit 50) would return only BBB's 60 evening notes: the wire needs its own query."""
+    notes = [_headline("BBB", f"BBB analyst note {i}", PREVIOUS_CLOSE + timedelta(minutes=30 + i)) for i in range(60)]
+    news = _NewestFirstNews([*notes, *NEWS["AAA"], *NEWS["CCC"]])
     result = _scanner(tmp_path, StaticEvents(EVENTS), news=news).prepare(held=set())
-    assert [c.symbol for c in result.candidates] == ["AAA"]  # a query shared with BBB (limit 50, newest first) lost it
+    assert [c.symbol for c in result.candidates] == ["AAA"]
+    assert [call[0] for call in news.calls] == [("AAA",), ("BBB",), ("CCC",)]
 
 
 def test_a_crowded_window_does_not_cut_the_earnings_headline_because_news_is_read_oldest_first(tmp_path: Path) -> None:

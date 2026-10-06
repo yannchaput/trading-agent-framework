@@ -119,12 +119,14 @@ def news_window(reaction_day: date, trading_dates: Sequence[date], now: datetime
     for JPM, UNH, AAPL, OMC), so a window built around it misses a wire that went out before it. Every wire that
     moves `reaction_day` falls after the previous close (an after-close release) or before this close (a pre-open
     or intraday one). Closes are taken as 16:00 ET (early closes are a known limit, spec §11). None when
-    `reaction_day` is not a trading date or has no previous one.
+    `reaction_day` is not a trading date, has no previous one, or `now` is before the previous close (the window
+    would end before it starts).
     """
     dates = sorted(trading_dates)
     if reaction_day not in dates or dates.index(reaction_day) == 0:
         return None
-    return session_close(dates[dates.index(reaction_day) - 1]), min(now, session_close(reaction_day))
+    start, end = session_close(dates[dates.index(reaction_day) - 1]), min(now, session_close(reaction_day))
+    return (start, end) if end >= start else None
 
 
 def release_timing(accepted_at: datetime, reaction_day: date) -> str:

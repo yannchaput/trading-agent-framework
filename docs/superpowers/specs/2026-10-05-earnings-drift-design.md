@@ -154,8 +154,8 @@ eps_surprise_pct, eps_beat, sales_actual, sales_estimate, sales_surprise_pct, sa
 sales fields are `None` when absent. `eps_beat` is computed from the numbers (`actual > estimate`), never from
 the verb. Headlines without an estimate ("Up From ...") return `None`.
 
-`pick_surprise(articles, accepted_at)` considers articles created from `accepted_at − 2h` to the reaction
-session's close; a `CORRECTION:` headline wins over the original; otherwise the earliest parsable one.
+`pick_surprise(articles)` takes one symbol's articles, oldest first, from the §3.6 news window (`articles_for`); a
+`CORRECTION:` headline wins over the original; otherwise the earliest parsable one.
 
 ### 3.4 Reaction features (`reaction.py`, pure)
 
@@ -204,7 +204,10 @@ real release by about 4 hours (JPM, UNH, OMC and AAPL wires came 4 hours before 
 a window of `accepted_at − 2 h`), so it anchors nothing here. Articles are read oldest first (`sort="asc"`), one
 symbol per query: Alpaca's default is newest first, so `limit` cuts the OLDEST articles of a busy window, and the
 Benzinga EPS headline is among the first after the release (MSFT's wire was cut by 50 newer articles). On the
-smoke sample (8 events) a read-only check of this window found the headline for all 8, against 3 with the old one.
+smoke sample (8 events, 3 parsed with the old window), a read-only query of this window returned the wire for JPM
+and UNH (7 and 6 articles, wire inside). For MSFT, AAPL and OMC the wire comes minutes after the previous close, so
+it is among the first articles read oldest first (by reasoning, not re-queried). The 3 that already parsed were not
+re-checked. The smoke script measures the share.
 
 **Hollow scan:** if SEC fails for more than half of the universe (with at least 20 failures), the session has no
 candidates, an error is logged and the events are not kept (the next cycle loads them again);
@@ -224,7 +227,7 @@ reaction: {gap_pct, return_pct, abnormal_pct, hold_ratio, close_location, rel_vo
 context: {runup_20d_pct, runup_60d_pct, atr14_pct, close, reaction_low}
 max_quantity
 filing: {accession_number}            (readable with get_filing_document)
-headlines: up to 5 headlines (title + time) from the surprise window
+headlines: up to 5 headlines (title + time) from the news window (§3.6)
 ```
 
 Percentages rounded to 0.1, prices to the cent. BEAT/MISS and signs come from code.
@@ -420,6 +423,11 @@ fractions in (0, 1]):
   session (a release before the close recorded after it is assigned the next session, whose news window starts after
   the wire: no headline, rejected `no_surprise_data`). The news window (§3.6) does not depend on it; the reaction
   date still does.
+- **Wide window for a pre-open release.** The window opens at the previous close, about 15 h before a pre-open
+  wire, so the previous evening's articles count against `news_limit` first (observed 7 and 6 articles for JPM and
+  UNH, far below 50; paging is deferred). The fact sheet's `reported_at`/`timing` still come from the SEC time (JPM
+  shows `during_session` 10:30 though the wire went out at 06:46 pre-open); the picked headline's own time is shown
+  to the agent.
 - **Benzinga coverage.** Events without a parsable headline are rejected (`no_surprise_data`); the smoke script
   measures that share before the first backtest.
 - **Today's fee rates** over past periods (as every backtest).

@@ -947,7 +947,7 @@ class FakeNewsProvider:
         include_content: bool = False,
         sort: str | None = None,
     ) -> list[dict[str, object]]:
-        """`sort` None keeps insertion order; "asc"/"desc" order the in-window articles by `created_at` before `limit`, as Alpaca does."""
+        """`sort` None keeps insertion order; "asc"/"desc" order the in-window articles by `created_at` (Alpaca's own key is the update time) before `limit`."""
         if sort not in (None, "asc", "desc"):
             raise ValueError(f"sort must be 'asc', 'desc' or None, got {sort!r}")
         self.calls.append((tuple(symbols), start, end, limit, include_content))

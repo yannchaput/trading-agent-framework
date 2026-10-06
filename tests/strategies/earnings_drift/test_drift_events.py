@@ -152,3 +152,8 @@ def test_news_window_reaches_back_past_an_sec_time_that_trails_the_release() -> 
     accepted = et(2026, 9, 3, 10, 30)  # SEC's time; the wire went out at 06:46 ET
     start, end = news_window(date(2026, 9, 3), DATES, et(2026, 9, 3, 16, 5))  # type: ignore[misc]
     assert start <= accepted - timedelta(hours=4) <= end
+
+
+def test_news_window_is_none_when_now_is_before_the_previous_close() -> None:
+    assert news_window(date(2026, 9, 3), DATES, et(2026, 9, 2, 15, 0)) is None  # the window would end before it starts
+    assert news_window(date(2026, 9, 3), DATES, et(2026, 9, 2, 16, 0)) == (et(2026, 9, 2, 16, 0), et(2026, 9, 2, 16, 0))  # empty, not inverted
