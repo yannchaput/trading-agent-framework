@@ -524,8 +524,9 @@ class CrossMomentumStrategy(Strategy):
                         self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
 
         # Phase 2: Buy
-        # The estimate is priced at the last close, but orders fill at a later open plus fees, so hold
-        # a fixed reserve back: it is what lets the last buys land when prices gap or sells fill lower.
+        # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
+        # bar's open in a backtest) plus fees, so hold a fixed reserve back: it is what lets the last buys land
+        # when prices move or sells fill lower.
         cash_reserve = (float(self.get_cash()) + estimated_sell_proceeds) * self.parameters["cash_buffer_pct"]
         available_cash = float(self.get_cash()) + estimated_sell_proceeds - cash_reserve
         for entry in target:

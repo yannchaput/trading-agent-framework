@@ -43,7 +43,19 @@ def test_parse_rebalance_time_reads_hh_mm():
     assert parse_rebalance_time("10:30") == time(10, 30)
 
 
-@pytest.mark.parametrize("value", ["noon", "25:00", "12:00+02:00", ""])
+@pytest.mark.parametrize("value", ["09:30", "10:30", "12:00", "15:58"])
+def test_parse_rebalance_time_accepts_a_time_in_the_regular_session(value):
+    assert parse_rebalance_time(value) == time.fromisoformat(value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "noon", "25:00", "12:60", "24:00", "12:00+02:00", "12:00:30", "12:00:00.5", "1200", "12", "T12:00", "", " 12:00",
+        None, 1200, time(12, 0),
+        "08:00", "09:29", "15:59", "16:30",
+    ],
+)  # fmt: skip
 def test_parse_rebalance_time_rejects_anything_else(value):
     with pytest.raises(ConfigurationError, match="rebalance_time"):
         parse_rebalance_time(value)
@@ -62,3 +74,8 @@ def test_the_strategy_iterates_at_its_rebalance_time():
 def test_a_malformed_rebalance_time_fails_at_construction():
     with pytest.raises(ConfigurationError, match="rebalance_time"):
         _strategy(rebalance_time="noon")
+
+
+def test_a_rebalance_time_of_24_00_fails_at_construction():
+    with pytest.raises(ConfigurationError, match="rebalance_time"):
+        _strategy(rebalance_time="24:00")

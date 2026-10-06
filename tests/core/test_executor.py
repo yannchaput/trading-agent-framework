@@ -518,4 +518,6 @@ def test_an_iteration_start_time_in_the_closing_window_skips_the_iterations(capl
     strategy = _run(Late)
     assert strategy.times("on_trading_iteration") == []
     assert strategy.times("before_market_closes") == [et(2026, 9, 14, 15, 59)]
-    assert any("iteration_start_time" in record.getMessage() for record in caplog.records)
+    skipped = [record for record in caplog.records if "iteration_start_time" in record.getMessage()]
+    assert skipped
+    assert all(record.levelno == logging.WARNING for record in skipped)

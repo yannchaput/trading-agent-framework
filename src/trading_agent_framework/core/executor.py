@@ -177,7 +177,7 @@ class StrategyExecutor:
         stop_at = session.close - timedelta(minutes=strategy.minutes_before_closing)
         start = self._iteration_start(session)
         if start >= stop_at:
-            logger.info(
+            logger.warning(
                 "No iteration for %s this session: iteration_start_time %s is not before %s",
                 strategy.name,
                 start.isoformat(),
