@@ -74,6 +74,8 @@ Groups never fall back to each other; with one Alpaca key pair, repeat it in eac
 
 `SEC_EDGAR_USER_AGENT` is needed if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings) or uses the fundamentals quality screen (`bill_ackman`). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
 
+`CONGRESS_USER_AGENT` is needed by the `congress_trades` strategy (House Clerk financial disclosures). Same format: `"<app or project name> <contact email>"`.
+
 ## 📈 Interactive Brokers (IBKR)
 
 Set `BROKER=ibkr` in the strategy's paper/live env file. IBKR handles orders, account and
