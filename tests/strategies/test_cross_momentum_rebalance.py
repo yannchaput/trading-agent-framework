@@ -14,7 +14,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import BacktestDataError, BrokerError
 
 TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
@@ -404,6 +404,15 @@ def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():
 
 def test_a_failed_bars_fetch_for_a_trend_asset_sends_its_half_to_shv():
     fake = _sleeve_fake(gld=BrokerError("no bars"))
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert any("GLD" in message for message in fake.warnings)
+
+
+def test_a_backtest_data_error_for_a_trend_asset_sends_its_half_to_shv():
+    fake = _sleeve_fake(gld=BacktestDataError("bars cannot be compared against the cutoff"))
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 

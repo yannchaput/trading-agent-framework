@@ -38,7 +38,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -433,7 +433,7 @@ class CrossMomentumStrategy(Strategy):
         self.vars.alpaca_rate_limiter.wait()
         try:
             bars = self.get_historical_prices(symbol, length=_HISTORY_BARS + 1, timestep="day")
-        except BrokerError as exc:
+        except (BrokerError, BacktestError) as exc:
             self.log_warning(f"Sleeve: no bars for {symbol} ({exc}): its share goes to {fallback}")
             return None
         if bars is None or bars.empty:
