@@ -9,6 +9,7 @@ from trading_agent_framework.strategies.cross_momentum.weekday_protocol import (
     RunEntry,
     RunMetrics,
     compare,
+    count_log_lines,
     days_to_run,
     load_manifest,
     mismatches,
@@ -163,3 +164,41 @@ def test_render_shows_both_labels_the_verdict_and_the_failures():
     assert "REJECT" in text
     assert "CAGR" in text
     assert "Tue" in text
+
+
+def test_two_sets_covering_fewer_than_five_days_cannot_be_compared():
+    three = [0, 1, 2]
+
+    with pytest.raises(ValueError, match="days"):
+        compare(_manifest("base", days=three), _manifest("cand", days=three), _same(_metrics(), three), _same(_metrics(cagr=0.31), three))
+
+
+@pytest.mark.parametrize("day", ["7", "-1"])
+def test_a_manifest_with_a_day_outside_monday_to_friday_is_refused(tmp_path, day):
+    path = tmp_path / "base.json"
+    save_manifest(path, _manifest(days=[0]))
+    data = json.loads(path.read_text())
+    data["runs"] = {day: data["runs"]["0"]}
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match=rf"base.*{day}"):
+        load_manifest(path)
+
+
+def test_read_run_metrics_refuses_a_non_finite_figure(tmp_path):
+    figures = {"cagr_strategy": 0.32, "alpha": float("nan"), "beta": 0.86, "max_drawdown_strategy": -0.25, "sharpe_strategy": 1.25}
+    (tmp_path / "metrics.json").write_text(json.dumps(figures))
+
+    with pytest.raises(ValueError, match=rf"alpha.*{tmp_path}"):
+        read_run_metrics(tmp_path)
+
+
+def test_count_log_lines_counts_the_lines_containing_each_pattern(tmp_path):
+    (tmp_path / "backtest.log").write_text("ok\nboom happened\nfine\nanother boom here\n")
+
+    assert count_log_lines(tmp_path, {"booms": "boom", "crashes": "crash"}) == {"booms": 2, "crashes": 0}
+
+
+def test_count_log_lines_names_a_run_dir_without_a_log(tmp_path):
+    with pytest.raises(ValueError, match=str(tmp_path)):
+        count_log_lines(tmp_path, {"booms": "boom"})

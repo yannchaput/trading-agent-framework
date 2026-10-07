@@ -491,6 +491,9 @@ class CrossMomentumStrategy(Strategy):
             if price <= 0:
                 self.log_warning(f"No price for {symbol}: no buy or trim this week")
 
+        # The trend data is fetched before any order is sent: an unexpected fetch error then aborts the rebalance cleanly
+        weights = self._sleeve_weights()
+
         # Phase 1: Sell (exits, trims, excess parking)
         estimated_sell_proceeds = 0.0
         hysteresis_value = 0.0
@@ -549,7 +552,6 @@ class CrossMomentumStrategy(Strategy):
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
         stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
         parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
-        weights = self._sleeve_weights()
         sleeve: list[tuple[str, float, float, float]] = []  # (symbol, price, current value, target value), priced only
         for symbol in sleeve_order:
             position = sleeve_positions.get(symbol)

@@ -8,6 +8,7 @@ from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config import TradingMode
@@ -418,6 +419,25 @@ def test_a_backtest_data_error_for_a_trend_asset_sends_its_half_to_shv():
 
     assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
     assert any("GLD" in message for message in fake.warnings)
+
+
+def test_an_unexpected_trend_fetch_error_aborts_before_any_order_is_sent():
+    fake = _sleeve_fake(gld=RuntimeError("boom"), cash=900.0, positions=[_held("OLD", 10.0)], last_prices={**SLEEVE_PRICES, "OLD": 10.0})  # OLD is unranked: it would be sold
+
+    with pytest.raises(RuntimeError, match="boom"):
+        CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert fake.orders == []
+
+
+def test_the_first_deployment_sells_shv_and_buys_the_trend_assets():
+    # pv 1000 (20 SHV x 50), parking target 950 - 300 = 650: GLD 325, IEF 325, SHV 0
+    fake = _sleeve_fake(cash=0.0, positions=[_held("SHV", 20.0)])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("SHV", "sell", 20.0), ("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("IEF", "buy", 32.5)]
+    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 0.0 + 20.0 * 50.0 - 1000.0 * 0.05 + 1e-6
 
 
 def test_empty_bars_for_a_trend_asset_send_its_half_to_shv():

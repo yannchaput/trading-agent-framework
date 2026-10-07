@@ -12,6 +12,7 @@ The verdict rules are in trading_agent_framework.strategies.cross_momentum.weekd
 import argparse
 import hashlib
 import logging
+import re
 import subprocess
 import sys
 from decimal import Decimal
@@ -23,6 +24,7 @@ from trading_agent_framework.strategies.cross_momentum.weekday_protocol import (
     Manifest,
     RunEntry,
     compare,
+    count_log_lines,
     days_to_run,
     load_manifest,
     mismatches,
@@ -35,6 +37,12 @@ STRATEGY = "cross_momentum"
 UNIVERSE_FILE = Path("data/universe/us_stock_universe.json")
 EXPERIMENTS_DIR = Path("logs/cross_momentum/experiments")
 RUN_DIR_PREFIX = "RUN_DIR="
+# What a run's backtest.log says about problems the executor swallowed: a normal-looking metrics.json can hide them
+LOG_PATTERNS = {
+    "iteration_failed": "on_trading_iteration failed for strategy",
+    "parking_order_failed": "Failed to submit parking",
+    "sleeve_no_bars": "Sleeve: no bars",
+}
 
 
 def _git(*args: str) -> str:
@@ -46,6 +54,17 @@ def _days(value: str) -> list[int]:
     if any(day not in range(5) for day in days) or len(set(days)) != len(days):
         raise argparse.ArgumentTypeError("days are distinct integers from 0 (Monday) to 4 (Friday)")
     return days
+
+
+def _label(value: str) -> str:
+    """A label becomes a file name under EXPERIMENTS_DIR: no path separators, nothing that climbs out of it."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", value) or value in {".", ".."}:
+        raise argparse.ArgumentTypeError("a label is letters, digits, '.', '_' or '-' (and not '.' or '..')")
+    return value
+
+
+def _tree_state() -> tuple[str, bool]:
+    return _git("rev-parse", "HEAD"), bool(_git("status", "--porcelain"))
 
 
 def _require_project_root() -> Path:
@@ -107,12 +126,16 @@ def _run(args: argparse.Namespace) -> int:
     for day in days:
         print(f"[{args.label}] {DAY_NAMES[day]}: running", flush=True)
         command = [sys.executable, __file__, "one", "--day", str(day), "--slippage", str(args.slippage)]
+        commit_before, dirty_before = _tree_state()
         completed = subprocess.run(command, capture_output=True, text=True)
+        commit_after, dirty_after = _tree_state()
         run_dirs = [line[len(RUN_DIR_PREFIX):] for line in completed.stdout.splitlines() if line.startswith(RUN_DIR_PREFIX)]
         if completed.returncode != 0 or not run_dirs:
             sys.stderr.write(completed.stderr[-4000:])
             sys.exit(f"[{args.label}] {DAY_NAMES[day]}: the backtest failed (exit {completed.returncode}); the days before it are saved in {path}")
-        manifest.runs[day] = RunEntry(run_dir=run_dirs[-1], commit=_git("rev-parse", "HEAD"), dirty=bool(_git("status", "--porcelain")))
+        manifest.runs[day] = RunEntry(
+            run_dir=run_dirs[-1], commit=commit_before, dirty=dirty_before or dirty_after or commit_before != commit_after
+        )
         save_manifest(path, manifest)
         print(f"[{args.label}] {DAY_NAMES[day]}: {run_dirs[-1]}", flush=True)
     print(f"Manifest: {path.resolve()}")
@@ -125,11 +148,25 @@ def _compare(args: argparse.Namespace) -> int:
         candidate = load_manifest(Path(args.candidate))
         baseline_metrics = {day: read_run_metrics(Path(entry.run_dir)) for day, entry in baseline.runs.items()}
         candidate_metrics = {day: read_run_metrics(Path(entry.run_dir)) for day, entry in candidate.runs.items()}
+        counts = {
+            (manifest.label, day): (entry.run_dir, count_log_lines(Path(entry.run_dir), LOG_PATTERNS))
+            for manifest in (baseline, candidate)
+            for day, entry in sorted(manifest.runs.items())
+        }
         comparison = compare(baseline, candidate, baseline_metrics, candidate_metrics)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"Cannot compare: {exc}", file=sys.stderr)
         return 2
+    broken = [(key, run_dir, found["iteration_failed"]) for key, (run_dir, found) in counts.items() if found["iteration_failed"] > 0]
+    if broken:
+        # The executor swallows an exception from on_trading_iteration, so such a run still writes a normal metrics.json
+        for (label, day), run_dir, failed in broken:
+            print(f"Cannot compare: {label} {DAY_NAMES[day]} had {failed} failed strategy iterations (see {run_dir}/backtest.log)", file=sys.stderr)
+        return 2
     print(render(comparison))
+    for (label, day), (_, found) in counts.items():
+        if found["parking_order_failed"] or found["sleeve_no_bars"]:
+            print(f"warning: {label} {DAY_NAMES[day]}: {found['parking_order_failed']} parking order failures / {found['sleeve_no_bars']} sleeve fetches without bars")
     return 0 if comparison.verdict == "KEEP" else 1
 
 
@@ -138,7 +175,7 @@ def main() -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     run = commands.add_parser("run", help="run (or resume) a set of weekday backtests")
-    run.add_argument("--label", required=True, help="the set's name: logs/cross_momentum/experiments/<label>.json")
+    run.add_argument("--label", type=_label, required=True, help="the set's name: logs/cross_momentum/experiments/<label>.json")
     run.add_argument("--slippage", type=float, default=0.0, help="per-trade slippage passed to run_backtesting (default 0)")
     run.add_argument("--days", type=_days, default=[0, 1, 2, 3, 4], help="comma-separated weekdays, 0 = Monday (default 0,1,2,3,4)")
     run.set_defaults(handler=_run)

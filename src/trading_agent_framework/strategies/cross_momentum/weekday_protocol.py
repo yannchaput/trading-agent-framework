@@ -9,11 +9,13 @@ runs them. Pure apart from the manifest and metrics JSON files.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from statistics import fmean
 
 DAY_NAMES = ("Mon", "Tue", "Wed", "Thu", "Fri")
+WEEKDAYS = frozenset(range(len(DAY_NAMES)))
 
 # KEEP thresholds (spec "Success bar"). Max drawdown is negative: the candidate's mean may be this much lower.
 MDD_TOLERANCE = 0.01
@@ -55,7 +57,12 @@ class Manifest:
 
 def load_manifest(path: Path) -> Manifest:
     data = json.loads(Path(path).read_text())
-    runs = {int(day): RunEntry(**entry) for day, entry in data.pop("runs").items()}
+    runs = {}
+    for key, entry in data.pop("runs").items():
+        day = int(key)
+        if day not in WEEKDAYS:
+            raise ValueError(f"manifest {data.get('label')!r} ({path}): run day {key} is not a weekday from 0 (Monday) to 4 (Friday)")
+        runs[day] = RunEntry(**entry)
     return Manifest(runs=runs, **data)
 
 
@@ -96,7 +103,21 @@ def read_run_metrics(run_dir: Path) -> RunMetrics:
     missing = [key for key in _METRIC_KEYS.values() if data.get(key) is None]
     if missing:
         raise ValueError(f"{path} has no {', '.join(missing)}")
-    return RunMetrics(**{name: float(data[key]) for name, key in _METRIC_KEYS.items()})
+    figures = {name: float(data[key]) for name, key in _METRIC_KEYS.items()}
+    for name, value in figures.items():
+        if not math.isfinite(value):
+            raise ValueError(f"{name} is {value} in {path} (run {run_dir}): the run is unusable")
+    return RunMetrics(**figures)
+
+
+def count_log_lines(run_dir: Path, patterns: dict[str, str]) -> dict[str, int]:
+    """Per name, how many lines of the run's `backtest.log` contain that substring."""
+    path = Path(run_dir) / "backtest.log"
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except FileNotFoundError as exc:
+        raise ValueError(f"no backtest.log in {run_dir}: the run was deleted or did not finish") from exc
+    return {name: sum(1 for line in lines if pattern in line) for name, pattern in patterns.items()}
 
 
 @dataclass(frozen=True)
@@ -146,12 +167,15 @@ def compare(
     """Judge the candidate set against the baseline set (spec "Success bar").
 
     Raises:
-        ValueError: the sets differ in setup or days, or a recorded day has no metrics.
+        ValueError: the sets differ in setup or days, either misses a weekday, or a recorded day has no metrics.
     """
     for name in mismatches(baseline, candidate):
         raise ValueError(f"the two sets differ in {name}: {getattr(baseline, name)!r} vs {getattr(candidate, name)!r}")
     if set(baseline.runs) != set(candidate.runs):
         raise ValueError(f"the two sets cover different days: {sorted(baseline.runs)} vs {sorted(candidate.runs)}")
+    for manifest in (baseline, candidate):
+        if set(manifest.runs) != WEEKDAYS:
+            raise ValueError(f"a comparison needs all five weekdays; {manifest.label} covers days {sorted(manifest.runs)}")
     for manifest, metrics in ((baseline, baseline_metrics), (candidate, candidate_metrics)):
         if set(metrics) != set(manifest.runs):
             raise ValueError(f"{manifest.label}: metrics for days {sorted(metrics)}, runs for days {sorted(manifest.runs)}")
