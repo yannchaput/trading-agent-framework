@@ -23,6 +23,7 @@ uv run python scripts/tests/smoke_quality_screen.py    # manual smoke test: fund
 uv run python scripts/tests/smoke_earnings_events.py    # manual smoke test: earnings_drift events + Benzinga surprises against real SEC + Alpaca news (read-only)
 uv run python scripts/tests/smoke_ibkr_account.py      # manual paper IB Gateway smoke test: account (read-only)
 uv run python scripts/tests/smoke_ibkr_orders.py       # manual paper IB Gateway smoke test: orders
+uv run python scripts/experiments/cross_momentum_weekdays.py run --label NAME   # cross_momentum backtest on each rebalance weekday, sequentially (~65 min); `compare A.json B.json` gives KEEP/REJECT
 ```
 
 Requires Python 3.14 (`.python-version`). Package manager is `uv`, not pip/poetry.
