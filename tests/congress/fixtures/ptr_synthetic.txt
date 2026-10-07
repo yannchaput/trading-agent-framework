@@ -1,0 +1,20 @@
+Clerk of the House of Representatives
+PERIODIC TRANSACTION REPORT
+Name: Hon. Nancy Pelosi
+Status: Member
+State/District: CA11
+ID Owner Asset Transaction Type Date Notification Date Amount Cap. Gains > $200?
+SP NVIDIA Corporation - Common Stock (NVDA) [ST] P 01/14/2025 01/14/2025 $250,001 - $500,000
+F S: New
+S O: Brokerage account
+D: Purchased 50 call options.
+Apple Inc. - Common Stock (AAPL) [ST] S 01/15/2025 01/15/2025 $1,000,001 - $5,000,000
+Alphabet Inc. - Class A (GOOGL) [ST] S (partial) 01/16/2025 01/16/2025 $15,001 - $50,000
+JT Berkshire Hathaway Inc. Class B
+(BRK.B) [ST] P 02/03/2025 02/04/2025 $100,001 - $250,000
+Tesla, Inc. - Call Option (TSLA) [OP] P 02/05/2025 02/05/2025 $500,001 - $1,000,000
+US Treasury Bill [GS] P 02/06/2025 02/06/2025 $1,000,001 - $5,000,000
+Microsoft Corporation (MSFT) [ST] E 02/07/2025 02/07/2025 $15,001 - $50,000
+DC Brown-Forman Corp. (BF-B) [ST] P 02/10/2025 02/10/2025 $1,001 - $15,000
+Vistra Corp. (VST) [ST] P 02/11/2025 02/11/2025 Over $50,000,000
+* For the complete list of asset type abbreviations, please visit https://fd.house.gov/reference/asset-type-codes.aspx.
