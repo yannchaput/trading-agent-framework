@@ -57,6 +57,7 @@ def test_package_exports_every_tool_factory() -> None:
         "news_tools",
         "macro_tools",
         "fundamentals_tools",
+        "congress_research_tools",
     }
     for name in tools_package.__all__:
         assert hasattr(tools_package, name)

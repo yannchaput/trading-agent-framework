@@ -33,11 +33,13 @@ def test_lazy_attribute_resolves_to_the_real_factory_in_process() -> None:
     the subprocess tests below which check the *absence* of `alpaca`/`httpx` from
     `sys.modules` before either attribute is ever touched.
     """
+    from trading_agent_framework.agents.tools.congress import congress_research_tools as direct_congress
     from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools as direct_fundamentals
     from trading_agent_framework.agents.tools.news import news_tools as direct_news
 
     assert tools.news_tools is direct_news
     assert tools.fundamentals_tools is direct_fundamentals
+    assert tools.congress_research_tools is direct_congress
     # Second access hits the globals() cache set by __getattr__, not the _LAZY branch again.
     assert tools.news_tools is direct_news
 
@@ -46,6 +48,7 @@ def test_dir_includes_lazy_and_eager_names() -> None:
     names = dir(tools)
     assert "news_tools" in names
     assert "fundamentals_tools" in names
+    assert "congress_research_tools" in names
     assert "PrebuiltTools" in names
     assert "trading_tools" in names
 
