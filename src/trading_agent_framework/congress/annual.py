@@ -56,6 +56,7 @@ _INCOME_TAIL = rf"(?:\s+{_INCOME}(?:\s*,\s*{_INCOME})*(?:\s+{_AMOUNT})?|\s+[A-Za
 _ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?:(?P<owner>SP|JT|DC)\s+)?(?P<value>{_AMOUNT}|None){_INCOME_TAIL}")
 _OWNERS = {"SP": "spouse", "JT": "joint", "DC": "dependent"}
 _TAG = re.compile(r"\[[A-Z]{2}\]")
+_STOCK_TAG = re.compile(r"\[ST\]")
 _OVER = re.compile(r"Over\s+\$([\d,]+)")
 
 
@@ -99,21 +100,12 @@ def _value(text: str) -> tuple[Decimal, Decimal]:
     return parse_amount(text)
 
 
-def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
-    """The stock holdings in a yearly report's extracted text; `None` for blank text (an image-only filing).
-
-    Raises `CongressDataError` when the text has no recognisable asset row at all: a changed layout must not read as
-    "she owns nothing". A report whose rows are all options or bonds is a valid, empty result.
-    """
-    flat = " ".join(strip_descriptions(text).split())
-    if not flat:
-        return None
-    rows = list(_ROW.finditer(flat))
-    if not rows:
-        raise CongressDataError(f"Report {ref.doc_id}: no asset row found in {len(flat)} characters of text (layout changed?)")
+def _scan(flat: str, ref: FilingRef) -> tuple[list[AssetHolding], list[int]]:
+    """(the stock holdings in `flat`, the positions of the `[ST]` tags that were NOT read as one)."""
     assets = []
+    read: set[int] = set()
     previous_end = 0
-    for row in rows:
+    for row in _ROW.finditer(flat):
         head = flat[previous_end : row.start()]
         previous_end = row.end()
         parsed_head = parse_row_head(head)
@@ -126,4 +118,31 @@ def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
         _head_owner, name, ticker = parsed_head
         owner = _OWNERS.get(row["owner"] or "", "self")
         assets.append(AssetHolding(doc_id=ref.doc_id, owner=owner, ticker=ticker, asset_name=name, value_low=low, value_high=high, tier=tier_of(low)))
+        read.add(row.start())
+    return assets, [tag.start() for tag in _STOCK_TAG.finditer(flat) if tag.start() not in read]
+
+
+def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
+    """The stock holdings in a yearly report's extracted text; `None` for blank text (an image-only filing).
+
+    Raises `CongressDataError` when the text has no recognisable asset row at all: a changed layout must not read as
+    "she owns nothing". A report whose rows are all options or bonds is a valid, empty result.
+    """
+    flat = " ".join(strip_descriptions(text).split())
+    if not flat:
+        return None
+    if not _ROW.search(flat):
+        raise CongressDataError(f"Report {ref.doc_id}: no asset row found in {len(flat)} characters of text (layout changed?)")
+    assets, _unread = _scan(flat, ref)
     return AnnualParse(assets=assets, skipped_non_stock=len(_TAG.findall(flat)) - len(assets))
+
+
+def unread_stock_rows(text: str, ref: FilingRef, *, before: int = 110, after: int = 70) -> list[str]:
+    """The text around every `[ST]` tag that `parse_annual` did NOT turn into a holding (a value of None, no ticker, an unknown shape).
+
+    For diagnostics: a stock row that is silently dropped would make the portfolio smaller than the disclosure, so the
+    manual smoke script prints these.
+    """
+    flat = " ".join(strip_descriptions(text).split())
+    _assets, unread = _scan(flat, ref)
+    return [flat[max(0, position - before) : position + after] for position in unread]

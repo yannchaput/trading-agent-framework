@@ -33,7 +33,7 @@ import httpx
 from dotenv import load_dotenv
 
 from trading_agent_framework.congress import holdings
-from trading_agent_framework.congress.annual import VALUE_BANDS
+from trading_agent_framework.congress.annual import VALUE_BANDS, unread_stock_rows
 from trading_agent_framework.congress.clerk_client import CLERK_BASE_URL, ClerkClient
 from trading_agent_framework.congress.source import CongressSource
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -109,6 +109,7 @@ def main() -> int:
             smoke_dir.mkdir(parents=True, exist_ok=True)
             for ref in known.refs:
                 (smoke_dir / f"{ref.doc_id}.txt").write_text(client.filing_text(ref), encoding="utf-8")
+            unread = unread_stock_rows(client.filing_text(known.annual_ref), known.annual_ref)
     except TradingFrameworkError as exc:
         print(f"FAIL: {exc}")
         with ClerkClient(user_agent, CACHE_DIR) as client:
@@ -120,6 +121,10 @@ def main() -> int:
     print(f"  {len(known.assets)} stock holdings; PTRs since: {len(known.refs) - 1}; stock trades after the period end: {sum(1 for t in known.transactions if t.transaction_date > known.period_end)}")
     print(f"  unparsed (image-only) filings: {known.unparsed_filings}; rows skipped (options, bonds, unreadable): {known.skipped_non_stock}")
     print(f"  raw text of every known filing: {CACHE_DIR / 'smoke'}")
+
+    print(f"\n[ST] tags in the yearly report NOT read as a holding: {len(unread)}")
+    for snippet in unread[:20]:
+        print(f"  ...{snippet}...")
 
     print("\nNewest filings (newest first):")
     for ref in known.refs[:8]:

@@ -165,3 +165,14 @@ def test_real_excerpt_name_is_not_polluted_by_the_description_lines_before_it() 
 
 def test_the_option_on_the_same_ticker_is_not_counted_as_a_stock_holding() -> None:
     assert [a.tier for a in _real().assets] == [annual.tier_of(Decimal("5000001"))]  # only the [ST] row, not the $1M-$5M [OP] row
+
+
+def test_unread_stock_rows_show_the_stock_tags_that_did_not_become_holdings() -> None:
+    unread = annual.unread_stock_rows(_fixture(), REF)
+
+    assert len(unread) == 1
+    assert "Broadcom" in unread[0]  # the [ST] row whose value is None
+
+
+def test_unread_stock_rows_is_empty_when_every_stock_row_parsed() -> None:
+    assert annual.unread_stock_rows((FIXTURES / "annual_real_excerpt.txt").read_text(encoding="utf-8"), REF) == []
