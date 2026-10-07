@@ -335,6 +335,47 @@ def breadth_exposure(step: int, exposures: tuple[float, ...]) -> float:
     return exposures[step]
 
 
+def sleeve_symbols(parking: dict) -> tuple[str, ...]:
+    """Every symbol of the parking sleeve: the fallback (SHV) first, then the trend assets."""
+    return (parking["symbol"], *parking["trend_assets"])
+
+
+def trend_reading(closes: list[float], sma_window: int) -> tuple[float, float] | None:
+    """(last close, simple average of the last `sma_window` closes), or None with too few or non-finite values."""
+    if len(closes) < sma_window:
+        return None
+    last = closes[-1]
+    sma = sum(closes[-sma_window:]) / sma_window
+    if not (math.isfinite(last) and math.isfinite(sma)):
+        return None
+    return last, sma
+
+
+def sleeve_weights(
+    closes_by_asset: dict[str, list[float]],
+    trend_assets: tuple[str, ...],
+    sma_window: int,
+    fallback: str,
+) -> dict[str, float]:
+    """Share of the parking sleeve for the fallback and each trend asset; the shares sum to 1.0.
+
+    Each trend asset gets 1/len(trend_assets) while its last close is strictly above its SMA; otherwise (or when
+    its closes are missing, too short or non-finite) that share goes to `fallback`. No hysteresis: the weekly
+    cadence, the rebalance band and the minimum trade already damp a close hovering at its SMA.
+    """
+    if not trend_assets:
+        return {fallback: 1.0}
+    share = 1.0 / len(trend_assets)
+    weights = {fallback: 0.0, **{asset: 0.0 for asset in trend_assets}}
+    for asset in trend_assets:
+        reading = trend_reading(closes_by_asset.get(asset, []), sma_window)
+        if reading is not None and reading[0] > reading[1]:
+            weights[asset] = share
+        else:
+            weights[fallback] += share
+    return weights
+
+
 def load_breadth_step(path: Path, n_steps: int) -> int | None:
     """Load the persisted breadth step, or None if there is nothing usable.
 

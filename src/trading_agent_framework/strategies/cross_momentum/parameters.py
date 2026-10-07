@@ -45,10 +45,13 @@ CONFIG = {
         "max_exposure": 1.00,
     },
     # ── Parking sleeve ─────────────────────────
-    # Capital the exposure legs take out of stocks is parked in this T-bill ETF instead of idle cash.
-    # Trims and parking orders smaller than min_trade_pct of the portfolio are skipped (per-order fees).
+    # Capital the exposure legs take out of stocks is parked in this sleeve instead of idle cash. Each trend asset
+    # holds 1/len(trend_assets) of it while its last completed close is above its trend_sma_window-day SMA; SHV
+    # (`symbol`) holds the rest. Sleeve trades smaller than min_trade_pct of the portfolio are skipped (per-order fees).
     "parking": {
         "symbol": "SHV",
+        "trend_assets": ("GLD", "IEF"),
+        "trend_sma_window": 200,
         "min_trade_pct": 0.01,
     },
     # ── Breadth overlay (market regime) ─────────
