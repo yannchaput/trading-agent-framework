@@ -70,7 +70,7 @@ def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strateg
     if not universe:
         Console().print("Universe file not found — run `uv run batch-universe` before executing this strategy.", style="bold red")
         return None
-    start, end = backtest_window(PredefinedWindow.SEMI_DECADE)
+    start, end = backtest_window(PredefinedWindow.YEAR)
     return EarningsDriftStrategy(
         broker=broker,
         mode=mode,

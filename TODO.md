@@ -9,7 +9,7 @@
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * ~~Create a batch to run all the smoke tests altogether~~
 * ~~Add cash available during backtesting~~
-* Update pyproject.toml to make dashboard an "extra" dependency
+* ~~Update pyproject.toml to make dashboard an "extra" dependency~~
 * Add a gloabl factory/builder for strategy in main.py
 * Log P&L every day in a sqllite database for the dashboard to display it: for backtest, paper and live
 * Add a skill to review, challenge and validate the design of a strategy
@@ -79,7 +79,7 @@
 
 * ~~Update claude.md with exempt_tools and budget_tools~~
 * Update dashboard to display tempearature
-* Log output of each agent to understand wht was their decision
+* ~~Log output of each agent to understand what was their decision~~
 
 ---
 

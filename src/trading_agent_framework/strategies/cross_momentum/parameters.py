@@ -9,7 +9,7 @@ CONFIG = {
     # ── Rebalance schedule ─────────────────────
     "rebalance_frequency": "weekly",
     # As per research, Tuesday (1) is the best day to rebalance the portfolio
-    "day_of_week": 1,  # 0=Monday, 4=Friday
+    "day_of_week": 2,  # 0=Monday, 4=Friday
     # ── Momentum scoring ──────────────────────
     "w_12m": 0.50,
     "w_6m": 0.30,
