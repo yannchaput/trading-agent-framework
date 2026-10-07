@@ -13,7 +13,7 @@ from trading_agent_framework.congress.ptr import FilingRef
 from trading_agent_framework.utils.errors import ConfigurationError, CongressDataError, CongressNotFoundError
 
 PTR = FilingRef(doc_id="20026590", member="Nancy Pelosi", kind="ptr", filed=date(2025, 2, 20), year=2025)
-ANNUAL = FilingRef(doc_id="10063900", member="Nancy Pelosi", kind="annual", filed=date(2025, 8, 14), year=2024)
+ANNUAL = FilingRef(doc_id="10063900", member="Nancy Pelosi", kind="annual", filed=date(2025, 5, 15), year=2024)
 XML = "<FinancialDisclosure></FinancialDisclosure>"
 
 
@@ -37,7 +37,7 @@ def test_blank_user_agent_raises_configuration_error(tmp_path: Path) -> None:
 def test_urls_follow_the_clerk_layout() -> None:
     assert index_url(2025).endswith("/financial-pdfs/2025FD.zip")
     assert filing_url(PTR).endswith("/ptr-pdfs/2025/20026590.pdf")
-    assert filing_url(ANNUAL).endswith("/financial-pdfs/2025/10063900.pdf")  # the folder is the FILING year, not the reporting year
+    assert filing_url(ANNUAL).endswith("/financial-pdfs/2024/10063900.pdf")  # the folder is the index year (the Year field), not the filing year
 
 
 def test_year_index_is_read_from_the_zip_and_cached(tmp_path: Path) -> None:
@@ -150,7 +150,7 @@ def test_a_yearly_report_is_fetched_from_financial_pdfs(tmp_path: Path) -> None:
 
     _client(tmp_path, handler).filing_text(ANNUAL)
 
-    assert seen == ["/public_disc/financial-pdfs/2025/10063900.pdf"]
+    assert seen == ["/public_disc/financial-pdfs/2024/10063900.pdf"]
 
 
 def test_an_image_only_pdf_returns_empty_text_and_is_cached(tmp_path: Path) -> None:

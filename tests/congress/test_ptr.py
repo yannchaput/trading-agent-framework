@@ -43,20 +43,21 @@ def _by_ticker() -> dict[str, ptr.Transaction]:
 # --- index ----------------------------------------------------------------------------------------
 
 
-def test_parse_index_returns_ptr_annual_and_amendment_refs_with_kind() -> None:
+def test_parse_index_returns_only_ptr_and_annual_refs_with_kind() -> None:
     xml = _index(
         _member(filing_type="P", doc_id="10"),
-        _member(filing_type="C", doc_id="11", filing_date="8/14/2025", year="2024"),
-        _member(filing_type="A", doc_id="12", filing_date="9/1/2025", year="2024"),
-        _member(filing_type="X", doc_id="13"),
-        _member(filing_type="T", doc_id="14"),
+        _member(filing_type="O", doc_id="11", filing_date="5/15/2025", year="2024"),
+        _member(filing_type="C", doc_id="12"),
+        _member(filing_type="A", doc_id="13"),
+        _member(filing_type="X", doc_id="14"),
+        _member(filing_type="T", doc_id="15"),
     )
 
     refs = ptr.parse_index(xml)
 
-    assert [(r.doc_id, r.kind) for r in refs] == [("10", "ptr"), ("11", "annual"), ("12", "annual")]
+    assert [(r.doc_id, r.kind) for r in refs] == [("10", "ptr"), ("11", "annual")]
     annual = refs[1]
-    assert annual.filed == date(2025, 8, 14)
+    assert annual.filed == date(2025, 5, 15)
     assert annual.year == 2024
     assert annual.member == "Nancy Pelosi"
 

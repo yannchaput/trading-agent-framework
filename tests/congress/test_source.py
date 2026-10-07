@@ -41,19 +41,24 @@ class FakeClerk:
 
 
 def _clerk() -> FakeClerk:
+    """Pelosi's yearly report of reporting year Y is listed in index Y (filed the next May); PTRs sit in the index of their filing year."""
     return FakeClerk(
         {
+            2026: _index(_member("P3", "P", "1/15/2026", 2026), _member("P4", "P", "9/14/2026", 2026)),
             2025: _index(
-                _member("A25", "C", "8/14/2025", 2024),
                 _member("P1", "P", "2/20/2025", 2025),
                 _member("P2", "P", "3/10/2025", 2025),
                 _member("PX", "P", "3/11/2025", 2025, first="Paul"),
             ),
-            2024: _index(_member("A24", "C", "8/15/2024", 2023), _member("P0", "P", "6/1/2024", 2024)),
-            2026: _index(_member("P3", "P", "1/15/2026", 2026), _member("P4", "P", "9/14/2026", 2026)),
+            2024: _index(_member("A25", "O", "5/15/2025", 2024), _member("P0", "P", "6/1/2024", 2024)),
+            2023: _index(_member("A24", "O", "5/15/2024", 2023)),
         },
         {"A25": ANNUAL_TEXT, "A24": ANNUAL_TEXT, "P0": PTR_TEXT, "P1": PTR_TEXT, "P2": PTR_TEXT, "P3": PTR_TEXT, "P4": PTR_TEXT},
     )
+
+
+def _empty(*years: int) -> dict[int, str]:
+    return {year: _index() for year in years}
 
 
 def _source(clerk: FakeClerk) -> CongressSource:
@@ -88,17 +93,15 @@ def test_newest_yearly_report_is_the_base_and_older_ones_are_ignored() -> None:
     assert {a.ticker for a in known.assets} == {"AAPL"}
 
 
-def test_an_amendment_of_the_newest_reporting_year_wins_and_an_old_year_amendment_does_not() -> None:
+def test_filing_types_other_than_ptr_and_yearly_report_are_ignored() -> None:
+    """C (candidate report) and A (amendment of any kind) are not read: an amended PTR parsed as a yearly report would abort the lookup."""
     clerk = _clerk()
-    clerk.indexes[2026] = _index(
-        _member("A25b", "A", "2/1/2026", 2024),  # amends the 2024 report
-        _member("A23b", "A", "3/1/2026", 2022),  # a late amendment of an older year
-    )
-    clerk.texts.update({"A25b": ANNUAL_TEXT, "A23b": ANNUAL_TEXT})
+    clerk.indexes[2026] = _index(_member("P3", "P", "1/15/2026", 2026), _member("AMEND", "A", "2/1/2026", 2025), _member("CAND", "C", "3/1/2026", 2026), _member("EXT", "X", "4/1/2026", 2026))
 
     known = _source(clerk).known(et(2026, 9, 14, 10))
 
-    assert known.annual_ref.doc_id == "A25b"
+    assert known.annual_ref.doc_id == "A25"
+    assert not {"AMEND", "CAND", "EXT"} & set(clerk.text_calls)
 
 
 def test_an_image_only_newest_report_falls_back_to_the_next_one_and_is_counted() -> None:
@@ -128,18 +131,18 @@ def test_refs_are_newest_filing_first() -> None:
 
 
 def test_no_yearly_report_known_is_an_error_not_an_empty_book() -> None:
-    clerk = FakeClerk({2025: _index(_member("P1", "P", "2/20/2025", 2025)), 2024: _index(), 2023: _index()}, {"P1": PTR_TEXT})
+    clerk = FakeClerk({2025: _index(_member("P1", "P", "2/20/2025", 2025)), **_empty(2024, 2023, 2022, 2021)}, {"P1": PTR_TEXT})
 
     with pytest.raises(CongressDataError, match="yearly report"):
         _source(clerk).known(et(2025, 9, 1, 10))
 
 
 def test_a_yearly_report_filed_today_is_not_known_yet() -> None:
-    clerk = FakeClerk({2025: _index(_member("A25", "C", "8/14/2025", 2024)), 2024: _index(), 2023: _index()}, {"A25": ANNUAL_TEXT})
+    clerk = FakeClerk({2024: _index(_member("A25", "O", "5/15/2025", 2024)), **_empty(2025, 2023, 2022, 2021)}, {"A25": ANNUAL_TEXT})
 
     with pytest.raises(CongressDataError, match="yearly report"):
-        _source(clerk).known(et(2025, 8, 14, 10))
-    assert _source(clerk).known(et(2025, 8, 15, 10)).annual_ref.doc_id == "A25"
+        _source(clerk).known(et(2025, 5, 15, 10))
+    assert _source(clerk).known(et(2025, 5, 16, 10)).annual_ref.doc_id == "A25"
 
 
 def test_a_missing_current_year_index_early_in_the_year_is_empty_not_an_error() -> None:

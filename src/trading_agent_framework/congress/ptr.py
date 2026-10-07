@@ -1,7 +1,7 @@
 """PURE parsing of the House Clerk's filing index and Periodic Transaction Reports (PTRs).
 
 No I/O and no clock. The index (`<YYYY>FD.xml`) lists every filing; `parse_index` keeps the PTRs and the yearly
-reports (and their amendments). `parse_ptr` turns a PTR's extracted text into stock `Transaction`s.
+reports. `parse_ptr` turns a PTR's extracted text into stock `Transaction`s.
 
 The row layout assumed here (whitespace collapsed) is
 `[owner] <asset name> (<TICKER>) [ST] <P|S|S (partial)|E> <MM/DD/YYYY> <MM/DD/YYYY> $<low> - $<high>` and it has NOT
@@ -21,8 +21,9 @@ from decimal import Decimal, InvalidOperation
 
 from trading_agent_framework.utils.errors import CongressDataError
 
-# Filing types in the Clerk index: P = periodic transaction report, C = annual report, A = amendment of one.
-_KINDS = {"P": "ptr", "C": "annual", "A": "annual"}
+# Filing types in the Clerk index (checked against the real index, 2026-10-07): P = periodic transaction report, O = annual report.
+# C is a candidate report and A an amendment of any kind; both are ignored (an amended PTR read as an annual report would abort the lookup).
+_KINDS = {"P": "ptr", "O": "annual"}
 _HONORIFICS = frozenset({"hon", "mr", "mrs", "ms", "dr", "jr", "sr", "ii", "iii", "iv"})
 _OWNERS = {"SP": "spouse", "JT": "joint", "DC": "dependent"}
 _SIDES = {"P": "buy", "S": "sell", "S (partial)": "sell_partial"}
@@ -43,7 +44,7 @@ class FilingRef:
     member: str  # "First Last", no honorific or suffix
     kind: str  # "ptr" | "annual"
     filed: date
-    year: int  # the Clerk's Year field: the reporting year of an annual report
+    year: int  # the Clerk's Year field, which is also the index it is listed in: the reporting year of an annual report (filed the next spring)
 
 
 @dataclass(frozen=True, slots=True)

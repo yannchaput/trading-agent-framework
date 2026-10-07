@@ -41,9 +41,9 @@ def index_url(year: int) -> str:
 
 
 def filing_url(ref: FilingRef) -> str:
-    """A PTR lives under `ptr-pdfs/`, a yearly report under `financial-pdfs/`, both in the folder of the year it was FILED."""
+    """A PTR lives under `ptr-pdfs/`, a yearly report under `financial-pdfs/`, in the folder of the index year (the Year field)."""
     folder = "ptr-pdfs" if ref.kind == "ptr" else "financial-pdfs"
-    return f"{CLERK_BASE_URL}/{folder}/{ref.filed.year}/{ref.doc_id}.pdf"
+    return f"{CLERK_BASE_URL}/{folder}/{ref.year}/{ref.doc_id}.pdf"
 
 
 class ClerkClient:
@@ -149,7 +149,7 @@ class ClerkClient:
 
     def filing_text(self, ref: FilingRef) -> str:
         """The extracted text of a filing's PDF; `""` for an image-only PDF. Cached forever."""
-        path = self._cache_path(ref.kind, str(ref.filed.year), f"{ref.doc_id}.txt")
+        path = self._cache_path(ref.kind, str(ref.year), f"{ref.doc_id}.txt")
         if path.exists():
             return path.read_text(encoding="utf-8")
         text = self._pdf_text(self._get(filing_url(ref)), ref)

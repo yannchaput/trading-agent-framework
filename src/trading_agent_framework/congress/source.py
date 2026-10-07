@@ -3,8 +3,9 @@
 A filing is known only when its filing DATE is strictly before the market date of `as_of` (the Clerk gives a date and
 no time). That one rule is the no-look-ahead gate for everything built on this module, in backtests and live alike.
 
-`known()` finds the newest yearly report (the latest reporting year, then the latest filing, amendments included, and
-the next one down if that one is an image-only scan), then every PTR filed after that report's period end. The
+`known()` finds the newest yearly report (the latest reporting year, then the latest filing; the next one down if that
+one is an image-only scan), then every PTR filed after that report's period end. The Clerk lists a yearly report in
+the index of its REPORTING year (the one filed in May 2026 holds the Dec 31, 2025 positions and sits in the 2025 index). The
 trades since the period end are then applied by `holdings.reconstruct`; the filing date of a PTR is irrelevant to that.
 """
 
@@ -25,7 +26,7 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "CongressSource")
 
-_ANNUAL_LOOKBACK_YEARS = 3  # index years searched for a yearly report: the filing year and the two before it
+_ANNUAL_LOOKBACK_YEARS = 5  # index years searched for a readable yearly report, newest first
 
 
 class ClerkLike(Protocol):
@@ -70,17 +71,19 @@ class CongressSource:
                 by_year[year] = [r for r in ptr.filings_for(ptr.parse_index(xml), self._politician) if r.filed < today]
             return by_year[year]
 
-        annuals = [r for year in range(today.year, today.year - _ANNUAL_LOOKBACK_YEARS, -1) for r in refs_of(year) if r.kind == "annual"]
         unparsed = skipped = 0
         chosen: tuple[FilingRef, list[AssetHolding]] | None = None
-        for ref in sorted(annuals, key=lambda r: (r.year, r.filed, r.doc_id), reverse=True):
-            parsed = parse_annual(self._client.filing_text(ref), ref)
-            if parsed is None:
-                unparsed += 1
-                continue
-            chosen = (ref, parsed.assets)
-            skipped += parsed.skipped_non_stock
-            break
+        for year in range(today.year, today.year - _ANNUAL_LOOKBACK_YEARS, -1):
+            for ref in sorted((r for r in refs_of(year) if r.kind == "annual"), key=lambda r: (r.filed, r.doc_id), reverse=True):
+                parsed = parse_annual(self._client.filing_text(ref), ref)
+                if parsed is None:
+                    unparsed += 1
+                    continue
+                chosen = (ref, parsed.assets)
+                skipped += parsed.skipped_non_stock
+                break
+            if chosen is not None:
+                break
         if chosen is None:
             raise CongressDataError(f"No readable yearly report of {self._politician} is known before {today.isoformat()}")
         annual_ref, assets = chosen

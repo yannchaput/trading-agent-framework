@@ -72,9 +72,9 @@ def diagnose(client: ClerkClient, user_agent: str, politician: str, now: datetim
             print(f"    {fields}")
         for member in [m for m in mine if (m.findtext("FilingType") or "").strip() != "P"][:3]:
             doc_id = (member.findtext("DocID") or "").strip()
-            filed_year = (member.findtext("FilingDate") or "").strip().rsplit("/", 1)[-1]
-            for folder in ("financial-pdfs", "ptr-pdfs"):
-                url = f"{CLERK_BASE_URL}/{folder}/{filed_year}/{doc_id}.pdf"
+            folder_years = dict.fromkeys([(member.findtext("Year") or "").strip(), (member.findtext("FilingDate") or "").strip().rsplit("/", 1)[-1]])
+            for folder, folder_year in [(f, y) for y in folder_years for f in ("financial-pdfs", "ptr-pdfs")]:
+                url = f"{CLERK_BASE_URL}/{folder}/{folder_year}/{doc_id}.pdf"
                 try:
                     response = httpx.get(url, headers={"User-Agent": user_agent}, follow_redirects=True, timeout=60)
                 except httpx.HTTPError as exc:
