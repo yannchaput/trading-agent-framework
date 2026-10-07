@@ -16,7 +16,8 @@ Implements:
   7. Fast/slow volatility targeting (equity-curve-based) — third exposure leg
   8. Combined via min(risk_exposure, breadth_exposure, vol_exposure) — most conservative wins
   9. Hysteresis: sell below rank 35, buy top 20; trim target positions above the ±20% band
-  10. Park the de-risked capital (everything but the cash reserve) in SHV instead of idle cash
+  10. Park the de-risked capital (everything but the cash reserve) in a sleeve: GLD and IEF each take half while
+      above their 200-day SMA, SHV holds the rest
 """
 
 import calendar
@@ -66,6 +67,9 @@ from .utils import (
     parse_rebalance_time,
     save_breadth_step,
     save_equity_history,
+    sleeve_symbols,
+    sleeve_weights,
+    trend_reading,
 )
 
 if TYPE_CHECKING:
@@ -88,7 +92,7 @@ class CrossMomentumStrategy(Strategy):
     more conservative estimate via max(vol_20d, 0.75 * vol_63d). Combined
     with the portfolio risk overlay and the market-breadth overlay via min() — the most conservative leg
     determines the final exposure multiplier. Held positions are trimmed to
-    the scaled target, and the capital taken out of stocks is parked in SHV.
+    the scaled target, and the capital taken out of stocks is parked in a trend-filtered SHV/GLD/IEF sleeve.
     """
 
     # ── Backtesting params ───────────────────────────────────────────────────────
@@ -123,7 +127,9 @@ class CrossMomentumStrategy(Strategy):
         if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
             sys.exit(1)
-        self.vars.universe = universe or []
+        # A sleeve asset (SHV, GLD, IEF) is never scored or bought as a stock, even if the universe file lists it
+        sleeve = set(sleeve_symbols(self.parameters["parking"]))
+        self.vars.universe = [symbol for symbol in universe if symbol not in sleeve]
 
         # Diagnostics (delegated to DiagnosticLogger)
         self.vars.diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
@@ -421,8 +427,44 @@ class CrossMomentumStrategy(Strategy):
             self.log_warning(f"No price for {symbol}: {e}")
             return 0.0
 
+    def _trend_closes(self, symbol: str) -> list[float] | None:
+        """A trend asset's completed daily closes, oldest first, or None (logged) when its bars are unavailable."""
+        fallback = self.parameters["parking"]["symbol"]
+        self.vars.alpaca_rate_limiter.wait()
+        try:
+            bars = self.get_historical_prices(symbol, length=_HISTORY_BARS + 1, timestep="day")
+        except BrokerError as exc:
+            self.log_warning(f"Sleeve: no bars for {symbol} ({exc}): its share goes to {fallback}")
+            return None
+        if bars is None or bars.empty:
+            self.log_warning(f"Sleeve: no bars for {symbol}: its share goes to {fallback}")
+            return None
+        # Completed sessions only, like the stocks: a bar dated today is partial while the session is open
+        return completed_bars(bars.pandas_df, self._market_date()).tail(_HISTORY_BARS)["close"].tolist()
+
+    def _sleeve_weights(self) -> dict[str, float]:
+        """This week's share of the parking sleeve per symbol (SHV first, then the trend assets), logged."""
+        parking = self.parameters["parking"]
+        window = parking["trend_sma_window"]
+        trend_assets = tuple(parking["trend_assets"])
+        closes_by_asset = {symbol: closes for symbol in trend_assets if (closes := self._trend_closes(symbol)) is not None}
+        weights = sleeve_weights(closes_by_asset, trend_assets, window, parking["symbol"])
+
+        readings = []
+        for symbol in trend_assets:
+            reading = trend_reading(closes_by_asset.get(symbol, []), window)
+            if reading is None:
+                readings.append(f"{symbol} off (no data)")
+            elif weights[symbol] > 0:
+                readings.append(f"{symbol} on (close {reading[0]:.2f} > SMA{window} {reading[1]:.2f})")
+            else:
+                readings.append(f"{symbol} off (close {reading[0]:.2f} <= SMA{window} {reading[1]:.2f})")
+        allocation = " / ".join(f"{symbol} {weight:.0%}" for symbol, weight in weights.items())
+        self.log_info(f"Sleeve: {', '.join(readings) + ' -> ' if readings else ''}{allocation}")
+        return weights
+
     def rebalance(self, target: list[dict], all_ranks: dict[str, int]) -> None:
-        """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in SHV.
+        """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in the sleeve.
 
         Args:
             target: Selected stocks with target_weight (top N, already weighted).
@@ -433,11 +475,13 @@ class CrossMomentumStrategy(Strategy):
 
         target_symbols = {entry["symbol"] for entry in target}
         target_by_symbol = {entry["symbol"]: entry for entry in target}
-        parking_symbol = self.parameters["parking"]["symbol"]
+        parking = self.parameters["parking"]
+        # Trend assets first, SHV last: the order of the sleeve buys once the stock buys are funded
+        sleeve_order = (*parking["trend_assets"], parking["symbol"])
 
         sell_threshold = self.parameters["sell_rank_threshold"]
         portfolio_value = float(self.portfolio_value or 1.0)
-        min_trade_value = portfolio_value * self.parameters["parking"]["min_trade_pct"]
+        min_trade_value = portfolio_value * parking["min_trade_pct"]
 
         current_positions = self.get_positions()
 
@@ -452,12 +496,12 @@ class CrossMomentumStrategy(Strategy):
         hysteresis_value = 0.0
         kept_count = 0
         sold_count = 0
-        parking_position = None
+        sleeve_positions = {}
         for pos in current_positions:
             symbol = pos.asset.symbol
-            if symbol == parking_symbol:
+            if symbol in sleeve_order:
                 # The parking sleeve is never ranked: it must not be exited as "not ranked" below
-                parking_position = pos
+                sleeve_positions[symbol] = pos
                 continue
             if symbol in target_symbols:
                 # Trim a target position that sits above its band, so an exposure cut lowers the held book
@@ -505,24 +549,30 @@ class CrossMomentumStrategy(Strategy):
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
         stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
         parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
-        parking_price = self._price_or_zero(parking_symbol)
-        parking_value = float(parking_position.quantity) * parking_price if parking_position else 0.0
-        if parking_price <= 0:
-            self.log_warning(f"Parking: no price for {parking_symbol} — no parking orders this week")
-        else:
-            self.log_info(f"Parking: {parking_symbol} target ${parking_target:,.0f} (current ${parking_value:,.0f})")
-            excess = parking_value - parking_target
-            if parking_value > parking_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
+        weights = self._sleeve_weights()
+        sleeve: list[tuple[str, float, float, float]] = []  # (symbol, price, current value, target value), priced only
+        for symbol in sleeve_order:
+            position = sleeve_positions.get(symbol)
+            price = self._price_or_zero(symbol)
+            if price <= 0:
+                self.log_warning(f"Parking: no price for {symbol} — no {symbol} order this week")
+                continue
+            value = float(position.quantity) * price if position else 0.0
+            symbol_target = parking_target * weights.get(symbol, 0.0)
+            sleeve.append((symbol, price, value, symbol_target))
+            self.log_info(f"Parking: {symbol} target ${symbol_target:,.0f} (current ${value:,.0f})")
+            excess = value - symbol_target
+            if value > symbol_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
                 # A zero target sells the exact holding, so float flooring leaves no dust behind.
-                # Guard against a missing parking position so static analysis does not treat it as a known quantity.
-                sell_qty = float(parking_position.quantity) if parking_position is not None and parking_target == 0 else fractional_qty(excess / parking_price)
+                # Guard against a missing position so static analysis does not treat it as a known quantity.
+                sell_qty = float(position.quantity) if position is not None and symbol_target == 0 else fractional_qty(excess / price)
                 if sell_qty > 0:
-                    self.log_info(f"Selling {sell_qty} {parking_symbol} @ ${parking_price:.2f} (parking above target)")
+                    self.log_info(f"Selling {sell_qty} {symbol} @ ${price:.2f} (parking above target)")
                     try:
-                        self.submit_order(self.create_order(parking_symbol, sell_qty, "sell", time_in_force="day"))
-                        estimated_sell_proceeds += sell_qty * parking_price
+                        self.submit_order(self.create_order(symbol, sell_qty, "sell", time_in_force="day"))
+                        estimated_sell_proceeds += sell_qty * price
                     except Exception as e:
-                        self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
+                        self.log_error(f"Failed to submit parking sell order for {symbol}: {e}")
 
         # Phase 2: Buy
         # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
@@ -590,17 +640,22 @@ class CrossMomentumStrategy(Strategy):
                     self.log_warning(f"Resyncing available cash to broker-reported buying power: ${real_buying_power:.2f}")
                     available_cash = real_buying_power * (1 - self.parameters["cash_buffer_pct"])
 
-        # Phase 3: Park what the stock buys left, up to the parking target
-        if parking_price > 0 and parking_value < parking_target * (1 - _REBALANCE_BAND):
-            buy_value = min(parking_target - parking_value, available_cash)
-            if buy_value >= min_trade_value:
-                quantity = fractional_qty(buy_value / parking_price)
-                if quantity > 0:
-                    self.log_info(f"Buying {quantity} {parking_symbol} @ ${parking_price:.2f} (parking)")
-                    try:
-                        self.submit_order(self.create_order(parking_symbol, quantity, "buy", time_in_force="day"))
-                    except Exception as e:
-                        self.log_warning(f"Failed to submit parking buy order for {parking_symbol}: {e}")
+        # Phase 3: Park what the stock buys left, up to each sleeve target (the trend assets first, SHV last)
+        for symbol, price, value, symbol_target in sleeve:
+            if value >= symbol_target * (1 - _REBALANCE_BAND):
+                continue
+            buy_value = min(symbol_target - value, available_cash)
+            if buy_value < min_trade_value:
+                continue
+            quantity = fractional_qty(buy_value / price)
+            if quantity <= 0:
+                continue
+            available_cash -= quantity * price
+            self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (parking)")
+            try:
+                self.submit_order(self.create_order(symbol, quantity, "buy", time_in_force="day"))
+            except Exception as e:
+                self.log_warning(f"Failed to submit parking buy order for {symbol}: {e}")
 
         # The target positions never get a line unless they are bought, so say how the book is made up
         held_targets = sum(1 for pos in current_positions if pos.asset.symbol in target_symbols)
@@ -688,8 +743,8 @@ class CrossMomentumStrategy(Strategy):
         self.rebalance(target, all_ranks)
 
     def _backtest_preload_assets(self) -> list[Asset]:
-        """The universe plus the parking symbol, each once: what a backtest loads up front."""
-        symbols = list(dict.fromkeys([*self.vars.universe, self.parameters["parking"]["symbol"]]))
+        """The universe plus the sleeve symbols, each once: what a backtest loads up front."""
+        symbols = list(dict.fromkeys([*self.vars.universe, *sleeve_symbols(self.parameters["parking"])]))
         return [Asset(symbol=symbol) for symbol in symbols]
 
     def run_backtesting(self, **overrides: Any):
@@ -715,7 +770,7 @@ class CrossMomentumStrategy(Strategy):
             end=self.parameters["backtesting_end"],
             budget=self.parameters["budget"],
             data_source=YahooBacktestData,  # AlpacaBacktestData has no enough history, approximatively 6 year history
-            preload_assets=self._backtest_preload_assets(),  # preload the ticker universe and the parking ETF in memory
+            preload_assets=self._backtest_preload_assets(),  # preload the ticker universe and the sleeve ETFs in memory
             benchmark=self.parameters["benchmark_symbol"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
         )

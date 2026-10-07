@@ -4,31 +4,58 @@ Market orders fill at a later bar's open (plus fees), so the cash the strategy c
 time is only an estimate. `cash_buffer_pct` holds a slice of it back so the buys still land.
 """
 
+from datetime import date, datetime, time, timedelta
 from types import SimpleNamespace
 
+import pandas as pd
+from tests.fakes import FakeBroker, FakeClock, et
+
+from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError
+
+TODAY = date(2026, 10, 7)
+RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
 
 
 class FakeStrategy:
     """Just enough of `Strategy` for `rebalance`; records the orders it places."""
 
-    def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=()):
+    def __init__(
+        self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=(), trend_assets=(), bars=None
+    ):
         self.parameters = {
             "sell_rank_threshold": 35,
             "cash_buffer_pct": cash_buffer_pct,
-            "parking": {"symbol": "SHV", "min_trade_pct": min_trade_pct},
+            "parking": {"symbol": "SHV", "trend_assets": tuple(trend_assets), "trend_sma_window": 3, "min_trade_pct": min_trade_pct},
         }
         self._cash = cash
         self._positions = list(positions)
         self._last_prices = last_prices or {}
         self._reject = set(reject)
         self._price_errors = set(price_errors)
+        self._bars = bars or {}
         self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
+        self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
+        self.bar_requests = []
         self.orders = []
         self.warnings: list[str] = []
         self.infos: list[str] = []
+
+    def get_historical_prices(self, symbol, length, timestep):
+        self.bar_requests.append((symbol, length, timestep))
+        bars = self._bars.get(symbol)
+        if isinstance(bars, Exception):
+            raise bars
+        return bars
+
+    def _market_date(self):
+        return TODAY
+
+    _sleeve_weights = CrossMomentumStrategy._sleeve_weights
+    _trend_closes = CrossMomentumStrategy._trend_closes
 
     def get_positions(self):
         return self._positions
@@ -107,6 +134,31 @@ def _held(symbol, quantity):
 
 def _orders(fake, symbol, side):
     return [o.quantity for o in fake.orders if o.symbol == symbol and o.side == side]
+
+
+def _bars(closes, *, today_close=None):
+    """Daily bars stamped at the close on the sessions before TODAY, plus a partial bar for TODAY if given."""
+    days = [TODAY - timedelta(days=len(closes) - i) for i in range(len(closes))]
+    if today_close is not None:
+        days.append(TODAY)
+        closes = [*closes, today_close]
+    index = pd.DatetimeIndex([datetime.combine(day, time(16), tzinfo=MARKET_TZ) for day in days])
+    frame = pd.DataFrame({"close": closes}, index=index)
+    return SimpleNamespace(empty=frame.empty, pandas_df=frame)
+
+
+SLEEVE_PRICES = {"AAA": 100.0, "GLD": 10.0, "IEF": 10.0, "SHV": 50.0}
+
+
+def _sleeve_fake(*, gld=RISING, ief=RISING, **kwargs):
+    bars = {"GLD": gld if not isinstance(gld, list) else _bars(gld), "IEF": ief if not isinstance(ief, list) else _bars(ief)}
+    kwargs.setdefault("cash", 1000.0)
+    kwargs.setdefault("last_prices", dict(SLEEVE_PRICES))
+    return FakeStrategy(trend_assets=("GLD", "IEF"), bars=bars, **kwargs)
+
+
+def _sequence(fake):
+    return [(o.symbol, o.side, o.quantity) for o in fake.orders]
 
 
 def test_idle_cash_is_swept_into_shv():
@@ -198,14 +250,14 @@ def test_a_rejected_shv_buy_is_logged_and_does_not_raise():
     assert any("SHV" in message for message in fake.warnings)
 
 
-def test_backtests_preload_the_parking_symbol_once():
-    fake = SimpleNamespace(parameters={"parking": {"symbol": "SHV"}}, vars=SimpleNamespace(universe=["AAA", "SHV", "BBB"]))
+def test_backtests_preload_the_sleeve_symbols_once():
+    fake = SimpleNamespace(parameters={"parking": {"symbol": "SHV", "trend_assets": ("GLD", "IEF")}}, vars=SimpleNamespace(universe=["AAA", "SHV", "BBB"]))
 
     assets = CrossMomentumStrategy._backtest_preload_assets(fake)
 
-    assert [a.symbol for a in assets] == ["AAA", "SHV", "BBB"]
+    assert [a.symbol for a in assets] == ["AAA", "SHV", "BBB", "GLD", "IEF"]
     fake.vars.universe = ["AAA"]
-    assert CrossMomentumStrategy._backtest_preload_assets(fake) == [Asset(symbol="AAA"), Asset(symbol="SHV")]
+    assert CrossMomentumStrategy._backtest_preload_assets(fake) == [Asset(symbol=s) for s in ("AAA", "SHV", "GLD", "IEF")]
 
 
 def test_a_failing_shv_quote_skips_parking_but_not_the_stock_orders():
@@ -298,3 +350,104 @@ def test_a_target_without_a_price_is_neither_bought_nor_trimmed():
     assert _orders(fake, "AAA", "buy") == []
     assert _orders(fake, "BBB", "buy") == [6.0]
     assert any("AAA" in message and "no buy or trim" in message for message in fake.warnings)
+
+
+# ── Trend sleeve ───────────────────────────────────────────────────────────────
+# With cash 1000 and AAA at 30%, the parking target is 950 - 300 = 650: 325 per trend asset that trends.
+
+
+def test_idle_cash_with_both_trends_on_is_split_between_gld_and_ief():
+    fake = _sleeve_fake()
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("IEF", "buy", 32.5)]
+
+
+def test_sleeve_symbols_are_never_sold_as_unranked():
+    held = [_held("GLD", 32.5), _held("IEF", 32.5), _held("SHV", 0.5)]
+    fake = _sleeve_fake(cash=325.0, positions=held)  # pv 325 + 325 + 325 + 25 = 1000
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert [o for o in fake.orders if o.side == "sell" and o.symbol != "SHV"] == []
+    assert not any("not ranked" in message for message in fake.warnings)
+
+
+def test_a_trend_turning_off_sells_the_whole_holding_and_parks_it_in_shv():
+    fake = _sleeve_fake(ief=FALLING, cash=350.0, positions=[_held("GLD", 32.5), _held("IEF", 32.5)])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "IEF", "sell") == [32.5]
+    assert _orders(fake, "GLD", "sell") == [] and _orders(fake, "GLD", "buy") == []
+    assert _orders(fake, "SHV", "buy") == [6.5]  # SHV target 325
+
+
+def test_trend_assets_are_bought_before_shv_and_within_the_cash_left():
+    fake = _sleeve_fake(ief=FALLING)
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 1000.0 * 0.95 + 1e-6
+
+
+def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():
+    fake = _sleeve_fake(price_errors={"GLD"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5)]
+    assert any("GLD" in message for message in fake.warnings)
+
+
+def test_a_failed_bars_fetch_for_a_trend_asset_sends_its_half_to_shv():
+    fake = _sleeve_fake(gld=BrokerError("no bars"))
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert any("GLD" in message for message in fake.warnings)
+
+
+def test_empty_bars_for_a_trend_asset_send_its_half_to_shv():
+    fake = _sleeve_fake(gld=_bars([]))
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert any("GLD" in message for message in fake.warnings)
+
+
+def test_a_partial_bar_for_today_is_ignored_by_the_trend_test():
+    fake = _sleeve_fake(gld=_bars(FALLING, today_close=100.0))  # with today's bar GLD would read as trending
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "GLD", "buy") == []
+    assert _orders(fake, "SHV", "buy") == [6.5]
+
+
+def test_the_trend_assets_are_read_over_the_strategy_history_window():
+    fake = _sleeve_fake()
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert fake.bar_requests == [("GLD", 301, "day"), ("IEF", 301, "day")]
+
+
+def test_the_sleeve_reading_is_logged():
+    fake = _sleeve_fake(ief=FALLING)
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert "Sleeve: GLD on (close 3.00 > SMA3 2.00), IEF off (close 1.00 <= SMA3 2.00) -> SHV 50% / GLD 50% / IEF 0%" in fake.infos
+
+
+def test_sleeve_symbols_are_removed_from_the_universe():
+    broker = FakeBroker(FakeClock(et(2026, 10, 6, 7), []))
+
+    strategy = CrossMomentumStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA", "GLD", "SHV", "BBB", "IEF"])
+
+    assert strategy.vars.universe == ["AAA", "BBB"]

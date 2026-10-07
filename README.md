@@ -249,6 +249,8 @@ News-driven trading through the framework's `search_news` tool (broker-agnostic 
 
 Final Version of the **cross_momentum** strategy is `V5` drawn from `V2.3c` and `V2` flavors. This strategy keeps a good tradeoff between risk appetence and performance (Sortino, CAGR) and loss (DrawDown).
 
+Capital the exposure legs take out of stocks is parked in a sleeve: GLD and IEF each take half of it while their last completed close is above their 200-day SMA, and SHV holds the rest (`parameters.py`, `parking`).
+
 **Note:** The `cross_momentum` strategy can enable a "diagnostic mode" storing key KPIs during backtesting for further analysis.
 This utility is hard coded in the method `_compute_and_persist_diagnostics` and is enabled with `enable_diagnostics` parameter. It applies only during backtesting.
 Those diagnostics are useful for forensics. Use
