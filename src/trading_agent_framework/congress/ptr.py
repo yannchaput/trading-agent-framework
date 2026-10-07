@@ -125,11 +125,29 @@ def parse_amount(text: str) -> tuple[Decimal, Decimal]:
     raise ValueError(f"unreadable amount: {text!r}")
 
 
+def parse_row_head(head: str) -> tuple[str, str, str] | None:
+    """(owner, asset name, ticker) from the text before a row's type tag, or None if it does not end in a ticker.
+
+    The last owner code before the name wins: earlier text is the previous row's description. Shared with the yearly
+    report parser (`annual.py`), whose Schedule A rows start the same way.
+    """
+    ticker_match = _HEAD.search(head)
+    if ticker_match is None:
+        return None
+    candidate = " " + ticker_match["name"].strip() + " "
+    owners = list(_OWNER_CODE.finditer(candidate))
+    owner = "self"
+    if owners:
+        owner = _OWNERS[owners[-1].group(1)]
+        candidate = candidate[owners[-1].end() :]
+    return owner, candidate.strip(), ticker_match["ticker"]
+
+
 def _row_transaction(ref: FilingRef, head: str, row: re.Match[str]) -> Transaction | None:
     """The stock transaction a type-tagged row describes, or None if it is not a readable stock purchase or sale."""
     side = _SIDES.get(row["side"])
-    ticker_match = _HEAD.search(head)
-    if row["type"] != "ST" or side is None or ticker_match is None:
+    parsed_head = parse_row_head(head)
+    if row["type"] != "ST" or side is None or parsed_head is None:
         return None
     try:
         transaction_date = datetime.strptime(row["tdate"], "%m/%d/%Y").date()
@@ -137,18 +155,12 @@ def _row_transaction(ref: FilingRef, head: str, row: re.Match[str]) -> Transacti
         low, high = parse_amount(row["amount"])
     except ValueError:
         return None
-    candidate = ticker_match["name"].strip()
-    owners = list(_OWNER_CODE.finditer(" " + candidate + " "))
-    owner = "self"
-    if owners:  # the last owner code before the name wins: earlier text is the previous row's description
-        last = owners[-1]
-        owner = _OWNERS[last.group(1)]
-        candidate = (" " + candidate + " ")[last.end() :].strip()
+    owner, asset_name, ticker = parsed_head
     return Transaction(
         doc_id=ref.doc_id,
         owner=owner,
-        ticker=ticker_match["ticker"],
-        asset_name=candidate,
+        ticker=ticker,
+        asset_name=asset_name,
         side=side,
         transaction_date=transaction_date,
         notification_date=notification_date,
