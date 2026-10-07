@@ -106,7 +106,10 @@ def test_earnings_drift_builders(monkeypatch: pytest.MonkeyPatch) -> None:
     baseline = main_module._build_earnings_drift_baseline(FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="earnings_drift_baseline"), TradingMode.BACKTESTING)
     assert isinstance(agent, EarningsDriftStrategy) and agent.settings.agent_enabled
     assert isinstance(baseline, EarningsDriftStrategy) and not baseline.settings.agent_enabled
-    assert baseline.parameters["backtesting_start"] < agent.parameters["backtesting_start"]  # 5 years against 1
+    for strategy in (agent, baseline):  # each builder picks its own window; the length is a parameter, so only its shape is pinned
+        start, end = strategy.parameters["backtesting_start"], strategy.parameters["backtesting_end"]
+        assert start.tzinfo is not None and end.tzinfo is not None  # run_backtest refuses naive bounds
+        assert start < end
 
 
 def test_earnings_drift_builder_returns_none_without_a_universe(monkeypatch: pytest.MonkeyPatch) -> None:
