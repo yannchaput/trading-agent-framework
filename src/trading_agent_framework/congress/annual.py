@@ -49,12 +49,15 @@ VALUE_BANDS: tuple[Band, ...] = (
 )
 
 _AMOUNT = r"(?:\$[\d,]+\s*-\s*\$[\d,]+|Over\s+\$[\d,]+)"
-_INCOME = r"(?:Dividends|Interest|Capital Gains|Rent and Royalties|Rent|Royalties|Partnership Income|Tax-Deferred|Excepted Investment Fund|None)"
+_INCOME = r"(?:Dividends|Interest|Capital Gains|Capital Loss(?:es)?|Rent and Royalties|Rent|Royalties|Partnership Income|Tax-Deferred|Excepted Investment Fund|None)"
 # After the value: the income type(s) and amount. A known type may stand alone ("None"); any other label (e.g. "Grape Sales")
 # is accepted only when an amount follows it, so it cannot swallow the next row's name.
 _INCOME_TAIL = rf"(?:\s+{_INCOME}(?:\s*,\s*{_INCOME})*(?:\s+{_AMOUNT})?|\s+[A-Za-z][A-Za-z ]{{0,40}}?\s+{_AMOUNT})?"
 _ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?:(?P<owner>SP|JT|DC)\s+)?(?P<value>{_AMOUNT}|None){_INCOME_TAIL}")
 _OWNERS = {"SP": "spouse", "JT": "joint", "DC": "dependent"}
+# The report's own Schedule B lists the year's transactions as `[ST] <owner> <date> <P|S|S (partial)|E> <amount>`: trades, not holdings,
+# all dated on or before the period end and so already inside the year-end values.
+_SCHEDULE_B_ROW = re.compile(rf"\[ST\]\s*(?:(?:SP|JT|DC)\s+)?\d{{2}}/\d{{2}}/\d{{4}}\s+(?:S \(partial\)|[PSE])\s+{_AMOUNT}")
 _TAG = re.compile(r"\[[A-Z]{2}\]")
 _STOCK_TAG = re.compile(r"\[ST\]")
 _OVER = re.compile(r"Over\s+\$([\d,]+)")
@@ -101,15 +104,21 @@ def _value(text: str) -> tuple[Decimal, Decimal]:
 
 
 def _scan(flat: str, ref: FilingRef) -> tuple[list[AssetHolding], list[int]]:
-    """(the stock holdings in `flat`, the positions of the `[ST]` tags that were NOT read as one)."""
+    """(the stock holdings in `flat`, the positions of the `[ST]` tags that are neither a holding nor an expected non-holding).
+
+    Expected non-holdings: a value of `None` (the position was sold out during the year) and a Schedule B transaction row.
+    """
     assets = []
-    read: set[int] = set()
+    read: set[int] = {m.start() for m in _SCHEDULE_B_ROW.finditer(flat)}
     previous_end = 0
     for row in _ROW.finditer(flat):
         head = flat[previous_end : row.start()]
         previous_end = row.end()
         parsed_head = parse_row_head(head)
-        if row["type"] != "ST" or row["value"] == "None" or parsed_head is None:
+        if row["type"] == "ST" and row["value"] == "None":
+            read.add(row.start())  # sold out during the year
+            continue
+        if row["type"] != "ST" or parsed_head is None:
             continue
         try:
             low, high = _value(row["value"])
@@ -138,7 +147,7 @@ def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
 
 
 def unread_stock_rows(text: str, ref: FilingRef, *, before: int = 110, after: int = 70) -> list[str]:
-    """The text around every `[ST]` tag that `parse_annual` did NOT turn into a holding (a value of None, no ticker, an unknown shape).
+    """The text around every `[ST]` tag that is neither a holding nor an expected non-holding (no ticker, an unknown shape).
 
     For diagnostics: a stock row that is silently dropped would make the portfolio smaller than the disclosure, so the
     manual smoke script prints these.

@@ -240,7 +240,11 @@ class CongressSource:
   `tests/congress/fixtures/{annual_real,ptr_real}.txt` (trim to a few rows; strip nothing that a parser depends
   on), keep the synthetic fixtures, and fix `ptr.py` / `annual.py` until both sets pass. Confirm: the index
   `FilingType` codes (`P`/`O`; done 2026-10-07), `Year` meaning for an annual, the annual PDF URL, and that Pelosi's PDFs have a text
-  layer. Record what differed in the commit message and in the spec's Risks section. **Tasks 6+ do not depend on
+  layer. Record what differed in the commit message and in the spec's Risks section.
+  **Done 2026-10-07 against Nancy Pelosi's real filings** (yearly report 10075701, PTRs 20033725-20035553): 33 `[ST]` tags = 22 holdings
+  + 2 positions sold out (value `None`) + 9 Schedule B transaction rows of the report itself. Real sale rows exist and match
+  (`SP Walt Disney Company (DIS) [ST] S 12/30/2025 ...`, dated one day before the period end, so ignored). Not yet seen in a real
+  filing: a stock row with NO owner code (assumed to be the filer's own) and a PTR `S (partial)` row (the report's Schedule B has them). **Tasks 6+ do not depend on
   the text layout and may proceed meanwhile, but nothing ships before this step.**
 
 ---

@@ -168,11 +168,53 @@ def test_the_option_on_the_same_ticker_is_not_counted_as_a_stock_holding() -> No
 
 
 def test_unread_stock_rows_show_the_stock_tags_that_did_not_become_holdings() -> None:
-    unread = annual.unread_stock_rows(_fixture(), REF)
+    text = _fixture() + "\nMystery Holding LLC [ST] SP $1,001 - $15,000 None"  # a stock row with no ticker
+
+    unread = annual.unread_stock_rows(text, REF)
 
     assert len(unread) == 1
-    assert "Broadcom" in unread[0]  # the [ST] row whose value is None
+    assert "Mystery Holding" in unread[0]
 
 
 def test_unread_stock_rows_is_empty_when_every_stock_row_parsed() -> None:
     assert annual.unread_stock_rows((FIXTURES / "annual_real_excerpt.txt").read_text(encoding="utf-8"), REF) == []
+
+
+# --- rows seen in the real report that are not holdings ---------------------------------------------
+
+REAL_NON_HOLDINGS = """\
+Palo Alto Networks, Inc. - Common Stock (PANW) [ST] SP $1,000,001 -
+$5,000,000
+None
+PayPal Holdings, Inc. (PYPL) [ST] SP None
+Dividends, Capital Loss $100,001 -
+$1,000,000
+Visa Inc. (V) [ST] SP $5,000,001 -
+$25,000,000
+Dividends $1 - $200
+Walt Disney Company (DIS) [ST] SP None
+Dividends, Capital Loss $100,001 -
+$1,000,000
+Asset Owner Date Tx. Type Amount
+Broadcom Inc. - Common Stock (AVGO) [ST] SP 06/20/2025 P $1,000,001 -
+$5,000,000
+Apple Inc. - Common Stock (AAPL) [ST] SP 12/24/2025 S (partial) $5,000,001 -
+$25,000,000
+D: Sold 45,000 shares.
+Walt Disney Company (DIS) [ST] SP 12/30/2025 S $1,000,001 -
+$5,000,000
+D: Sold 10,000 shares.
+"""
+
+
+def test_a_value_of_none_and_schedule_b_transaction_rows_are_not_holdings_and_are_not_flagged() -> None:
+    result = _parse(REAL_NON_HOLDINGS)
+
+    assert [a.ticker for a in result.assets] == ["PANW", "V"]
+    assert annual.unread_stock_rows(REAL_NON_HOLDINGS, REF) == []
+
+
+def test_capital_loss_income_does_not_leak_into_the_next_asset_name() -> None:
+    visa = next(a for a in _parse(REAL_NON_HOLDINGS).assets if a.ticker == "V")
+
+    assert visa.asset_name == "Visa Inc."
