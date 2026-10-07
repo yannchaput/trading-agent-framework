@@ -272,3 +272,29 @@ def test_no_summary_when_there_is_no_target():
     CrossMomentumStrategy.rebalance(fake, [], {})
 
     assert fake.infos == []
+
+
+def test_buys_are_sized_at_the_last_trade_not_the_completed_close():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 50.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})  # closed at 100, trades at 50
+
+    assert _orders(fake, "AAA", "buy") == [6.0]
+
+
+def test_trims_are_sized_at_the_last_trade():
+    fake = FakeStrategy(cash=0.0, positions=[_held("AAA", 10.0)], last_prices={"AAA": 100.0, "SHV": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 80.0, 1)], {"AAA": 1})  # closed at 80, trades at 100
+
+    assert _orders(fake, "AAA", "sell") == [6.0]  # worth 1000 against a 400 target
+
+
+def test_a_target_without_a_price_is_neither_bought_nor_trimmed():
+    fake = FakeStrategy(cash=1000.0, last_prices={"BBB": 50.0, "SHV": 50.0}, price_errors={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1), _target("BBB", 0.3, 50.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert _orders(fake, "AAA", "buy") == []
+    assert _orders(fake, "BBB", "buy") == [6.0]
+    assert any("AAA" in message and "no buy or trim" in message for message in fake.warnings)

@@ -75,75 +75,51 @@ def classify_risk_state(
 # ── Returns construction ───────────────────────────────────────────────────────
 
 
-def _build_aligned_returns(
-    closes_map: dict[str, list[float]],
-    weights_dict: dict[str, float],
-    benchmark_closes: list[float] | None,
-) -> tuple[pd.DataFrame | None, pd.Series | None, np.ndarray | None]:
-    """Build aligned daily returns from raw close-price series.
+_BENCHMARK_COLUMN = "__benchmark__"  # never a ticker
 
-    All series are truncated to the shortest common length, then converted
-    to simple daily percentage returns (not log returns, for consistency
-    with existing diagnostics). Weights are renormalized to include only
-    symbols that made it into the returns DataFrame.
+
+def _build_aligned_returns(
+    closes_map: dict[str, pd.Series],
+    weights_dict: dict[str, float],
+    benchmark_closes: pd.Series | None,
+) -> tuple[pd.DataFrame | None, pd.Series | None, np.ndarray | None]:
+    """Build daily returns aligned by session date.
+
+    The target series (and the benchmark's, if any) are inner-joined on their dates and rows with a gap are
+    dropped BEFORE computing simple daily returns, so every return spans the same two sessions for every symbol
+    and for the benchmark. A date missing from one series is dropped for all. Weights are renormalized over the
+    symbols that made it into the returns frame.
 
     Args:
-        closes_map: {symbol: [closes]} for each target stock.
+        closes_map: {symbol: closes indexed by session date} for each target stock.
         weights_dict: {symbol: target_weight} — raw weights (may not sum to 1).
-        benchmark_closes: List of benchmark (SPY) closes, or None.
+        benchmark_closes: Benchmark (SPY) closes indexed by session date, or None.
 
     Returns:
-        (returns_df, benchmark_returns, aligned_weights) tuple where:
-        - returns_df: DataFrame (days × symbols) of daily returns
-        - benchmark_returns: Series of daily benchmark returns (or None)
-        - aligned_weights: np.ndarray normalized to sum=1, matching column order
-        All three are None if closes_map is empty.
+        (returns_df, benchmark_returns, aligned_weights), all indexed by the later session's date; all three are
+        None when fewer than two common dates remain.
     """
     if not closes_map:
         return None, None, None
 
-    # Truncate to shortest common length
-    lengths = [len(closes) for closes in closes_map.values()]
+    columns = dict(closes_map)
     if benchmark_closes is not None:
-        lengths.append(len(benchmark_closes))
-    min_len = min(lengths)
-
-    if min_len < 2:
+        columns[_BENCHMARK_COLUMN] = benchmark_closes
+    prices = pd.concat(columns, axis=1, join="inner").sort_index().dropna()
+    if len(prices) < 2:
         return None, None, None
 
-    # Compute daily returns for each stock (simple pct change)
-    returns_map: dict[str, pd.Series] = {}
-    for sym, closes in closes_map.items():
-        truncated = closes[-min_len:]
-        r = pd.Series(truncated).pct_change().dropna().values
-        if len(r) > 0:
-            returns_map[sym] = r  # pyright: ignore[reportArgumentType]
-
-    if not returns_map:
+    returns = prices.pct_change().iloc[1:]
+    benchmark_returns = returns.pop(_BENCHMARK_COLUMN) if benchmark_closes is not None else None
+    if returns.shape[1] < 1:
         return None, None, None
 
-    # Build DataFrame aligned on observation index
-    returns_df = pd.DataFrame(returns_map).dropna()
-    if returns_df.empty or returns_df.shape[1] < 1:
-        return None, None, None
-
-    # Benchmark returns
-    benchmark_returns = None
-    if benchmark_closes is not None:
-        truncated_bench = benchmark_closes[-min_len:]
-        br = pd.Series(truncated_bench).pct_change().dropna().reset_index(drop=True)
-        if len(br) > 0:
-            benchmark_returns = br
-
-    # Aligned weights
-    cols = returns_df.columns.tolist()
+    cols = returns.columns.tolist()
     raw = np.array([weights_dict.get(sym, 0.0) for sym in cols], dtype=float)
     total = np.sum(raw)
     if total <= 0:
         return None, None, None
-    aligned_weights = raw / total
-
-    return returns_df, benchmark_returns, aligned_weights
+    return returns, benchmark_returns, raw / total
 
 
 # ── Metric computations ────────────────────────────────────────────────────────
@@ -241,9 +217,9 @@ def _compute_portfolio_beta(
 
 
 def compute_risk_overlay(
-    closes_map: dict[str, list[float]],
+    closes_map: dict[str, pd.Series],
     target_weights: dict[str, float],
-    benchmark_closes: list[float] | None,
+    benchmark_closes: pd.Series | None,
     min_obs: int = _MIN_OBS,
 ) -> tuple[str, float, dict]:
     """Compute portfolio risk metrics and determine exposure multiplier.
@@ -254,9 +230,9 @@ def compute_risk_overlay(
     the state name, exposure multiplier, and a metrics dict for logging.
 
     Args:
-        closes_map: {symbol: [closes]} — price series for each target stock.
+        closes_map: {symbol: closes indexed by session date} for each target stock.
         target_weights: {symbol: weight} — raw target weights (from inverse-vol).
-        benchmark_closes: List of SPY close prices, or None if unavailable.
+        benchmark_closes: SPY closes indexed by session date, or None if unavailable.
         min_obs: Minimum aligned observations for metric computation (default 40).
 
     Returns:
@@ -270,6 +246,7 @@ def compute_risk_overlay(
         target_weights,
         benchmark_closes,
     )
+    observations = 0 if returns_df is None else len(returns_df)
 
     beta = None
     vol = None
@@ -288,6 +265,7 @@ def compute_risk_overlay(
                     "beta_63d": None,
                     "vol_20d": None,
                     "corr_20d": None,
+                    "observations": observations,
                 },
             )
 
@@ -312,6 +290,7 @@ def compute_risk_overlay(
         "beta_63d": beta,
         "vol_20d": vol,
         "corr_20d": corr,
+        "observations": observations,
     }
 
     return risk_state.value, multiplier, metrics

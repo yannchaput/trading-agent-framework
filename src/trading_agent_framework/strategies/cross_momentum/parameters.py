@@ -10,6 +10,9 @@ CONFIG = {
     "rebalance_frequency": "weekly",
     # As per research, Tuesday (1) is the best day to rebalance the portfolio
     "day_of_week": 2,  # 0=Monday, 4=Friday
+    # Market time (ET, HH:MM, from 09:30 to before 15:59) of the daily iteration, so of the weekly rebalance: past the opening's wide spreads,
+    # well before the close. The decision reads completed sessions only, so the hour changes execution, not signals.
+    "rebalance_time": "12:00",
     # ── Momentum scoring ──────────────────────
     "w_12m": 0.50,
     "w_6m": 0.30,

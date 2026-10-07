@@ -10,7 +10,7 @@ Implements:
   1. Load pre-computed universe (monthly batch)
   2. Daily: compute portfolio risk diagnostics (if enabled)
   3. Daily: record portfolio equity for realized-vol tracking
-  4. Weekly (Friday): filter, score, rank, select top N, weight by inverse vol
+  4. Weekly (Tuesday, at rebalance_time): filter, score, rank, select top N on completed sessions, weight by inverse vol
   5. Portfolio risk overlay (beta/vol/corr) — first exposure leg
   6. Breadth overlay (share of scored stocks above their 100d SMA, stepped, with hysteresis) — second leg
   7. Fast/slow volatility targeting (equity-curve-based) — third exposure leg
@@ -23,7 +23,7 @@ import calendar
 import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -49,6 +49,8 @@ from .utils import (
     apply_filters,
     breadth_exposure,
     breadth_share,
+    close_series,
+    completed_bars,
     compute_atr_from_df,
     compute_return_from_prices,
     compute_volatility_exposure,
@@ -60,6 +62,7 @@ from .utils import (
     momentum_score,
     next_breadth_step,
     parse_insufficient_buying_power,
+    parse_rebalance_time,
     save_breadth_step,
     save_equity_history,
 )
@@ -71,6 +74,9 @@ logger = logging.getLogger(__name__)
 
 # A position within ±20% of its target value is left alone (no top-up, no trim) to avoid overtrading.
 _REBALANCE_BAND = 0.20
+
+# Daily bars behind every computation (scores, filters, breadth, risk overlay), all from completed sessions.
+_HISTORY_BARS = 300
 
 
 class CrossMomentumStrategy(Strategy):
@@ -110,6 +116,8 @@ class CrossMomentumStrategy(Strategy):
     ):
         super().__init__(broker, mode=mode, **kwargs)
         self.parameters = {**CONFIG, **self.parameters}
+        # The executor runs each session's iteration, so the Tuesday rebalance, at this market time
+        self.iteration_start_time = parse_rebalance_time(self.parameters["rebalance_time"])
 
         if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
@@ -196,11 +204,15 @@ class CrossMomentumStrategy(Strategy):
         dt = self.get_datetime()
         return dt.weekday() == self.parameters["day_of_week"]
 
+    def _market_date(self) -> date:
+        """Today's date in market time: the date of the session whose daily bar is still forming."""
+        return self.get_datetime().astimezone(MARKET_TZ).date()
+
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
         self.vars.alpaca_rate_limiter.wait()
         try:
-            bars = self.get_historical_prices(ticker, length=300, timestep="day")
+            bars = self.get_historical_prices(ticker, length=_HISTORY_BARS + 1, timestep="day")
         except BrokerError as exc:
             self.log_warning(f"Skipping {ticker}: failed to fetch bars ({exc})")
             return None
@@ -210,6 +222,12 @@ class CrossMomentumStrategy(Strategy):
         df = bars.pandas_df if hasattr(bars, "pandas_df") else bars
         if not isinstance(df, pd.DataFrame) or df.empty:
             self.log_error("The Bars instance has not the right type: consider using a pandas Dataframe.")
+            return None
+
+        # Completed sessions only: today's bar is partial, and it made the same Tuesday's decision depend on the
+        # hour it ran (2026-10-06). One extra bar is fetched so the window stays _HISTORY_BARS long.
+        df = completed_bars(df, self._market_date()).tail(_HISTORY_BARS)
+        if df.empty:
             return None
 
         closes = df["close"].tolist()
@@ -250,6 +268,7 @@ class CrossMomentumStrategy(Strategy):
             "trading_days": trading_days,
             "atr": atr,
             "closes": closes,
+            "close_series": close_series(df),
         }
 
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
@@ -327,7 +346,7 @@ class CrossMomentumStrategy(Strategy):
         selected = scored[:top_n]
 
         # Store closes for the selected stocks (consumed by portfolio risk overlay)
-        self.vars.target_closes = {entry["symbol"]: entry["closes"] for entry in selected}
+        self.vars.target_closes = {entry["symbol"]: entry["close_series"] for entry in selected}
 
         selected = inverse_volatility_weights(
             selected,
@@ -358,6 +377,37 @@ class CrossMomentumStrategy(Strategy):
         exposure = breadth_exposure(step, config["exposures"])
         self.log_info(f"Breadth: {breadth:.0%} of stocks above their {config['sma_window']}d SMA -> step {step} (exposure {exposure:.0%})")
         return exposure
+
+    def _risk_exposure(self, target: list[dict]) -> float:
+        """Exposure multiplier from the portfolio risk overlay: beta/vol/corr of the target stocks against SPY.
+
+        1.0 without targets or SPY data. The overlay aligns the series by session date; a target whose last bar
+        is dated differently from SPY's is still logged, because on 2026-10-06 half of them were a session short
+        for a reason never established.
+        """
+        if not target or not self.vars.target_closes:
+            return 1.0
+        self.vars.alpaca_rate_limiter.wait()
+        spy_bars = self.get_historical_prices("SPY", length=_HISTORY_BARS + 1, timestep="day")
+        if spy_bars is None or spy_bars.empty:
+            self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
+            return 1.0
+        spy = close_series(completed_bars(spy_bars.pandas_df, self._market_date()).tail(_HISTORY_BARS))
+        if spy.empty:
+            self.log_warning("Risk overlay: no completed SPY session — defaulting to NORMAL (100% exposure)")
+            return 1.0
+        spy_last = spy.index[-1]
+        off_date = {symbol: series.index[-1] for symbol, series in self.vars.target_closes.items() if len(series) and series.index[-1] != spy_last}
+        if off_date:
+            listed = ", ".join(f"{symbol} {day}" for symbol, day in sorted(off_date.items()))
+            self.log_warning(f"Risk overlay: last bar date differs from SPY's {spy_last}: {listed}")
+        target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
+        risk_state, risk_exposure, metrics = compute_risk_overlay(self.vars.target_closes, target_weights, spy)
+        self.log_info(
+            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_63d')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
+            f"obs={metrics.get('observations')}, exposure={risk_exposure:.0%})"
+        )
+        return risk_exposure
 
     def _price_or_zero(self, symbol: str) -> float:
         """Last price for valuing a holding, or 0.0 if the lookup fails or returns nothing.
@@ -390,6 +440,12 @@ class CrossMomentumStrategy(Strategy):
 
         current_positions = self.get_positions()
 
+        # Size at the last trade: an entry's "price" is the last COMPLETED close, a session old by now.
+        prices = {entry["symbol"]: self._price_or_zero(entry["symbol"]) for entry in target}
+        for symbol, price in prices.items():
+            if price <= 0:
+                self.log_warning(f"No price for {symbol}: no buy or trim this week")
+
         # Phase 1: Sell (exits, trims, excess parking)
         estimated_sell_proceeds = 0.0
         hysteresis_value = 0.0
@@ -406,16 +462,19 @@ class CrossMomentumStrategy(Strategy):
                 # Trim a target position that sits above its band, so an exposure cut lowers the held book
                 # too, not just new buys; the proceeds are parked or fund this week's buys.
                 entry = target_by_symbol[symbol]
+                price = prices[symbol]
+                if price <= 0:
+                    continue
                 target_value = portfolio_value * entry["target_weight"]
-                current_value = float(pos.quantity) * entry["price"]
+                current_value = float(pos.quantity) * price
                 trim_value = current_value - target_value
                 if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
-                    trim_qty = fractional_qty(trim_value / entry["price"])
+                    trim_qty = fractional_qty(trim_value / price)
                     if trim_qty > 0:
-                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${entry['price']:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
+                        self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                         try:
                             self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
-                            estimated_sell_proceeds += trim_qty * entry["price"]
+                            estimated_sell_proceeds += trim_qty * price
                         except Exception as e:
                             self.log_error(f"Failed to submit trim order for {symbol}: {e}")
                 continue
@@ -465,8 +524,9 @@ class CrossMomentumStrategy(Strategy):
                         self.log_error(f"Failed to submit parking sell order for {parking_symbol}: {e}")
 
         # Phase 2: Buy
-        # The estimate is priced at the last close, but orders fill at a later open plus fees, so hold
-        # a fixed reserve back: it is what lets the last buys land when prices gap or sells fill lower.
+        # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
+        # bar's open in a backtest) plus fees, so hold a fixed reserve back: it is what lets the last buys land
+        # when prices move or sells fill lower.
         cash_reserve = (float(self.get_cash()) + estimated_sell_proceeds) * self.parameters["cash_buffer_pct"]
         available_cash = float(self.get_cash()) + estimated_sell_proceeds - cash_reserve
         for entry in target:
@@ -476,11 +536,14 @@ class CrossMomentumStrategy(Strategy):
                 break
 
             symbol = entry["symbol"]
+            price = prices[symbol]
+            if price <= 0:
+                continue
             target_weight = entry["target_weight"]
             target_value = portfolio_value * target_weight
 
             current_pos = next((p for p in current_positions if p.asset.symbol == symbol), None)
-            current_value = float(current_pos.quantity) * entry["price"] if current_pos else 0.0
+            current_value = float(current_pos.quantity) * price if current_pos else 0.0
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value
@@ -491,17 +554,17 @@ class CrossMomentumStrategy(Strategy):
                 continue
 
             # Compute the fractional quantity to buy taking into account the existing position
-            raw_qty = diff_value / entry["price"]
+            raw_qty = diff_value / price
             quantity = fractional_qty(raw_qty)
             # Current position is already above target, skip buying
             if quantity <= 0:
                 continue
 
-            cost = quantity * entry["price"]
+            cost = quantity * price
             # If the cost exceeds the remaining spendable cash (the reserve is already excluded), reduce the quantity to fit
             if cost > available_cash:
-                quantity = fractional_qty(available_cash / entry["price"])
-                cost = quantity * entry["price"]
+                quantity = fractional_qty(available_cash / price)
+                cost = quantity * price
             # quantity can be equal to 0 for very tiny amount passed to fractional_qty
             if quantity <= 0:
                 continue
@@ -509,7 +572,7 @@ class CrossMomentumStrategy(Strategy):
             # cost <= available_cash here (fractional_qty floors), so available_cash stays non-negative
             available_cash -= cost
 
-            self.log_info(f"Buying {quantity} {symbol} @ ${entry['price']:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
+            self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
             try:
                 buy_order = self.create_order(symbol, quantity, "buy", time_in_force="day")
                 self.submit_order(buy_order)
@@ -580,32 +643,8 @@ class CrossMomentumStrategy(Strategy):
 
         target, all_ranks = self.compute_target_portfolio()
 
-        # Step 3: Portfolio Risk Overlay — compute beta/vol/corr from
-        # today's target stocks' historical closes. This is the "hypothetical
-        # risk of today's portfolio" leg.
-        risk_exposure = 1.0
-        risk_metrics = {}
-        if target and self.vars.target_closes:
-            self.vars.alpaca_rate_limiter.wait()
-            spy_bars = self.get_historical_prices("SPY", length=300, timestep="day")
-            spy_closes = None
-            if spy_bars is not None and not spy_bars.empty:
-                spy_df = spy_bars.pandas_df if hasattr(spy_bars, "pandas_df") else spy_bars
-                if spy_df is not None and not spy_df.empty:
-                    spy_closes = spy_df["close"].tolist()
-
-            if spy_closes is None:
-                self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
-            else:
-                target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
-                risk_state, risk_exposure, risk_metrics = compute_risk_overlay(
-                    self.vars.target_closes,
-                    target_weights,
-                    spy_closes,
-                )
-                self.log_info(
-                    f"Risk overlay: {risk_state.upper()} (beta={risk_metrics.get('beta_63d')}, vol={risk_metrics.get('vol_20d')}, corr={risk_metrics.get('corr_20d')}, exposure={risk_exposure:.0%})"
-                )
+        # Step 3: Portfolio Risk Overlay — beta/vol/corr of today's target stocks against SPY, aligned by date.
+        risk_exposure = self._risk_exposure(target)
 
         # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
         breadth_leg = self._breadth_exposure()
