@@ -138,3 +138,30 @@ def test_a_report_of_non_stock_assets_only_is_empty_not_an_error() -> None:
     assert result is not None
     assert result.assets == []
     assert result.skipped_non_stock == 1
+
+
+# --- the real layout (an excerpt of Nancy Pelosi's report filed 2026-05-15) ------------------------
+
+
+def _real() -> annual.AnnualParse:
+    return _parse((FIXTURES / "annual_real_excerpt.txt").read_text(encoding="utf-8"))
+
+
+def test_real_excerpt_finds_the_one_stock_among_property_partnership_and_option_rows() -> None:
+    result = _real()
+
+    [googl] = result.assets
+    assert googl.ticker == "GOOGL"
+    assert googl.owner == "spouse"
+    assert (googl.value_low, googl.value_high) == (Decimal("5000001"), Decimal("25000000"))
+    assert result.skipped_non_stock == 5  # three properties [RP], the partnership [OL] and the option [OP] on the same ticker
+
+
+def test_real_excerpt_name_is_not_polluted_by_the_description_lines_before_it() -> None:
+    [googl] = _real().assets
+
+    assert googl.asset_name == "Alphabet Inc. - Class A"
+
+
+def test_the_option_on_the_same_ticker_is_not_counted_as_a_stock_holding() -> None:
+    assert [a.tier for a in _real().assets] == [annual.tier_of(Decimal("5000001"))]  # only the [ST] row, not the $1M-$5M [OP] row

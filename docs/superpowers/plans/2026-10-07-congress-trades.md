@@ -95,7 +95,7 @@ class CongressDataError(TradingFrameworkError):
 ## Task 2: `congress/ptr.py` -- index, member match, PTR rows (pure)
 
 The year index `<YYYY>FD.xml` has `<Member>` elements: `Prefix, Last, First, Suffix, FilingType, StateDst, Year,
-FilingDate (M/D/YYYY), DocID`. `P` = PTR, `C` = annual report, `A` = amendment (assumed; verify at the checkpoint).
+FilingDate (M/D/YYYY), DocID`. `P` = PTR, `O` = annual report (verified on the real index 2026-10-07: `C` is a candidate report, `A` an amendment, both ignored); the index of year Y lists the report of reporting year Y, filed the next May, and the PDF folder is the Year field.
 PTR text, whitespace collapsed, is a run of rows like
 `SP NVIDIA Corporation - Common Stock (NVDA) [ST] P 01/14/2025 01/14/2025 $250,001 - $500,000`
 (owner code optional: `SP` spouse, `JT` joint, `DC` dependent; sides `P`, `S`, `S (partial)`, `E`).
@@ -239,7 +239,7 @@ class CongressSource:
   Run the smoke script. Copy one real yearly report's text and one real PTR's text into
   `tests/congress/fixtures/{annual_real,ptr_real}.txt` (trim to a few rows; strip nothing that a parser depends
   on), keep the synthetic fixtures, and fix `ptr.py` / `annual.py` until both sets pass. Confirm: the index
-  `FilingType` codes (`C`/`A`/`P`), `Year` meaning for an annual, the annual PDF URL, and that Pelosi's PDFs have a text
+  `FilingType` codes (`P`/`O`; done 2026-10-07), `Year` meaning for an annual, the annual PDF URL, and that Pelosi's PDFs have a text
   layer. Record what differed in the commit message and in the spec's Risks section. **Tasks 6+ do not depend on
   the text layout and may proceed meanwhile, but nothing ships before this step.**
 

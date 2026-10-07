@@ -4,10 +4,11 @@ A yearly report lists each asset held on the reporting year's December 31 as a V
 module reads those rows (stocks only), and maps a dollar value to a band's TIER (its index in `VALUE_BANDS`, 0 = the
 smallest), which is what the portfolio weights are ordered by.
 
-The Schedule A row layout assumed here (whitespace collapsed) is
-`[owner] <asset name> (<TICKER>) [ST] <value band> [<income type(s)> [<income amount>]]` and it has NOT been checked
-against a real report yet (see the congress_trades plan, Task 5 checkpoint). As in `ptr.py`, text with no
-recognisable row raises `CongressDataError` and only blank text (an image-only scan) returns `None`.
+The Schedule A row layout (checked against Nancy Pelosi's report filed 2026-05-15) is
+`<asset name> (<TICKER>) [ST] [<owner>] <value band> <income type(s)> <income amount>`: the owner code (`SP`, `JT`, `DC`)
+comes AFTER the type tag (assumed absent for the filer's own assets: no such row has been seen yet); the value band wraps over two lines; `L:` / `D:`
+description lines follow some rows. Other tags: `[RP]` real property, `[OL]` ownership interest, `[OP]` option.
+As in `ptr.py`, text with no recognisable row raises `CongressDataError` and only blank text (an image-only scan) returns `None`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from trading_agent_framework.congress.ptr import FilingRef, parse_amount, parse_row_head
+from trading_agent_framework.congress.ptr import FilingRef, parse_amount, parse_row_head, strip_descriptions
 from trading_agent_framework.utils.errors import CongressDataError
 
 
@@ -49,7 +50,11 @@ VALUE_BANDS: tuple[Band, ...] = (
 
 _AMOUNT = r"(?:\$[\d,]+\s*-\s*\$[\d,]+|Over\s+\$[\d,]+)"
 _INCOME = r"(?:Dividends|Interest|Capital Gains|Rent and Royalties|Rent|Royalties|Partnership Income|Tax-Deferred|Excepted Investment Fund|None)"
-_ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?P<value>{_AMOUNT}|None)(?:\s+{_INCOME}(?:\s*,\s*{_INCOME})*(?:\s+{_AMOUNT})?)?")
+# After the value: the income type(s) and amount. A known type may stand alone ("None"); any other label (e.g. "Grape Sales")
+# is accepted only when an amount follows it, so it cannot swallow the next row's name.
+_INCOME_TAIL = rf"(?:\s+{_INCOME}(?:\s*,\s*{_INCOME})*(?:\s+{_AMOUNT})?|\s+[A-Za-z][A-Za-z ]{{0,40}}?\s+{_AMOUNT})?"
+_ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?:(?P<owner>SP|JT|DC)\s+)?(?P<value>{_AMOUNT}|None){_INCOME_TAIL}")
+_OWNERS = {"SP": "spouse", "JT": "joint", "DC": "dependent"}
 _TAG = re.compile(r"\[[A-Z]{2}\]")
 _OVER = re.compile(r"Over\s+\$([\d,]+)")
 
@@ -100,7 +105,7 @@ def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
     Raises `CongressDataError` when the text has no recognisable asset row at all: a changed layout must not read as
     "she owns nothing". A report whose rows are all options or bonds is a valid, empty result.
     """
-    flat = " ".join(text.split())
+    flat = " ".join(strip_descriptions(text).split())
     if not flat:
         return None
     rows = list(_ROW.finditer(flat))
@@ -118,6 +123,7 @@ def parse_annual(text: str, ref: FilingRef) -> AnnualParse | None:
             low, high = _value(row["value"])
         except ValueError:
             continue
-        owner, name, ticker = parsed_head
+        _head_owner, name, ticker = parsed_head
+        owner = _OWNERS.get(row["owner"] or "", "self")
         assets.append(AssetHolding(doc_id=ref.doc_id, owner=owner, ticker=ticker, asset_name=name, value_low=low, value_high=high, tier=tier_of(low)))
     return AnnualParse(assets=assets, skipped_non_stock=len(_TAG.findall(flat)) - len(assets))

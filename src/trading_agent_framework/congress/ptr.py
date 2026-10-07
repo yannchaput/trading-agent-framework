@@ -36,6 +36,9 @@ _ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?P<side>S \(partial\)|[PSE])\s+
 _HEAD = re.compile(r"(?P<name>[^:()\[\]]*?)\s*\((?P<ticker>[A-Z][A-Z0-9.\-]{0,9})\)\s*$")
 _OWNER_CODE = re.compile(r"(?:^|\s)(SP|JT|DC)\s+")
 _MONEY = re.compile(r"\$([\d,]+)")
+# Free-text lines that follow a row ("F S: New", "S O: ...", "D: ...", "L: ...", "C: ...") and wrap onto further lines.
+_DESCRIPTION_START = re.compile(r"^(?:F S|S O|D|L|C):\s")
+_TAG_FIRST = re.compile(r"^(?:\[[A-Z]{2}\]|\([A-Z][A-Z0-9.\-]{0,9}\)\s*(?:\[[A-Z]{2}\])?)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,6 +129,30 @@ def parse_amount(text: str) -> tuple[Decimal, Decimal]:
     raise ValueError(f"unreadable amount: {text!r}")
 
 
+def strip_descriptions(text: str) -> str:
+    """The text without the free-text description lines between rows, which would otherwise pollute the next row's name.
+
+    A description starts on a line beginning `F S:`, `S O:`, `D:`, `L:` or `C:` and runs over its wrapped lines up to the
+    next row's first line. A line starts a row when it has text before a `[XX]` type tag, or when the next line begins
+    with a tag or a `(TICKER)` (a name wrapped before its tag).
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    kept = []
+    in_description = False
+    for index, line in enumerate(lines):
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        tag = _TAG.search(line)
+        starts_row = (tag is not None and tag.start() > 0) or bool(_TAG_FIRST.match(following))
+        if _DESCRIPTION_START.match(line):
+            in_description = True
+            continue
+        if in_description and not starts_row:
+            continue
+        in_description = False
+        kept.append(line)
+    return "\n".join(kept)
+
+
 def parse_row_head(head: str) -> tuple[str, str, str] | None:
     """(owner, asset name, ticker) from the text before a row's type tag, or None if it does not end in a ticker.
 
@@ -177,7 +204,7 @@ def parse_ptr(text: str, ref: FilingRef) -> PtrParse | None:
     Raises `CongressDataError` when the text has no recognisable transaction row at all: a changed layout must not
     read as "no trades". A filing whose rows are all options or bonds is a valid, empty result.
     """
-    flat = " ".join(text.split())
+    flat = " ".join(strip_descriptions(text).split())
     if not flat:
         return None
     rows = list(_ROW.finditer(flat))

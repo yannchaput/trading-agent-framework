@@ -187,3 +187,26 @@ def test_a_row_with_an_impossible_date_is_skipped_and_counted() -> None:
     assert result is not None
     assert [t.ticker for t in result.transactions] == ["NVDA"]
     assert result.skipped_non_stock == 1
+
+
+# --- the real layout (a PTR filed 2026-10-02) ----------------------------------------------------
+
+
+def test_real_ptr_with_only_a_non_stock_row_is_an_empty_result() -> None:
+    result = ptr.parse_ptr((FIXTURES / "ptr_real_excerpt.txt").read_text(encoding="utf-8"), REF)
+
+    assert result is not None
+    assert result.transactions == []
+    assert result.skipped_non_stock == 1  # the LLC investment, tagged [AB]
+
+
+def test_description_lines_between_rows_do_not_pollute_the_next_name() -> None:
+    text = (
+        "SP NVIDIA Corporation (NVDA) [ST] P 01/14/2026 01/14/2026 $250,001 -\n$500,000\nF S: New\nD: Bought more shares of the AI chip maker in\nthe brokerage account.\n"
+        "Apple Inc. (AAPL) [ST] S 01/15/2026 01/15/2026 $1,001 -\n$15,000\n"
+    )
+
+    result = ptr.parse_ptr(text, REF)
+
+    assert result is not None
+    assert [(t.ticker, t.owner, t.asset_name) for t in result.transactions] == [("NVDA", "spouse", "NVIDIA Corporation"), ("AAPL", "self", "Apple Inc.")]

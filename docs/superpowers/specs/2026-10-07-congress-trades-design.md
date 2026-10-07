@@ -24,7 +24,7 @@ the smoke script parses a real yearly report and a real PTR.
 - **Reports known before today.** A filing counts only when its FILING date is strictly before `clock.now()`'s
   market date (the Clerk gives a date, no time; same rule as the quality screen). Applies to the yearly report
   and to every PTR.
-- **Base = the newest yearly report known** (index types `C` annual and `A` amendment; the newest by filing
+- **Base = the newest yearly report known** (index type `O`, annual report; `A` amendments and `C` candidate reports are ignored; verified against the real index on 2026-10-07; the newest by filing
   date wins). It lists each asset held on the report's period end (Dec 31 of its reporting year) as a VALUE BAND
   (e.g. $5,000,001 - $25,000,000), never shares.
 - **Then every PTR trade made after that Dec 31.** Deviation from the brief's wording ("every trade report filed
@@ -102,7 +102,7 @@ final positions against the target (tolerance: the rebalance band); any shortfal
 
 ```
 congress/__init__.py
-congress/ptr.py             PURE: filing index (types C/A/P), member match, PTR rows -> Transaction, amount bands
+congress/ptr.py             PURE: filing index (types P/O), member match, PTR rows -> Transaction, amount bands
 congress/annual.py          PURE: yearly report text -> AssetHolding (value band), value-band table and tiers
 congress/holdings.py        PURE: reconstruct(annual assets, PTR transactions, period_end) -> Holding (range, tier); baseline weights
 congress/clerk_client.py    ClerkClient: the only Clerk/httpx/pypdf code, disk cache <root>/cache/house_clerk/
