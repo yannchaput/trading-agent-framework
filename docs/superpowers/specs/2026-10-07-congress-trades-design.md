@@ -1,143 +1,153 @@
-# congress_trades: an LLM agent that follows Nancy Pelosi's disclosed stock trades
+# congress_trades: a three-agent team that mirrors Nancy Pelosi's disclosed stock holdings
 
 Date: 2026-10-07 · Source: port of lumibot's "Nancy Pelosi trading bot" agent example (the page was not readable
-from the build sandbox; the design below is from the brief, not from that page's code)
+from the build sandbox; the design below is from the brief, not from that page's code). Supersedes the first
+version of this spec (single agent, search tool): the brief changed to a researcher → portfolio → trader pipeline.
 
 ## Goal
 
-A new strategy, `congress_trades`, in which an LLM agent reads newly disclosed stock transactions of a configurable
-list of members of Congress (default: Nancy Pelosi) and trades their tickers, weighting each position by the
-size of the disclosed trade. It runs in paper, live and backtesting.
+A new strategy, `congress_trades`, that once a day checks the House Clerk's disclosures for Nancy Pelosi and
+**trades only when she has filed something new**. Three agents hand structured results to each other:
 
-Success: `uv run pytest` and `uv run ruff check` pass; `uv run agent congress_trades backtesting` runs a
-multi-year window with no look-ahead; the smoke script parses a real Clerk filing.
+1. **Research agent** finds her newest yearly report (Financial Disclosure, FD) and every Periodic Transaction
+   Report (PTR) filed since, and works out what she owns today.
+2. **Portfolio agent** turns those holdings into a target mix: the bigger her holding's value band, the bigger
+   its share of the account.
+3. **Trading agent** places the buys and sells to match the mix and checks that every order filled.
 
-## Decisions taken in brainstorming (binding)
+It runs in paper, live and backtesting. Success: `uv run pytest`, `uv run ruff check` and `uv run pyright` pass;
+`uv run agent congress_trades backtesting` runs a multi-year window with no look-ahead and trades on filing days only;
+the smoke script parses a real yearly report and a real PTR.
 
-1. **Data: the House Clerk's Periodic Transaction Reports (PTRs)**, the official free source. No API key.
-2. **The decision-maker is an LLM agent** with a congress-trades tool, like `news_binary` (not a code copier).
-3. **Sizing follows the disclosed amount.** Filings give dollar ranges only (e.g. $250,001-$500,000); the tool
-   turns the range midpoint into a suggested weight (section 3).
-4. **Several politicians from the start**, a configurable list; stock transactions only (no options, bonds, funds).
+## What "owns today" means (binding)
 
-## Decisions taken by the designer (change if wrong)
+- **Reports known before today.** A filing counts only when its FILING date is strictly before `clock.now()`'s
+  market date (the Clerk gives a date, no time; same rule as the quality screen). Applies to the yearly report
+  and to every PTR.
+- **Base = the newest yearly report known** (index types `C` annual and `A` amendment; the newest by filing
+  date wins). It lists each asset held on the report's period end (Dec 31 of its reporting year) as a VALUE BAND
+  (e.g. $5,000,001 - $25,000,000), never shares.
+- **Then every PTR trade made after that Dec 31.** Deviation from the brief's wording ("every trade report filed
+  since" the yearly report): a yearly report is filed months after its period end (Pelosi files in summer), so
+  PTRs filed between Dec 31 and the yearly report's filing date describe trades the report does not include.
+  The rule is therefore: PTRs known before today whose TRANSACTION date is after the report's period end. A PTR trade
+  dated on or before the period end is already inside the report (disclosure lag) and is ignored.
+- **Estimate per ticker** (`congress/holdings.py`, pure, `Decimal`): start at the band midpoint; a buy adds the
+  range midpoint; a partial sale subtracts it (floor 0); a full sale (`S`) sets it to 0. Result: an estimated
+  value range and a TIER (the index of the yearly-report value band the estimate falls in, 0 = smallest).
+- Stocks only (`[ST]` with a ticker). Options, funds, bonds and rows with no ticker are dropped and counted in
+  the handoff (much of her real exposure is call options, which a long-only stock bot cannot copy; this is a
+  stated limit, not a bug). Spouse and joint assets count (`owner` is kept). One politician (a `politician`
+  setting, default "Nancy Pelosi"); several at once is out of scope.
 
-- **As-of rule: a filing is known only when its filing date is strictly before `clock.now()`'s date** (the Clerk gives
-  a date, no time; same rule as the quality screen). Trades are keyed by FILING date, never transaction date:
-  disclosure lags the trade by up to 45 days, and keying on the trade date would leak the future in a backtest.
-- **Long-only.** A disclosed sale is acted on only for a position this account holds; no shorts.
-- **Spouse trades count** (Paul Pelosi's trades are most of the disclosed volume); the payload carries `owner`
-  (`self`, `spouse`, `joint`, `dependent`) so the agent can see it.
-- **Daily cadence**, `sleeptime = "1D"`, `iteration_start_time = 10:00` ET. Filings appear at most once a day, so a
-  faster tick buys nothing.
-- **Sizing is guidance in the tool payload and the prompt, not a code guardrail** (no `Desk`). If runs show the
-  agent ignoring it, add a desk like `earnings_drift/desk.py` in a follow-up.
+## Daily check, trade only on news (binding)
 
-## 1. Layout
+State file `data/congress_trades_state_<mode>.json` (`StateStore`, wiped at the start of a backtest only, like
+`bill_ackman`) keeps `processed`: the DocIDs of the yearly report and PTRs the last COMPLETED run was built
+from. Each daily tick (`sleeptime = "1D"`, `iteration_start_time = 10:00` ET):
+
+1. Code lists the filings known before today. **New = known DocIDs not in `processed`.**
+2. **Nothing new, nothing pending → the research stage answers "nothing new"**: logged as the research result,
+   no agent is run (zero LLM calls, deterministic), no order is sent.
+3. Something new → research → portfolio → trading.
+4. **Pending trade.** If the last run finished its trading stage with orders unfilled, state holds
+   `pending_trade` (the target and a day counter) and the next ticks re-run ONLY the trading stage against the
+   stored target, at most `max_trade_retries` (3) times, then give up and log it. This is what "check that every
+   order filled" means across days; it never re-runs research or portfolio and never trades on a quiet day with
+   nothing pending.
+5. The first run (empty state) treats every known filing as new, so it builds the portfolio once.
+
+Design choice flagged for review: step 2 is a code short-circuit, not an agent that answers "nothing new". The
+observable behaviour is the same and it saves a model call per quiet day.
+
+## Agents and hand-offs (same pattern as `bill_ackman`)
+
+Each agent ends its run by calling ONE submit tool, validated by a `HandoffRecorder` armed by the pipeline; an
+invalid submission returns `{"error": ...}` so the model can correct itself; the first valid one is final; free
+text from an agent is logged and ignored. A stage with no valid submission after one forced retry
+(`force_tool=<submit tool>`) abandons the run: nothing is traded, state does not move, `abandoned_streak` goes
+up, and a backtest raises `FatalStrategyError` at `max_consecutive_abandoned` (3). All three agents run at
+`agent_temperature` 0.3. `handoff.py` has no `from __future__ import annotations`.
+
+**Research agent.** Tools: `list_filings()` and `read_filing(doc_id)` (lean parsed rows; the clock gate is in the
+tool: it refuses a DocID filed on or after today), market-data tools for a ticker sanity check, and
+`submit_holdings`. Its context carries `new_filings` and a code-computed `baseline` (the reconstruction above).
+Code does the arithmetic; the agent resolves what code cannot (an ambiguous partial sale, a renamed or merged
+ticker, an unparsed row) and may drop or adjust a holding, always with a reason. Validation: every ticker must
+appear in a known filing; value estimates must be positive; a holding that differs from the baseline needs a
+reason; at most `max_holdings` (20).
+
+**Portfolio agent.** Tools: `submit_target` only. Context: the holdings with tier and estimated range, a
+code-computed `baseline_weight` per ticker (share of estimated midpoints × `max_total_weight`, each capped at
+`max_position_weight`), and the current portfolio weights. Validation (the brief's rule, enforced by code):
+tickers ⊆ holdings; each weight in [`min_weight`, `max_position_weight`]; sum ≤ `max_total_weight`; **a holding
+in a higher tier never gets a smaller weight than one in a lower tier**; at most `max_positions` names; a held
+name may be dropped only with a reason (e.g. not tradable). Defaults: `max_total_weight` 0.95, `max_position_weight` 0.15,
+`min_weight` 0.01.
+
+**Trading agent.** Tools: `get_positions` and `get_account_balance` (the existing account tools),
+`get_last_price`, and the desk's `place_order(symbol, side, quantity)`, `check_orders()` and
+`submit_trade_report`. `TradeDesk` is the only order code and enforces, per call, with `{"error": ...}` on a
+violation: a buy only for a target ticker and not beyond its target weight (held + open buys + this order, within the
+rebalance band); a sell only of a position this strategy owns (a target ticker or one in `state.traded`; a shared
+account's other positions are left alone) and never above held minus open sells; sells before buys; buys sized
+against the SMALLER of `buying_power` and `cash` + the proceeds of the sells submitted this run (the repo rule,
+never `buying_power` alone); no shorts, no margin. `check_orders()` waits (`strategy.wait_for_orders_execution`,
+with a timeout) and returns each order's status, filled quantity and average price.
+`submit_trade_report(orders)` is accepted only when EVERY desk order is in a final status and the report names
+each one; an order that ended cancelled or rejected is accepted with a reason. The pipeline then audits in code:
+final positions against the target (tolerance: the rebalance band); any shortfall sets `pending_trade`.
+
+## Layout
 
 ```
-fundamentals-style data client
-  congress/__init__.py
-  congress/ptr.py            PURE: filing index parsing, PTR text -> Transaction, amount ranges, weights
-  congress/clerk_client.py   ClerkClient: the only module importing httpx for the Clerk; cache <root>/cache/house_clerk/
-agents/tools/congress.py     congress_trades_tools(strategy) -> [search_congress_trades]   (clock-gated)
+congress/__init__.py
+congress/ptr.py             PURE: filing index (types C/A/P), member match, PTR rows -> Transaction, amount bands
+congress/annual.py          PURE: yearly report text -> AssetHolding (value band), value-band table and tiers
+congress/holdings.py        PURE: reconstruct(annual assets, PTR transactions, period_end) -> Holding (range, tier); baseline weights
+congress/clerk_client.py    ClerkClient: the only Clerk/httpx/pypdf code, disk cache <root>/cache/house_clerk/
+congress/source.py          CongressSource: known-before-today filings, parsed; the new-filing diff
+agents/tools/congress.py    research tools list_filings / read_filing, bound to the Strategy (clock gate)
 strategies/congress_trades/
-  __init__.py
-  agent_congress_trades.py   CongressTradesStrategy (system prompt inline, like news_binary)
-  parameters.py              CongressParams (politicians, lookback, caps)
-main.py                      AGENT_STRATEGIES["congress_trades"]
-scripts/tests/smoke_congress_trades.py   manual smoke test against the real Clerk (read-only)
-tests/congress/, tests/agents/tools/test_congress.py, tests/strategies/congress_trades/
+  parameters.py             CongressParams
+  handoff.py                HandoffRecorder + submit_holdings / submit_target / submit_trade_report validation
+  desk.py                   TradeDesk: guarded place_order, check_orders; the only order code
+  state.py                  StateStore (processed, last holdings/target, pending_trade, traded, abandoned_streak), RunLog
+  pipeline.py               CongressPipeline: nothing-new short-circuit, three stages, audit
+  prompts.py                the three system prompts and task prompts
+  agent_congress_trades.py  CongressTradesStrategy
+main.py                     AGENT_STRATEGIES["congress_trades"]
+scripts/tests/smoke_congress_trades.py
 ```
 
-`ptr.py` is pure (no I/O, no clock), like `fundamentals/sec.py`. `clerk_client.py` is the only network code.
+The pure modules do no I/O and read no clock. `clerk_client.py` is the only network code (`CONGRESS_USER_AGENT`
+required, like `SEC_EDGAR_USER_AGENT`); yearly and PTR PDFs are immutable once filed, so their extracted text is
+cached forever; a year's index is refetched when its `fetched_at` is older than 1 day by `as_of`
+(`fundamentals/freshness.is_stale`) and the file was fetched no later than that year, so a backtest never
+refetches an existing index. Image-only (scanned) PDFs have no text: skipped with a warning and counted. A
+filing with text but no parseable row raises `CongressDataError`: a changed layout must not read as "no trades".
 
-## 2. Data layer
+## Backtesting
 
-**Index.** The Clerk publishes one zip per year, `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/<YYYY>FD.zip`,
-with `<YYYY>FD.xml`: one row per filing (last name, first name, filing type, filing date, DocID). PTRs have filing
-type `P`. `ptr.parse_index(xml)` returns `FilingRef(doc_id, member, filed: date, year)` for PTRs only; the
-member filter is a normalized-name match (`"Nancy Pelosi"` matches last `Pelosi` + first `Nancy`, honorifics and
-suffixes ignored).
+Daily bars (`timestep="day"`) like `bill_ackman`; the tickers are not known up front, so the data source must
+load them lazily (the plan's Task 9 checks how `YahooBacktestData` handles an asset that was not preloaded and
+adds a pre-scan of the window's tickers to `preload_assets` if it does not). A backtest fills an order on the next
+bar, so `check_orders()` in a daily backtest finds orders unfilled at the 10:00 tick; the plan verifies how
+`wait_for_orders_execution` advances the simulated clock and, if it cannot cover a next-session fill, the
+audit/`pending_trade` path (next tick re-checks, never re-sends what is open) is the designed behaviour. Orders
+still open count toward a position when sizing (the `Rebalancer` rule). Default window: two years.
 
-**Filings.** Each PTR is a PDF at `.../ptr-pdfs/<YYYY>/<DocID>.pdf`. `ClerkClient.fetch_pdf_text(ref)` downloads and
-extracts the text (a PDF text library, one new dependency, chosen in the plan; the choice must not need a system
-binary). Image-only (scanned) filings carry no text: they are skipped with a logged warning, and counted in the
-payload's `unparsed_filings`.
+## Risks and open points
 
-**Transactions.** `ptr.parse_transactions(text, ref)` returns `Transaction(doc_id, member, owner, asset_name,
-ticker, side, transaction_date, notification_date, amount_low, amount_high, filed)`:
-
-- Keep only asset type `[ST]` (stock) with a ticker in parentheses, e.g. `NVIDIA Corporation - Common Stock (NVDA) [ST]`.
-  Options `[OP]`, funds, bonds and rows with no ticker are dropped and counted (`skipped_non_stock`).
-- `side`: `P` -> `buy`; `S` and `S (partial)` -> `sell`; `E` (exchange) is dropped.
-- `amount_low`/`amount_high` are `Decimal` from the range bands the form uses ($1,001-$15,000 ... Over $50,000,000;
-  an open-ended top band gets `amount_high = amount_low`).
-- Money is `Decimal`; no new float boundary.
-- A row that does not parse is skipped and counted, never raised, but a filing where NO row parses raises
-  `FundamentalsError`-style `CongressDataError` (a changed layout must not read as "no trades").
-
-**Caching.** The year index and each PDF's extracted text are cached under `<project_root>/cache/house_clerk/`.
-A filing is immutable once filed (amendments are new DocIDs), so a PDF never expires; the CURRENT year's index is
-refreshed when its `fetched_at` is older than 1 day by `as_of` (`fundamentals/freshness.is_stale`, same rule as the
-SEC client: a backtest never refetches an existing file). Rate limit and a descriptive `User-Agent` from
-`CONGRESS_USER_AGENT` (env, required, like `SEC_EDGAR_USER_AGENT`).
-
-## 3. The agent tool
-
-`search_congress_trades(days: int = 30, ticker: str = "", politician: str = "")` in `agents/tools/congress.py`,
-bound to the `Strategy` so it takes its cutoff from `strategy.clock.now()` (the research-tool rule in CLAUDE.md).
-
-- Returns transactions whose `filed` date is in `[today - days, today)` (strictly before today), newest first,
-  capped (default 20) and lean: `{ticker, side, member, owner, filed, traded, amount_low, amount_high, suggested_weight}`.
-  Plus `{"count", "unparsed_filings", "skipped_non_stock"}`. Errors come back as `{"error": ...}`.
-- `suggested_weight` is computed in code (`ptr.suggested_weights`), per TICKER: the ticker's buy midpoints divided by the
-  sum of the midpoints of all buys in the window by the same members, times `CongressParams.max_total_weight`
-  (default 0.9), each capped at `max_position_weight` (default 0.15). So the weights sum to at most 0.9 across the
-  names disclosed in the window and a single big trade cannot take the whole book. Sells carry no weight.
-- Window sums use only filings known at `now`, so the weights are identical in a backtest and live.
-- Same-run identical calls reuse the first result (`RunMemo`, like `search_news`).
-
-## 4. The strategy
-
-`CongressTradesStrategy` mirrors `NewsBinaryStrategy`: `PrebuiltTools.all(self)` + `congress_trades_tools(self)`,
-inline system prompt, a `portfolio` snapshot in every run's context (shared helper extracted from news_binary) and `FatalStrategyError` after 3 consecutive
-agent failures in a backtest. A run that records no decision logs a warning; there is no corrective retry turn. The prompt tells the agent to:
-
-1. Call `search_congress_trades` (default lookback `CongressParams.lookback_days`, 45 = the legal filing window).
-2. Buy tickers with a recent disclosed purchase it does not already hold, at `suggested_weight` of the portfolio,
-   sized against the smaller of `buying_power` and `cash` + same-run sell proceeds (the existing rule).
-3. Sell a held ticker when a politician disclosed a sale of it; ignore sells for names it does not hold.
-4. Take no action when nothing new was filed (no churn), and record the decision with `remember_decision`.
-
-The universe is whatever tickers the filings contain, so tickers the broker cannot trade are refused by the
-broker and come back as `{"error": ...}`.
-
-Benchmark: SPY (`benchmark_symbol` default). Backtest window: the predefined decade/5-year window is too long
-for the free Clerk history of electronic PTRs; the default is `PredefinedWindow` covering 2 years, adjustable.
-
-## 5. Testing
-
-- `tests/congress/test_ptr.py`: index parsing, name matching, row parsing for P / S / S (partial) / options /
-  no-ticker / amount bands, an unparseable filing raises, weights sum to at most `max_total_weight` and respect the cap.
-- `tests/congress/test_clerk_client.py`: fake `httpx` transport; cache hit does not refetch; backtest `as_of`
-  never refetches; current-year index refetched after a day.
-- `tests/agents/tools/test_congress.py`: the tool never returns a filing dated today or later (frozen strategy
-  clock), error payloads, `RunMemo`.
-- `tests/strategies/congress_trades/`: a fake agent run through the executor in backtesting.
-- No test touches the network. `scripts/tests/smoke_congress_trades.py` runs against the real Clerk.
-
-## 6. Risks and open points
-
-- **Filing layout is unverified.** The build sandbox could not reach `disclosures-clerk.house.gov`. The first
-  plan task is to run the smoke script on a machine with access, capture one real PTR's extracted text as a
-  fixture, and fix `ptr.py` against it before any other code depends on it.
-- **Disclosure lag** (up to 45 days) makes this a slow-signal strategy; the backtest, not the idea, decides
-  whether it adds anything. A known cost of keying on the filing date.
-- **Dollar ranges are coarse**, so weights are approximate by construction.
-- **Scanned pre-electronic filings** are unreadable and skipped.
-- **Sizing is advisory** (see designer decisions).
+- **Both filing layouts are unverified** (yearly report Schedule A and PTR rows). The build sandbox cannot reach
+  `disclosures-clerk.house.gov`. The first plan tasks end in a checkpoint: run the smoke script where the site is
+  reachable, store real extracted text as fixtures, fix the parsers. Nothing ships before it.
+- **Estimates are coarse by construction** (bands and ranges, not shares), and exclude options.
+- **Disclosure lag** (PTRs up to 45 days, the yearly report months) makes this a slow signal; the backtest decides.
+- **The trading agent has order tools.** Unlike `bill_ackman`, per the brief; the desk's guardrails make a bad
+  order impossible rather than unlikely, and an order the agent forgets is caught by the audit.
 
 ## Out of scope
 
-Senate disclosures, options and futures, shorting, paid APIs (Quiver), real-time alerts, a desk with code guardrails.
+Other politicians at once, Senate disclosures, options and futures, shorting, paid APIs, a parking instrument
+(unallocated money stays cash).

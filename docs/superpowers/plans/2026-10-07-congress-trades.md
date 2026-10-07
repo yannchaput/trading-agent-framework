@@ -2,52 +2,61 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A new strategy `congress_trades`: an LLM agent reads newly filed stock transactions of a configurable list of
-House members (default Nancy Pelosi) from the House Clerk's Periodic Transaction Reports (PTRs), through a
-clock-gated `search_congress_trades` tool, and trades the disclosed tickers weighted by the disclosed dollar
-range. It runs in paper, live and backtesting.
+**Goal:** A new strategy `congress_trades`: a team of three agents (research → portfolio → trading) that rebuilds what
+Nancy Pelosi owns today from the House Clerk's newest yearly report plus the trade reports (PTRs) since, turns it
+into a target mix weighted by her holdings' value bands, and trades to that mix and checks every order filled. The
+bot ticks once a day but trades only when she has filed something new. Paper, live and backtesting.
 
-**Architecture:** A pure `congress/ptr.py` (index parsing, name matching, transaction parsing, amount bands,
-weights), an I/O `congress/clerk_client.py` (the only Clerk/`httpx`/`pypdf` code, disk-cached), a thin
-`congress/source.py` that joins them into "trades filed in a window, known at `as_of`", the tool in
-`agents/tools/congress.py` (cutoff from `strategy.clock.now()`), and `strategies/congress_trades/`
-(`NewsBinaryStrategy`-shaped: `PrebuiltTools.all(self)` + the congress tool, inline prompt, daily tick).
+**Architecture:** Pure `congress/{ptr,annual,holdings}.py` (parsing, bands, reconstruction, weights); I/O
+`congress/clerk_client.py` (the only Clerk/`httpx`/`pypdf` code, disk cache) and `congress/source.py` (the filings
+known before today, parsed, and the new-filing diff); research tools in `agents/tools/congress.py` (clock-gated);
+`strategies/congress_trades/` following `bill_ackman`: `HandoffRecorder` with three submit tools, a `CongressPipeline`
+that short-circuits on "nothing new", a guarded `TradeDesk` (the only order code), a `StateStore`.
 
 **Tech Stack:** Python 3.14, httpx, pypdf (new), pytest, `uv`, ruff, pyright.
 
-**Spec:** `docs/superpowers/specs/2026-10-07-congress-trades-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-07-congress-trades-design.md` (read it first: it fixes the "owns today"
+rule, the daily trigger, and each agent's validation).
+
+**Patterns to copy (read before the task that uses them):** `strategies/bill_ackman/handoff.py` (recorder, submit
+tools, validators), `pipeline.py` (`_run_stage`, abandonment, `ReviewLog`), `state.py` (atomic JSON store),
+`parameters.py` (self-validating dataclass), `agent_bill_ackman.py` (wiring, `FatalStrategyError` on
+`ConfigurationError`), `rebalancer.py` (open-order accounting, the smaller-of-buying-power-and-cash sizing);
+`fundamentals/edgar_client.py` (cache, rate limit, error wrapping); `agents/tools/news.py` (tool bound to the
+strategy, clock gate, `RunMemo`).
 
 ## Global Constraints
 
 - Run everything through `uv` (`uv run pytest`, `uv run ruff check`, `uv run pyright`); never pip. Add the dependency
   with `uv add pypdf`.
-- The automated tests never touch the network: fake `httpx.MockTransport`, hand-written fakes (`tests/fakes.py`),
-  no `MagicMock`. `scripts/tests/` is the only place that touches the real Clerk.
-- Money is `Decimal`; no new float boundary. Pure modules (`ptr.py`) do no I/O and read no clock.
-- **A filing is known only when its filing DATE is strictly before `clock.now()`'s date** (market time). Trades
-  are keyed on the filing date, never on the transaction date. No `datetime.now()` / `time.sleep` in
-  strategy, tool or source code (`strategy.clock`, `strategy.sleep`); the client's rate limit is the one allowed
-  `time.sleep`, as in `SecEdgarClient`.
-- No raw `httpx`/`pypdf` exception escapes: wrap in `CongressDataError` (`utils/errors.py`).
-- `agents/tools/congress.py` and `congress/ptr.py` have no `from __future__ import annotations` where the agent layer
-  reads annotations (the tool function); follow `memory/tools.py`.
+- The automated tests never touch the network: `httpx.MockTransport`, hand-written fakes (`tests/fakes.py`), no
+  `MagicMock`. `scripts/tests/` is the only place that touches the real Clerk.
+- Money is `Decimal`; no new float boundary except the JSON/LangChain boundary of the handoff weights (as in
+  `bill_ackman/handoff.py`). Pure modules do no I/O and read no clock.
+- **A filing is known only when its filing DATE is strictly before `clock.now()`'s market date.** No
+  `datetime.now()` / `time.sleep` in strategy, tool or desk code (`strategy.clock`, `strategy.sleep`); the client's
+  rate limit is the one allowed `time.sleep`, as in `SecEdgarClient`.
+- No raw `httpx`/`pypdf` exception escapes: wrap in `CongressDataError`.
+- Files whose functions are tools (`handoff.py`, `desk.py` tool closures, `agents/tools/congress.py`) have no
+  `from __future__ import annotations` (the agent layer reads real annotations).
+- Tests that count runs pin their own `sleeptime`; the prompts never state the cadence.
 - Commit after every task; each commit message ends with the `Co-Authored-By:` trailer of the model executing
   the task. Line length and style follow the surrounding code (ruff config in `pyproject.toml`).
-- Out of scope: Senate disclosures, options, shorting, paid APIs (Quiver), a code-enforcing desk, a decision retry
-  turn like `news_binary`'s.
+- Out of scope: other politicians at once, Senate, options, shorting, paid APIs, a parking instrument.
 
 ## Review Focus
 
-- **No look-ahead.** A filing dated today or later never reaches the agent (Task 7 tool test with a frozen
-  clock; Task 6 source test), and weights are computed from the same known set in a backtest and live.
-- **A changed layout must not read as "no trades"**: a filing with text but no parseable row raises
-  `CongressDataError`; only an image-only (no text) filing is skipped and counted (Task 3).
-- **The unverified layout.** Task 1 produces a real fixture; Tasks 2-3 are written against a synthetic one and the
-  checkpoint at the end of Task 3 re-bases them on the real text. Do not merge Tasks 4+ on a parser the
-  checkpoint has not confirmed.
-- **Weights bounded**: sum of ticker weights <= `max_total_weight`, each <= `max_position_weight`, sells carry none.
-- A member name match is exact on normalized first+last name: "Nancy Pelosi" never matches "Pelosi, Paul"
-  or "Nancy Pelosi-Smith" (Task 2).
+- **No look-ahead**: a filing dated today or later never reaches an agent or the reconstruction (Task 5 source test,
+  Task 6 tool test), and the diff "new filings" uses the same known set.
+- **"Nothing new" costs nothing and trades nothing**: no agent is run, no order sent, state unchanged (Task 10).
+- **Pending trade is not a daily trade**: only the trading stage re-runs, at most `max_trade_retries` times, never
+  re-sends an order that is already open (Tasks 9-10).
+- **The tier rule is code, not prompt**: a higher-tier holding with a smaller weight is rejected by `submit_target` (Task 8).
+- **A changed layout must not read as "no holdings/trades"** (Tasks 2-3 raise `CongressDataError`).
+- **PTR trades dated on or before the yearly report's Dec 31 are ignored** (already inside the report) while PTRs
+  filed before the report but trading after Dec 31 ARE applied (Task 4).
+- **The desk cannot over-buy, short, or touch positions this strategy does not own** (Task 9).
+- **The unverified layouts**: the checkpoint at the end of Task 5 re-bases Tasks 2-3 on real text; nothing ships before it.
 
 ---
 
@@ -55,326 +64,320 @@ weights), an I/O `congress/clerk_client.py` (the only Clerk/`httpx`/`pypdf` code
 
 | File | Change |
 |---|---|
-| `pyproject.toml`, `uv.lock` | `pypdf` dependency |
+| `pyproject.toml`, `uv.lock` | `pypdf` |
 | `src/trading_agent_framework/utils/errors.py` | `CongressDataError` |
-| `src/trading_agent_framework/congress/__init__.py` | new package |
-| `src/trading_agent_framework/congress/ptr.py` | new, pure |
-| `src/trading_agent_framework/congress/clerk_client.py` | new, I/O |
-| `src/trading_agent_framework/congress/source.py` | new, `CongressSource` |
-| `src/trading_agent_framework/agents/tools/congress.py` | new, `congress_trades_tools` |
-| `src/trading_agent_framework/agents/tools/__init__.py` | lazy-export `congress_trades_tools` |
-| `src/trading_agent_framework/strategies/congress_trades/{__init__,parameters,agent_congress_trades}.py` | new |
-| `src/trading_agent_framework/main.py` | builder + `AGENT_STRATEGIES["congress_trades"]` |
+| `src/trading_agent_framework/congress/{__init__,ptr,annual,holdings,clerk_client,source}.py` | new |
+| `src/trading_agent_framework/agents/tools/congress.py`, `agents/tools/__init__.py` | research tools, lazy export |
+| `src/trading_agent_framework/strategies/congress_trades/{__init__,parameters,state,handoff,desk,prompts,pipeline,agent_congress_trades}.py` | new |
+| `src/trading_agent_framework/main.py` | builder + registry |
 | `scripts/tests/smoke_congress_trades.py` | new, manual |
-| `env/.env.example`, `README.md`, `CLAUDE.md` | `CONGRESS_USER_AGENT`, strategy section, architecture + gotcha |
-| `tests/congress/{test_ptr,test_clerk_client,test_source}.py`, `tests/agents/tools/test_congress_tools.py`, `tests/strategies/congress_trades/test_congress_strategy.py`, `tests/test_main.py` | new / extended |
+| `env/.env.example`, `README.md`, `CLAUDE.md` | `CONGRESS_USER_AGENT`, strategy section, architecture + gotchas |
+| `tests/congress/`, `tests/agents/tools/test_congress_tools.py`, `tests/strategies/congress_trades/`, `tests/test_main.py` | new / extended |
 
 ---
 
-## Task 1: Plumbing and the real-format smoke script
+## Task 1: Plumbing
 
-**Files:** `pyproject.toml`, `utils/errors.py`, `scripts/tests/smoke_congress_trades.py` (created last, in Task 6,
-once `ClerkClient` exists; this task only prepares what it needs).
-
-- [ ] **Step 1: Dependency.** `uv add pypdf`. Confirm `uv run python -c "import pypdf"` works (pure Python, no
-  system binary).
-- [ ] **Step 2: Error type.** In `utils/errors.py`, after `FundamentalsNotFoundError`:
+- [ ] **Step 1:** `uv add pypdf`; confirm `uv run python -c "import pypdf"` (pure Python, no system binary).
+- [ ] **Step 2:** `utils/errors.py`, after `FundamentalsNotFoundError`:
 
 ```python
 class CongressDataError(TradingFrameworkError):
     """Raised when a congressional-disclosure lookup or parse fails (never a raw httpx/pypdf exception)."""
 ```
 
-- [ ] **Step 3: Env.** `env/.env.example`: add `CONGRESS_USER_AGENT=` next to `SEC_EDGAR_USER_AGENT` with the same
-  "`<app or project name> <contact email>`" comment. README env section: one line mirroring the SEC one.
-- [ ] **Step 4: Run `uv run pytest -q` and `uv run ruff check`** (unchanged green), commit
-  `chore: pypdf dependency, CongressDataError, CONGRESS_USER_AGENT env`.
+- [ ] **Step 3:** `env/.env.example`: `CONGRESS_USER_AGENT=` beside `SEC_EDGAR_USER_AGENT`, same comment style
+  ("`<app or project name> <contact email>`"); one README env line mirroring the SEC one.
+- [ ] **Step 4:** `uv run pytest -q`, `uv run ruff check` green; commit `chore: pypdf, CongressDataError, CONGRESS_USER_AGENT`.
 
 ---
 
-## Task 2: `ptr.py` -- index parsing and name matching (pure)
+## Task 2: `congress/ptr.py` -- index, member match, PTR rows (pure)
 
-**Files:** `congress/__init__.py`, `congress/ptr.py`, `tests/congress/test_ptr.py`.
-
-The year index `<YYYY>FD.xml` has `<Member>` elements with children `Prefix, Last, First, Suffix, FilingType,
-StateDst, Year, FilingDate (M/D/YYYY), DocID`. PTRs are `FilingType == "P"`.
-
-- [ ] **Step 1: Write failing tests** in `tests/congress/test_ptr.py`:
-  - `test_parse_index_keeps_only_ptrs` (a `C` annual report and an `X` extension are dropped; `FilingRef.filed` is a
-    `date`, `doc_id` a string, `year` an int).
-  - `test_filed_date_parses_month_first_without_padding` (`"1/5/2025"`).
-  - `test_name_match_is_exact_on_normalized_first_and_last` ("Nancy Pelosi" matches `Last=Pelosi, First=Nancy`; also
-    `Prefix=Hon.` and a `Suffix` are ignored; does NOT match `First=Paul`, `Last=Pelosi-Smith`, nor a
-    case/whitespace variant mismatch -> case-insensitive match is True).
-  - `test_filings_for_returns_only_the_named_members` (two members requested).
-  - `test_malformed_index_raises_congress_data_error` (not XML; a `Member` with no `DocID`).
-- [ ] **Step 2: Run, expect FAIL** (`ModuleNotFoundError`).
-- [ ] **Step 3: Implement** (`xml.etree.ElementTree`, which is stdlib and safe for this trusted-origin file; if
-  the project later parses untrusted XML switch to `defusedxml`):
-
-```python
-@dataclass(frozen=True, slots=True)
-class FilingRef:
-    doc_id: str
-    member: str          # "First Last", normalized display name
-    filed: date
-    year: int
-
-def normalize_name(name: str) -> str: ...        # lower, strip honorifics ("hon.", "mr.", "mrs.", "ms.", "dr."), collapse spaces
-def parse_index(xml_text: str) -> list[FilingRef]: ...   # PTRs only; raises CongressDataError on malformed input
-def filings_for(refs: Iterable[FilingRef], politicians: Sequence[str]) -> list[FilingRef]: ...
-```
-
-  `member` is built from `First` + `Last` (no prefix/suffix); `filings_for` compares `normalize_name(ref.member)`
-  to `normalize_name(requested)`.
-- [ ] **Step 4: Run tests, expect PASS; `uv run ruff check`; commit** `feat(congress): PTR index parsing and member matching`.
-
----
-
-## Task 3: `ptr.py` -- transaction parsing (pure) and the real-format checkpoint
-
-**Files:** `congress/ptr.py`, `tests/congress/test_ptr.py`, `tests/congress/fixtures/ptr_sample.txt`.
-
-PTR text, once whitespace is collapsed, is a run of rows like
+The year index `<YYYY>FD.xml` has `<Member>` elements: `Prefix, Last, First, Suffix, FilingType, StateDst, Year,
+FilingDate (M/D/YYYY), DocID`. `P` = PTR, `C` = annual report, `A` = amendment (assumed; verify at the checkpoint).
+PTR text, whitespace collapsed, is a run of rows like
 `SP NVIDIA Corporation - Common Stock (NVDA) [ST] P 01/14/2025 01/14/2025 $250,001 - $500,000`
-(owner code optional: `SP` spouse, `JT` joint, `DC` dependent child, none = filer; a row may add `S (partial)`,
-`F S:` / `D:` description lines after it). **This is the assumed layout, not a verified one.**
+(owner code optional: `SP` spouse, `JT` joint, `DC` dependent; sides `P`, `S`, `S (partial)`, `E`).
 
-- [ ] **Step 1: Fixture.** Write `tests/congress/fixtures/ptr_sample.txt` by hand in the shape above: a header
-  block, a stock purchase (spouse), a stock sale, `S (partial)`, an option row (`[OP]`), a bond (`[GS]`, no ticker),
-  an exchange (`E`), a `Over $50,000,000` band, a row split across two lines, and a trailing "Filing ID" footer.
-- [ ] **Step 2: Failing tests:**
-  - `test_parses_a_purchase_with_owner_and_range` (owner `spouse`, side `buy`, `Decimal` bounds, both dates).
-  - `test_sale_and_partial_sale_are_sells`.
-  - `test_options_bonds_and_exchanges_are_counted_not_parsed` (`ParseResult.skipped_non_stock` equals their count).
-  - `test_open_ended_top_band_uses_the_floor_for_both_bounds`.
-  - `test_a_row_split_across_lines_parses`.
-  - `test_text_with_no_parseable_stock_row_and_no_other_row_raises` (a changed layout is an error).
-  - `test_empty_text_is_an_image_only_filing` (`parse_transactions("")` returns `None`).
-  - `test_ticker_with_dot_or_dash_parses` (`BRK.B`, `BF-B`).
+- [ ] **Step 1: Failing tests** (`tests/congress/test_ptr.py`, synthetic fixture `tests/congress/fixtures/ptr_synthetic.txt`):
+  - `test_parse_index_returns_ptr_annual_and_amendment_refs_with_kind` (other types dropped; `FilingRef.kind` in
+    `{"ptr","annual"}`, `filed` a `date`, `year` the reporting year, `"1/5/2025"` parses).
+  - `test_member_match_is_exact_on_normalized_first_and_last` ("Nancy Pelosi" matches; honorific/suffix ignored,
+    case-insensitive; not `Paul Pelosi`, not `Pelosi-Smith`).
+  - `test_malformed_index_raises_congress_data_error` (not XML; a `Member` with no `DocID`).
+  - `test_parses_a_purchase_with_owner_and_range`, `test_sale_and_partial_sale_are_sells`,
+    `test_options_bonds_exchanges_are_counted_not_parsed`, `test_open_ended_top_band_uses_the_floor_for_both_bounds`,
+    `test_a_row_split_across_lines_parses`, `test_ticker_with_dot_or_dash_parses` (`BRK.B`, `BF-B`).
+  - `test_text_with_type_tags_but_no_parseable_row_raises`, `test_text_with_no_type_tag_raises`,
+    `test_blank_text_is_an_image_only_filing` (returns `None`).
+- [ ] **Step 2:** run, expect FAIL (`ModuleNotFoundError`).
 - [ ] **Step 3: Implement:**
 
 ```python
 @dataclass(frozen=True, slots=True)
+class FilingRef:
+    doc_id: str; member: str; kind: str; filed: date; year: int   # kind: "ptr" | "annual"
+
+@dataclass(frozen=True, slots=True)
 class Transaction:
-    doc_id: str; member: str; owner: str          # "self" | "spouse" | "joint" | "dependent"
-    ticker: str; asset_name: str; side: str       # "buy" | "sell"
+    doc_id: str; owner: str; ticker: str; asset_name: str; side: str     # owner: self|spouse|joint|dependent; side: buy|sell|sell_partial
     transaction_date: date; notification_date: date
     amount_low: Decimal; amount_high: Decimal; filed: date
 
 @dataclass(frozen=True, slots=True)
-class ParseResult:
-    transactions: list[Transaction]
-    skipped_non_stock: int
+class PtrParse:
+    transactions: list[Transaction]; skipped_non_stock: int
 
-def parse_transactions(text: str, ref: FilingRef) -> ParseResult | None: ...   # None = image-only (blank text)
+def normalize_name(name: str) -> str: ...
+def parse_index(xml_text: str) -> list[FilingRef]: ...                  # xml.etree.ElementTree; raises CongressDataError
+def filings_for(refs, politician: str) -> list[FilingRef]: ...
+def parse_ptr(text: str, ref: FilingRef) -> PtrParse | None: ...         # None = image-only
 ```
 
-  Collapse whitespace first, then `finditer` one compiled pattern for stock rows; count every `[XX]` type tag and
-  report `skipped_non_stock = tags - parsed stock rows`. Side `P` -> buy, `S` / `S (partial)` -> sell, `E`
-  dropped (counted). Non-blank text with no type tag at all raises `CongressDataError`; tags present but zero stock
-  rows is fine (a filing of bonds only).
-- [ ] **Step 4: Tests PASS; ruff; commit** `feat(congress): parse PTR transactions`.
-- [ ] **Step 5 (CHECKPOINT, needs a machine that can reach disclosures-clerk.house.gov): re-base on real text.**
-  After Task 6 creates the smoke script, run it, save one real Pelosi PTR's extracted text over
-  `ptr_sample.txt` (keep the synthetic cases as `ptr_synthetic.txt`), and fix `parse_transactions` until both
-  fixtures pass. Record in the commit message what differed. Tasks 4+ do not depend on the text layout and may
-  proceed meanwhile, but nothing ships before this step.
+  Collapse whitespace, `finditer` one compiled stock-row pattern, count every `[XX]` tag and report
+  `skipped_non_stock = tags - parsed`. `E` rows are dropped and counted. `side` keeps `sell` and `sell_partial`
+  apart (Task 4 needs the difference).
+- [ ] **Step 4:** PASS; ruff; commit `feat(congress): filing index and PTR parsing`.
 
 ---
 
-## Task 4: `ptr.py` -- suggested weights (pure)
+## Task 3: `congress/annual.py` -- value bands, tiers, yearly report (pure)
 
-**Files:** `congress/ptr.py`, `tests/congress/test_ptr.py`.
+Yearly report Schedule A rows (assumed shape): `SP Apple Inc. - Common Stock (AAPL) [ST] $5,000,001 - $25,000,000 Dividends $...`.
+Bands (index = tier): `$1,001-$15,000`, `$15,001-$50,000`, `$50,001-$100,000`, `$100,001-$250,000`,
+`$250,001-$500,000`, `$500,001-$1,000,000`, `$1,000,001-$5,000,000`, `$5,000,001-$25,000,000`,
+`$25,000,001-$50,000,000`, `Over $50,000,000`; spouse/dependent assets may use `Over $1,000,000` (tier of the
+$1,000,001-$5,000,000 band; flagged `open_ended`).
 
-- [ ] **Step 1: Failing tests:**
-  - `test_weights_are_proportional_to_range_midpoints_and_sum_to_max_total` (two buys, 3:1 midpoints, caps not binding
-    -> 0.675 / 0.225 with `max_total=0.9`).
-  - `test_each_weight_is_capped_at_max_position` (one buy, `max_position=0.15` -> 0.15, total below max).
-  - `test_buys_of_the_same_ticker_add_up` (one weight per ticker).
-  - `test_sells_carry_no_weight_and_do_not_dilute_buys`.
-  - `test_no_buys_gives_an_empty_mapping`.
-- [ ] **Step 2: Implement:**
+- [ ] **Step 1: Failing tests** (`tests/congress/test_annual.py`, fixture `annual_synthetic.txt`):
+  - `test_bands_are_ordered_and_tier_of_a_value_is_the_band_that_contains_it` (including the exact edges, `$5,000,001` and `$25,000,000`).
+  - `test_parse_annual_assets_reads_stock_rows_with_owner_and_value_band`.
+  - `test_other_asset_tags_options_and_no_ticker_rows_are_counted` (`skipped_non_stock`).
+  - `test_over_one_million_spouse_band_maps_to_the_one_to_five_million_tier`.
+  - `test_period_end_is_december_31_of_the_reporting_year`.
+  - `test_text_with_no_parseable_asset_and_no_other_tag_raises`; `test_blank_text_is_image_only`.
+- [ ] **Step 2-3: Implement** `VALUE_BANDS: tuple[Band, ...]`, `tier_of(value: Decimal) -> int`,
+  `AssetHolding(doc_id, owner, ticker, asset_name, value_low, value_high, tier)`, `parse_annual(text, ref) -> AnnualParse | None`,
+  `period_end(ref) -> date`.
+- [ ] **Step 4:** PASS; ruff; commit `feat(congress): yearly report parsing and value tiers`.
+
+---
+
+## Task 4: `congress/holdings.py` -- what she owns today (pure)
+
+- [ ] **Step 1: Failing tests** (`tests/congress/test_holdings.py`):
+  - `test_annual_assets_alone_give_holdings_at_the_band_midpoint`.
+  - `test_ptr_buy_after_period_end_adds_the_range_midpoint`; `test_ptr_buy_dated_on_or_before_period_end_is_ignored`
+    (disclosure lag: already inside the report); `test_ptr_filed_before_the_annual_report_but_traded_after_period_end_is_applied`.
+  - `test_full_sale_sets_the_holding_to_zero_and_removes_it`; `test_partial_sale_subtracts_the_midpoint_with_floor_zero`.
+  - `test_a_ptr_buy_of_a_ticker_not_in_the_annual_report_creates_a_holding`.
+  - `test_tier_is_recomputed_from_the_estimated_value` (a buy lifts a holding from the $1M-$5M to the $5M-$25M tier).
+  - `test_two_owners_of_the_same_ticker_add_up`.
+  - `test_baseline_weights_are_proportional_to_midpoints_capped_and_sum_at_most_max_total` and
+    `test_baseline_weight_cap_is_not_redistributed`.
+  - `test_filings_dated_today_or_later_are_not_the_callers_input` is a SOURCE test (Task 5); here `reconstruct` takes the already-filtered inputs and has no date logic besides `period_end`.
+- [ ] **Step 2-3: Implement:**
 
 ```python
-def suggested_weights(transactions: Iterable[Transaction], *, max_total: Decimal, max_position: Decimal) -> dict[str, Decimal]:
-    """Ticker -> portfolio weight: its share of the window's buy midpoints times max_total, capped at max_position."""
+@dataclass(frozen=True, slots=True)
+class Holding:
+    ticker: str; asset_name: str; value_low: Decimal; value_high: Decimal; tier: int; sources: tuple[str, ...]   # DocIDs
+
+def reconstruct(assets: Sequence[AssetHolding], transactions: Sequence[Transaction], *, period_end: date) -> list[Holding]: ...
+def baseline_weights(holdings: Sequence[Holding], *, max_total: Decimal, max_position: Decimal) -> dict[str, Decimal]: ...
 ```
 
-  Quantize to 4 places with `ROUND_DOWN` so the sum can never exceed `max_total`. The cap is not redistributed
-  (spare weight stays in cash, deliberately).
-- [ ] **Step 3: PASS; ruff; commit** `feat(congress): suggested position weights`.
+  Transactions are applied in (transaction_date, doc_id) order. Weights quantized `ROUND_DOWN` to 4 places so the
+  sum can never exceed `max_total`. A holding whose value reaches 0 is removed.
+- [ ] **Step 4:** PASS; ruff; commit `feat(congress): reconstruct holdings and baseline weights`.
 
 ---
 
-## Task 5: `CongressParams`
+## Task 5: `ClerkClient`, `CongressSource`, smoke script, and the format CHECKPOINT
 
-**Files:** `strategies/congress_trades/{__init__,parameters}.py`, `tests/strategies/congress_trades/test_congress_params.py`.
+**Files:** `congress/clerk_client.py`, `congress/source.py`, `scripts/tests/smoke_congress_trades.py`, tests.
 
-- [ ] **Step 1: Failing tests:** defaults (`politicians == ("Nancy Pelosi",)`, `lookback_days == 45`,
-  `max_total_weight == Decimal("0.9")`, `max_position_weight == Decimal("0.15")`, `result_limit == 20`);
-  `__post_init__` rejects an empty politician list, `lookback_days < 1`, a weight outside (0, 1], and
-  `max_position_weight > max_total_weight` with `ConfigurationError`.
-- [ ] **Step 2: Implement** as a frozen dataclass validating itself in `__post_init__` (like `ScreenParams` /
-  `DriftParams`; copy their style).
-- [ ] **Step 3: PASS; ruff; commit** `feat(congress_trades): CongressParams`.
-
----
-
-## Task 6: `ClerkClient`, `CongressSource` and the smoke script
-
-**Files:** `congress/clerk_client.py`, `congress/source.py`, `scripts/tests/smoke_congress_trades.py`,
-`tests/congress/test_clerk_client.py`, `tests/congress/test_source.py`.
-
-- [ ] **Step 1: Client tests** (`httpx.MockTransport`, `tmp_path` cache; copy the fixture style of
-  `tests/fundamentals/test_edgar_client.py`):
-  - `test_blank_user_agent_raises_configuration_error`.
-  - `test_year_index_is_fetched_from_the_zip_and_cached` (a zip built in memory with `<YYYY>FD.xml`; second call makes no request).
-  - `test_past_year_index_fetched_after_that_year_is_never_refetched` (`mtime.year > year`, backtest `as_of`).
-  - `test_current_year_index_is_refetched_after_a_day_by_as_of` and `..._not_within_a_day`
-    (rule: stale = `mtime.year <= year and freshness.is_stale(mtime, as_of, 1)`; `as_of` is the caller's clock, never the wall clock).
-  - `test_ptr_text_is_cached_forever` (filings are immutable; amendments are new DocIDs).
-  - `test_image_only_pdf_returns_empty_text_and_is_cached` (a PDF with no text layer; build a minimal one with `pypdf.PdfWriter().add_blank_page`).
-  - `test_http_and_pdf_failures_are_wrapped_in_congress_data_error` (500, truncated zip, corrupt PDF; a 404 PDF too).
-  - `test_stale_index_that_cannot_refresh_is_served_with_a_warning` (same degrade rule as `SecEdgarClient.get_json`).
+- [ ] **Step 1: Client tests** (`httpx.MockTransport`, `tmp_path`; style of `tests/fundamentals/test_edgar_client.py`):
+  blank user agent -> `ConfigurationError`; the year index is read from the zip's `<YYYY>FD.xml` and cached; a past
+  year's index fetched after that year is never refetched; the current year's index is refetched after a day **by
+  `as_of`** (stale = `mtime.year <= year and is_stale(mtime, as_of, 1)`) and not within a day; PDF text (yearly
+  `.../financial-pdfs/{year}/{doc_id}.pdf`, PTR `.../ptr-pdfs/{year}/{doc_id}.pdf`) is cached forever; an
+  image-only PDF returns `""` and is cached; 500 / 404 / truncated zip / corrupt PDF -> `CongressDataError`; a stale
+  index that cannot refresh is served with a warning; atomic cache writes.
 - [ ] **Step 2: Implement** `ClerkClient(user_agent, cache_dir, *, min_request_interval_seconds=1.0, transport=None)`:
-  `year_index_xml(year, as_of) -> str`, `ptr_text(ref) -> str`. URLs:
-  `https://disclosures-clerk.house.gov/public_disc/financial-pdfs/{year}FD.zip` and
-  `https://disclosures-clerk.house.gov/public_disc/ptr-pdfs/{year}/{doc_id}.pdf`. Cache layout
-  `cache_dir/index/{year}FD.xml` and `cache_dir/ptr/{year}/{doc_id}.txt`; atomic writes (write to a temp name, then
-  `replace`) so an interrupted download is not a cache hit. `pypdf` imported inside `ptr_text` only.
-- [ ] **Step 3: Source tests** (`FakeClerk` returning a canned index + texts):
-  - `test_trades_between_dates_known_before_as_of` -- window `[start, end)` over FILING date, `end` exclusive; a
-    filing dated on `as_of`'s date is excluded, the day before is included.
-  - `test_spans_two_years_and_loads_both_indexes`.
-  - `test_counts_image_only_filings_and_skipped_rows` (`unparsed_filings`, `skipped_non_stock`).
-  - `test_only_requested_members` and `test_newest_first_order` (ties by `doc_id`).
-  - `test_a_filing_that_raises_aborts_the_lookup` (a layout change surfaces, not "no trades").
+  `year_index_xml(year, as_of) -> str`, `filing_text(ref) -> str`. `pypdf` imported inside `filing_text` only.
+- [ ] **Step 3: Source tests** (`FakeClerk`):
+  - `test_known_filings_exclude_anything_filed_today_or_later` (the day before is included, `as_of`'s date is not).
+  - `test_newest_annual_report_is_the_base_and_older_ones_are_ignored` (an amendment filed later wins).
+  - `test_ptrs_are_those_with_transactions_after_the_annual_period_end` is NOT here (that is `holdings`); the source
+    returns every known PTR filed after `period_end - 60 days` (covers the 45-day lag) and `holdings.reconstruct` filters by transaction date.
+  - `test_no_annual_report_known_gives_an_error_not_an_empty_book` (`CongressDataError`).
+  - `test_new_filings_is_known_doc_ids_minus_processed`.
+  - `test_counts_image_only_filings_and_skipped_rows`; `test_a_filing_that_raises_aborts_the_lookup`.
+  - `test_spans_two_calendar_years_and_loads_both_indexes`.
 - [ ] **Step 4: Implement:**
 
 ```python
 @dataclass(frozen=True, slots=True)
-class TradesResult:
-    transactions: list[Transaction]      # newest filing first
-    unparsed_filings: int
-    skipped_non_stock: int
+class KnownFilings:
+    annual: AnnualParse; ptrs: list[PtrParse]; refs: list[FilingRef]     # refs: every known annual+PTR of the politician
+    unparsed_filings: int; skipped_non_stock: int
 
 class CongressSource:
-    def __init__(self, client: ClerkClientLike) -> None: ...
-    def trades(self, politicians: Sequence[str], *, start: date, end: date, as_of: datetime) -> TradesResult:
-        """Stock transactions filed in [start, end), end exclusive. Caller passes end = as_of's market date."""
+    def __init__(self, client, politician: str) -> None: ...
+    def known(self, as_of: datetime) -> KnownFilings: ...                      # filed strictly before as_of's market date
+    def new_since(self, known: KnownFilings, processed: Collection[str]) -> list[FilingRef]: ...
 ```
 
-- [ ] **Step 5: Smoke script** `scripts/tests/smoke_congress_trades.py` (read-only; follow `smoke_quality_screen.py`'s
-  header and `SystemExit` messaging): reads `CONGRESS_USER_AGENT`, builds the client in `<root>/cache/house_clerk`,
-  prints Pelosi's last 5 PTRs (filing date, DocID), parses the newest, prints the parsed rows plus
-  `skipped_non_stock` / image-only status, and writes the newest filing's raw extracted text to
-  `<root>/cache/house_clerk/last_smoke_ptr.txt` for Task 3's checkpoint. Add it to the CLAUDE.md commands list in Task 10.
-- [ ] **Step 6: PASS; ruff; pyright; commit** `feat(congress): Clerk client, trades source and smoke script`.
+- [ ] **Step 5: Smoke script** `scripts/tests/smoke_congress_trades.py` (read-only; header and messaging style of
+  `smoke_quality_screen.py`): needs `CONGRESS_USER_AGENT`; lists the politician's newest annual report and the PTRs
+  since, parses them, prints the reconstructed holdings with tiers and baseline weights and every skipped-row count,
+  and writes each filing's raw extracted text to `<root>/cache/house_clerk/smoke/`.
+- [ ] **Step 6:** PASS; ruff; pyright; commit `feat(congress): Clerk client, known-filings source and smoke script`.
+- [ ] **Step 7 (CHECKPOINT -- needs a machine that can reach disclosures-clerk.house.gov): re-base on real text.**
+  Run the smoke script. Copy one real yearly report's text and one real PTR's text into
+  `tests/congress/fixtures/{annual_real,ptr_real}.txt` (trim to a few rows; strip nothing that a parser depends
+  on), keep the synthetic fixtures, and fix `ptr.py` / `annual.py` until both sets pass. Confirm: the index
+  `FilingType` codes (`C`/`A`/`P`), `Year` meaning for an annual, the annual PDF URL, and that Pelosi's PDFs have a text
+  layer. Record what differed in the commit message and in the spec's Risks section. **Tasks 6+ do not depend on
+  the text layout and may proceed meanwhile, but nothing ships before this step.**
 
 ---
 
-## Task 7: `search_congress_trades` tool
+## Task 6: Research tools
 
-**Files:** `agents/tools/congress.py`, `agents/tools/__init__.py` (lazy map entry), `tests/agents/tools/test_congress_tools.py`,
+**Files:** `agents/tools/congress.py`, `agents/tools/__init__.py` (lazy export), `tests/agents/tools/test_congress_tools.py`,
 extend `tests/agents/tools/test_agents_tools_lazy_imports.py`.
 
-- [ ] **Step 1: Failing tests** (fake source records its call arguments; `Strategy(FakeBroker(FakeClock(now)))`):
-  - `test_window_ends_the_day_before_the_clock_date` (frozen 2026-09-14 10:00 ET; the source is asked for
-    `end == date(2026, 9, 14)` exclusive, `start == end - days`, `as_of == clock.now()`).
-  - `test_never_returns_a_transaction_filed_today_or_later` (fake source ignoring its bounds; the tool still filters by `filed < today`).
-  - `test_rows_are_lean_and_carry_the_ticker_weight` (keys exactly
-    `ticker, side, member, owner, filed, traded, amount_low, amount_high, suggested_weight`; amounts as `int`,
-    dates ISO; sells have `suggested_weight` `None`).
-  - `test_weights_use_the_whole_window_not_the_row_cap` (more buys than `result_limit`: weights still sum correctly).
-  - `test_ticker_and_politician_filters`; a `politician` not in `params.politicians` -> `{"error": ...}` (the agent cannot widen the list).
-  - `test_days_is_clamped_to_1_and_lookback_days`.
-  - `test_source_failure_returns_an_error_payload` (`CongressDataError` -> `{"error": ...}`, not raised).
-  - `test_identical_search_in_one_run_is_reused` (`RunMemo`, like `search_news`).
-  - `test_tool_has_a_one_line_docstring` and the payload has `count`, `unparsed_filings`, `skipped_non_stock`.
-- [ ] **Step 2: Implement** `congress_trades_tools(strategy, source, params) -> list[Callable[..., dict[str, Any]]]`
-  (no `from __future__ import annotations`). One tool, `search_congress_trades(days: int = 45, ticker: str = "", politician: str = "")`.
-  `today = strategy.clock.now().astimezone(MARKET_TZ).date()`. Compute weights over the window's buys
-  (`ptr.suggested_weights`) before applying the ticker/politician filters and `result_limit`, so the weight
-  of a name does not depend on how the agent filtered. Amounts serialized as `int` (tokens), weights as `float`
-  rounded to 4 places (the JSON boundary for LangChain; the computation stays `Decimal`).
-- [ ] **Step 3: Lazy export:** add `congress_trades_tools` to `agents/tools/__init__.py`'s `TYPE_CHECKING` import,
-  `__all__` and `_LAZY` map (it imports `congress.source`, which pulls `httpx`); extend the lazy-imports test the
-  same way as `news_tools` / `fundamentals_tools`.
-- [ ] **Step 4: PASS; ruff; pyright; commit** `feat(agents): search_congress_trades tool`.
+- [ ] **Step 1: Failing tests** (fake source; `Strategy(FakeBroker(FakeClock(now)))`, frozen 2026-09-14 10:00 ET):
+  - `test_list_filings_returns_only_filings_filed_before_today` (a source that ignores its bound is still filtered by the tool).
+  - `test_list_filings_rows_are_lean` (`doc_id, kind, filed, year`; newest first).
+  - `test_read_filing_refuses_a_doc_id_filed_today_or_later` and `..._an_unknown_doc_id` (`{"error": ...}`).
+  - `test_read_filing_returns_stock_rows_for_a_ptr_and_for_the_annual_report` (lean keys; amounts as `int`; ISO dates).
+  - `test_read_filing_reports_skipped_rows_and_image_only` ; `test_source_failure_is_an_error_payload`.
+  - `test_identical_calls_in_one_run_are_reused` (`RunMemo`); one-line docstrings.
+- [ ] **Step 2: Implement** `congress_research_tools(strategy, source) -> list[Callable[..., dict[str, Any]]]` with
+  `list_filings()` and `read_filing(doc_id: str)`; the cutoff is `strategy.clock.now()` (the research-tool rule in CLAUDE.md).
+- [ ] **Step 3:** lazy export beside `news_tools` / `fundamentals_tools` (it pulls `httpx` via the source).
+- [ ] **Step 4:** PASS; ruff; pyright; commit `feat(agents): congress research tools`.
 
 ---
 
-## Task 8: `CongressTradesStrategy`
+## Task 7: `CongressParams` and `StateStore`
 
-**Files:** `strategies/congress_trades/agent_congress_trades.py`, `__init__.py`,
-`tests/strategies/congress_trades/test_congress_strategy.py`.
+**Files:** `strategies/congress_trades/{__init__,parameters,state}.py`, tests.
 
-- [ ] **Step 1: Read first** (no code yet): `strategies/news_builtin/agent_news_binary.py` (shape to copy: `_FakeHandle`
-  test style in `tests/strategies/test_news_builtin.py`) and `strategies/earnings_drift/agent_earnings_drift.py`'s
-  `run_backtesting` (daily timestep, data source and how dynamically chosen symbols are loaded in a backtest).
-  Mirror the latter's data source and `preload_assets` handling: this strategy's tickers are unknown up front.
-  If a symbol the agent trades has no preloaded data and the data source cannot load it lazily, STOP and add a
-  short design note to the spec instead of improvising.
-- [ ] **Step 2: Failing tests:**
-  - `test_initialize_creates_one_agent_with_prebuilt_and_congress_tools` (tool names include `search_congress_trades`,
-    `submit_order`, `remember_decision`; no `search_news`).
-  - `test_sleeptime_is_daily_and_iteration_starts_at_ten` (`sleeptime == "1D"`, `iteration_start_time == time(10, 0)`).
-  - `test_each_tick_runs_the_agent_once_with_datetime_and_portfolio_context`.
-  - `test_missing_congress_user_agent_makes_the_strategy_refuse_to_start` (`ConfigurationError` in `initialize` ->
-    `FatalStrategyError`, like `bill_ackman`; no network).
-  - `test_backtest_aborts_after_three_consecutive_agent_failures` and `test_paper_mode_does_not_abort`
-    (`MAX_CONSECUTIVE_BACKTEST_AGENT_ERRORS` reused from `agent_news_binary`; import it, do not redefine).
-  - `test_warns_when_no_decision_was_recorded` (a log warning; **no retry turn**).
-  - `test_system_prompt_states_the_sizing_and_sell_rules` (contains the `suggested_weight`, "SMALLER of
-    `buying_power`", "never short", and "nothing new filed -> do nothing" rules).
-- [ ] **Step 3: Implement.** Class attributes: `AGENT_NAME = "congress_trades_trader"`, `TASK_PROMPT`, `parameters`
-  (`backtesting_start/end`: two years, `benchmark_symbol "SPY"`, `warmup_trading_days`, `budget`), constructor takes
-  `settings: CongressParams = CongressParams()` and an optional `source` (tests inject a fake; default built in
-  `initialize` from `CONGRESS_USER_AGENT` + `find_project_root() / "cache" / "house_clerk"`).
-  Reuse `NewsBinaryStrategy._portfolio_snapshot`'s logic: **extract it to a shared helper**
-  (`strategies/news_builtin/portfolio.py::portfolio_snapshot(strategy)`) and call it from both strategies, rather
-  than copy it; `_track_regime` stays in `news_binary`. All of `tests/strategies/test_news_builtin.py` must stay green unmodified.
-  System prompt, in this order: allowed instruments (any US common stock the filings name; never short, margin,
-  options, FOREX); English-only; workflow (1. `search_memory`; 2. `search_congress_trades` with the default lookback;
-  3. for each ticker with a buy and not held: buy at `suggested_weight` x `portfolio_value` using the smaller-of
-  sizing rule from news_binary's prompt; 4. for a held ticker with a disclosed sale: sell it; ignore sells of names
-  not held; 5. nothing new since the last recorded decision -> trade nothing, still `remember_decision` once; 6. always `get_positions` and
-  `get_account_balance` before trading; sells before buys; honour `{"error"}` returns; `remember_decision` exactly once, then stop).
-  "New" means a `filed` date later than the newest filing in the last `remember_decision` (the prompt tells the agent
-  to put that date in its decision text).
-- [ ] **Step 4: PASS; existing news_binary tests PASS; ruff; pyright; commit** `feat(congress_trades): strategy`.
+- [ ] **Step 1: Failing tests:** `CongressParams` defaults (`politician "Nancy Pelosi"`, `max_holdings 20`, `max_positions 15`,
+  `max_total_weight 0.95`, `max_position_weight 0.15`, `min_weight 0.01`, `rebalance_band 0.01`, `min_trade_pct 0.005`,
+  `max_trade_retries 3`, `max_consecutive_abandoned 3`, `reason_max_chars 300`, `agent_temperature 0.3`,
+  `order_wait_seconds 60`); validation errors (blank politician, weights not in (0,1], `min_weight > max_position_weight`,
+  `max_positions x min_weight` over `max_total_weight`, non-finite). `StateStore`: round-trip; atomic write; a missing, corrupt or
+  wrong-`STATE_VERSION` file is an empty state; `wipe()`; `PendingTrade(target, days, orders_open)` round-trips; no
+  method ever raises on an I/O problem. State fields: `processed: list[str]`, `holdings`, `target`, `traded: list[str]`,
+  `pending_trade`, `abandoned_streak`, `last_run`. `RunLog` appends one JSON line per run to `runs.jsonl` in the run directory.
+- [ ] **Step 2-3: Implement** (copy the shape of `bill_ackman/parameters.py` and `state.py`; path
+  `data/congress_trades_state_<mode>.json`).
+- [ ] **Step 4:** PASS; ruff; commit `feat(congress_trades): params and state`.
 
 ---
 
-## Task 9: Registry, builder and docs
+## Task 8: `handoff.py` -- three submit tools and the recorder
 
-**Files:** `main.py`, `tests/test_main.py`, `README.md`, `env/.env.example`.
-
-- [ ] **Step 1: Failing tests:** `test_registry_lists_the_strategies` gains `"congress_trades"`;
-  `test_congress_trades_builder_returns_the_strategy` (`main_module._build_congress_trades(broker, TradingMode.BACKTESTING)`
-  is a `CongressTradesStrategy` with `is_backtesting`; no universe file is needed).
-- [ ] **Step 2: Implement** `_build_congress_trades(broker, mode) -> Strategy | None` returning
-  `CongressTradesStrategy(broker=broker, mode=mode)`; register it.
-- [ ] **Step 3: README** section next to the other strategies: what it does, the 45-day lag caveat, env file
-  `env/.env.congress_trades.<mode>` with `LLM_*`, `CONGRESS_USER_AGENT`, `ALPACA_DATA_*` (backtest bars) and the broker keys in
-  paper/live.
-- [ ] **Step 4: `uv run pytest`, ruff, pyright; commit** `feat(congress_trades): register the strategy`.
+- [ ] **Step 1: Failing tests** (`tests/strategies/congress_trades/test_handoff.py`):
+  - `submit_holdings`: ok; ticker not in any known filing; unreasoned deviation from the baseline; non-positive value; duplicate; more than `max_holdings`; a baseline holding silently omitted (must be listed with `drop: true` and a reason); reason too long.
+  - `submit_target`: ok; ticker not in holdings; weight below `min_weight` / above `max_position_weight`; sum above `max_total_weight`;
+    **`test_a_higher_tier_holding_with_a_smaller_weight_is_rejected`** and the equal-weight / capped-tie case accepted; more than `max_positions`;
+    a dropped holding needs a reason; empty list allowed (hold cash).
+  - `submit_trade_report`: ok when every desk order is final and named; rejects an order still working; rejects an order missing from the report;
+    accepts a cancelled/rejected order only with a reason.
+  - Recorder: wrong stage -> `{"error"}`; second valid submission -> `{"error": "already recorded..."}`; `last_error` kept.
+- [ ] **Step 2-3: Implement** `HandoffRecorder(params)` with `expect_holdings(known_tickers, baseline)`,
+  `expect_target(holdings)`, `expect_report(desk)`; `submit_tools(recorder)` returns the three closures
+  (`submit_holdings`, `submit_target`, `submit_trade_report`). Validators are pure functions raising `HandoffError`.
+- [ ] **Step 4:** PASS; ruff; pyright; commit `feat(congress_trades): handoff tools`.
 
 ---
 
-## Task 10: CLAUDE.md, final verification
+## Task 9: `TradeDesk`
 
-**Files:** `CLAUDE.md`.
+**Read first:** `bill_ackman/rebalancer.py` (open orders, sizing) and `earnings_drift/desk.py` (guarded tools, `traded` symbols, re-entrant lock).
 
-- [ ] **Step 1: CLAUDE.md:** add `congress/` and `agents/tools/congress.py` to Architecture (pure `ptr.py`,
-  `ClerkClient` the only module importing `httpx`/`pypdf` for the Clerk, `CongressSource`); add
-  `congress_trades` to the `strategies/` bullet; add the `smoke_congress_trades.py` command; add one gotcha:
-  **congress trades are keyed on the FILING date** (strictly before `clock.now()`'s date; disclosure lags the trade by up to 45
-  days, so trade-date keying leaks the future), `suggested_weight` is advisory, image-only filings are skipped and
-  counted, and the Clerk layout was verified against a real filing on `<date>` (fill in at the Task 3 checkpoint).
-- [ ] **Step 2: Full run:** `uv run pytest`, `uv run ruff check`, `uv run pyright` all clean.
-- [ ] **Step 3 (needs network + an LLM):** `uv run python scripts/tests/smoke_congress_trades.py`, then
-  `uv run agent congress_trades backtesting`; confirm in `logs/congress_trades/backtesting/<run>/` that no tool call
-  returned a row filed on or after its tick's date, and that `settings.json` agent totals exist.
-- [ ] **Step 4: Commit** `docs: congress_trades in CLAUDE.md`, then the review-fix commit the repo cadence expects.
+- [ ] **Step 1: Failing tests** (`FakeBroker` + a `BacktestBroker` for the fill-timing ones):
+  - `place_order` buys: refused for a symbol not in the target; refused beyond target weight (held + open buys + this order, within `rebalance_band`); refused above the smaller of `buying_power` and `cash` + same-run sell proceeds; accepted otherwise; fractional quantities floored.
+  - sells: refused for a position not owned (not a target ticker and not in `state.traded`); refused above held minus open sells; a sell of a non-target owned position accepted; **sells submitted after a buy this run are refused** ("sells first").
+  - never short / never margin (`buying_power` alone never used).
+  - `traded` records the symbol BEFORE `submit_order` (an order the client raised on may still have reached the broker).
+  - `check_orders`: reports status/filled/avg price of each desk order; waits with `order_wait_seconds`; a timeout reports `working`, not an error.
+  - **`test_check_orders_in_a_daily_backtest`** pins what actually happens: if `wait_for_orders_execution` advances the
+    simulated clock to the next bar the orders come back filled; otherwise they come back `working` and the audit
+    path owns it. Write the test for the real behaviour found, and note it in the spec (see the spec's Backtesting section).
+  - `audit(target)`: returns shortfalls when final positions differ from target by more than the band; orders already open are not shortfalls to re-send.
+  - One re-entrant lock (tools may run on parallel LangGraph threads).
+- [ ] **Step 2-3: Implement** `TradeDesk(strategy, params, state)` with `tools() -> [place_order, check_orders]` (closures with
+  one-line docstrings and real annotations), `orders` (this run's), `audit(target) -> list[Shortfall]`, `reset()`.
+- [ ] **Step 4:** PASS; ruff; pyright; commit `feat(congress_trades): trade desk`.
+
+---
+
+## Task 10: `CongressPipeline` and prompts
+
+**Read first:** `bill_ackman/pipeline.py` (`_run_stage`, `ReviewAbandoned`, `retry_prompt`, outcome/streak).
+
+- [ ] **Step 1: Failing tests** (a `FakeAgents` dict scripting each agent's submit call through the recorder; a `FakeSource`):
+  - `test_nothing_new_and_nothing_pending_runs_no_agent_and_sends_no_order` (state unchanged, log line "nothing new", `completed=True`).
+  - `test_first_run_treats_every_known_filing_as_new_and_builds_the_portfolio`.
+  - `test_a_new_ptr_runs_research_portfolio_trading_in_order_and_updates_processed` (the research context carries `new_filings` and `baseline`).
+  - `test_research_context_contains_only_filings_known_before_today`.
+  - `test_processed_is_updated_only_when_the_whole_run_completes` (an abandoned research/portfolio stage leaves `processed` so tomorrow retries it; `abandoned_streak` up).
+  - `test_stage_without_a_valid_submission_is_forced_once_then_abandons` and `..._backtest_raises_fatal_at_max_consecutive_abandoned`.
+  - `test_trading_stage_with_unfilled_orders_sets_pending_trade` and `test_pending_trade_reruns_only_trading_up_to_max_trade_retries`
+    (no research, no portfolio, stored target used; orders already open are not re-sent; gives up and logs after the limit; a quiet day with nothing pending still trades nothing).
+  - `test_a_new_filing_while_a_trade_is_pending_replaces_the_pending_trade` (fresh research/portfolio wins).
+  - `test_broker_error_in_trading_abandons_with_the_orders_already_sent_logged`.
+  - `test_run_log_line_records_new_filings_holdings_target_orders_and_shortfalls`.
+- [ ] **Step 2: Implement** `CongressPipeline.run() -> RunOutcome(completed, abandoned_streak)`; prompts in `prompts.py`:
+  - Research system prompt: reconstruct only from known filings; trust the baseline arithmetic, resolve ambiguities, justify every deviation; stocks only; end with `submit_holdings`.
+  - Portfolio system prompt: bigger value tier gets a share at least as big as a smaller tier; start from `baseline_weight`; drop only untradable names with a reason; end with `submit_target`.
+  - Trading system prompt: sells first, then buys; size with the smaller of `buying_power` and `cash` + same-run sell proceeds; never short or use margin; `place_order` errors are final for that order (read, fix once, or skip); after the last order call `check_orders` until every order is final or the wait times out; end with `submit_trade_report` naming every order.
+  - No cadence wording anywhere.
+- [ ] **Step 3:** PASS; ruff; pyright; commit `feat(congress_trades): pipeline and prompts`.
+
+---
+
+## Task 11: Strategy, backtest wiring, registry
+
+- [ ] **Step 1: Read** how `YahooBacktestData` handles an asset that was not in `preload_assets`. If it loads
+  lazily on `bars()`, preload only the benchmark; if not, `run_backtesting` pre-scans the tickers of every
+  annual+PTR filed in `[start - 1 year, end]` (one `CongressSource` lookup) and passes them as `preload_assets`. Add a test for whichever is true.
+- [ ] **Step 2: Failing tests** (`tests/strategies/congress_trades/test_congress_strategy.py`; `_FakeHandle` style from `tests/strategies/test_news_builtin.py`):
+  - `test_initialize_creates_three_agents_with_only_their_own_tools` (research: list/read/market data/`submit_holdings`; portfolio: `submit_target` only; trading: account tools, `get_last_price`, `place_order`, `check_orders`, `submit_trade_report`; none has memory/indicators).
+  - `test_sleeptime_is_daily_and_iteration_starts_at_ten`.
+  - `test_missing_congress_user_agent_or_llm_model_makes_the_strategy_refuse_to_start` (`ConfigurationError` -> `FatalStrategyError`, like `bill_ackman`).
+  - `test_backtest_wipes_state_and_paper_keeps_it`.
+  - `test_backtest_aborts_after_three_abandoned_runs_but_paper_carries_on`.
+  - `test_a_quiet_day_makes_zero_agent_calls`.
+  - `test_run_backtesting_defaults` (daily timestep, two-year window, SPY benchmark, budget, `agent_telemetry=True`).
+- [ ] **Step 3: Implement** `CongressTradesStrategy` (shape of `agent_bill_ackman.py`): `initialize` builds the source, state,
+  recorder, desk, three agents (`temperature=params.agent_temperature`; the portfolio agent and the research agent have no order tool) and the
+  pipeline; `on_trading_iteration` runs it and raises `FatalStrategyError` per the abandonment rule; `_run_log_path()` -> `runs.jsonl`.
+- [ ] **Step 4: Registry.** `main.py`: `_build_congress_trades(broker, mode)` returns the strategy (no universe file); register
+  `"congress_trades"`. `tests/test_main.py`: the registry set gains it; a builder test as for `news_binary`.
+- [ ] **Step 5:** `uv run pytest`, ruff, pyright; commit `feat(congress_trades): strategy and registry`.
+
+---
+
+## Task 12: Docs and final verification
+
+- [ ] **Step 1: README** strategy section (what it does, the filing lag, the "trades only on a new filing" rule, env file
+  `env/.env.congress_trades.<mode>`: `LLM_*`, `CONGRESS_USER_AGENT`, `ALPACA_DATA_*`, broker keys in paper/live).
+- [ ] **Step 2: CLAUDE.md:** `congress/` and `agents/tools/congress.py` in Architecture (pure modules, `ClerkClient` the only Clerk/`httpx`/`pypdf` code,
+  `CongressSource`); `congress_trades` in the `strategies/` bullet; the smoke command in Commands; gotchas: filings keyed on FILING date strictly before
+  today (disclosure lag leaks the future otherwise); the "owns today" rule (annual base + PTRs with transaction date after its Dec 31); nothing-new
+  is a code short-circuit (no LLM) and pending-trade re-runs the trading stage only; the trading agent HAS order tools, bounded by `TradeDesk`;
+  estimates come from bands (options excluded); the real-layout verification date from the Task 5 checkpoint.
+- [ ] **Step 3: Full run:** `uv run pytest`, `uv run ruff check`, `uv run pyright` clean.
+- [ ] **Step 4 (needs network + an LLM):** smoke script, then `uv run agent congress_trades backtesting`; in
+  `logs/congress_trades/backtesting/<run>/` confirm orders appear only on days after a new filing, no tool call returned a filing dated on/after its tick, and
+  `settings.json` has per-agent telemetry totals.
+- [ ] **Step 5:** commit `docs: congress_trades in README and CLAUDE.md`, then the review-fix commit the repo cadence expects.
