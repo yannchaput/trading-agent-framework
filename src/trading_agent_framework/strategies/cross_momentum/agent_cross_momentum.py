@@ -31,6 +31,7 @@ import numpy as np
 import pandas as pd
 
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
@@ -94,8 +95,8 @@ class CrossMomentumStrategy(Strategy):
     parameters = {
         # "backtesting_start": datetime(2026, 4, 6, tzinfo=MARKET_TZ),
         # "backtesting_end": datetime(2026, 4, 24, tzinfo=MARKET_TZ),
-        "backtesting_start": datetime(2016, 1, 1, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 9, 23, tzinfo=MARKET_TZ),
+        "backtesting_start": backtest_window(PredefinedWindow.DECADE)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.DECADE)[1],
         "benchmark_symbol": "SPY",
         # Warm-up extends the data window before backtesting_start so the 12-1m
         # momentum lookback (252 + 21 skip + 1 = 274 bars) has full history from
