@@ -63,3 +63,7 @@ class FundamentalsNotFoundError(FundamentalsError):
 
 class CongressDataError(TradingFrameworkError):
     """Raised when a congressional-disclosure lookup or parse fails (never a raw httpx/pypdf exception)."""
+
+
+class CongressNotFoundError(CongressDataError):
+    """Raised when the Clerk has nothing for the request (HTTP 404, e.g. a year index not published yet): a real absence, not a failed lookup."""
