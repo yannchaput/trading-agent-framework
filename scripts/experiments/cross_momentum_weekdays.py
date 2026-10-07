@@ -120,13 +120,13 @@ def _run(args: argparse.Namespace) -> int:
 
 
 def _compare(args: argparse.Namespace) -> int:
-    baseline = load_manifest(Path(args.baseline))
-    candidate = load_manifest(Path(args.candidate))
     try:
+        baseline = load_manifest(Path(args.baseline))
+        candidate = load_manifest(Path(args.candidate))
         baseline_metrics = {day: read_run_metrics(Path(entry.run_dir)) for day, entry in baseline.runs.items()}
         candidate_metrics = {day: read_run_metrics(Path(entry.run_dir)) for day, entry in candidate.runs.items()}
         comparison = compare(baseline, candidate, baseline_metrics, candidate_metrics)
-    except ValueError as exc:
+    except (OSError, ValueError, TypeError, KeyError) as exc:
         print(f"Cannot compare: {exc}", file=sys.stderr)
         return 2
     print(render(comparison))
