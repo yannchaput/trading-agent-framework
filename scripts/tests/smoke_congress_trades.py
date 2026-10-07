@@ -20,17 +20,21 @@ parses from it, and no filing known today is dated today or later.
 
 from __future__ import annotations
 
+import io
 import os
 import sys
+import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 
 from trading_agent_framework.congress import holdings
 from trading_agent_framework.congress.annual import VALUE_BANDS
-from trading_agent_framework.congress.clerk_client import ClerkClient
+from trading_agent_framework.congress.clerk_client import CLERK_BASE_URL, ClerkClient
 from trading_agent_framework.congress.source import CongressSource
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
@@ -43,6 +47,49 @@ DEFAULT_POLITICIAN = "Nancy Pelosi"
 
 class SmokeTestFailure(Exception):
     pass
+
+
+def diagnose(client: ClerkClient, user_agent: str, politician: str, now: datetime) -> None:
+    """What the Clerk index really looks like, printed when the normal lookup fails (the layout assumptions are unverified)."""
+    last = politician.split()[-1].lower()
+    print(f"\n--- DIAGNOSTIC (looking for last name containing '{last}') ---")
+    for year in (now.year, now.year - 1, now.year - 2):
+        print(f"\n[{year} index]")
+        try:
+            xml = client.year_index_xml(year, now)
+            root = ET.fromstring(xml)
+        except Exception as exc:  # a diagnostic: show any failure, whatever its type
+            print(f"  cannot load or parse: {type(exc).__name__}: {exc}")
+            continue
+        members = list(root.iter("Member"))
+        print(f"  {len(xml):,} characters, {len(members)} <Member> elements; root tag <{root.tag}>")
+        print(f"  first 400 characters: {' '.join(xml[:400].split())}")
+        print(f"  FilingType counts over everyone: {dict(Counter((m.findtext('FilingType') or '?').strip() for m in members))}")
+        mine = [m for m in members if last in (m.findtext("Last") or "").lower()]
+        print(f"  members whose Last name contains '{last}': {len(mine)}")
+        for member in mine[:40]:
+            fields = {tag: (member.findtext(tag) or "").strip() for tag in ("Prefix", "First", "Last", "Suffix", "FilingType", "Year", "FilingDate", "DocID")}
+            print(f"    {fields}")
+        for member in [m for m in mine if (m.findtext("FilingType") or "").strip() != "P"][:3]:
+            doc_id = (member.findtext("DocID") or "").strip()
+            filed_year = (member.findtext("FilingDate") or "").strip().rsplit("/", 1)[-1]
+            for folder in ("financial-pdfs", "ptr-pdfs"):
+                url = f"{CLERK_BASE_URL}/{folder}/{filed_year}/{doc_id}.pdf"
+                try:
+                    response = httpx.get(url, headers={"User-Agent": user_agent}, follow_redirects=True, timeout=60)
+                except httpx.HTTPError as exc:
+                    print(f"    GET {url}: {exc}")
+                    continue
+                note = ""
+                if response.status_code == 200 and response.content[:4] == b"%PDF":
+                    from pypdf import PdfReader
+
+                    try:
+                        text = "\n".join((page.extract_text() or "") for page in PdfReader(io.BytesIO(response.content)).pages)
+                        note = f", PDF with {len(text):,} characters of text; first 300: {' '.join(text[:300].split())!r}"
+                    except Exception as exc:  # a diagnostic: show any failure
+                        note = f", PDF that pypdf cannot read: {exc}"
+                print(f"    GET {url}: HTTP {response.status_code}, {response.headers.get('content-type')}, {len(response.content):,} bytes{note}")
 
 
 def main() -> int:
@@ -64,6 +111,8 @@ def main() -> int:
                 (smoke_dir / f"{ref.doc_id}.txt").write_text(client.filing_text(ref), encoding="utf-8")
     except TradingFrameworkError as exc:
         print(f"FAIL: {exc}")
+        with ClerkClient(user_agent, CACHE_DIR) as client:
+            diagnose(client, user_agent, politician, now)
         return 1
 
     annual = known.annual_ref
