@@ -91,7 +91,7 @@ bound to the `Strategy` so it takes its cutoff from `strategy.clock.now()` (the 
 - Returns transactions whose `filed` date is in `[today - days, today)` (strictly before today), newest first,
   capped (default 20) and lean: `{ticker, side, member, owner, filed, traded, amount_low, amount_high, suggested_weight}`.
   Plus `{"count", "unparsed_filings", "skipped_non_stock"}`. Errors come back as `{"error": ...}`.
-- `suggested_weight` is computed in code (`ptr.suggested_weight`): the transaction's range midpoint divided by the
+- `suggested_weight` is computed in code (`ptr.suggested_weights`), per TICKER: the ticker's buy midpoints divided by the
   sum of the midpoints of all buys in the window by the same members, times `CongressParams.max_total_weight`
   (default 0.9), each capped at `max_position_weight` (default 0.15). So the weights sum to at most 0.9 across the
   names disclosed in the window and a single big trade cannot take the whole book. Sells carry no weight.
@@ -101,8 +101,8 @@ bound to the `Strategy` so it takes its cutoff from `strategy.clock.now()` (the 
 ## 4. The strategy
 
 `CongressTradesStrategy` mirrors `NewsBinaryStrategy`: `PrebuiltTools.all(self)` + `congress_trades_tools(self)`,
-inline system prompt, a `portfolio` snapshot in every run's context, `FatalStrategyError` after 3 consecutive
-agent failures in a backtest, and the single corrective `remember_decision` follow-up. The prompt tells the agent to:
+inline system prompt, a `portfolio` snapshot in every run's context (shared helper extracted from news_binary) and `FatalStrategyError` after 3 consecutive
+agent failures in a backtest. A run that records no decision logs a warning; there is no corrective retry turn. The prompt tells the agent to:
 
 1. Call `search_congress_trades` (default lookback `CongressParams.lookback_days`, 45 = the legal filing window).
 2. Buy tickers with a recent disclosed purchase it does not already hold, at `suggested_weight` of the portfolio,
