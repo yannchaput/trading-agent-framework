@@ -14,6 +14,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.strategies.cross_momentum.utils import unfilled_sell_proceeds
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestDataError, BrokerError
 
@@ -21,12 +22,38 @@ TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
 
 
+class FakeOrder(SimpleNamespace):
+    """An order as the broker tracks it: `filled_quantity` and `is_active()` move as fills arrive."""
+
+    def __init__(self, symbol, quantity, side):
+        super().__init__(symbol=symbol, quantity=quantity, side=side, filled_quantity=0.0, active=True)
+
+    def is_active(self):
+        return self.active
+
+
 class FakeStrategy:
-    """Just enough of `Strategy` for `rebalance`; records the orders it places."""
+    """Just enough of `Strategy` for `rebalance`; records the orders it places.
+
+    `sell_fill` is the share of each sell that fills the moment it is submitted, its proceeds credited to the cash,
+    as a live market sell at noon does; 0.0 (the default) is a backtest, where nothing fills before the next session.
+    """
 
     def __init__(
-        self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=(), trend_assets=(), bars=None
+        self,
+        *,
+        cash,
+        positions=(),
+        last_prices=None,
+        cash_buffer_pct=0.05,
+        min_trade_pct=0.01,
+        reject=(),
+        price_errors=(),
+        trend_assets=(),
+        bars=None,
+        sell_fill=0.0,
     ):
+        self._sell_fill = sell_fill
         self.parameters = {
             "sell_rank_threshold": 35,
             "cash_buffer_pct": cash_buffer_pct,
@@ -71,12 +98,18 @@ class FakeStrategy:
         return self._last_prices.get(symbol)
 
     def create_order(self, symbol, quantity, side, **kwargs):
-        return SimpleNamespace(symbol=symbol, quantity=quantity, side=side)
+        return FakeOrder(symbol, quantity, side)
 
     def submit_order(self, order):
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
         self.orders.append(order)
+        if order.side == "sell" and self._sell_fill > 0:
+            filled = order.quantity * self._sell_fill
+            order.filled_quantity = filled
+            order.active = self._sell_fill < 1.0
+            self._cash += filled * self._last_prices[order.symbol]
+        return order
 
     _price_or_zero = CrossMomentumStrategy._price_or_zero
 
@@ -118,6 +151,51 @@ def test_buffer_applies_to_estimated_sell_proceeds_too():
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})  # OLD is unranked -> sold
 
     assert _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+
+
+def test_a_sell_filled_before_the_buys_are_sized_is_not_counted_twice():
+    # Live: OLD's market sell fills at once, so its 1000 is already in the cash when the buys are sized
+    prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, cash_buffer_pct=0.05, sell_fill=1.0)
+    target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
+
+    CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
+
+    assert _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+
+
+def test_only_the_unfilled_part_of_a_partly_filled_sell_is_added_to_the_cash():
+    # Half of OLD fills at once (500 in the cash); the other 500 is still to come. Spendable: 1000 less the 5% reserve.
+    prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, cash_buffer_pct=0.05, sell_fill=0.5)
+    target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
+
+    CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
+
+    assert 1000.0 * 0.95 - 50.0 < _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+
+
+def test_the_buy_budget_logs_how_many_sells_had_already_filled():
+    prices = {"OLD": 10.0, "AAA": 100.0}
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, sell_fill=1.0)
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1)], {"AAA": 1})
+
+    assert any("1 of 1 sells already filled" in line for line in fake.infos)
+
+
+def test_unfilled_sell_proceeds_counts_the_open_quantity_of_active_sells_only():
+    new = FakeOrder("A", 10.0, "sell")  # nothing filled yet: all of it to come
+    partly = FakeOrder("B", 10.0, "sell")
+    partly.filled_quantity = 4.0  # 6 still to come
+    filled = FakeOrder("C", 10.0, "sell")
+    filled.filled_quantity, filled.active = 10.0, False  # already in the cash
+    canceled = FakeOrder("D", 10.0, "sell")
+    canceled.active = False  # brings nothing
+
+    proceeds = unfilled_sell_proceeds([(new, 2.0), (partly, 3.0), (filled, 5.0), (canceled, 7.0)])
+
+    assert proceeds == pytest.approx(10.0 * 2.0 + 6.0 * 3.0)
 
 
 def test_zero_buffer_spends_everything_available():
