@@ -170,26 +170,61 @@ def _holding(ticker: str, mid: int) -> holdings.Holding:
     return holdings.Holding(ticker=ticker, asset_name=ticker, value_low=Decimal(mid), value_high=Decimal(mid), tier=tier_of(Decimal(mid)), sources=("A1",))
 
 
-def test_baseline_weights_are_proportional_to_midpoints_and_sum_to_max_total() -> None:
-    weights = holdings.baseline_weights([_holding("AAA", 3_000_000), _holding("BBB", 1_000_000)], max_total=Decimal("0.9"), max_position=Decimal("0.9"))
-
-    assert weights == {"AAA": Decimal("0.6750"), "BBB": Decimal("0.2250")}
-
-
-def test_baseline_weight_cap_is_not_redistributed() -> None:
-    weights = holdings.baseline_weights([_holding("AAA", 9_000_000), _holding("BBB", 1_000_000)], max_total=Decimal("0.9"), max_position=Decimal("0.15"))
-
-    assert weights == {"AAA": Decimal("0.1500"), "BBB": Decimal("0.0900")}
-    assert sum(weights.values()) < Decimal("0.9")
+def _weights(items: list[holdings.Holding], **overrides: object) -> dict[str, Decimal]:
+    kwargs: dict[str, object] = dict(max_total=Decimal("0.95"), max_position=Decimal("0.15"), min_weight=Decimal("0.01"), max_positions=15, tier_base=Decimal("1.5"))
+    return holdings.baseline_weights(items, **{**kwargs, **overrides})  # type: ignore[arg-type]
 
 
-def test_baseline_weights_never_exceed_max_total_after_rounding() -> None:
+def test_weights_follow_the_tier_not_the_dollar_midpoint() -> None:
+    # tier 8 ($5M-$25M) against tier 7 ($1M-$5M): a ratio of 1.5, not the ratio of the midpoints (about 5)
+    weights = _weights([_holding("AAA", 15_000_000), _holding("BBB", 3_000_000)], max_total=Decimal("1.0"), max_position=Decimal("1.0"))
+
+    assert weights == {"AAA": Decimal("0.6000"), "BBB": Decimal("0.4000")}
+
+
+def test_a_higher_tier_never_gets_a_smaller_weight() -> None:
+    items = [_holding(f"T{tier}", value) for tier, value in enumerate([5_000, 30_000, 75_000, 150_000, 400_000, 750_000, 3_000_000, 15_000_000, 30_000_000])]
+
+    weights = _weights(items, max_positions=20, min_weight=Decimal("0"))
+
+    ordered = [weights[h.ticker] for h in sorted(items, key=lambda h: h.tier)]
+    assert ordered == sorted(ordered)
+
+
+def test_weights_sum_to_at_most_max_total_after_rounding() -> None:
     many = [_holding(f"T{i}", 1_000_000 + i) for i in range(7)]
 
-    weights = holdings.baseline_weights(many, max_total=Decimal("0.95"), max_position=Decimal("0.95"))
+    assert sum(_weights(many, max_position=Decimal("0.95")).values()) <= Decimal("0.95")
 
-    assert sum(weights.values()) <= Decimal("0.95")
+
+def test_a_cap_is_not_redistributed() -> None:
+    weights = _weights([_holding("AAA", 15_000_000)], max_position=Decimal("0.15"))
+
+    assert weights == {"AAA": Decimal("0.1500")}
+
+
+def test_a_holding_under_the_minimum_weight_is_dropped_and_the_rest_rescaled() -> None:
+    items = [_holding("AAA", 15_000_000), _holding("BBB", 15_000_000), _holding("TINY", 5_000)]
+
+    weights = _weights(items, min_weight=Decimal("0.05"), tier_base=Decimal("3"), max_position=Decimal("0.95"))  # TINY: 3 / (2 x 6561 + 3) x 0.95 is far below 5%
+
+    assert set(weights) == {"AAA", "BBB"}
+    assert weights["AAA"] == weights["BBB"] == Decimal("0.4750")
+
+
+def test_only_the_highest_holdings_up_to_max_positions_are_considered() -> None:
+    items = [_holding("LOW", 100_000), _holding("MID", 3_000_000), _holding("HIGH", 15_000_000)]
+
+    weights = _weights(items, max_positions=2)
+
+    assert set(weights) == {"HIGH", "MID"}
+
+
+def test_within_a_tier_the_larger_midpoint_is_kept_first() -> None:
+    weights = _weights([_holding("SMALL", 5_100_000), _holding("LARGE", 24_000_000)], max_positions=1)
+
+    assert set(weights) == {"LARGE"}
 
 
 def test_baseline_weights_of_nothing_is_empty() -> None:
-    assert holdings.baseline_weights([], max_total=Decimal("0.9"), max_position=Decimal("0.15")) == {}
+    assert _weights([]) == {}

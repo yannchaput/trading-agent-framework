@@ -26,7 +26,7 @@ schema from the function's real annotations.
 import math
 import threading
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
@@ -66,10 +66,12 @@ class Shortfall:
 class Audit:
     unfilled: list[OrderView]  # this run's orders that are not fully filled
     shortfalls: list[Shortfall]
+    in_flight: list[str] = field(default_factory=list)  # owned stocks with an order still working at the broker (this run's or an earlier one's)
 
     @property
     def complete(self) -> bool:
-        return not self.unfilled and not self.shortfalls
+        """Nothing unfilled, nothing off target, nothing still working: the trade is finished."""
+        return not self.unfilled and not self.shortfalls and not self.in_flight
 
 
 class TradeDesk:
@@ -321,7 +323,9 @@ class TradeDesk:
                 return Audit(unfilled, shortfalls)
             band = self._params.rebalance_band * portfolio_value
             min_trade = self._params.min_trade_pct * portfolio_value
-            for symbol in sorted(set(self._target) | self._traded):
+            owned = set(self._target) | self._traded
+            in_flight = sorted(symbol for symbol in owned if incoming.get(symbol, 0.0) > _EPS or outgoing.get(symbol, 0.0) > _EPS)
+            for symbol in sorted(owned):
                 try:
                     price = self._price(symbol)
                 except _DATA_ERRORS as exc:
@@ -343,4 +347,4 @@ class TradeDesk:
                         else f"{symbol} was dropped from the target but ${effective:,.2f} is still held or on order"
                     )
                     shortfalls.append(Shortfall(symbol, "sell", -gap, detail))
-        return Audit(unfilled, shortfalls)
+        return Audit(unfilled, shortfalls, in_flight)

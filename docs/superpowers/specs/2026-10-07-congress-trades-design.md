@@ -78,8 +78,8 @@ appear in a known filing; value estimates must be positive; a holding that diffe
 reason; at most `max_holdings` (20).
 
 **Portfolio agent.** Tools: `submit_target` only. Context: the holdings with tier and estimated range, a
-code-computed `baseline_weight` per ticker (share of estimated midpoints × `max_total_weight`, each capped at
-`max_position_weight`), and the current portfolio weights. Validation (the brief's rule, enforced by code):
+code-computed `baseline_weight` per ticker (`tier_weight_base ** tier`, default 1.5, scaled to `max_total_weight`, capped at
+`max_position_weight`, the lowest dropped while under `min_weight`, at most `max_positions` kept), and the current portfolio weights. Validation (the brief's rule, enforced by code):
 tickers ⊆ holdings; each weight in [`min_weight`, `max_position_weight`]; sum ≤ `max_total_weight`; **a holding
 in a higher tier never gets a smaller weight than one in a lower tier**; at most `max_positions` names; a held
 name may be dropped only with a reason (e.g. not tradable). Defaults: `max_total_weight` 0.95, `max_position_weight` 0.15,

@@ -14,6 +14,7 @@ def test_the_defaults_are_the_spec_values() -> None:
     assert params.politician == "Nancy Pelosi"
     assert (params.max_holdings, params.max_positions) == (20, 15)
     assert (params.max_total_weight, params.max_position_weight, params.min_weight) == (0.95, 0.15, 0.01)
+    assert params.tier_weight_base == 1.5
     assert (params.rebalance_band, params.min_trade_pct) == (0.01, 0.005)
     assert (params.max_trade_retries, params.max_consecutive_abandoned, params.reason_max_chars) == (3, 3, 300)
     assert (params.agent_temperature, params.order_wait_seconds) == (0.3, 60.0)
@@ -52,6 +53,8 @@ def test_the_params_are_frozen() -> None:
         {"agent_temperature": 2.1},
         {"agent_temperature": math.nan},
         {"max_total_weight": math.nan},
+        {"tier_weight_base": 0.9},  # a higher tier would weigh less
+        {"tier_weight_base": math.nan},
         {"min_weight": math.inf},
         {"rebalance_band": math.nan},
         {"order_wait_seconds": math.inf},
@@ -70,7 +73,17 @@ def test_every_problem_is_reported_at_once() -> None:
 
 
 @pytest.mark.parametrize(
-    "overrides", [{"agent_temperature": None}, {"agent_temperature": 0.0}, {"max_trade_retries": 0}, {"min_trade_pct": 0.0}, {"max_positions": 95}, {"politician": "Someone Else"}]
+    "overrides",
+    [
+        {"agent_temperature": None},
+        {"agent_temperature": 0.0},
+        {"max_trade_retries": 0},
+        {"min_trade_pct": 0.0},
+        {"max_positions": 95},
+        {"politician": "Someone Else"},
+        {"tier_weight_base": 1.0},
+        {"tier_weight_base": 3.0},
+    ],
 )
 def test_valid_edge_values_are_accepted(overrides: dict[str, object]) -> None:
     CongressParams(**overrides)  # type: ignore[arg-type]

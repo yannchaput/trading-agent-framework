@@ -36,6 +36,7 @@ from trading_agent_framework.congress import holdings
 from trading_agent_framework.congress.annual import VALUE_BANDS, unread_stock_rows
 from trading_agent_framework.congress.clerk_client import CLERK_BASE_URL, ClerkClient
 from trading_agent_framework.congress.source import CongressSource
+from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
 
@@ -130,9 +131,17 @@ def main() -> int:
     for ref in known.refs[:8]:
         print(f"  {ref.filed}  {ref.kind:6}  {ref.doc_id}")
 
-    print("\nReconstructed holdings (ticker, tier band, estimated range):")
+    print("\nReconstructed holdings (ticker, tier band, estimated range, baseline weight; a holding without one is below the position limit or the minimum weight):")
     current = holdings.reconstruct(known.assets, known.transactions, period_end=known.period_end)
-    weights = holdings.baseline_weights(current, max_total=Decimal("0.95"), max_position=Decimal("0.15"))
+    params = CongressParams()
+    weights = holdings.baseline_weights(
+        current,
+        max_total=Decimal(str(params.max_total_weight)),
+        max_position=Decimal(str(params.max_position_weight)),
+        min_weight=Decimal(str(params.min_weight)),
+        max_positions=params.max_positions,
+        tier_base=Decimal(str(params.tier_weight_base)),
+    )
     for holding in sorted(current, key=lambda h: h.midpoint, reverse=True):
         band = VALUE_BANDS[holding.tier].label
         weight = weights.get(holding.ticker, Decimal(0))

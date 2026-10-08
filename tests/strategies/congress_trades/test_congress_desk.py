@@ -468,3 +468,21 @@ def test_in_a_daily_backtest_the_orders_are_still_working_at_the_tick_and_filled
     assert second["all_filled"] is True
     assert second["orders"][0]["status"] == "filled" and second["orders"][0]["avg_price"] == 151.0
     assert desk.audit().complete
+
+
+def test_an_order_from_an_earlier_run_still_working_keeps_the_audit_incomplete(tmp_path: Path) -> None:
+    book = _book(tmp_path, target={"AAA": 0.15})
+    book.place("AAA", "buy", 30)  # covers the target and stays working at the broker
+    book.desk.begin_run({"AAA": 0.15}, book.desk.traded)  # a later run: this run has placed nothing
+
+    audit = book.desk.audit()
+
+    assert audit.unfilled == [] and audit.shortfalls == []
+    assert audit.in_flight == ["AAA"]
+    assert not audit.complete
+
+
+def test_no_order_working_means_nothing_in_flight(tmp_path: Path) -> None:
+    book = _book(tmp_path, positions={"AAA": 30, "BBB": 20})
+
+    assert book.desk.audit().in_flight == []

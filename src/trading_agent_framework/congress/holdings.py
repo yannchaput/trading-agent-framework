@@ -94,17 +94,30 @@ def reconstruct(assets: Sequence[AssetHolding], transactions: Iterable[Transacti
     return holdings
 
 
-def baseline_weights(holdings: Sequence[Holding], *, max_total: Decimal, max_position: Decimal) -> dict[str, Decimal]:
-    """Each ticker's share of the holdings' midpoints times `max_total`, capped at `max_position`.
+def baseline_weights(
+    holdings: Sequence[Holding],
+    *,
+    max_total: Decimal,
+    max_position: Decimal,
+    min_weight: Decimal,
+    max_positions: int,
+    tier_base: Decimal,
+) -> dict[str, Decimal]:
+    """A suggested weight per ticker, ordered by value tier: a holding's raw weight is `tier_base ** tier`.
 
-    Rounded down to four places so the sum can never exceed `max_total`. A cap is not redistributed: the spare weight
-    stays in cash, on purpose.
+    Dollar midpoints are too coarse and too far apart to size a book on (a $15M name would get 60 times a $250K one), so
+    the tier decides: with the default base of 1.5 a holding one tier up gets 1.5 times the weight. Only the
+    `max_positions` highest holdings (by tier, then midpoint) are considered; the weights are scaled to sum to `max_total`
+    and capped at `max_position` (a cap is not redistributed: the spare stays cash); the lowest holding is dropped while its
+    weight is under `min_weight`. Holdings left out get no entry. Rounded down to four places, so the sum never exceeds
+    `max_total`. A higher tier never gets a smaller weight than a lower one.
     """
-    total = sum((h.midpoint for h in holdings), _ZERO)
-    if total <= 0:
-        return {}
-    weights = {}
-    for holding in holdings:
-        weight = min(holding.midpoint / total * max_total, max_position)
-        weights[holding.ticker] = weight.quantize(_WEIGHT_PLACES, rounding=ROUND_DOWN)
-    return weights
+    ranked = sorted(holdings, key=lambda h: (h.tier, h.midpoint, h.ticker), reverse=True)[:max_positions]
+    while ranked:
+        raw = {h.ticker: tier_base**h.tier for h in ranked}
+        total = sum(raw.values(), _ZERO)
+        weights = {ticker: min(value / total * max_total, max_position).quantize(_WEIGHT_PLACES, rounding=ROUND_DOWN) for ticker, value in raw.items()}
+        if weights[ranked[-1].ticker] >= min_weight:
+            return weights
+        ranked = ranked[:-1]
+    return {}

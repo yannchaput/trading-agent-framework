@@ -14,6 +14,7 @@ class CongressParams:
     max_total_weight: float = 0.95  # largest sum of stock weights, as a fraction of portfolio value; the rest stays cash
     max_position_weight: float = 0.15  # largest weight of one stock
     min_weight: float = 0.01  # smallest weight of one stock; must be at least `rebalance_band`
+    tier_weight_base: float = 1.5  # the suggested weight of a holding is `tier_weight_base ** tier`: one value tier up weighs this many times more
     rebalance_band: float = 0.01  # drift, as a fraction of portfolio value, below which a position is left alone
     min_trade_pct: float = 0.005  # smallest order, as a fraction of portfolio value
     max_trade_retries: int = 3  # later ticks that re-run the trading stage after orders were left unfilled (0 disables)
@@ -23,13 +24,14 @@ class CongressParams:
     order_wait_seconds: float = 60.0  # how long `check_orders` waits for the orders to reach a final state
 
     def __post_init__(self) -> None:
-        floats = (self.max_total_weight, self.max_position_weight, self.min_weight, self.rebalance_band, self.min_trade_pct, self.order_wait_seconds)
+        floats = (self.max_total_weight, self.max_position_weight, self.min_weight, self.rebalance_band, self.min_trade_pct, self.order_wait_seconds, self.tier_weight_base)
         finite = all(math.isfinite(value) for value in floats)
         problems = {
             "politician must not be blank": not self.politician.strip(),
             "max_holdings must be at least 1": self.max_holdings < 1,
             "max_positions must be at least 1": self.max_positions < 1,
-            "weights, rebalance_band, min_trade_pct and order_wait_seconds must be finite": not finite,
+            "weights, tier_weight_base, rebalance_band, min_trade_pct and order_wait_seconds must be finite": not finite,
+            "tier_weight_base must be at least 1 (a higher tier must not weigh less)": finite and self.tier_weight_base < 1,
             "max_total_weight must be in (0, 1]": finite and not 0 < self.max_total_weight <= 1,
             "min_weight must be above 0 and at most max_position_weight, which is at most max_total_weight": finite and not 0 < self.min_weight <= self.max_position_weight <= self.max_total_weight,
             "min_weight must be at least rebalance_band (a chosen stock below the band would never be bought)": finite and self.min_weight < self.rebalance_band,
