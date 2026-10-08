@@ -18,11 +18,7 @@
 
 * ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
-* Decommission IBKR
-  * Withdraw money
-  * Cehck fees to delete account
-  * Delete account
-  * DEcommission the code
+* Update tools comments with parameters
 
 ## Strategies to test
 
