@@ -360,6 +360,8 @@ class CrossMomentumStrategy(Strategy):
         self.log_info(f"Computing target portfolio for {len(self.vars.universe)} tickers...")
         self.vars.breadth = None  # no stale reading if this run returns early
         self.vars.yahoo_bars = {}  # nor last week's bars
+        # An unusable batch (logged by _load_yahoo_bars) ends the scan with an empty target. rebalance() treats that as
+        # "hold the book", so no sell is sent on data Yahoo did not deliver.
         if self.vars.bars_source is not None and not self._load_yahoo_bars():
             return [], {}
 
@@ -785,9 +787,13 @@ class CrossMomentumStrategy(Strategy):
 
         self.log_info("Today is a rebalance day — computing target portfolio...")
 
+        # Paper/live: this loads the scan's Yahoo bars into vars.yahoo_bars. Steps 3-9 read them through
+        # get_historical_prices, and rebalance() releases them at the end, so nothing below may fetch a fresh batch.
         target, all_ranks = self.compute_target_portfolio()
 
         # Step 3: Portfolio Risk Overlay — beta/vol/corr of today's target stocks against SPY, aligned by date.
+        # Still reads vars.yahoo_bars (rebalance() has not run yet). After an unusable batch the target is empty, so
+        # this returns 1.0 without reading SPY.
         risk_exposure = self._risk_exposure(target)
 
         # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA
