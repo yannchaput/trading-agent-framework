@@ -55,6 +55,7 @@ class FakeStrategy:
     def _market_date(self):
         return TODAY
 
+    _rebalance_book = CrossMomentumStrategy._rebalance_book
     _sleeve_weights = CrossMomentumStrategy._sleeve_weights
     _trend_closes = CrossMomentumStrategy._trend_closes
 
@@ -480,3 +481,36 @@ def test_sleeve_symbols_are_removed_from_the_universe():
     strategy = CrossMomentumStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA", "GLD", "SHV", "BBB", "IEF"])
 
     assert strategy.vars.universe == ["AAA", "BBB"]
+
+
+# --- the scan's Yahoo bars are released once the rebalance, their last reader, is done -------------------
+
+
+def test_the_rebalance_releases_the_scans_yahoo_bars():
+    prices = {"AAA": 100.0, "BBB": 50.0}
+    fake = FakeStrategy(cash=1000.0, last_prices=prices)
+    fake.vars.yahoo_bars = {"AAA": object()}  # ~15 MB live; stale until next week if kept
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert fake.vars.yahoo_bars == {}
+
+
+def test_a_rebalance_with_no_target_still_releases_them():
+    fake = FakeStrategy(cash=1000.0)
+    fake.vars.yahoo_bars = {"AAA": object()}
+
+    CrossMomentumStrategy.rebalance(fake, [], {})
+
+    assert fake.vars.yahoo_bars == {}
+
+
+def test_a_rebalance_that_raises_still_releases_them():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0})
+    fake.vars.yahoo_bars = {"AAA": object()}
+    fake.get_positions = lambda: (_ for _ in ()).throw(RuntimeError("broker down"))
+
+    with pytest.raises(RuntimeError):
+        CrossMomentumStrategy.rebalance(fake, [_target("AAA", 1.0, 100.0, 1)], {"AAA": 1})
+
+    assert fake.vars.yahoo_bars == {}

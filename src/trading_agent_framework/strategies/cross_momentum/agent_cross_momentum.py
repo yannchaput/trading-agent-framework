@@ -89,6 +89,10 @@ _HISTORY_BARS = 300
 # or throttled, and scanning on the remainder would sell held names as "not ranked".
 _MIN_YAHOO_COVERAGE = 0.5
 
+# Seconds before each new attempt at a failed or incomplete Yahoo batch: the rebalance runs once a week, so a transient
+# throttle is waited out (~4 minutes at most) rather than costing the week.
+_YAHOO_RETRY_DELAYS = (60.0, 180.0)
+
 
 class CrossMomentumStrategy(Strategy):
     """Cross-sectional momentum strategy V5 — copy of V2 with fractional share support.
@@ -308,23 +312,45 @@ class CrossMomentumStrategy(Strategy):
     def _load_yahoo_bars(self) -> bool:
         """Fetch the scan's daily bars from Yahoo into `vars.yahoo_bars`: the universe, SPY and the sleeve's trend assets.
 
-        False (logged) when Yahoo is down or has bars for too few stocks: the caller then skips the scan and holds the
-        book. A stock Yahoo has no bars for is simply filtered out, like any other ticker without data.
+        A failed or incomplete batch is fetched again after each of `_YAHOO_RETRY_DELAYS` (a transient 429 must not cost
+        the week's only rebalance). False (logged) when the last attempt still fails: the caller then skips the scan
+        and holds the book.
+        """
+        for delay in (*_YAHOO_RETRY_DELAYS, None):
+            bars, problem = self._fetch_yahoo_bars()
+            if problem is None:
+                self.vars.yahoo_bars = bars
+                covered = sum(1 for symbol in self.vars.universe if symbol in bars)
+                self.log_info(f"Yahoo bars: {covered}/{len(self.vars.universe)} symbols")
+                return True
+            if delay is None:
+                self.log_error(f"{problem} — holding current positions.")
+                return False
+            self.log_warning(f"{problem} — retry in {delay:.0f}s")
+            self.sleep(delay)  # clock time, so order hooks still fire meanwhile
+        return False  # unreachable: the last delay is None
+
+    def _fetch_yahoo_bars(self) -> tuple[dict[str, Bars], str | None]:
+        """One attempt: the bars, and None when they are usable, else a description of the problem.
+
+        Unusable when Yahoo fails, has bars for too few stocks, or misses a held stock (an unranked holding would be
+        sold). Any other stock Yahoo has no bars for is simply filtered out, like any other ticker without data.
         """
         universe = self.vars.universe
         extras = ["SPY", *self.parameters["parking"]["trend_assets"]]
         try:
             bars = self.vars.bars_source.bars([*universe, *extras], self._market_date())
         except YahooDataError as exc:
-            self.log_error(f"Yahoo lookup failed ({exc}) — holding current positions.")
-            return False
+            return {}, f"Yahoo lookup failed ({exc})"
         covered = sum(1 for symbol in universe if symbol in bars)
         if covered < len(universe) * _MIN_YAHOO_COVERAGE:
-            self.log_error(f"Yahoo covers only {covered}/{len(universe)} symbols — holding current positions.")
-            return False
-        self.vars.yahoo_bars = bars
-        self.log_info(f"Yahoo bars: {covered}/{len(universe)} symbols")
-        return True
+            return {}, f"Yahoo covers only {covered}/{len(universe)} symbols"
+        # A holding outside the universe was never requested: the rebalance sells it as "not ranked" by design
+        in_universe = set(universe)
+        missing_held = sorted(({pos.asset.symbol for pos in self.get_positions()} & in_universe) - bars.keys())
+        if missing_held:
+            return {}, f"Yahoo has no bars for held {', '.join(missing_held)}"
+        return bars, None
 
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
         """Run the full pipeline: indicators → score → filter → rank → select → weight.
@@ -513,6 +539,17 @@ class CrossMomentumStrategy(Strategy):
         return weights
 
     def rebalance(self, target: list[dict], all_ranks: dict[str, int]) -> None:
+        """Rebalance the book to `target` (`_rebalance_book`), then release the scan's Yahoo bars whatever happens.
+
+        The rebalance is their last reader (the sleeve's trend test); kept, they would pin ~15 MB for a week and serve
+        last week's bars to any later daily read.
+        """
+        try:
+            self._rebalance_book(target, all_ranks)
+        finally:
+            self.vars.yahoo_bars = {}
+
+    def _rebalance_book(self, target: list[dict], all_ranks: dict[str, int]) -> None:
         """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in the sleeve.
 
         Args:

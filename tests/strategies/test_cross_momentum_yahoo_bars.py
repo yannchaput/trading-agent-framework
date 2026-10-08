@@ -15,6 +15,7 @@ import pandas as pd
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
+from trading_agent_framework.backtesting.data.yahoo import parse_yahoo_frame
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
@@ -69,7 +70,34 @@ def test_each_symbol_comes_back_as_bars_in_the_shape_the_strategy_reads():
     assert bars.timestep == "day"
     assert list(bars.pandas_df.columns) == ["open", "high", "low", "close", "volume"]
     assert bars.pandas_df["close"].tolist() == closes
-    assert bars.pandas_df.index[-1] == pd.Timestamp(YESTERDAY, tz=MARKET_TZ)  # live Alpaca bars are stamped at midnight ET
+    assert bars.pandas_df.index[-1] == pd.Timestamp(datetime(2026, 10, 6, 16), tz=MARKET_TZ)  # at the close, as in a backtest
+
+
+def test_the_bars_are_exactly_the_backtests_parse_of_the_same_download():
+    frame = _yahoo_frame(300, closes=[100.0 + i for i in range(300)])
+
+    bars = YahooDailyBars(download=FakeDownload(_batch({"AAA": frame}))).bars(["AAA"], TODAY)["AAA"]
+
+    pd.testing.assert_frame_equal(bars.pandas_df, parse_yahoo_frame(frame))
+
+
+def test_a_timezone_aware_yahoo_index_reads_the_same_sessions():
+    frame = _yahoo_frame(300)
+    frame.index = pd.DatetimeIndex(frame.index).tz_localize(MARKET_TZ)
+
+    bars = YahooDailyBars(download=FakeDownload(_batch({"AAA": frame}))).bars(["AAA"], TODAY)["AAA"]
+
+    assert bars.pandas_df.index[-1].date() == YESTERDAY
+    assert len(bars) == 300
+
+
+def test_a_symbol_whose_data_cannot_be_parsed_is_left_out_not_raised():
+    broken = _yahoo_frame(300).astype(object)
+    broken.iloc[5, broken.columns.get_loc("Close")] = "n/a"
+
+    result = YahooDailyBars(download=FakeDownload(_batch({"AAA": _yahoo_frame(300), "BAD": broken}))).bars(["AAA", "BAD"], TODAY)
+
+    assert set(result) == {"AAA"}
 
 
 def test_one_batch_serves_every_symbol():
@@ -243,16 +271,28 @@ class FakeScanStrategy:
     def _load_yahoo_bars(self):
         return CrossMomentumStrategy._load_yahoo_bars(self)
 
-    def __init__(self, universe, bars_source):
+    def _fetch_yahoo_bars(self):
+        return CrossMomentumStrategy._fetch_yahoo_bars(self)
+
+    def __init__(self, universe, bars_source, held=()):
         self.parameters = dict(CONFIG)
+        self._held = list(held)
         self.vars = SimpleNamespace(
             universe=universe, target_closes={}, breadth=None, breadth_step=None, bars_source=bars_source, yahoo_bars={}
         )
         self.scanned: list[str] = []
         self.errors: list[str] = []
+        self.warnings: list[str] = []
+        self.slept: list[float] = []
 
     def get_datetime(self):
         return datetime(2026, 10, 7, 12, 0, tzinfo=MARKET_TZ)
+
+    def sleep(self, seconds):
+        self.slept.append(seconds)
+
+    def get_positions(self):
+        return [SimpleNamespace(asset=Asset(symbol), quantity=1.0) for symbol in self._held]
 
     def _compute_indicators_for_ticker(self, ticker):
         self.scanned.append(ticker)
@@ -260,7 +300,8 @@ class FakeScanStrategy:
 
     def log_info(self, *args, **kwargs): ...
 
-    def log_warning(self, *args, **kwargs): ...
+    def log_warning(self, message, *args, **kwargs):
+        self.warnings.append(message)
 
     def log_error(self, message, *args, **kwargs):
         self.errors.append(message)
@@ -316,3 +357,97 @@ def test_a_backtest_does_not_touch_yahoo():
 
     assert fake.scanned == ["AAA"]
     assert fake.vars.yahoo_bars == {}
+
+
+def test_a_held_stock_missing_from_the_yahoo_batch_holds_the_book():
+    # 9/10 coverage is plenty, but S9 is held: scanning without it would sell it as "not ranked"
+    universe = _universe()
+    fake = FakeScanStrategy(universe, FakeBarsSource({symbol: _bars(symbol) for symbol in universe[:9]}), held=["S9", "S0"])
+
+    assert fake.compute_target_portfolio() == ([], {})
+    assert fake.scanned == []
+    assert any("S9" in message and "holding current positions" in message for message in fake.errors)
+
+
+def test_held_stocks_that_all_have_bars_let_the_scan_run():
+    universe = _universe()
+    fake = FakeScanStrategy(universe, FakeBarsSource({symbol: _bars(symbol) for symbol in universe[:9]}), held=["S0", "S8"])
+
+    fake.compute_target_portfolio()
+
+    assert sorted(fake.scanned) == sorted(universe)
+
+
+def test_a_held_name_outside_the_universe_does_not_block_the_scan():
+    # never requested from Yahoo: the rebalance sells it as "not ranked" by design (it left the universe)
+    universe = _universe()
+    fake = FakeScanStrategy(universe, FakeBarsSource({symbol: _bars(symbol) for symbol in universe}), held=["GONE", "SHV"])
+
+    fake.compute_target_portfolio()
+
+    assert sorted(fake.scanned) == sorted(universe)
+
+
+class SequenceSource:
+    """Answers each call with the next response: a {symbol: bars} dict, or an exception to raise."""
+
+    def __init__(self, *responses):
+        self._responses = list(responses)
+        self.calls = 0
+
+    def bars(self, symbols, today):
+        response = self._responses[min(self.calls, len(self._responses) - 1)]
+        self.calls += 1
+        if isinstance(response, Exception):
+            raise response
+        return {symbol: response[symbol] for symbol in symbols if symbol in response}
+
+
+def _full(universe):
+    return {symbol: _bars(symbol) for symbol in universe}
+
+
+def test_a_failed_yahoo_download_is_retried_before_the_week_is_given_up():
+    universe = _universe()
+    source = SequenceSource(YahooDataError("429"), _full(universe))
+    fake = FakeScanStrategy(universe, source)
+
+    fake.compute_target_portfolio()
+
+    assert source.calls == 2
+    assert fake.slept == [60.0]  # through Strategy.sleep, so the clock (and order hooks) drive the wait
+    assert sorted(fake.scanned) == sorted(universe)
+    assert not any("Yahoo" in message for message in fake.errors)
+    assert any("429" in message and "retry" in message for message in fake.warnings)
+
+
+def test_a_thin_batch_is_retried_too():
+    universe = _universe()
+    source = SequenceSource(_full(universe[:3]), _full(universe))
+    fake = FakeScanStrategy(universe, source)
+
+    fake.compute_target_portfolio()
+
+    assert source.calls == 2
+    assert sorted(fake.scanned) == sorted(universe)
+
+
+def test_a_batch_missing_a_held_stock_is_retried_too():
+    universe = _universe()
+    source = SequenceSource(_full(universe[:9]), _full(universe))
+    fake = FakeScanStrategy(universe, source, held=["S9"])
+
+    fake.compute_target_portfolio()
+
+    assert source.calls == 2
+    assert sorted(fake.scanned) == sorted(universe)
+
+
+def test_yahoo_gets_three_attempts_then_the_book_is_held_with_one_error():
+    source = SequenceSource(YahooDataError("429"))
+    fake = FakeScanStrategy(_universe(), source)
+
+    assert fake.compute_target_portfolio() == ([], {})
+    assert source.calls == 3
+    assert fake.slept == [60.0, 180.0]
+    assert len(fake.errors) == 1 and "429" in fake.errors[0] and "holding current positions" in fake.errors[0]
