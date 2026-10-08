@@ -19,15 +19,22 @@
 * ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Decommission IBKR
-    * Withdraw money
-    * Cehck fees to delete account
-    * Delete account
-    * DEcommission the code
-
+  * Withdraw money
+  * Cehck fees to delete account
+  * Delete account
+  * DEcommission the code
 
 ## Strategies to test
 
 * [AI investment comitee](https://lumibot.lumiwealth.com/agents_investment_committee.html)
+
+## PEA Manager
+
+* Trouver un skills ou MCP permettant de remplacer EODHD quand son credit est epuisé pour le scan des tickers
+
+## Tests
+
+* Test Typesafe.AI sur news binary.
 
 ## Evolutions
 
