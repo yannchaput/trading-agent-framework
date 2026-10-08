@@ -38,6 +38,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
+from trading_agent_framework.entities.order import Order
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, YahooDataError
 from trading_agent_framework.utils.helpers import (
@@ -71,6 +72,7 @@ from .utils import (
     sleeve_symbols,
     sleeve_weights,
     trend_reading,
+    unfilled_sell_proceeds,
 )
 from .yahoo_daily_bars import YahooDailyBars
 
@@ -384,6 +386,7 @@ class CrossMomentumStrategy(Strategy):
                 result["trading_days"],
                 dict(self.parameters),
             ):
+                self.log_debug(f"Skipping {ticker}: failed filters")
                 return None
 
             result["score"] = momentum_score(
@@ -583,7 +586,7 @@ class CrossMomentumStrategy(Strategy):
         weights = self._sleeve_weights()
 
         # Phase 1: Sell (exits, trims, excess parking)
-        estimated_sell_proceeds = 0.0
+        sells: list[tuple[Order, float]] = []  # each submitted sell with the price it is expected to fill at
         hysteresis_value = 0.0
         kept_count = 0
         sold_count = 0
@@ -609,8 +612,7 @@ class CrossMomentumStrategy(Strategy):
                     if trim_qty > 0:
                         self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                         try:
-                            self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day"))
-                            estimated_sell_proceeds += trim_qty * price
+                            sells.append((self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day")), price))
                         except Exception as e:
                             self.log_error(f"Failed to submit trim order for {symbol}: {e}")
                 continue
@@ -625,10 +627,10 @@ class CrossMomentumStrategy(Strategy):
                     self.log_warning(f"Selling {symbol} (rank {rank} > {sell_threshold}) - outside hysteresis band")
                 try:
                     sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
-                    self.submit_order(sell_order)
+                    sell_order = self.submit_order(sell_order)
                     sold_count += 1
                     last_price = self.get_last_price(symbol) or 0.0
-                    estimated_sell_proceeds += float(pos.quantity) * float(last_price)
+                    sells.append((sell_order, float(last_price)))
                 except Exception as e:
                     self.log_error(f"Failed to submit sell order for {symbol}: {e}")
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
@@ -659,8 +661,7 @@ class CrossMomentumStrategy(Strategy):
                 if sell_qty > 0:
                     self.log_info(f"Selling {sell_qty} {symbol} @ ${price:.2f} (parking above target)")
                     try:
-                        self.submit_order(self.create_order(symbol, sell_qty, "sell", time_in_force="day"))
-                        estimated_sell_proceeds += sell_qty * price
+                        sells.append((self.submit_order(self.create_order(symbol, sell_qty, "sell", time_in_force="day")), price))
                     except Exception as e:
                         self.log_error(f"Failed to submit parking sell order for {symbol}: {e}")
 
@@ -668,8 +669,16 @@ class CrossMomentumStrategy(Strategy):
         # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
         # bar's open in a backtest) plus fees, so hold a fixed reserve back: it is what lets the last buys land
         # when prices move or sells fill lower.
-        cash_reserve = (float(self.get_cash()) + estimated_sell_proceeds) * self.parameters["cash_buffer_pct"]
-        available_cash = float(self.get_cash()) + estimated_sell_proceeds - cash_reserve
+        # Live market sells fill within seconds, so the broker's cash already holds the proceeds of the filled ones:
+        # only the part still to fill is added. The cash is read BEFORE the sell states, so a sell filling in between
+        # is counted nowhere (a slightly smaller budget), never twice. In a backtest no sell fills before the next
+        # session, so all of them are added, as before.
+        cash = float(self.get_cash())
+        pending_proceeds = unfilled_sell_proceeds(sells)
+        filled_sells = sum(1 for order, _ in sells if not order.is_active())
+        self.log_info(f"Buy budget: cash ${cash:,.0f} + ${pending_proceeds:,.0f} from unfilled sells ({filled_sells} of {len(sells)} sells already filled)")
+        cash_reserve = (cash + pending_proceeds) * self.parameters["cash_buffer_pct"]
+        available_cash = cash + pending_proceeds - cash_reserve
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
             if available_cash <= 0:

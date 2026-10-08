@@ -21,6 +21,10 @@ from trading_agent_framework.utils.errors import ConfigurationError
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power  # noqa: F401  (moved to utils/helpers.py; re-exported)
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from trading_agent_framework.entities.order import Order
+
     from .risk_diagnostics import PortfolioRiskDiagnostics
 
 logger = logging.getLogger(__name__)
@@ -196,6 +200,16 @@ def inverse_volatility_weights(
         entry["target_weight"] = final[i]
 
     return selected
+
+
+def unfilled_sell_proceeds(sells: Iterable[tuple[Order, float]]) -> float:
+    """Estimated proceeds of the sells still to fill: each active sell's open quantity at its sizing price.
+
+    A filled part is already in the broker's cash and must not be counted again (live market sells fill within
+    seconds); a sell no longer active (filled, canceled, rejected) brings nothing more. In a backtest nothing fills
+    before the next session, so every sell counts in full.
+    """
+    return sum(float(order.quantity - order.filled_quantity) * price for order, price in sells if order.is_active())
 
 
 def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
