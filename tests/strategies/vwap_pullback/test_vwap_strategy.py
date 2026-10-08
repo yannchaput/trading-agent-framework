@@ -86,9 +86,9 @@ def test_order_hooks_and_the_close_reach_the_desk(tmp_path: Path) -> None:
 
 
 def test_main_registers_the_strategy() -> None:
-    from trading_agent_framework.main import AGENT_STRATEGIES
+    from trading_agent_framework.utils.strategy_factory import Strategies
 
-    assert "vwap_pullback_continuation" in AGENT_STRATEGIES
+    assert "vwap_pullback_continuation" in Strategies
 
 
 def test_the_strategy_package_imports_no_llm_library() -> None:

@@ -10,7 +10,7 @@
 * ~~Create a batch to run all the smoke tests altogether~~
 * ~~Add cash available during backtesting~~
 * ~~Update pyproject.toml to make dashboard an "extra" dependency~~
-* Add a gloabl factory/builder for strategy in main.py
+* ~~Add a gloabl factory/builder for strategy in main.py~~
 * Log P&L every day in a sqllite database for the dashboard to display it: for backtest, paper and live
 * Add a skill to review, challenge and validate the design of a strategy
 
@@ -46,19 +46,6 @@
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * ~~Compute the residual volatility compared to the market (cf chatgpt thread)~~
 
-### Opening range breakout
-
-* ~~Override LUMIBOT_CACHE_FOLDER~~
-* ~~Increase number of positions to 20~~
-* Clean up the "think" tags leaving only the result in te logs tha gent produces
-* Test various combination of "volume_confirm_threshold" : 0,75 -> 1.0 -> 0.5 -> 0.0
-* Improve code regarding the universe management (too many entry points) => refactor in a factory
-* Write unit test (including new helpers methods)
-* Fix indicators not showing up
-* Add more indicators than portfolio value (e.g SMA 200)
-* Automatize deletion of memory sqllite db before running a backtest
-* Use langraph to split the tasks into simple task for the LLM.
-
 ### News sentiment analysis
 
 * ~~Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.~~
@@ -81,7 +68,7 @@
 ### Bill Ackman
 
 * ~~Update claude.md with exempt_tools and budget_tools~~
-* Update dashboard to display tempearature
+* ~~Update dashboard to display tempearature~~
 * ~~Log output of each agent to understand what was their decision~~
 
 ---
