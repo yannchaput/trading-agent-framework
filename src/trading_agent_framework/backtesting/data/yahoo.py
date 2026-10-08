@@ -100,7 +100,7 @@ class YahooBacktestData(BacktestDataSource):
             ) from exc
 
         for asset in missing:
-            frame = parse_yahoo_frame(_extract_ticker_frame(raw, asset.symbol))
+            frame = parse_yahoo_frame(extract_ticker_frame(raw, asset.symbol))
             if frame.empty:
                 logger.warning(
                     "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
@@ -193,22 +193,29 @@ class YahooBacktestData(BacktestDataSource):
         return df
 
     def _real_download(self) -> DownloadFn:
-        import yfinance as yf
-
-        # yfinance's own "Failed download"/"Data doesn't exist" notices go through
-        # a "yfinance"-named logger with no handler of its own, which falls back to
-        # `logging.lastResort` -- a raw, unformatted dump to stderr that bypasses this
-        # project's log file entirely. Silence it here; `load()`/`_fetch()` already
-        # log their own WARNING for a ticker that comes back with no data.
-        yf_logger = logging.getLogger("yfinance")
-        if not yf_logger.handlers:
-            yf_logger.addHandler(logging.NullHandler())
-            yf_logger.propagate = False
-
-        return cast(DownloadFn, yf.download)
+        return yfinance_download()
 
 
-def _extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
+def yfinance_download() -> DownloadFn:
+    """`yfinance.download`, imported lazily, with yfinance's own logger silenced.
+
+    yfinance's own "Failed download"/"Data doesn't exist" notices go through a
+    "yfinance"-named logger with no handler of its own, which falls back to
+    `logging.lastResort` -- a raw, unformatted dump to stderr that bypasses this
+    project's log file entirely. Callers log their own WARNING for a ticker that
+    comes back with no data. Shared with cross_momentum's live Yahoo bars.
+    """
+    import yfinance as yf
+
+    yf_logger = logging.getLogger("yfinance")
+    if not yf_logger.handlers:
+        yf_logger.addHandler(logging.NullHandler())
+        yf_logger.propagate = False
+
+    return cast(DownloadFn, yf.download)
+
+
+def extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
     """Slice one ticker's OHLCV out of a batched `download(symbols, group_by="ticker")`
     result. Columns come back as a `(ticker, field)` MultiIndex -- `raw[symbol]` drops
     the ticker level, leaving the same flat shape `parse_yahoo_frame` already expects

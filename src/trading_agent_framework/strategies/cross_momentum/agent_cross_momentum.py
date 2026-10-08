@@ -37,8 +37,9 @@ from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, YahooDataError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -71,6 +72,7 @@ from .utils import (
     sleeve_weights,
     trend_reading,
 )
+from .yahoo_daily_bars import YahooDailyBars
 
 if TYPE_CHECKING:
     from trading_agent_framework.brokers.base import Broker
@@ -82,6 +84,14 @@ _REBALANCE_BAND = 0.20
 
 # Daily bars behind every computation (scores, filters, breadth, risk overlay), all from completed sessions.
 _HISTORY_BARS = 300
+
+# Paper/live need Yahoo's bars for at least this share of the universe to scan at all: below it the lookup is down
+# or throttled, and scanning on the remainder would sell held names as "not ranked".
+_MIN_YAHOO_COVERAGE = 0.5
+
+# Seconds before each new attempt at a failed or incomplete Yahoo batch: the rebalance runs once a week, so a transient
+# throttle is waited out (~4 minutes at most) rather than costing the week.
+_YAHOO_RETRY_DELAYS = (60.0, 180.0)
 
 
 class CrossMomentumStrategy(Strategy):
@@ -117,6 +127,7 @@ class CrossMomentumStrategy(Strategy):
         mode: TradingMode = TradingMode.BACKTESTING,
         universe: list[str] | None = None,
         diagnostics_file_path: str | None = None,
+        bars_source: YahooDailyBars | None = None,
         **kwargs,
     ):
         super().__init__(broker, mode=mode, **kwargs)
@@ -130,6 +141,14 @@ class CrossMomentumStrategy(Strategy):
         # A sleeve asset (SHV, GLD, IEF) is never scored or bought as a stock, even if the universe file lists it
         sleeve = set(sleeve_symbols(self.parameters["parking"]))
         self.vars.universe = [symbol for symbol in universe if symbol not in sleeve]
+
+        # Paper/live read every daily bar the decision uses from Yahoo (see `get_historical_prices`): Alpaca's IEX bars
+        # carry ~5% of consolidated volume, skip a thin stock's quiet days and close at the last IEX trade, so the
+        # filter and the ranks ran on other data than the backtest's. A backtest's bars are already Yahoo's.
+        if bars_source is None and self.trading_mode is not TradingMode.BACKTESTING:
+            bars_source = YahooDailyBars()
+        self.vars.bars_source = bars_source
+        self.vars.yahoo_bars = {}
 
         # Diagnostics (delegated to DiagnosticLogger)
         self.vars.diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
@@ -215,9 +234,21 @@ class CrossMomentumStrategy(Strategy):
         """Today's date in market time: the date of the session whose daily bar is still forming."""
         return self.get_datetime().astimezone(MARKET_TZ).date()
 
+    def get_historical_prices(self, asset: Asset | str, length: int, timestep: str = "day", *, include_after_hours: bool = True) -> Bars | None:
+        """The last `length` bars of `asset`.
+
+        Paper/live serve daily bars from the Yahoo batch loaded for this scan (`_load_yahoo_bars`), so the stocks, SPY
+        and the sleeve's trend assets are all read from the backtest's own source; a symbol Yahoo has no bars for gets
+        None, never an Alpaca fallback on other data. Everything else goes to the framework.
+        """
+        if self.vars.bars_source is not None and timestep == "day":
+            bars = self.vars.yahoo_bars.get(asset.symbol if isinstance(asset, Asset) else asset)
+            return None if bars is None else Bars(asset=bars.asset, timestep="day", df=bars.pandas_df.tail(length))
+        self.vars.alpaca_rate_limiter.wait()  # Alpaca's data API; a no-op in backtests
+        return super().get_historical_prices(asset, length, timestep, include_after_hours=include_after_hours)
+
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
-        self.vars.alpaca_rate_limiter.wait()
         try:
             bars = self.get_historical_prices(ticker, length=_HISTORY_BARS + 1, timestep="day")
         except BrokerError as exc:
@@ -278,6 +309,49 @@ class CrossMomentumStrategy(Strategy):
             "close_series": close_series(df),
         }
 
+    def _load_yahoo_bars(self) -> bool:
+        """Fetch the scan's daily bars from Yahoo into `vars.yahoo_bars`: the universe, SPY and the sleeve's trend assets.
+
+        A failed or incomplete batch is fetched again after each of `_YAHOO_RETRY_DELAYS` (a transient 429 must not cost
+        the week's only rebalance). False (logged) when the last attempt still fails: the caller then skips the scan
+        and holds the book.
+        """
+        for delay in (*_YAHOO_RETRY_DELAYS, None):
+            bars, problem = self._fetch_yahoo_bars()
+            if problem is None:
+                self.vars.yahoo_bars = bars
+                covered = sum(1 for symbol in self.vars.universe if symbol in bars)
+                self.log_info(f"Yahoo bars: {covered}/{len(self.vars.universe)} symbols")
+                return True
+            if delay is None:
+                self.log_error(f"{problem} — holding current positions.")
+                return False
+            self.log_warning(f"{problem} — retry in {delay:.0f}s")
+            self.sleep(delay)  # clock time, so order hooks still fire meanwhile
+        return False  # unreachable: the last delay is None
+
+    def _fetch_yahoo_bars(self) -> tuple[dict[str, Bars], str | None]:
+        """One attempt: the bars, and None when they are usable, else a description of the problem.
+
+        Unusable when Yahoo fails, has bars for too few stocks, or misses a held stock (an unranked holding would be
+        sold). Any other stock Yahoo has no bars for is simply filtered out, like any other ticker without data.
+        """
+        universe = self.vars.universe
+        extras = ["SPY", *self.parameters["parking"]["trend_assets"]]
+        try:
+            bars = self.vars.bars_source.bars([*universe, *extras], self._market_date())
+        except YahooDataError as exc:
+            return {}, f"Yahoo lookup failed ({exc})"
+        covered = sum(1 for symbol in universe if symbol in bars)
+        if covered < len(universe) * _MIN_YAHOO_COVERAGE:
+            return {}, f"Yahoo covers only {covered}/{len(universe)} symbols"
+        # A holding outside the universe was never requested: the rebalance sells it as "not ranked" by design
+        in_universe = set(universe)
+        missing_held = sorted(({pos.asset.symbol for pos in self.get_positions()} & in_universe) - bars.keys())
+        if missing_held:
+            return {}, f"Yahoo has no bars for held {', '.join(missing_held)}"
+        return bars, None
+
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
         """Run the full pipeline: indicators → score → filter → rank → select → weight.
 
@@ -285,6 +359,11 @@ class CrossMomentumStrategy(Strategy):
         """
         self.log_info(f"Computing target portfolio for {len(self.vars.universe)} tickers...")
         self.vars.breadth = None  # no stale reading if this run returns early
+        self.vars.yahoo_bars = {}  # nor last week's bars
+        # An unusable batch (logged by _load_yahoo_bars) ends the scan with an empty target. rebalance() treats that as
+        # "hold the book", so no sell is sent on data Yahoo did not deliver.
+        if self.vars.bars_source is not None and not self._load_yahoo_bars():
+            return [], {}
 
         scored: list[dict] = []
         skip_count = 0
@@ -394,7 +473,6 @@ class CrossMomentumStrategy(Strategy):
         """
         if not target or not self.vars.target_closes:
             return 1.0
-        self.vars.alpaca_rate_limiter.wait()
         spy_bars = self.get_historical_prices("SPY", length=_HISTORY_BARS + 1, timestep="day")
         if spy_bars is None or spy_bars.empty:
             self.log_warning("Risk overlay: SPY data unavailable — defaulting to NORMAL (100% exposure)")
@@ -411,7 +489,7 @@ class CrossMomentumStrategy(Strategy):
         target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
         risk_state, risk_exposure, metrics = compute_risk_overlay(self.vars.target_closes, target_weights, spy)
         self.log_info(
-            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_63d')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
+            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_full_window')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
             f"obs={metrics.get('observations')}, exposure={risk_exposure:.0%})"
         )
         return risk_exposure
@@ -430,7 +508,6 @@ class CrossMomentumStrategy(Strategy):
     def _trend_closes(self, symbol: str) -> list[float] | None:
         """A trend asset's completed daily closes, oldest first, or None (logged) when its bars are unavailable."""
         fallback = self.parameters["parking"]["symbol"]
-        self.vars.alpaca_rate_limiter.wait()
         try:
             bars = self.get_historical_prices(symbol, length=_HISTORY_BARS + 1, timestep="day")
         except (BrokerError, BacktestError) as exc:
@@ -464,6 +541,17 @@ class CrossMomentumStrategy(Strategy):
         return weights
 
     def rebalance(self, target: list[dict], all_ranks: dict[str, int]) -> None:
+        """Rebalance the book to `target` (`_rebalance_book`), then release the scan's Yahoo bars whatever happens.
+
+        The rebalance is their last reader (the sleeve's trend test); kept, they would pin ~15 MB for a week and serve
+        last week's bars to any later daily read.
+        """
+        try:
+            self._rebalance_book(target, all_ranks)
+        finally:
+            self.vars.yahoo_bars = {}
+
+    def _rebalance_book(self, target: list[dict], all_ranks: dict[str, int]) -> None:
         """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in the sleeve.
 
         Args:
@@ -699,9 +787,13 @@ class CrossMomentumStrategy(Strategy):
 
         self.log_info("Today is a rebalance day — computing target portfolio...")
 
+        # Paper/live: this loads the scan's Yahoo bars into vars.yahoo_bars. Steps 3-9 read them through
+        # get_historical_prices, and rebalance() releases them at the end, so nothing below may fetch a fresh batch.
         target, all_ranks = self.compute_target_portfolio()
 
         # Step 3: Portfolio Risk Overlay — beta/vol/corr of today's target stocks against SPY, aligned by date.
+        # Still reads vars.yahoo_bars (rebalance() has not run yet). After an unusable batch the target is empty, so
+        # this returns 1.0 without reading SPY.
         risk_exposure = self._risk_exposure(target)
 
         # Step 4: Breadth overlay — market regime from the share of scored stocks above their SMA

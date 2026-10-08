@@ -25,7 +25,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Path and pruning window for persisted equity history
+# Path and pruning window for persisted equity history. Both load and save prune to it; 70 leaves slack over the
+# 64 values the fast/slow volatility targeting needs (`_compute_realized_volatility` in the strategy).
 _EQUITY_HISTORY_FILE = Path("data/cross_momentum_ptf_history.json")
 _MAX_HISTORY_ENTRIES = 70
 
@@ -139,6 +140,10 @@ def inverse_volatility_weights(
     Each dict in `selected` must have a "volatility" key (float > 0).
     Mutates each dict in-place to add a "target_weight" key (float 0..1).
     Returns the same list.
+
+    Known limitation: the sequence is cap, redistribute the excess, floor, normalize. The floor only raises the total
+    above 1.0, and the final normalization then scales every weight down. So no weight ends above `max_pct`, but a
+    floored weight can end a little under `min_pct`. A floor that binds is not guaranteed to hold after normalization.
     """
     if not selected:
         return selected
@@ -174,7 +179,7 @@ def inverse_volatility_weights(
                 for i in uncapped_indices:
                     capped[i] += excess * (capped[i] / total_uncapped_weight)
 
-    # Floor at min_pct
+    # Floor at min_pct (see the known limitation in the docstring: normalization below can undo it)
     for i, w in enumerate(capped):
         if w < min_pct:
             capped[i] = min_pct
@@ -418,6 +423,8 @@ def _percentile_rank(values: list[float]) -> list[float]:
 
     Higher input values get higher ranks (1 = best/highest momentum).
     Ties receive the average rank.
+
+    Not called by the strategy (no caller in src): kept with `compute_residual_momentum` for the beta experiments.
     """
     n = len(values)
     if n <= 1:
@@ -453,6 +460,9 @@ def compute_residual_momentum(
     skip_days: int = 0,
 ) -> float | None:
     """Compute cumulative residual return after regressing out market beta.
+
+    Not called by the strategy: residual (beta-adjusted) momentum was tested twice in the beta experiments and dropped.
+    Kept so those experiments can be re-run.
 
     For each trading day t in the lookback window:
 
@@ -638,7 +648,7 @@ def save_equity_history(
 def load_cross_momentum_universe() -> list[str]:
     """Load the pre-computed universe for cross-sectional momentum.
 
-    Reads data/universe/stock_universe.json (produced by batch_stock_universe.py).
+    Reads data/universe/us_stock_universe.json (produced by batch_us_stock_universe.py).
     Falls back to an empty list if the file doesn't exist.
 
     Returns:
@@ -658,7 +668,7 @@ def load_cross_momentum_universe() -> list[str]:
 def get_cross_momentum_universe_last_date() -> datetime | None:
     """Get the last date of the pre-computed universe for cross-sectional momentum.
 
-    Reads data/universe/stock_universe.json (produced by batch_stock_universe.py).
+    Reads data/universe/us_stock_universe.json (produced by batch_us_stock_universe.py).
     Returns None if the file doesn't exist or if the date is not found.
 
     Returns:

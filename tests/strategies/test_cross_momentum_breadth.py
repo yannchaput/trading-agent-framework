@@ -252,7 +252,7 @@ class FakeScoringStrategy:
 
     def __init__(self, indicators):
         self.parameters = dict(CONFIG)
-        self.vars = SimpleNamespace(universe=list(indicators), target_closes={}, breadth=None, breadth_step=None)
+        self.vars = SimpleNamespace(universe=list(indicators), target_closes={}, breadth=None, breadth_step=None, bars_source=None, yahoo_bars={})
         self._indicators = indicators
         self.errors: list[str] = []
 

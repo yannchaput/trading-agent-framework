@@ -4,7 +4,8 @@ CONFIG = {
     "min_price": 10.0,
     "min_dollar_volume": 20_000_000,
     "max_volatility": 0.80,
-    "min_market_cap": 2_000_000_000,  # pre-filtered by batch, gate here for safety
+    # Not enforced by apply_filters: the universe batch pre-filters on it. Adding a gate here is a decision (CLAUDE.md).
+    "min_market_cap": 2_000_000_000,
     "min_trading_days": 250,
     # ── Rebalance schedule ─────────────────────
     "rebalance_frequency": "weekly",
