@@ -16,6 +16,7 @@ from trading_agent_framework.config import find_project_root, load_strategy_env
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
@@ -56,6 +57,10 @@ def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
     return BillAckmanStrategy(broker=broker, mode=mode, universe=universe)
 
 
+def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+    return CongressTradesStrategy(broker=broker, mode=mode)
+
+
 def _build_earnings_drift(broker: Broker, mode: TradingMode) -> Strategy | None:
     universe = load_cross_momentum_universe()
     if not universe:
@@ -82,6 +87,7 @@ def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strateg
 
 AGENT_STRATEGIES: dict[str, StrategyBuilder] = {
     "bill_ackman": _build_bill_ackman,
+    "congress_trades": _build_congress_trades,
     "cross_momentum": _build_cross_momentum,
     "earnings_drift": _build_earnings_drift,
     "earnings_drift_baseline": _build_earnings_drift_baseline,

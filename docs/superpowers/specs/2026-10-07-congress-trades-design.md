@@ -135,7 +135,7 @@ adds a pre-scan of the window's tickers to `preload_assets` if it does not). A b
 bar, so `check_orders()` in a daily backtest finds orders unfilled at the 10:00 tick; the plan verifies how
 `wait_for_orders_execution` advances the simulated clock and, if it cannot cover a next-session fill, the
 audit/`pending_trade` path (next tick re-checks, never re-sends what is open) is the designed behaviour. Orders
-still open count toward a position when sizing (the `Rebalancer` rule). Default window: two years.
+still open count toward a position when sizing (the `Rebalancer` rule). Default window: one year (`PredefinedWindow.YEAR`; there is no two-year window). Yahoo's source fetches a ticker it was not told about lazily, once, the first time its price is asked, so only the benchmark is preloaded.
 
 ## Risks and open points
 

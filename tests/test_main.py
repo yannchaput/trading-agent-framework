@@ -6,6 +6,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 from trading_agent_framework import main as main_module
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 
@@ -13,6 +14,7 @@ from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 def test_registry_lists_the_strategies() -> None:
     assert set(main_module.AGENT_STRATEGIES) == {
         "bill_ackman",
+        "congress_trades",
         "cross_momentum",
         "earnings_drift",
         "earnings_drift_baseline",
@@ -27,6 +29,15 @@ def test_news_binary_builder_returns_the_strategy() -> None:
     strategy = main_module._build_news_binary(broker, TradingMode.BACKTESTING)
 
     assert isinstance(strategy, NewsBinaryStrategy)
+    assert strategy.is_backtesting
+
+
+def test_congress_trades_builder_returns_the_strategy_without_needing_a_universe_file() -> None:
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="congress_trades")
+
+    strategy = main_module._build_congress_trades(broker, TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, CongressTradesStrategy)
     assert strategy.is_backtesting
 
 
