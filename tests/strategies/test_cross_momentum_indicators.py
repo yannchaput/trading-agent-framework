@@ -23,7 +23,7 @@ class FakeStrategy:
 
     def __init__(self, *, bars=None, raises=None, now=None):
         self.parameters = {"min_trading_days": 250, "skip_days": 21, "volatility_window": 20}
-        self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
+        self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None), filter_source=None, filter_inputs={})
         self._bars = bars
         self._raises = raises
         self._now = now or datetime(2026, 10, 6, 12, 0, tzinfo=MARKET_TZ)

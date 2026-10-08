@@ -38,7 +38,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, FilterDataError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -71,6 +71,7 @@ from .utils import (
     sleeve_weights,
     trend_reading,
 )
+from .yahoo_filter_inputs import YahooFilterSource
 
 if TYPE_CHECKING:
     from trading_agent_framework.brokers.base import Broker
@@ -82,6 +83,10 @@ _REBALANCE_BAND = 0.20
 
 # Daily bars behind every computation (scores, filters, breadth, risk overlay), all from completed sessions.
 _HISTORY_BARS = 300
+
+# Paper/live need Yahoo's filter inputs for at least this share of the universe to scan at all: below it the
+# lookup is down or throttled, and scanning on the remainder would sell held names as "not ranked".
+_MIN_YAHOO_COVERAGE = 0.5
 
 
 class CrossMomentumStrategy(Strategy):
@@ -117,6 +122,7 @@ class CrossMomentumStrategy(Strategy):
         mode: TradingMode = TradingMode.BACKTESTING,
         universe: list[str] | None = None,
         diagnostics_file_path: str | None = None,
+        filter_source: YahooFilterSource | None = None,
         **kwargs,
     ):
         super().__init__(broker, mode=mode, **kwargs)
@@ -130,6 +136,14 @@ class CrossMomentumStrategy(Strategy):
         # A sleeve asset (SHV, GLD, IEF) is never scored or bought as a stock, even if the universe file lists it
         sleeve = set(sleeve_symbols(self.parameters["parking"]))
         self.vars.universe = [symbol for symbol in universe if symbol not in sleeve]
+
+        # Paper/live: `apply_filters` reads its inputs (price, dollar volume, volatility, trading days) from Yahoo,
+        # because Alpaca's IEX bars carry ~5% of consolidated volume and skip a thin stock's quiet days: the filter
+        # was far stricter than in a backtest. A backtest's own Yahoo bars already feed it, so it has no source.
+        if filter_source is None and self.trading_mode is not TradingMode.BACKTESTING:
+            filter_source = YahooFilterSource(history=_HISTORY_BARS, volatility_window=self.parameters["volatility_window"])
+        self.vars.filter_source = filter_source
+        self.vars.filter_inputs = {}
 
         # Diagnostics (delegated to DiagnosticLogger)
         self.vars.diagnostics_logger = DiagnosticLogger(self, trading_mode=self.trading_mode, diagnostics_file_path=diagnostics_file_path)
@@ -241,7 +255,9 @@ class CrossMomentumStrategy(Strategy):
         volumes = df["volume"].tolist()
         trading_days = len(closes)
 
-        if trading_days < self.parameters["min_trading_days"]:
+        # With Yahoo as the filter's source the bar count is Yahoo's (a thin stock's IEX bars skip quiet days);
+        # the momentum lookbacks below still return None when these bars are too few to score.
+        if self.vars.filter_source is None and trading_days < self.parameters["min_trading_days"]:
             return None
 
         current_price = closes[-1] if closes else 0.0
@@ -278,6 +294,25 @@ class CrossMomentumStrategy(Strategy):
             "close_series": close_series(df),
         }
 
+    def _load_filter_inputs(self) -> bool:
+        """Fetch the universe's filter inputs from Yahoo into `vars.filter_inputs`.
+
+        False (logged) when Yahoo is down or answers for too few symbols: the caller then skips the scan and holds
+        the book. A symbol Yahoo has no data for is simply filtered out, like any other failing ticker.
+        """
+        universe = self.vars.universe
+        try:
+            inputs = self.vars.filter_source.inputs(universe, self._market_date())
+        except FilterDataError as exc:
+            self.log_error(f"Yahoo lookup failed ({exc}) — holding current positions.")
+            return False
+        if len(inputs) < len(universe) * _MIN_YAHOO_COVERAGE:
+            self.log_error(f"Yahoo covers only {len(inputs)}/{len(universe)} symbols — holding current positions.")
+            return False
+        self.vars.filter_inputs = inputs
+        self.log_info(f"Yahoo filter inputs: {len(inputs)}/{len(universe)} symbols")
+        return True
+
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
         """Run the full pipeline: indicators → score → filter → rank → select → weight.
 
@@ -285,6 +320,9 @@ class CrossMomentumStrategy(Strategy):
         """
         self.log_info(f"Computing target portfolio for {len(self.vars.universe)} tickers...")
         self.vars.breadth = None  # no stale reading if this run returns early
+        self.vars.filter_inputs = {}  # nor last week's Yahoo inputs
+        if self.vars.filter_source is not None and not self._load_filter_inputs():
+            return [], {}
 
         scored: list[dict] = []
         skip_count = 0
@@ -294,11 +332,17 @@ class CrossMomentumStrategy(Strategy):
         self.log_info(f"Using {max_workers} threads for parallel processing")
 
         def _process_ticker(ticker: str) -> dict | None:
+            if self.vars.filter_source is not None:
+                # Paper/live: the filter runs on Yahoo's inputs, before any Alpaca request is spent on the ticker
+                yahoo = self.vars.filter_inputs.get(ticker)
+                if yahoo is None or not apply_filters(yahoo.price, yahoo.avg_dollar_volume, yahoo.volatility, yahoo.trading_days, dict(self.parameters)):
+                    return None
+
             result = self._compute_indicators_for_ticker(ticker)
             if result is None:
                 return None
 
-            if not apply_filters(
+            if self.vars.filter_source is None and not apply_filters(
                 result["price"],
                 result["avg_dollar_volume"],
                 result["volatility"],

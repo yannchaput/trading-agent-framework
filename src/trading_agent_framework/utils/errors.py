@@ -53,6 +53,10 @@ class MacroDataError(TradingFrameworkError):
     """Raised when a macro (FRED) data lookup fails."""
 
 
+class FilterDataError(TradingFrameworkError):
+    """Raised when the Yahoo lookup of a strategy's filter inputs (price, volume, volatility, history) fails."""
+
+
 class FundamentalsError(TradingFrameworkError):
     """Raised when a SEC EDGAR fundamentals lookup fails."""
 
