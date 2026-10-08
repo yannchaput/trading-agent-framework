@@ -3,9 +3,9 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from trading_agent_framework.congress import holdings
-from trading_agent_framework.congress.annual import AssetHolding, tier_of
-from trading_agent_framework.congress.ptr import Transaction
+from trading_agent_framework.strategies.congress_trades.congress import holdings
+from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, tier_of
+from trading_agent_framework.strategies.congress_trades.congress.ptr import Transaction
 
 PERIOD_END = date(2024, 12, 31)
 

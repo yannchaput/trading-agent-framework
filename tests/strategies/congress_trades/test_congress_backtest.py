@@ -18,12 +18,12 @@ from tests.fakes import FakeBroker, FakeClock, et, weekday_sessions
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.congress.annual import AssetHolding, tier_of
-from trading_agent_framework.congress.ptr import FilingRef
-from trading_agent_framework.congress.source import CongressSource, KnownFilings
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
+from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, tier_of
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
+from trading_agent_framework.strategies.congress_trades.congress.source import CongressSource, KnownFilings
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.utils.errors import AgentError, BacktestError
 

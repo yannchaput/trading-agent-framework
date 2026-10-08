@@ -12,6 +12,7 @@ inside `_default_fred_client`, not imported at `macro.py` module level.
 from typing import TYPE_CHECKING
 
 from trading_agent_framework.agents.tools.account import account_tools
+from trading_agent_framework.agents.tools.common import only
 from trading_agent_framework.agents.tools.indicators import indicator_tools
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.market_data import market_data_tools
@@ -22,24 +23,22 @@ from trading_agent_framework.utils import get_version
 __version__ = get_version("trading_agent_framework")
 
 if TYPE_CHECKING:
-    from trading_agent_framework.agents.tools.congress import congress_research_tools
     from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
     from trading_agent_framework.agents.tools.news import news_tools
 
 __all__ = [
     "PrebuiltTools",
     "account_tools",
-    "congress_research_tools",
     "fundamentals_tools",
     "indicator_tools",
     "macro_tools",
     "market_data_tools",
     "news_tools",
     "trading_tools",
+    "only",
 ]
 
 _LAZY = {
-    "congress_research_tools": (".congress", "congress_research_tools"),
     "news_tools": (".news", "news_tools"),
     "fundamentals_tools": (".fundamentals", "fundamentals_tools"),
 }

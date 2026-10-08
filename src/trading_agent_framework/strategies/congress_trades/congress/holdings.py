@@ -19,8 +19,8 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import ROUND_DOWN, Decimal
 
-from trading_agent_framework.congress.annual import AssetHolding, tier_of
-from trading_agent_framework.congress.ptr import Transaction
+from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, tier_of
+from trading_agent_framework.strategies.congress_trades.congress.ptr import Transaction
 
 _ZERO = Decimal(0)
 _WEIGHT_PLACES = Decimal("0.0001")

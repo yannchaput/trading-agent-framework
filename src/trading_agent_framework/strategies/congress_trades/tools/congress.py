@@ -16,8 +16,8 @@ from collections.abc import Callable
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from trading_agent_framework.congress.source import KnownFilings
 from trading_agent_framework.memory.tools import RunMemo, current_run_id
+from trading_agent_framework.strategies.congress_trades.congress.source import KnownFilings
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import CongressDataError
 

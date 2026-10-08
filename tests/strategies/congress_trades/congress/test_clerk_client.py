@@ -6,10 +6,10 @@ from pathlib import Path
 
 import httpx
 import pytest
-from tests.congress.pdfs import make_image_only_pdf, make_text_pdf, make_zip
+from tests.strategies.congress_trades.congress.pdfs import make_image_only_pdf, make_text_pdf, make_zip
 
-from trading_agent_framework.congress.clerk_client import ClerkClient, filing_url, index_url
-from trading_agent_framework.congress.ptr import FilingRef
+from trading_agent_framework.strategies.congress_trades.congress.clerk_client import ClerkClient, filing_url, index_url
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
 from trading_agent_framework.utils.errors import ConfigurationError, CongressDataError, CongressNotFoundError
 
 PTR = FilingRef(doc_id="20026590", member="Nancy Pelosi", kind="ptr", filed=date(2025, 2, 20), year=2025)

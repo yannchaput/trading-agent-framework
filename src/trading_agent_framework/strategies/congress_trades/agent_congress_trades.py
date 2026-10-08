@@ -10,37 +10,29 @@ See docs/superpowers/specs/2026-10-07-congress-trades-design.md.
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 from datetime import time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.account import account_tools
-from trading_agent_framework.agents.tools.congress import congress_research_tools
 from trading_agent_framework.agents.tools.market_data import market_data_tools
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.congress.clerk_client import ClerkClient
-from trading_agent_framework.congress.source import CongressSource
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.congress_trades.congress import ClerkClient, CongressSource
 from trading_agent_framework.strategies.congress_trades.desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.pipeline import AGENT_PORTFOLIO, AGENT_RESEARCHER, AGENT_TRADER, CongressPipeline, SourceLike
 from trading_agent_framework.strategies.congress_trades.prompts import portfolio_system, researcher_system, trader_system
 from trading_agent_framework.strategies.congress_trades.state import RunLog, StateStore, state_path
+from trading_agent_framework.strategies.congress_trades.tools import congress_research_tools
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
-
-Tool = Callable[..., dict[str, Any]]
-
-
-def _only(tools: list[Tool], names: set[str]) -> list[Tool]:
-    """The tools named in `names`: each agent gets exactly the tools its prompt describes, and no more schema than that."""
-    return [tool for tool in tools if tool.__name__ in names]
 
 
 class CongressTradesStrategy(Strategy):
@@ -89,14 +81,14 @@ class CongressTradesStrategy(Strategy):
             self.agents.create(
                 name=AGENT_RESEARCHER,
                 system_prompt=researcher_system(params.politician),
-                tools=[*congress_research_tools(self, source), *_only(market_data_tools(self), {"get_last_price"}), submit["submit_holdings"]],
+                tools=[*congress_research_tools(self, source), *only(market_data_tools(self), {"get_last_price"}), submit["submit_holdings"]],
                 temperature=temperature,
             )
             self.agents.create(name=AGENT_PORTFOLIO, system_prompt=portfolio_system(params.politician), tools=[submit["submit_target"]], temperature=temperature)
             self.agents.create(
                 name=AGENT_TRADER,
                 system_prompt=trader_system(),
-                tools=[*_only(account_tools(self), {"get_account_balance", "get_positions"}), *_only(market_data_tools(self), {"get_last_price"}), *desk.tools(), submit["submit_trade_report"]],
+                tools=[*only(account_tools(self), {"get_account_balance", "get_positions"}), *only(market_data_tools(self), {"get_last_price"}), *desk.tools(), submit["submit_trade_report"]],
                 temperature=temperature,
             )
         except ConfigurationError as exc:

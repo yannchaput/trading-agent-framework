@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.congress import ptr
-from trading_agent_framework.congress.ptr import FilingRef
+from trading_agent_framework.strategies.congress_trades.congress import ptr
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
 from trading_agent_framework.utils.errors import CongressDataError
 
 FIXTURES = Path(__file__).parent / "fixtures"

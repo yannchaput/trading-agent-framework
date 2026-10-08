@@ -6,8 +6,8 @@ from decimal import Decimal
 import pytest
 from tests.fakes import et
 
-from trading_agent_framework.congress.ptr import FilingRef
-from trading_agent_framework.congress.source import CongressSource
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
+from trading_agent_framework.strategies.congress_trades.congress.source import CongressSource
 from trading_agent_framework.utils.errors import CongressDataError, CongressNotFoundError
 
 ANNUAL_TEXT = "SP Apple Inc. (AAPL) [ST] $5,000,001 - $25,000,000 Dividends $1 - $200 Tesla Call (TSLA) [OP] $1,001 - $15,000 None"

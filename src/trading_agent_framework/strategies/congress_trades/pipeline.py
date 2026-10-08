@@ -19,11 +19,11 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.congress import holdings as holdings_module
-from trading_agent_framework.congress.annual import tier_of
-from trading_agent_framework.congress.holdings import Holding
-from trading_agent_framework.congress.ptr import FilingRef
-from trading_agent_framework.congress.source import KnownFilings
+from trading_agent_framework.strategies.congress_trades.congress import holdings as holdings_module
+from trading_agent_framework.strategies.congress_trades.congress.annual import tier_of
+from trading_agent_framework.strategies.congress_trades.congress.holdings import Holding
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
+from trading_agent_framework.strategies.congress_trades.congress.source import KnownFilings
 from trading_agent_framework.strategies.congress_trades.desk import Audit, TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, HoldingSubmission, TargetPosition
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams

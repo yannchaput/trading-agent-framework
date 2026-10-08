@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
 
-from trading_agent_framework.congress.ptr import FilingRef, parse_amount, parse_row_head, strip_descriptions
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef, parse_amount, parse_row_head, strip_descriptions
 from trading_agent_framework.utils.errors import CongressDataError
 
 

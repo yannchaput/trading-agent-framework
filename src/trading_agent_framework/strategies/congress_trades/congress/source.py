@@ -17,9 +17,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Protocol
 
-from trading_agent_framework.congress import ptr
-from trading_agent_framework.congress.annual import AssetHolding, parse_annual, period_end
-from trading_agent_framework.congress.ptr import FilingRef, Transaction
+from trading_agent_framework.strategies.congress_trades.congress import ptr
+from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, parse_annual, period_end
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef, Transaction
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import CongressDataError, CongressNotFoundError
 from trading_agent_framework.utils.log import ColorLogger

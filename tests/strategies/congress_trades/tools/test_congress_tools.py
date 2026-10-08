@@ -6,12 +6,12 @@ from decimal import Decimal
 
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.tools.congress import congress_research_tools
-from trading_agent_framework.congress.annual import AssetHolding
-from trading_agent_framework.congress.ptr import FilingRef, Transaction
-from trading_agent_framework.congress.source import KnownFilings
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.memory.tools import agent_call_context
+from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef, Transaction
+from trading_agent_framework.strategies.congress_trades.congress.source import KnownFilings
+from trading_agent_framework.strategies.congress_trades.tools.congress import congress_research_tools
 from trading_agent_framework.utils.errors import CongressDataError
 
 ANNUAL = FilingRef("A1", "Nancy Pelosi", "annual", date(2026, 5, 15), 2025)

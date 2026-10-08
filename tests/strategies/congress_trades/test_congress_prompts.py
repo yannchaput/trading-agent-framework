@@ -28,9 +28,9 @@ def test_the_prompts_only_name_tools_that_really_exist() -> None:
     from tests.fakes import FakeBroker, FakeClock, et
 
     from trading_agent_framework.agents.tools.account import account_tools
-    from trading_agent_framework.agents.tools.congress import congress_research_tools
     from trading_agent_framework.agents.tools.market_data import market_data_tools
     from trading_agent_framework.core.strategy import Strategy
+    from trading_agent_framework.strategies.congress_trades.tools.congress import congress_research_tools
 
     strategy = Strategy(FakeBroker(FakeClock(et(2026, 9, 14, 10))))
     real = set(submit_tools(HandoffRecorder(CongressParams())))

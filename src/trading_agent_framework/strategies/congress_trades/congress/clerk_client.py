@@ -23,8 +23,8 @@ from pathlib import Path
 
 import httpx
 
-from trading_agent_framework.congress.ptr import FilingRef
 from trading_agent_framework.fundamentals.freshness import is_stale
+from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
 from trading_agent_framework.utils.errors import ConfigurationError, CongressDataError, CongressNotFoundError
 from trading_agent_framework.utils.log import ColorLogger
 
