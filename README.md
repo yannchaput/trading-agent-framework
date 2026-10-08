@@ -282,6 +282,28 @@ The strategy will rely on those symbols as input.
 
 A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ackman example. Each day code screens the universe for simple, cash-generative, lightly indebted, reasonably priced companies (`strategies/bill_ackman/screen/`), the researcher ranks the best 5, the short seller attacks them and every stock already held, and the trader picks the weights. Code applies a hysteresis (a holding that fails the attack on 2 consecutive days is sold), validates every agent output, and places all orders; money not allocated to stocks is parked in SHV. Run `uv run agent bill_ackman backtesting` (default window `PredefinedWindow.BI_MONTH`); each run writes `reviews.jsonl` (one line per daily review) next to its report. The first run downloads about 5 GB of SEC data once.
 
+### 📈 `congress_trades` — Copy Nancy Pelosi's disclosed stock holdings (researcher, portfolio manager, trader)
+
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/congress_trades/agent_congress_trades.py` (`CongressTradesStrategy`) |
+| **Model** | from `LLM_MODEL` in the env file (one model for the three agents) |
+| **Agents** | `researcher`, `portfolio_manager`, `trader` |
+| **Tools** | researcher: `list_filings`, `read_filing`, `get_last_price`, `submit_holdings`; portfolio manager: `submit_target`; trader: `get_positions`, `get_account_balance`, `get_last_price`, `place_order`, `check_orders`, `submit_trade_report`. Only the trader can place an order, and only through the order desk's guardrails |
+| **Asset universe** | the US stocks in the member's disclosures (no universe file) |
+| **Agent frequency** | checked once per session at 10:00 ET, but the agents run only when she has filed something new (see below) |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.congress_trades.<mode>`: `LLM_*`, `CONGRESS_USER_AGENT`, plus the broker keys in paper/live |
+
+Mirrors the stock holdings that Nancy Pelosi (the `politician` setting of `CongressParams`) discloses to the House Clerk. Her newest yearly report lists what she owned on December 31 as value bands (for example $5,000,001 - $25,000,000); every trade report filed since lists each purchase and sale with a dollar range. Code combines them into a baseline of what she owns today, then three agents hand structured results to each other:
+
+1. the **researcher** checks the baseline against the filings and corrects what code cannot read (every change needs a reason);
+2. the **portfolio manager** turns the holdings into target weights: a holding in a higher value tier never gets a smaller weight than one in a lower tier (code enforces it), starting from `tier_weight_base ** tier` and capped at 15% per stock and 95% in total;
+3. the **trader** places the orders (sells first, sized against the smaller of buying power and cash) and checks that they filled.
+
+A filing counts only when it was filed **strictly before today** (disclosures lag trades by up to 45 days, so using the trade date would look into the future). The bot checks every session, but when no new filing has appeared since the last completed run, no agent runs and no order is sent. Orders still working (a backtest fills on the next bar) are re-checked on the following days by the trading stage alone, up to 3 times. Options are ignored (long-only stocks), so a good part of her real exposure is not copied. Run `uv run agent congress_trades backtesting` (default window one year); each run writes `runs.jsonl` (one line per check) next to its report, and `uv run python scripts/tests/smoke_congress_trades.py` checks the Clerk parsing against the live site.
+
 ### 📈 `vwap_pullback_continuation` — Intraday VWAP pullback continuation
 
 | Field | Value |
