@@ -30,7 +30,7 @@ CONFIG = {
     # ── Volatility sizing ───────────────────────
     "volatility_window": 20,
     # ── Risk diagnostics (V2.3) ──────────────────
-    "enable_diagnostics": True,  # set to True to enable risk diagnostics
+    "enable_diagnostics": False,  # set to True to enable risk diagnostics
     "risk_diagnostics": {
         "enabled": True,
         "benchmark": "SPY",
