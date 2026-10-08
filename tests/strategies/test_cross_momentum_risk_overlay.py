@@ -48,7 +48,7 @@ def test_series_one_day_short_are_aligned_by_date_not_by_position():
     _, _, full = compute_risk_overlay(stocks, _equal(stocks), spy)
     state, exposure, metrics = compute_risk_overlay(short, _equal(short), spy)
 
-    assert metrics["beta_63d"] == pytest.approx(full["beta_63d"], abs=0.05)
+    assert metrics["beta_full_window"] == pytest.approx(full["beta_full_window"], abs=0.05)
     assert metrics["corr_20d"] == pytest.approx(full["corr_20d"], abs=0.1)
     assert (state, exposure) == ("critical", 0.4)
 
@@ -77,7 +77,7 @@ def test_fewer_than_min_obs_aligned_returns_is_normal():
     state, exposure, metrics = compute_risk_overlay(recent, _equal(recent), spy)
 
     assert (state, exposure) == ("normal", 1.0)
-    assert metrics["beta_63d"] is None
+    assert metrics["beta_full_window"] is None
     assert metrics["observations"] == 29
 
 
@@ -96,7 +96,7 @@ def test_without_a_benchmark_vol_and_corr_are_still_computed():
 
     _, _, metrics = compute_risk_overlay(stocks, _equal(stocks), None)
 
-    assert metrics["beta_63d"] is None
+    assert metrics["beta_full_window"] is None
     assert metrics["vol_20d"] > 0
     assert metrics["corr_20d"] > 0.5
 

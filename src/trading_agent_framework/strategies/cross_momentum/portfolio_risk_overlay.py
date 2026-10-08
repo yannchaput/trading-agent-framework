@@ -1,6 +1,7 @@
 """Portfolio Risk Overlay — pure computation functions.
 
-No Lumibot dependency. Computes portfolio-level beta (63d), realized
+No Lumibot dependency. Computes portfolio-level beta (over every overlapping
+day passed in: the strategy passes ~300 sessions, not 63), realized
 volatility (20d), and average pairwise correlation (20d) from raw close
 prices, then classifies the portfolio risk state as NORMAL, ELEVATED, or
 CRITICAL to determine an exposure multiplier.
@@ -185,7 +186,11 @@ def _compute_portfolio_beta(
     benchmark_returns: pd.Series,
     min_obs: int = _MIN_OBS,
 ) -> float | None:
-    """Portfolio beta relative to benchmark over full available history.
+    """Portfolio beta relative to benchmark over every overlapping day it is given.
+
+    The strategy passes its full ~300-session window, not a 63-day one. Needs at least `min_obs` overlapping days,
+    else None. It is the `beta_full_window` key of `compute_risk_overlay`'s metrics. The `portfolio_beta_63d` of the
+    risk diagnostics is a different, true ~63-day beta (`beta_lookback_days`), computed elsewhere.
 
     beta = cov(portfolio, benchmark) / var(benchmark)
     """
@@ -262,7 +267,7 @@ def compute_risk_overlay(
                 {
                     "risk_state": risk_state.value,
                     "exposure_multiplier": EXPOSURE_MAP[risk_state],
-                    "beta_63d": None,
+                    "beta_full_window": None,
                     "vol_20d": None,
                     "corr_20d": None,
                     "observations": observations,
@@ -277,7 +282,7 @@ def compute_risk_overlay(
         if returns_df.shape[1] >= 2:
             corr = _compute_avg_corr(returns_df, lookback=20)
 
-        # Beta (63d) — requires benchmark
+        # Beta — requires benchmark. Computed over every aligned day, not a 63-day window (see the docstring).
         if bench_returns is not None:
             beta = _compute_portfolio_beta(returns_df, aligned_weights, bench_returns, min_obs=min_obs)
 
@@ -287,7 +292,7 @@ def compute_risk_overlay(
     metrics = {
         "risk_state": risk_state.value,
         "exposure_multiplier": multiplier,
-        "beta_63d": beta,
+        "beta_full_window": beta,
         "vol_20d": vol,
         "corr_20d": corr,
         "observations": observations,

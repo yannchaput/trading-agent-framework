@@ -489,7 +489,7 @@ class CrossMomentumStrategy(Strategy):
         target_weights = {entry["symbol"]: entry["target_weight"] for entry in target}
         risk_state, risk_exposure, metrics = compute_risk_overlay(self.vars.target_closes, target_weights, spy)
         self.log_info(
-            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_63d')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
+            f"Risk overlay: {risk_state.upper()} (beta={metrics.get('beta_full_window')}, vol={metrics.get('vol_20d')}, corr={metrics.get('corr_20d')}, "
             f"obs={metrics.get('observations')}, exposure={risk_exposure:.0%})"
         )
         return risk_exposure
