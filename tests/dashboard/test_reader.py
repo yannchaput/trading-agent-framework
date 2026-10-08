@@ -510,6 +510,29 @@ def test_load_parameters_shows_one_agents_model_calls_tokens_and_latency(tmp_pat
     ]
 
 
+def test_load_parameters_shows_the_agents_temperature_under_its_model(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(agents={"trader": {**_TRADER, "temperature": 0.3}}))
+
+    rows = load_parameters(_ref(run_dir))
+
+    assert rows[rows.index(("Model", "Model", "qwen3-8b")) + 1] == ("Model", "Temperature", "0.3")
+
+
+def test_load_parameters_shows_a_none_temperature_as_the_server_default(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(agents={"trader": {**_TRADER, "temperature": None}}))
+
+    assert ("Model", "Temperature", "server default") in load_parameters(_ref(run_dir))
+
+
+def test_load_parameters_has_no_temperature_row_when_settings_predate_it(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_settings(run_dir, _settings_payload(agents={"trader": _TRADER}))
+
+    assert not any(label == "Temperature" for _, label, _ in load_parameters(_ref(run_dir)))
+
+
 def test_load_parameters_shows_unreported_tokens_as_a_dash_and_sub_second_latency_in_ms(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     agent = {**_TRADER, "reasoning_tokens": None, "latency_ms_avg": 250.0}

@@ -156,7 +156,7 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
 
 
 def _agent_rows(agents: dict[str, dict[str, Any]]) -> list[tuple[str, str, str]]:
-    """Model / Calls / Tokens / Latency rows per agent. Section names carry the agent's name when
+    """Model (with its temperature) / Calls / Tokens / Latency rows per agent. Section names carry the agent's name when
     there are several, so each agent's rows stay one contiguous group in the Parameters tab."""
     rows: list[tuple[str, str, str]] = []
     for name, agent in agents.items():
@@ -167,6 +167,9 @@ def _agent_rows(agents: dict[str, dict[str, Any]]) -> list[tuple[str, str, str]]
 
         if agent.get("model") is not None:
             add("Model", "Model", str(agent["model"]))
+        if "temperature" in agent:  # absent in runs recorded before temperature was logged
+            temperature = agent["temperature"]
+            add("Model", "Temperature", "server default" if temperature is None else f"{float(temperature):g}")
         add("Calls", "Model calls", _fmt_int(agent.get("calls")))
         add("Calls", "Tool calls", _fmt_int(agent.get("tool_calls")))
         add("Tokens", "Input tokens", _fmt_int(agent.get("input_tokens")))
