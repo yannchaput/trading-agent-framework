@@ -1,0 +1,37 @@
+Clerk of the House of Representatives
+FINANCIAL DISCLOSURE REPORT
+Name: Hon. Nancy Pelosi
+Filing Type: Annual Report
+Filing Year: 2024
+Asset Owner Value of Asset Income Type(s) Income Tx. >
+$1,000?
+Apple Inc. - Common Stock (AAPL) [ST] SP $5,000,001 -
+$25,000,000
+Dividends $100,001 -
+$1,000,000
+NVIDIA Corporation - Common Stock (NVDA) [ST] $1,000,001 -
+$5,000,000
+Dividends, Capital Gains $15,001 - $50,000
+Alphabet Inc. - Class A
+(GOOGL) [ST] JT $25,000,001 - $50,000,000
+None
+L: Mountain View, CA, US
+D: A technology company providing search and advertising
+services worldwide.
+Visa Inc. (V) [ST] DC $1,001 - $15,000
+Dividends $201 - $1,000
+Vistra Corp. (VST) [ST] SP Over $1,000,000
+Dividends $1 - $200
+Amazon.com, Inc. (AMZN) [ST] SP Over $50,000,000
+Dividends $5,001 - $15,000
+Tesla, Inc. - Call Option (TSLA)
+[OP]
+SP $1,000,001 - $5,000,000
+None
+US Treasury Bill [GS] $250,001 - $500,000
+Interest $1,001 - $2,500
+Broadcom Inc. (AVGO) [ST] None
+None
+Costco Wholesale Corporation (COST) [ST] $1 - $1,000
+None
+* For the complete list of asset type abbreviations, please visit https://fd.house.gov/reference/asset-type-codes.aspx.
