@@ -42,8 +42,8 @@ class CongressTradesStrategy(Strategy):
     iteration_start_time = time(10, 0)  # market time: after the open, so the first bar of the day has printed
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.SEMI_DECADE)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.SEMI_DECADE)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,
         "budget": 10000,
