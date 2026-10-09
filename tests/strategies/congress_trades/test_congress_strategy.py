@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import time, timedelta
+from datetime import UTC, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -241,8 +241,9 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_only
     assert [asset.symbol for asset in seen["preload_assets"]] == ["SPY"]  # the traded tickers are known only once the filings are read
 
 
-def test_the_default_backtest_window_is_one_year_ending_in_the_past() -> None:
+def test_the_default_backtest_window_is_timezone_aware_and_ends_in_the_past() -> None:
+    """Only what any window must satisfy: its length is a choice that changes (`backtest_window(...)` in the class parameters)."""
     start, end = CongressTradesStrategy.parameters["backtesting_start"], CongressTradesStrategy.parameters["backtesting_end"]
 
-    assert timedelta(days=355) <= end - start <= timedelta(days=380)
     assert start.tzinfo is not None and end.tzinfo is not None  # a backtest window must be timezone-aware
+    assert start < end <= datetime.now(UTC)
