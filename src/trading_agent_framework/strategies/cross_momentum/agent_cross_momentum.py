@@ -261,10 +261,12 @@ class CrossMomentumStrategy(Strategy):
         `vars.yahoo_bars` for the duration of the call only. A backtest has no bars source and uses the framework as is.
         """
         if self.vars.bars_source is None:
+            # call parent implementation based on Alpaca IEX if bars_source is not based on Yahoo
             super()._refresh_regime()
             return
         benchmark = self.benchmark_symbol
         try:
+            # Fetch bars from Yahoo for the benchmark only, and hand them to the framework's logic through `vars.yahoo_bars` for the duration of the call
             fetched = self.vars.bars_source.bars([benchmark], self._market_date())
         except YahooDataError as exc:
             # Same policy as the framework: a failed refresh keeps the previous value and never costs a session
@@ -276,6 +278,7 @@ class CrossMomentumStrategy(Strategy):
         previous = self.vars.yahoo_bars
         self.vars.yahoo_bars = fetched
         try:
+            # Hand over to parent refresh_regime which will call this class get_historical_prices fetching bars from vars.yahoo_bars
             super()._refresh_regime()
         finally:
             self.vars.yahoo_bars = previous  # not left behind: no stale bars outlive the call
