@@ -253,3 +253,12 @@ def test_a_stop_order_that_cannot_even_be_built_falls_back_to_the_backstop_sell(
     rig.next_close()  # the fill hook must not raise
     trade = rig.state.trades["AAA"]
     assert len(attempts) == 2 and trade.stop_order_id is None and trade.exit_reason == "backstop_sell"
+
+
+def test_a_cycle_buy_that_fills_inside_the_cycle_is_not_deducted_again(tmp_path: Path) -> None:
+    """Once a buy fills, `cash` has already dropped by its cost: counting the estimate too left nothing to size the next one with."""
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=2), budget=D("10000"))
+    assert "error" not in rig.desk.buy("AAA", 50, 8.0, "x")  # estimated 50 x 100 = 5000
+    rig.advance()  # the buy fills at the next bar (101): cash 4950; no new session, the cycle goes on
+    assert rig.broker.get_account().cash == D("4950")
+    assert rig.desk.max_quantity("BBB") == 99  # 4950 at 50 a share, not 4950 - 5000
