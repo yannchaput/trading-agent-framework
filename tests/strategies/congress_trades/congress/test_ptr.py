@@ -210,3 +210,12 @@ def test_description_lines_between_rows_do_not_pollute_the_next_name() -> None:
 
     assert result is not None
     assert [(t.ticker, t.owner, t.asset_name) for t in result.transactions] == [("NVDA", "spouse", "NVIDIA Corporation"), ("AAPL", "self", "Apple Inc.")]
+
+
+def test_real_ptr_with_an_expired_option_priced_at_one_dollar_is_an_empty_result() -> None:
+    # Filing 20022320 (filed 2023-01-25): one RBLX call option that expired worthless, its amount printed as the single figure `$1.00`.
+    result = ptr.parse_ptr((FIXTURES / "ptr_real_expired_option.txt").read_text(encoding="utf-8"), REF)
+
+    assert result is not None
+    assert result.transactions == []
+    assert result.skipped_non_stock == 1  # the option, tagged [OP]

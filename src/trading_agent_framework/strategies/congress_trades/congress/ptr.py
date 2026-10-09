@@ -29,7 +29,8 @@ _OWNERS = {"SP": "spouse", "JT": "joint", "DC": "dependent"}
 _SIDES = {"P": "buy", "S": "sell", "S (partial)": "sell_partial"}
 
 _TAG = re.compile(r"\[[A-Z]{2}\]")
-_AMOUNT = r"(?:\$[\d,]+\s*-\s*\$[\d,]+|Over\s+\$[\d,]+)"
+# A band, the open-ended top band, or the single figure with cents the Clerk prints for an option that expired worthless (`$1.00`).
+_AMOUNT = r"(?:\$[\d,]+\s*-\s*\$[\d,]+|Over\s+\$[\d,]+|\$[\d,]+\.\d{2})"
 _DATE = r"\d{2}/\d{2}/\d{4}"
 _ROW = re.compile(rf"\[(?P<type>[A-Z]{{2}})\]\s*(?P<side>S \(partial\)|[PSE])\s+(?P<tdate>{_DATE})\s+(?P<ndate>{_DATE})\s+(?P<amount>{_AMOUNT})")
 # What precedes a row's type tag: an optional owner code, the asset name, then the ticker in parentheses.
