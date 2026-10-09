@@ -451,3 +451,54 @@ def test_yahoo_gets_three_attempts_then_the_book_is_held_with_one_error():
     assert source.calls == 3
     assert fake.slept == [60.0, 180.0]
     assert len(fake.errors) == 1 and "429" in fake.errors[0] and "holding current positions" in fake.errors[0]
+
+
+# --- market regime ----------------------------------------------------------------------------------------
+
+
+def _spy_uptrend() -> Bars:
+    frame = _yahoo_frame(301, closes=[100 * 1.001**i for i in range(301)])
+    frame.columns = [c.lower() for c in frame.columns]
+    frame.index = pd.DatetimeIndex(frame.index).tz_localize(MARKET_TZ)
+    return Bars(Asset("SPY"), "day", frame)
+
+
+def test_the_regime_reads_spy_from_yahoo_before_any_scan_has_loaded_bars(alpaca):
+    # The executor refreshes the regime before the session opens, when the scan's batch (`vars.yahoo_bars`) is empty.
+    source = FakeBarsSource({"SPY": _spy_uptrend()})
+    strategy = _built(TradingMode.PAPER, bars_source=source)
+    assert strategy.vars.yahoo_bars == {}
+
+    strategy._refresh_regime()
+
+    assert strategy.regime == 1
+    assert source.calls == [(["SPY"], YESTERDAY + timedelta(days=1))]
+    assert alpaca.calls == []  # not Alpaca's IEX bars: the regime reads the data the decisions use
+
+
+def test_the_regime_fetch_leaves_no_bars_behind(alpaca):
+    strategy = _built(TradingMode.PAPER, bars_source=FakeBarsSource({"SPY": _spy_uptrend()}))
+
+    strategy._refresh_regime()
+
+    assert strategy.vars.yahoo_bars == {}
+
+
+def test_a_failed_yahoo_lookup_keeps_the_previous_regime_and_says_why(alpaca, caplog):
+    strategy = _built(TradingMode.PAPER, bars_source=FakeBarsSource(raises=YahooDataError("429")))
+    strategy.regime = -1
+
+    with caplog.at_level("WARNING"):
+        strategy._refresh_regime()
+
+    assert strategy.regime == -1
+    assert "429" in caplog.text
+    assert "fewer than" not in caplog.text  # a lookup failure is not a shortage of history
+
+
+def test_a_backtest_regime_still_reads_the_framework_bars(alpaca):
+    strategy = _built(TradingMode.BACKTESTING)
+
+    strategy._refresh_regime()
+
+    assert alpaca.calls == [("SPY", 273)]
