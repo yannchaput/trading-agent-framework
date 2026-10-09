@@ -18,7 +18,7 @@
 
 * ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
-* Update tools comments with parameters
+* Update tools comments with parameters + check if tool annotation is recommended
 
 ## Strategies to test
 
@@ -57,7 +57,7 @@
 ### LLM benchmark
 
 * ~~Log a frontmatter before each model benchmark~~
-* Update with scenarios from bill ackman and vwap pullback continuation
+* ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
 
 ### VWAP Pullback continuation
 
