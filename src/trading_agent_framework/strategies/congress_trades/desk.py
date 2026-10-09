@@ -5,8 +5,8 @@ refusal comes back as `{"error": ...}` (with the numbers the agent needs to corr
 
 - a buy only for a stock in the target portfolio, never beyond its target weight (held + open buys + this order, within
   the rebalance band), and never beyond the money: the SMALLER of `buying_power` and `cash` + the estimated proceeds of the
-  sells placed this run, less what the buys placed this run already cost (never `buying_power` alone: on a margin account it
-  exceeds cash);
+  sells placed this run still to fill, less what the buys placed this run still have to cost (a filled part is already in
+  `cash`; never `buying_power` alone: on a margin account it exceeds cash);
 - a sell only of a position this strategy owns (a target stock or one it ordered before: a shared account's other positions are
   left alone), never above what is held and not already being sold, and never below a target stock's weight;
 - sells go out before the first buy of the run, there are no shorts, and an order below the minimum trade size is refused
@@ -84,8 +84,7 @@ class TradeDesk:
         self._orders: dict[str, Order] = {}
         self._checked: set[str] = set()
         self._buys_placed = False
-        self._sell_proceeds = 0.0
-        self._buy_cost = 0.0
+        self._prices: dict[str, float] = {}  # order id -> the price its cost or proceeds were estimated at
 
     # --- the run -----------------------------------------------------------------------------------
 
@@ -97,8 +96,7 @@ class TradeDesk:
             self._orders = {}
             self._checked = set()
             self._buys_placed = False
-            self._sell_proceeds = 0.0
-            self._buy_cost = 0.0
+            self._prices = {}
 
     @property
     def traded(self) -> list[str]:
@@ -155,6 +153,19 @@ class TradeDesk:
             book = incoming if order.side is OrderSide.BUY else outgoing
             book[order.asset.symbol] = book.get(order.asset.symbol, 0.0) + float(order.quantity - order.filled_quantity)
         return float(account.portfolio_value), float(account.cash), float(account.buying_power), held, incoming, outgoing
+
+    def _unfilled_value(self, side: OrderSide) -> float:
+        """Estimated dollars of this run's active orders on `side` still to fill, each at its sizing price.
+
+        A filled part is already in the account's cash (live market orders fill within seconds), so counting it
+        again took a buy's cost off twice and left $0.00 available; an order no longer active moves nothing more.
+        In a daily backtest nothing fills before the next session, so every order counts in full.
+        """
+        return sum(
+            float(order.quantity - order.filled_quantity) * self._prices[identifier]
+            for identifier, order in self._orders.items()
+            if order.side is side and order.quantity is not None and order.is_active() and identifier in self._prices
+        )
 
     def _price(self, symbol: str) -> float | None:
         price = self._strategy.get_last_price(symbol)
@@ -217,7 +228,7 @@ class TradeDesk:
                 f"buy {quantity:g} {symbol} (${cost:,.2f}) would exceed its target weight of {weight:.4f} (${weight * portfolio_value:,.2f} of ${portfolio_value:,.2f}; "
                 f"${effective:,.2f} held or on order): at most {fractional_qty(max(room, 0.0) / price):g} shares"
             )
-        available = min(buying_power, cash + self._sell_proceeds - self._buy_cost)
+        available = min(buying_power, cash + self._unfilled_value(OrderSide.SELL) - self._unfilled_value(OrderSide.BUY))
         if cost > available + _EPS:
             return (
                 f"buy {quantity:g} {symbol} (${cost:,.2f}) exceeds the money available (${max(available, 0.0):,.2f}: the smaller of buying power ${buying_power:,.2f} "
@@ -267,11 +278,9 @@ class TradeDesk:
         except TradingFrameworkError as exc:
             return self._refuse(f"{side} {quantity:g} {symbol} was refused by the broker: {exc}")
         self._orders[order.identifier] = order
+        self._prices[order.identifier] = price
         if side == "buy":
             self._buys_placed = True
-            self._buy_cost += cost
-        else:
-            self._sell_proceeds += cost
         strategy.log_info(f"[congress_trades] {side} {quantity:g} {symbol} @ ~${price:,.2f}")
         return {"order_id": order.identifier, "symbol": symbol, "side": side, "quantity": quantity, "status": order_status(order)}
 

@@ -156,6 +156,36 @@ def test_this_runs_buys_are_deducted_from_the_money_available(tmp_path: Path) ->
     assert "error" not in book.place("BBB", "buy", 20)
 
 
+def _fill(book: _Book, order_id: str, price: float) -> None:
+    """A live fill: the order is done and the account's cash already reflects it."""
+    order = next(o for o in book.broker.submitted if o.identifier == order_id)
+    order.status, order.filled_quantity = OrderStatus.FILL, order.quantity
+    cash = book.broker.account.cash - Decimal(str(price)) * order.quantity
+    book.broker.account = AccountBalances(cash=cash, portfolio_value=book.broker.account.portfolio_value, buying_power=cash)
+
+
+def test_a_filled_buy_is_not_deducted_twice_once_the_account_cash_reflects_it(tmp_path: Path) -> None:
+    """Live market buys fill in seconds and cash drops by their cost: counting the same cost again left $0.00 available (2026-10-09)."""
+    book = _book(tmp_path, cash=2_000.0, buying_power=2_000.0)
+    first = book.place("AAA", "buy", 30)  # $1,500
+    _fill(book, first["order_id"], 50.0)  # cash is now $500
+
+    assert "at most 20 shares" in book.place("BBB", "buy", 21)["error"]  # $500 available, BBB $25 a share
+    assert "error" not in book.place("BBB", "buy", 20)
+
+
+def test_a_filled_sells_proceeds_are_not_added_twice_once_the_account_cash_reflects_them(tmp_path: Path) -> None:
+    book = _book(tmp_path, cash=0.0, buying_power=0.0, traded=("OLD",), positions={"OLD": 100})  # OLD: $1,000
+    sold = book.place("OLD", "sell", 100)
+    order = next(o for o in book.broker.submitted if o.identifier == sold["order_id"])
+    order.status, order.filled_quantity = OrderStatus.FILL, order.quantity
+    book.broker.account = AccountBalances(cash=Decimal(1_000), portfolio_value=Decimal(10_000), buying_power=Decimal(20_000))
+    book.broker.positions = []
+
+    assert "at most 20 shares" in book.place("AAA", "buy", 30)["error"]  # $1,000, not $2,000
+    assert "error" not in book.place("AAA", "buy", 20)
+
+
 def test_the_proceeds_of_this_runs_sells_fund_the_buys(tmp_path: Path) -> None:
     book = _book(tmp_path, cash=0.0, buying_power=20_000.0, traded=("OLD",), positions={"OLD": 100})  # OLD: $1,000
 
