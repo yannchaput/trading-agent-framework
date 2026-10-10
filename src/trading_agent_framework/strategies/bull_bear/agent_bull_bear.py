@@ -47,8 +47,8 @@ class BullBearStrategy(Strategy):
     sleeptime = "1D"
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.HALF_YEAR)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.HALF_YEAR)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         # 300 completed sessions before the first review: the 12-1 month return needs 274 (as cross_momentum)
         "warmup_trading_days": 300,
