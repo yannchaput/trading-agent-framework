@@ -222,8 +222,11 @@ class ReviewPipeline:
             drops=[asdict(drop) for drop in picks.drops],
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
+        # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
+        for forced in debate.forced_exits:
+            strategy.log_warning(f"[bull_bear] forced exit: {forced.symbol} ({forced.reason}) is sold by code, outside the debate")
         self._stage = "execution"
-        orders = self._rebalancer.rebalance(target, [exit.symbol for exit in debate.forced_exits])
+        orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
         # 8. Remember and log.
         self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_picks=[{"symbol": pick.symbol, "reason": pick.reason, "date": today} for pick in picks.picks]))

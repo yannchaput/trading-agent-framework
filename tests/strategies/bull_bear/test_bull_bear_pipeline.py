@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import Decimal
@@ -413,3 +414,40 @@ def test_the_parking_instrument_is_never_forced_out_and_a_position_outside_the_u
     assert h.agents["judge"].calls[0]["context"]["held"] == []
     assert seen == [["OLD"]]
     assert ("OLD", "sell", 20.0) in h.orders
+
+
+def _forced_exit_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING and "forced exit" in record.getMessage()]
+
+
+def test_each_forced_exit_is_logged_as_a_warning_before_its_sell(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # OLD is outside the universe (unranked), so code sells it; SHV is the parking instrument and is never forced out
+    h = _harness(tmp_path, held={"OLD": 20, "SHV": 10})
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome.completed
+    (message,) = _forced_exit_warnings(caplog)
+    assert "OLD" in message and "unranked" in message
+    assert ("OLD", "sell", 20.0) in h.orders
+
+
+def test_a_review_without_forced_exits_logs_no_forced_exit_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path, held={"SHV": 10})
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome.completed
+    assert _forced_exit_warnings(caplog) == []
+
+
+def test_an_abandoned_review_does_not_log_a_forced_exit_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # nothing is sold when a review is abandoned, so no forced exit "occurred"
+    h = _harness(tmp_path, held={"OLD": 20})
+    h.agents["judge"].script = does_nothing  # the judge never submits: the review is abandoned at the judge stage
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert not outcome.completed
+    assert h.orders == []
+    assert _forced_exit_warnings(caplog) == []
