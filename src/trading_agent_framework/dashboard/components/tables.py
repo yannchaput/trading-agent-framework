@@ -6,7 +6,8 @@ from typing import cast
 import pandas as pd
 import streamlit as st
 
-from trading_agent_framework.dashboard.models import BenchmarkModel, ScenarioRun
+from trading_agent_framework.dashboard import reviews_reader
+from trading_agent_framework.dashboard.models import BenchmarkModel, RunRef, ScenarioRun
 
 
 def render_metric_table(metrics: dict[str, tuple[float, float]], title: str = "") -> None:
@@ -184,3 +185,35 @@ def scenario_runs_frame(runs: Sequence[ScenarioRun]) -> pd.DataFrame:
             for run in runs
         ]
     )
+
+
+def render_reviews_table(ref: RunRef) -> None:
+    """The run's `reviews.jsonl`: one row per review, then a list of the reviews beside one review's raw record."""
+    try:
+        loaded = reviews_reader.load_reviews(ref)
+    except OSError as exc:
+        st.error(f"This run's reviews cannot be read: {exc}")
+        return
+
+    abandoned = sum(1 for record in loaded.records if record.get("abandoned"))
+    parts = [f"{len(loaded.records)} reviews", f"{abandoned} abandoned"]
+    if loaded.malformed:
+        parts.append(f"{loaded.malformed} unreadable line{'s' if loaded.malformed != 1 else ''}")
+    st.caption(" · ".join(parts))
+
+    st.dataframe(reviews_reader.reviews_frame(loaded.records), width="stretch", hide_index=True)
+
+    if not loaded.records:
+        return
+    # The list holds indices into the records (two reviews may share a date), newest first so that the
+    # selected one, the latest, is at the top of a long list.
+    def label(index: int) -> str:
+        record = loaded.records[index]
+        return f"{record.get('date', '')} · abandoned" if record.get("abandoned") else str(record.get("date", ""))
+
+    left, right = st.columns([1, 3])
+    with left:
+        with st.container(height=520):
+            index = st.radio("Review", range(len(loaded.records) - 1, -1, -1), format_func=label, label_visibility="collapsed", key=f"agents_review_{ref.path}")
+    with right:
+        st.json(loaded.records[index], expanded=True)

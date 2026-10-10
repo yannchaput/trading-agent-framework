@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.dashboard import reviews_reader as rr
+from trading_agent_framework.dashboard.models import RunRef
 
 ACKMAN_REVIEW: dict[str, Any] = {
     "date": "2021-09-27",
@@ -37,38 +38,16 @@ ABANDONED_REVIEW: dict[str, Any] = {
 }
 
 
-def _write_reviews(logs: Path, strategy: str, mode: str, run_ts: str, lines: list[str]) -> Path:
-    run_dir = logs / strategy / mode / f"{run_ts}_{mode}"
+def _run_with_reviews(tmp_path: Path, lines: list[str] | None) -> RunRef:
+    run_dir = tmp_path / "logs" / "bull_bear" / "backtesting" / "2026-10-09_101500_backtesting"
     run_dir.mkdir(parents=True)
-    (run_dir / "reviews.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return run_dir
-
-
-def test_scan_lists_backtesting_runs_with_a_reviews_file_newest_first_per_strategy(tmp_path: Path) -> None:
-    logs = tmp_path / "logs"
-    _write_reviews(logs, "bull_bear", "backtesting", "2026-10-09_101500", [json.dumps(BULL_BEAR_REVIEW)])
-    _write_reviews(logs, "bill_ackman", "backtesting", "2026-10-03_231803", [json.dumps(ACKMAN_REVIEW)])
-    _write_reviews(logs, "bill_ackman", "backtesting", "2026-10-05_193526", [json.dumps(ACKMAN_REVIEW)])
-    _write_reviews(logs, "bill_ackman", "paper", "2026-10-04_224802", [json.dumps(ACKMAN_REVIEW)])
-    (logs / "cross_momentum" / "backtesting" / "2026-10-01_000000_backtesting").mkdir(parents=True)  # no reviews.jsonl
-
-    refs = rr.scan_review_runs(logs)
-
-    assert [(ref.strategy_name, ref.run_ts) for ref in refs] == [
-        ("bill_ackman", "2026-10-05_193526"),
-        ("bill_ackman", "2026-10-03_231803"),
-        ("bull_bear", "2026-10-09_101500"),
-    ]
-
-
-def test_scan_of_a_missing_logs_directory_is_empty(tmp_path: Path) -> None:
-    assert rr.scan_review_runs(tmp_path / "nope") == []
+    if lines is not None:
+        (run_dir / "reviews.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return RunRef.from_path(str(run_dir))
 
 
 def test_load_reads_every_record_in_file_order(tmp_path: Path) -> None:
-    logs = tmp_path / "logs"
-    _write_reviews(logs, "bull_bear", "backtesting", "2026-10-09_101500", [json.dumps(BULL_BEAR_REVIEW), json.dumps(ABANDONED_REVIEW)])
-    (ref,) = rr.scan_review_runs(logs)
+    ref = _run_with_reviews(tmp_path, [json.dumps(BULL_BEAR_REVIEW), json.dumps(ABANDONED_REVIEW)])
 
     loaded = rr.load_reviews(ref)
 
@@ -77,14 +56,20 @@ def test_load_reads_every_record_in_file_order(tmp_path: Path) -> None:
 
 
 def test_load_skips_and_counts_malformed_lines(tmp_path: Path) -> None:
-    logs = tmp_path / "logs"
-    _write_reviews(logs, "bull_bear", "backtesting", "2026-10-09_101500", [json.dumps(BULL_BEAR_REVIEW), '{"date": "2026-10-1', "[1, 2]", "", json.dumps(ABANDONED_REVIEW)])
-    (ref,) = rr.scan_review_runs(logs)
+    ref = _run_with_reviews(tmp_path, [json.dumps(BULL_BEAR_REVIEW), '{"date": "2026-10-1', "[1, 2]", "", json.dumps(ABANDONED_REVIEW)])
 
     loaded = rr.load_reviews(ref)
 
     assert [record["date"] for record in loaded.records] == ["2026-10-06", "2026-10-13"]
     assert loaded.malformed == 2  # the truncated line and the non-object; the blank line is not a record
+
+
+def test_has_reviews_tells_a_run_with_the_file_from_one_without(tmp_path: Path) -> None:
+    with_file = _run_with_reviews(tmp_path / "a", [json.dumps(BULL_BEAR_REVIEW)])
+    without = _run_with_reviews(tmp_path / "b", None)
+
+    assert rr.has_reviews(with_file)
+    assert not rr.has_reviews(without)
 
 
 def test_frame_summarises_a_bill_ackman_review() -> None:

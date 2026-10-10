@@ -1,4 +1,4 @@
-"""Streamlit dashboard: Backtesting, Models and Agents tabs.
+"""Streamlit dashboard: Backtesting and Models tabs.
 
 Run via: uv run dashboard [--benchmark-dir PATH]
 Or:      uv run streamlit run src/trading_agent_framework/dashboard/app.py [-- --benchmark-dir PATH]
@@ -8,7 +8,6 @@ from pathlib import Path
 
 import streamlit as st
 
-from trading_agent_framework.dashboard._pages.agents import page_agents
 from trading_agent_framework.dashboard._pages.backtesting import page_backtesting
 from trading_agent_framework.dashboard._pages.models import page_models
 from trading_agent_framework.dashboard.theme import apply_theme
@@ -20,7 +19,6 @@ ASSETS = Path(__file__).parent / "assets"
 NAV_PAGES = (
     ("Backtesting", "backtesting", page_backtesting),
     ("Models", "models", page_models),
-    ("Agents", "agents", page_agents),
 )
 
 

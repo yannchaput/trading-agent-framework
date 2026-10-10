@@ -184,13 +184,12 @@ def test_run_detail_header_shows_the_agents_model(run_dir: Path) -> None:
 # --- Top navigation --------------------------------------------------------------------------------
 
 
-def test_the_tabs_are_backtesting_models_then_agents() -> None:
+def test_the_tabs_are_backtesting_then_models() -> None:
     from trading_agent_framework.dashboard import app
 
     assert [(title, url_path) for title, url_path, _ in app.NAV_PAGES] == [
         ("Backtesting", "backtesting"),
         ("Models", "models"),
-        ("Agents", "agents"),
     ]
 
 
@@ -216,3 +215,79 @@ def test_run_detail_shows_the_intraday_exposure_of_a_run_with_fills(run_dir: Pat
 
     assert not at.exception
     assert "Intraday exposure" in [subheader.value for subheader in at.subheader]
+
+
+# --- Run Detail: Agents tab (reviews.jsonl) --------------------------------------------------------
+
+
+def _write_reviews(run_dir: Path, records: list[dict]) -> None:
+    import json
+
+    (run_dir / "reviews.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+
+def test_run_detail_tabs_put_agents_just_before_parameters(run_dir: Path) -> None:
+    _write_reviews(run_dir, [{"date": "2026-01-06", "abandoned": False}])
+
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert [tab.label for tab in at.tabs] == ["Performance Metrics", "Charts", "Trades", "Returns", "Agents", "Parameters"]
+
+
+def test_run_detail_hides_the_agents_tab_when_the_run_has_no_reviews_file(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert not at.exception
+    assert [tab.label for tab in at.tabs] == ["Performance Metrics", "Charts", "Trades", "Returns", "Parameters"]
+
+
+def test_agents_tab_lists_the_runs_reviews_as_a_table(run_dir: Path) -> None:
+    _write_reviews(
+        run_dir,
+        [
+            {"date": "2026-01-06", "abandoned": False, "targets": {"AAPL": 0.5, "SHV": 0.48}, "orders": [{"symbol": "AAPL", "side": "buy", "quantity": 3}]},
+            {"date": "2026-01-13", "abandoned": True, "stage": "judge", "error": "no valid submission"},
+        ],
+    )
+
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert not at.exception
+    (table,) = list(at.tabs[4].dataframe)
+    assert list(table.value["Date"]) == ["2026-01-06", "2026-01-13"]
+    assert list(table.value["Status"]) == ["completed", "abandoned"]
+    assert table.value["Orders"][0] == "BUY AAPL 3"
+    assert any("2 reviews" in caption.value and "1 abandoned" in caption.value for caption in at.tabs[4].caption)
+
+
+def test_agents_tab_has_a_review_list_left_of_the_json_and_it_starts_on_the_latest(run_dir: Path) -> None:
+    _write_reviews(
+        run_dir,
+        [
+            {"date": "2026-01-06", "abandoned": False, "verdicts": [{"symbol": "BBY", "reason": "net cash"}]},
+            {"date": "2026-01-13", "abandoned": True, "error": "no valid submission"},
+        ],
+    )
+
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    left, right = at.tabs[4].columns[-2], at.tabs[4].columns[-1]
+    assert [option for option in left.radio[0].options] == ["2026-01-13 · abandoned", "2026-01-06"]  # newest first
+    assert any("no valid submission" in element.value for element in right.json)
+
+
+def test_clicking_a_review_in_the_list_updates_the_json(run_dir: Path) -> None:
+    _write_reviews(
+        run_dir,
+        [
+            {"date": "2026-01-06", "abandoned": False, "verdicts": [{"symbol": "BBY", "reason": "net cash"}]},
+            {"date": "2026-01-13", "abandoned": True, "error": "no valid submission"},
+        ],
+    )
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    at.tabs[4].columns[-2].radio[0].set_value(0).run()  # the oldest review: the list holds indices into the records
+
+    right = at.tabs[4].columns[-1]
+    assert any("net cash" in element.value for element in right.json)
+    assert not any("no valid submission" in element.value for element in right.json)

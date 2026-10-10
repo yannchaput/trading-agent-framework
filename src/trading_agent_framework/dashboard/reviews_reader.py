@@ -1,6 +1,7 @@
-"""Read-only access to the `reviews.jsonl` of backtesting runs (one JSON line per strategy review).
+"""Read-only access to the `reviews.jsonl` of a backtesting run (one JSON line per strategy review).
 
-Written by the agent pipelines (`bill_ackman`, `bull_bear`) into `logs/<strategy>/backtesting/<ts>_backtesting/`.
+Written by the agent pipelines (`bill_ackman`, `bull_bear`) into the run directory, and shown in the
+Agents tab of Run Detail.
 The two strategies share some fields (`date`, `abandoned`, `holdings`/`debate_set`, `forced_exits`,
 `targets`, `orders`) and differ in the rest, so the table keeps only what both can fill and the page
 shows the raw record for the rest. Streamlit-free, like reader.py. Nothing here writes into a run.
@@ -29,22 +30,16 @@ class ReviewsFile:
     malformed: int
 
 
-def scan_review_runs(logs_dir: Path) -> list[RunRef]:
-    """Backtesting runs under `logs_dir` that wrote a `reviews.jsonl`: by strategy, newest run first."""
-    refs: list[RunRef] = []
-    for file in logs_dir.glob(f"*/backtesting/*/{REVIEWS_FILE}"):
-        try:
-            refs.append(RunRef.from_path(str(file.parent)))
-        except ValueError:
-            continue
-    # run_ts is "%Y-%m-%d_%H%M%S", so lexical order is chronological order; the sorts are stable.
-    refs.sort(key=lambda ref: ref.run_ts, reverse=True)
-    refs.sort(key=lambda ref: ref.strategy_name)
-    return refs
+def has_reviews(ref: RunRef) -> bool:
+    """Whether the run wrote a reviews file (only the agent strategies do)."""
+    return (Path(ref.path) / REVIEWS_FILE).is_file()
 
 
 def load_reviews(ref: RunRef) -> ReviewsFile:
-    """Every record of the run's reviews file in file order; a line that is not a JSON object is counted, not raised."""
+    """Every record of the run's reviews file in file order; a line that is not a JSON object is counted, not raised.
+
+    Raises OSError (FileNotFoundError included) when the file cannot be read.
+    """
     records: list[dict[str, Any]] = []
     malformed = 0
     text = (Path(ref.path) / REVIEWS_FILE).read_text(encoding="utf-8")

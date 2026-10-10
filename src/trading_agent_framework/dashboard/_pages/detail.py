@@ -18,6 +18,7 @@ from trading_agent_framework.dashboard.components.charts import (
     trades_chart,
 )
 from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
+from trading_agent_framework.dashboard.components.tables import render_reviews_table
 from trading_agent_framework.dashboard.reader import (
     load_agent_calls,
     load_cumulative_returns,
@@ -29,6 +30,7 @@ from trading_agent_framework.dashboard.reader import (
     load_trades_curve,
     load_yearly_returns,
 )
+from trading_agent_framework.dashboard.reviews_reader import has_reviews
 
 BETA_HELP = (
     "Sensitivity and volatility relative to the market:\n"
@@ -101,7 +103,12 @@ def page_detail():
         backtest_time=s.backtest_time_seconds if s else 0,
     )
 
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["Performance Metrics", "Charts", "Trades", "Returns", "Parameters"])
+    # The Agents tab exists only for a run that wrote a reviews.jsonl (the agent strategies).
+    labels = ["Performance Metrics", "Charts", "Trades", "Returns", "Parameters"]
+    if has_reviews(ref):
+        labels.insert(4, "Agents")
+    tabs = st.tabs(labels)
+    tab1, tab2, tab3, tab4, tab5 = tabs[:4] + tabs[-1:]
 
     with tab1:
         st.subheader("Returns")
@@ -269,6 +276,10 @@ def page_detail():
             )
         else:
             st.info("No yearly return data available.")
+
+    if len(tabs) == 6:
+        with tabs[4]:
+            render_reviews_table(ref)
 
     with tab5:
         st.subheader("Parameters Used")

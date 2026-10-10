@@ -178,7 +178,7 @@ Compare backtesting runs across all strategies, and the local vLLM models benchm
 
 - **Backtesting tab** — the three pages below, reached from the sidebar:
   - **Scorecard page** — aggregate table of all strategies' latest runs with key metrics (CAGR, Sharpe, Sortino, Max DD, Win Days%, etc.)
-  - **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table.
+  - **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table. The **Agents** sub-tab (before Parameters; only for a run that wrote a `reviews.jsonl`: bill_ackman, bull_bear) lists its reviews as one row each — date, completed/abandoned, stage, holdings, target weights, forced exits, orders, error — with a clickable list of reviews beside the selected review's full record (verdicts, picks, bull/bear cases...) as JSON.
   - **Side-by-Side page** — compare two runs across all metrics.
 - **Models tab** — pick a benchmark run (latest by default): best/fastest model cards, a summary table (overall and per-category scores, runs passed, text tool calls, latency, tokens/s), category bars, a quality-vs-speed scatter, a per-scenario heatmap, and a drill-down listing each repeat's checks with their pass/fail reasons.
 
