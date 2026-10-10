@@ -54,10 +54,18 @@
 * ~~Log the system prompt in 'initialize' method~~
 * ~~Fix prompt to avoid chineese character with GLM models~~
 
+### Bull Bear
+
+* Enrich logging, specifically the research agent
+
 ### LLM benchmark
 
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
+
+---
+
+## Archives
 
 ### VWAP Pullback continuation
 
@@ -70,10 +78,6 @@
 * ~~Update claude.md with exempt_tools and budget_tools~~
 * ~~Update dashboard to display tempearature~~
 * ~~Log output of each agent to understand what was their decision~~
-
----
-
-## Archives
 
 ### MIGRATION
 
