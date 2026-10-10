@@ -21,7 +21,7 @@ from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_r
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Picks
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.bull_bear.prompts import BEAR_TASK, BULL_TASK, JUDGE_TASK, UNAVAILABLE_NOTE, researcher_task, retry_prompt
+from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
 from trading_agent_framework.strategies.bull_bear.sizing import capped_inverse_volatility
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
@@ -180,11 +180,12 @@ class ReviewPipeline:
         evidence = [{"fact_sheet": sheets[symbol], "note": notes[symbol]} for symbol in symbols]
 
         # 5. Bull, then bear: the same evidence; neither sees the other's case.
+        limits = {"argument_max_chars": params.argument_max_chars}
         self._recorder.expect_bull(symbols)
-        self._run_stage("bull", "submit_bull_case", BULL_TASK, {"current_datetime": moment, "stocks": evidence})
+        self._run_stage("bull", "submit_bull_case", bull_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
         bull: dict[str, BullCase] = {case.symbol: case for case in self._recorder.submission}
         self._recorder.expect_bear(symbols)
-        self._run_stage("bear", "submit_bear_case", BEAR_TASK, {"current_datetime": moment, "stocks": evidence})
+        self._run_stage("bear", "submit_bear_case", bear_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
         bear: dict[str, BearCase] = {case.symbol: case for case in self._recorder.submission}
         record.update(bull_conviction=dict(Counter(case.conviction for case in bull.values())), bear_risk=dict(Counter(case.risk for case in bear.values())))
         for symbol in symbols:
@@ -205,9 +206,9 @@ class ReviewPipeline:
                 for symbol in symbols
             ],
             "held": held,
-            "constraints": {"min_picks": params.min_picks, "max_picks": params.max_picks},
+            "constraints": {"min_picks": params.min_picks, "max_picks": params.max_picks, "reason_max_chars": params.reason_max_chars},
         }
-        self._run_stage("judge", "submit_picks", JUDGE_TASK, context)
+        self._run_stage("judge", "submit_picks", judge_task(params.reason_max_chars), context)
         picks: Picks = self._recorder.submission
         strategy.log_info(f"[judge] picks: {', '.join(f'{p.symbol} ({p.reason})' for p in picks.picks)}; drops: {', '.join(f'{d.symbol} ({d.reason})' for d in picks.drops) or 'none'}")
 
@@ -215,6 +216,12 @@ class ReviewPipeline:
         volatilities = {pick.symbol: debate.stock(pick.symbol).row.volatility for pick in picks.picks}
         target_weights = capped_inverse_volatility(volatilities, total=params.investable, min_weight=params.min_weight, max_weight=params.max_weight)
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
+        # The decision goes into the record before the first order: an abandonment during execution still says why.
+        record.update(
+            picks=[asdict(pick) for pick in picks.picks],
+            drops=[asdict(drop) for drop in picks.drops],
+            targets={**target.weights, params.parking_symbol: target.parking_weight},
+        )
         self._stage = "execution"
         orders = self._rebalancer.rebalance(target, [exit.symbol for exit in debate.forced_exits])
 
@@ -225,9 +232,6 @@ class ReviewPipeline:
                 **record,
                 "bull": [asdict(case) for case in bull.values()],
                 "bear": [asdict(case) for case in bear.values()],
-                "picks": [asdict(pick) for pick in picks.picks],
-                "drops": [asdict(drop) for drop in picks.drops],
-                "targets": {**target.weights, params.parking_symbol: target.parking_weight},
                 "orders": [asdict(order) for order in orders],
             }
         )

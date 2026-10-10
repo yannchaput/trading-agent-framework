@@ -33,6 +33,13 @@ def test_the_researcher_task_names_the_symbol_and_the_note_limit() -> None:
     assert "AAA" in task and "500" in task
 
 
+@pytest.mark.parametrize("task", [prompts.bull_task, prompts.bear_task, prompts.judge_task])
+def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None:  # noqa: ANN001
+    text = task(234)
+
+    assert "234 characters" in text and "rejects the whole submission" in text
+
+
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
     text = prompts.retry_prompt("submit_picks", "pick between 5 and 10 stocks, got 4")
 
@@ -40,5 +47,5 @@ def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
 
 
 def test_no_prompt_mentions_forced_exits() -> None:
-    for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM, prompts.BULL_TASK, prompts.BEAR_TASK, prompts.JUDGE_TASK):
+    for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM, prompts.bull_task(300), prompts.bear_task(300), prompts.judge_task(300)):
         assert "forced" not in text.lower()

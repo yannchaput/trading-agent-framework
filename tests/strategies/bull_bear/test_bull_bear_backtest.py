@@ -83,6 +83,11 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "TestApp test@example.com")
 
 
+def _read_run_file(tmp_path: Path, name: str) -> pd.DataFrame:
+    (path,) = tmp_path.rglob(name)
+    return pd.read_parquet(path)
+
+
 def _run(tmp_path: Path, manager: _Manager) -> BullBearStrategy:
     source = FakeBacktestDataSource()
     source.set_sessions(SESSIONS)
@@ -120,3 +125,16 @@ def test_a_backtest_reviews_on_the_two_tuesdays_and_buys_the_judges_picks(tmp_pa
     assert manager.handles["researcher"].runs == 2 * len(UNIVERSE)
     assert all(manager.handles[name].runs == 2 for name in ("bull", "bear", "judge"))
     assert list(tmp_path.rglob("metrics.json"))  # the run completed and wrote its report
+
+
+def test_the_first_reviews_orders_fill_and_the_second_review_trades_nothing(tmp_path: Path) -> None:
+    _run(tmp_path, _Manager())
+
+    lines = _review_lines(tmp_path)
+    assert lines[1]["orders"] == []  # same picks, positions inside the band: nothing to trade
+    trades = _read_run_file(tmp_path, "trades.parquet")
+    buys = trades[(trades["side"] == "buy") & (trades["status"] == "fill") & (trades["symbol"] != "SHV")]
+    assert sorted(buys["symbol"]) == sorted(UNIVERSE[:5])  # the judge's five picks, each filled once
+    assert (buys["filled_quantity"] > 0).all()
+    equity = _read_run_file(tmp_path, "equity.parquet")
+    assert equity["portfolio_value"].nunique() > 1  # the book was invested and marked to market

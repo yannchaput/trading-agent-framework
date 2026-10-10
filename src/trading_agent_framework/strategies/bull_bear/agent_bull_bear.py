@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.tools import only
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
@@ -34,6 +34,9 @@ from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDail
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError
+
+if TYPE_CHECKING:
+    from trading_agent_framework.backtesting.runner import BacktestResult
 
 _RESEARCH_TOOLS = {"search_news", "get_income_statement", "get_balance_sheet"}
 
@@ -128,7 +131,8 @@ class BullBearStrategy(Strategy):
 
     def on_trading_iteration(self) -> None:
         """The weekly review. A backtest aborts when too many reviews in a row were abandoned (a dead LLM or data source)."""
-        assert self.pipeline is not None, "initialize() has not run"
+        if self.pipeline is None:
+            raise FatalStrategyError("BullBearStrategy.on_trading_iteration ran before initialize() built the review pipeline")
         today = self._market_date()
         if today.weekday() != self.settings.rebalance_weekday:
             return
@@ -165,7 +169,7 @@ class BullBearStrategy(Strategy):
 
     # --- backtesting ------------------------------------------------------------------------------------
 
-    def run_backtesting(self, **overrides: Any):
+    def run_backtesting(self, **overrides: Any) -> BacktestResult:
         """Backtest over the class `parameters` window on Yahoo daily bars, the universe preloaded."""
         symbols = list(dict.fromkeys([*self.universe, self.settings.parking_symbol, self.parameters["benchmark_symbol"]]))
         defaults: dict[str, Any] = dict(

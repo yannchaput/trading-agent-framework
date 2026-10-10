@@ -159,6 +159,13 @@ def test_a_completed_review_of_another_day_does_not_block_todays(tmp_path: Path)
     assert not strategy.pipeline.completed_today()
 
 
+def test_an_iteration_before_initialize_raises_instead_of_asserting(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+
+    with pytest.raises(FatalStrategyError, match="before initialize"):
+        strategy.on_trading_iteration()
+
+
 def test_the_review_runs_on_tuesdays_only(tmp_path: Path) -> None:
     monday, _ = _strategy(tmp_path, now=MONDAY)
     monday.pipeline = _FakePipeline([ReviewOutcome(True, 0)])  # type: ignore[assignment]

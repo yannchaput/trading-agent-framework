@@ -106,10 +106,14 @@ class Rebalancer:
 
         Cash invariant (live fills must never be counted twice, cf. congress_trades 275c2f3): the account is read
         once, BEFORE any order and before positions and open orders, and `cash` is never read again in this call.
-        Sell proceeds are added to that pre-sell snapshot, so a live sell filled within seconds counts once. Buying
-        power is read again after the sells, but only inside `min()`. A buy refused for buying power replaces
-        `available` with the broker's own figure. Earlier open orders count only their unfilled part. Reading the
-        account after positions/open orders would double-count an older sell that fills in between.
+        Sell proceeds are added to that pre-sell snapshot, so a sell of this run that fills within seconds counts
+        once, and an earlier sell that has already filled (its proceeds are in the snapshot, it is no longer open) is
+        not credited again; earlier open orders count only their unfilled part, so no fill is deducted twice.
+        Reading the account after positions/open orders would double-count an older sell that fills in between.
+        NOT covered: an earlier open BUY that fills between the account read and the open-order read. Its cost leaves
+        `incoming` while the snapshot still holds the pre-fill cash. Buying power, read again after the sells but only
+        inside `min()`, bounds that on a cash account only. A buy refused for buying power replaces `available` with
+        the broker's own figure.
         """
         strategy, params = self._strategy, self._params
         self.placed = []

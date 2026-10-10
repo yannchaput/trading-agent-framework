@@ -77,11 +77,25 @@ def researcher_task(symbol: str, max_chars: int) -> str:
     return f"Research {symbol}: its fact sheet is in the context. Then submit your note on {symbol} (at most {max_chars} characters). The current datetime is in the context."
 
 
-BULL_TASK = "Make the bull case for every stock in the context and submit it. The current datetime is in the context."
+def bull_task(max_chars: int) -> str:
+    return (
+        "Make the bull case for every stock in the context and submit it. "
+        f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    )
 
-BEAR_TASK = "Make the bear case for every stock in the context and submit it. The current datetime is in the context."
 
-JUDGE_TASK = "Judge the debate over the stocks in the context and submit your picks and drops. The current datetime is in the context."
+def bear_task(max_chars: int) -> str:
+    return (
+        "Make the bear case for every stock in the context and submit it. "
+        f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    )
+
+
+def judge_task(max_chars: int) -> str:
+    return (
+        "Judge the debate over the stocks in the context and submit your picks and drops. "
+        f"Each reason is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    )
 
 
 def retry_prompt(tool: str, error: str) -> str:

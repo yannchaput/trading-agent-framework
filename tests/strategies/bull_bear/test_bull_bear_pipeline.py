@@ -185,6 +185,17 @@ def test_a_review_debates_the_top_15_and_buys_the_judges_picks(tmp_path: Path) -
     assert [pick["symbol"] for pick in state.last_picks] == UNIVERSE[:5]
 
 
+def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_path: Path) -> None:
+    h = _harness(tmp_path, params=BullBearParams(argument_max_chars=123, reason_max_chars=77))
+
+    assert h.run().completed
+
+    bull, bear, judge = (h.agents[name].calls[0] for name in ("bull", "bear", "judge"))
+    assert bull["context"]["constraints"] == bear["context"]["constraints"] == {"argument_max_chars": 123}
+    assert judge["context"]["constraints"] == {"min_picks": 5, "max_picks": 10, "reason_max_chars": 77}
+    assert "123 characters" in bull["task"] and "123 characters" in bear["task"] and "77 characters" in judge["task"]
+
+
 def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> None:
     h = _harness(tmp_path)
 
@@ -318,6 +329,8 @@ def test_a_broker_error_before_the_rebalance_abandons_at_the_broker_stage(tmp_pa
     outcome = h.run()
 
     assert not outcome.completed and h.log_lines()[0]["stage"] == "broker"
+    state = h.store.load()
+    assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
 
 
 def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -334,6 +347,13 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     assert not outcome.completed
     (line,) = h.log_lines()
     assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0}]
+    # The decision that led to those orders is in the same line.
+    assert [pick["symbol"] for pick in line["picks"]] == UNIVERSE[:5] and line["drops"] == []
+    stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
+    assert sorted(stock_targets) == UNIVERSE[:5] and "SHV" in line["targets"]
+    assert sum(stock_targets.values()) == pytest.approx(0.98)
+    state = h.store.load()
+    assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
 
 
 # --- the streak and the same-day rule -------------------------------------------------------------------
