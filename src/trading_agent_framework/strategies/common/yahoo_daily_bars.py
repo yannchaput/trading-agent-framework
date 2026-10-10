@@ -1,4 +1,4 @@
-"""Yahoo as the source of cross_momentum's daily bars in paper/live.
+"""Yahoo as the source of daily bars in paper/live (cross_momentum, bull_bear).
 
 Alpaca's IEX bars carry ~5% of consolidated volume, skip a thin stock's quiet days, and close at the last IEX
 trade rather than the official close, so the strategy's filter and ranks ran on other data than the backtest's

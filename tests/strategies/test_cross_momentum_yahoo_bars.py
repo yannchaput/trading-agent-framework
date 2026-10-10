@@ -20,9 +20,9 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
+from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
-from trading_agent_framework.strategies.cross_momentum.yahoo_daily_bars import YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import YahooDataError
 

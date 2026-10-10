@@ -20,6 +20,7 @@ import pandas as pd
 
 from trading_agent_framework.brokers.alpaca.alpaca_support import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
+from trading_agent_framework.strategies.common.sector_provider import SectorProvider
 
 from .risk_diagnostics import (
     PortfolioRiskDiagnostics,
@@ -30,7 +31,6 @@ from .risk_diagnostics import (
     compute_portfolio_volatility,
     compute_weighted_pairwise_correlation,
 )
-from .sector_provider import SectorProvider
 from .utils import diagnostics_to_dict
 
 logger = logging.getLogger(__name__)

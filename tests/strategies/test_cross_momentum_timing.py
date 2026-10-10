@@ -7,9 +7,9 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config import TradingMode
+from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
-from trading_agent_framework.strategies.cross_momentum.utils import completed_bars, parse_rebalance_time
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError
 
