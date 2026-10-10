@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from trading_agent_framework.strategies.bill_ackman.portfolio import target_portfolio
+from trading_agent_framework.strategies.common.portfolio import target_portfolio
 
 
 def test_the_remainder_after_the_stocks_and_the_cash_buffer_goes_to_parking() -> None:

@@ -22,9 +22,9 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewOutcome, ReviewPipeline
-from trading_agent_framework.strategies.bill_ackman.rebalancer import Rebalancer
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
 from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore
+from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, ConfigurationError, FundamentalsError
 
 Step = Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]

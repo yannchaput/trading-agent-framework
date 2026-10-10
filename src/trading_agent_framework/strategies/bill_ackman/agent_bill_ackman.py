@@ -24,9 +24,9 @@ from trading_agent_framework.strategies.bill_ackman.handoff import HandoffRecord
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewPipeline, ScreenLike
 from trading_agent_framework.strategies.bill_ackman.prompts import RESEARCHER_SYSTEM, SHORT_SELLER_SYSTEM, TRADER_SYSTEM
-from trading_agent_framework.strategies.bill_ackman.rebalancer import Rebalancer
 from trading_agent_framework.strategies.bill_ackman.screen import build_quality_screen
 from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, StateStore, state_path
+from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
 
 

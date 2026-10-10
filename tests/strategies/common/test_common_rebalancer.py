@@ -12,12 +12,12 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, PositionSide
+from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
-from trading_agent_framework.strategies.bill_ackman.portfolio import target_portfolio
-from trading_agent_framework.strategies.bill_ackman.rebalancer import PlacedOrder, Rebalancer
+from trading_agent_framework.strategies.common.portfolio import target_portfolio
+from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
 from trading_agent_framework.utils.errors import BrokerError
 
 # Portfolio value 10,000 in every test: the band is 500 (5%), the smallest order 50 (0.5%), the cash reserve 200 (2%).
@@ -322,3 +322,49 @@ def test_this_runs_sell_credit_is_not_lost_to_a_stale_buying_power(tmp_path: Pat
 
     assert placed[0] == PlacedOrder("A", "sell", 100.0)
     assert PlacedOrder("B", "buy", 140.0) in placed
+
+
+class _LiveFillBroker(FakeBroker):
+    """Fills every order at submission, at its last price, and moves cash at once: Alpaca with a market order.
+
+    Buying power is 4x cash (a margin account), so `min(buying_power, ...)` cannot hide a double count.
+    """
+
+    def _submit_order(self, order: Order) -> Order:
+        self.submitted.append(order)
+        cost = self.last_prices[order.asset.symbol] * order.quantity
+        cash = self.account.cash - cost if order.side is OrderSide.BUY else self.account.cash + cost
+        self.account = AccountBalances(cash=cash, portfolio_value=self.account.portfolio_value, buying_power=4 * cash)
+        order.status, order.filled_quantity = OrderStatus.FILL, order.quantity
+        return order  # never tracked as active: it is already filled
+
+
+def _live_book(tmp_path: Path, *, positions: dict[str, float], prices: dict[str, float], cash: float) -> tuple[_LiveFillBroker, Rebalancer]:
+    broker = _LiveFillBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman")
+    broker.positions = [Position(strategy_name="bill_ackman", asset=Asset(symbol), quantity=Decimal(str(quantity)), side=PositionSide.LONG) for symbol, quantity in positions.items()]
+    broker.last_prices = {symbol: Decimal(str(price)) for symbol, price in prices.items()}
+    # Portfolio value 10,000 while only cash + A is visible: the money, not the targets, binds the buys.
+    broker.account = AccountBalances(cash=Decimal(str(cash)), portfolio_value=Decimal(10_000), buying_power=Decimal(str(4 * cash)))
+    strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
+    return broker, Rebalancer(strategy, AckmanParams())
+
+
+def test_a_live_filled_sell_funds_the_buys_once(tmp_path: Path) -> None:
+    """Sell A (5,000) then buy B and C: at most pre-sell cash 1,000 + 5,000 - the 200 reserve = 5,800 is spent."""
+    broker, rebalancer = _live_book(tmp_path, positions={"A": 100}, prices={"A": 50, "B": 25, "C": 20, "SHV": 100}, cash=1_000)
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.49, "C": 0.49}, cash_buffer=0.02))
+
+    # B wants 4,900 (196 shares), C gets the 900 left (45 shares); re-reading the filled cash would have bought far more C
+    assert placed == [PlacedOrder("A", "sell", 100.0), PlacedOrder("B", "buy", 196.0), PlacedOrder("C", "buy", 45.0)]
+    assert broker.account.cash >= Decimal(200)
+
+
+def test_a_live_filled_buy_is_not_deducted_twice_from_the_next_buy(tmp_path: Path) -> None:
+    """Two buys from 5,000 cash: B 2,400 then C 2,400; C must not be sized on (cash after B) - B's cost again."""
+    broker, rebalancer = _live_book(tmp_path, positions={}, prices={"B": 25, "C": 20, "SHV": 100}, cash=5_000)
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.24, "C": 0.24}, cash_buffer=0.02))
+
+    assert placed[:2] == [PlacedOrder("B", "buy", 96.0), PlacedOrder("C", "buy", 120.0)]
+    assert broker.account.cash >= Decimal(0)

@@ -14,16 +14,31 @@ from __future__ import annotations
 
 from collections.abc import Collection
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from trading_agent_framework.entities.enums import OrderSide
-from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
-from trading_agent_framework.strategies.bill_ackman.portfolio import TargetPortfolio
+from trading_agent_framework.strategies.common.portfolio import TargetPortfolio
 from trading_agent_framework.utils.errors import TradingFrameworkError
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
+
+
+class RebalanceParams(Protocol):
+    """What the rebalancer reads from a strategy's parameters (`AckmanParams`, `BullBearParams`)."""
+
+    @property
+    def parking_symbol(self) -> str: ...
+
+    @property
+    def rebalance_band(self) -> float: ...
+
+    @property
+    def min_trade_pct(self) -> float: ...
+
+    @property
+    def cash_buffer(self) -> float: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,7 +49,7 @@ class PlacedOrder:
 
 
 class Rebalancer:
-    def __init__(self, strategy: Strategy, params: AckmanParams) -> None:
+    def __init__(self, strategy: Strategy, params: RebalanceParams) -> None:
         self._strategy = strategy
         self._params = params
         self.placed: list[PlacedOrder] = []  # the orders accepted by the current/last `rebalance`, readable if it raises half way
@@ -87,7 +102,15 @@ class Rebalancer:
     # --- the rebalance -----------------------------------------------------------------------------
 
     def rebalance(self, target: TargetPortfolio, forced_exits: Collection[str] = ()) -> list[PlacedOrder]:
-        """Trade the book toward `target`; returns the orders that were accepted, in submission order."""
+        """Trade the book toward `target`; returns the orders that were accepted, in submission order.
+
+        Cash invariant (live fills must never be counted twice, cf. congress_trades 275c2f3): the account is read
+        once, BEFORE any order and before positions and open orders, and `cash` is never read again in this call.
+        Sell proceeds are added to that pre-sell snapshot, so a live sell filled within seconds counts once. Buying
+        power is read again after the sells, but only inside `min()`. A buy refused for buying power replaces
+        `available` with the broker's own figure. Earlier open orders count only their unfilled part. Reading the
+        account after positions/open orders would double-count an older sell that fills in between.
+        """
         strategy, params = self._strategy, self._params
         self.placed = []
         account = strategy.broker.get_account()
