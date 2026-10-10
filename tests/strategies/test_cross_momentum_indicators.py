@@ -6,10 +6,13 @@ rejects) -- that ticker should be skipped like any other filtered-out
 ticker, not blow up the whole rebalance.
 """
 
+import math
+import statistics
 from datetime import date, datetime, time
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -94,3 +97,19 @@ def test_the_scan_keeps_300_bars_when_today_has_no_bar_yet():
     assert result is not None
     assert result["trading_days"] == 300
     assert result["close_series"].index[-1] == date(2026, 10, 5)
+
+
+def test_the_scan_computes_cross_momentums_inputs_on_completed_sessions():
+    """Pins the momentum inputs before they move to strategies/common/scoring.py: 300 completed closes 100..399."""
+    fake = FakeStrategy(bars=_daily_bars(301, date(2026, 10, 6)))  # Tuesday's crash is still forming and is dropped
+
+    result = CrossMomentumStrategy._compute_indicators_for_ticker(fake, "AAA")
+
+    assert result is not None
+    assert result["ret_12_1m"] == pytest.approx((378 - 126) / 126)  # closes[-22] over closes[-274]
+    assert result["ret_6_1m"] == pytest.approx((378 - 252) / 252)  # closes[-22] over closes[-148]
+    assert result["ret_3m"] == pytest.approx((399 - 336) / 336)  # closes[-1] over closes[-64]
+    assert result["avg_dollar_volume"] == pytest.approx(1e6 * 399)
+    closes = [100.0 + i for i in range(300)]
+    logs = [math.log(closes[i] / closes[i - 1]) for i in range(-20, 0)]
+    assert result["volatility"] == pytest.approx(statistics.stdev(logs) * math.sqrt(252))

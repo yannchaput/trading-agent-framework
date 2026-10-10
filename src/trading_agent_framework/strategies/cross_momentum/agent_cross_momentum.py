@@ -39,6 +39,7 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, YahooDataError
 from trading_agent_framework.utils.helpers import (
@@ -49,21 +50,17 @@ from .log_diagnostics import DiagnosticLogger
 from .parameters import CONFIG
 from .portfolio_risk_overlay import compute_risk_overlay
 from .utils import (
-    annualized_volatility,
-    apply_filters,
     breadth_exposure,
     breadth_share,
     close_series,
     completed_bars,
     compute_atr_from_df,
-    compute_return_from_prices,
     compute_volatility_exposure,
     fractional_qty,
     get_cross_momentum_universe_last_date,
     inverse_volatility_weights,
     load_breadth_step,
     load_equity_history,
-    momentum_score,
     next_breadth_step,
     parse_insufficient_buying_power,
     parse_rebalance_time,
@@ -305,41 +302,21 @@ class CrossMomentumStrategy(Strategy):
             return None
 
         closes = df["close"].tolist()
-        volumes = df["volume"].tolist()
-        trading_days = len(closes)
-
-        if trading_days < self.parameters["min_trading_days"]:
+        inputs = momentum_inputs(closes, df["volume"].tolist(), self.parameters)
+        if inputs is None:
             return None
 
-        current_price = closes[-1] if closes else 0.0
-
-        skip = self.parameters["skip_days"]
-        ret_12_1m = compute_return_from_prices(closes, 252, skip)
-        ret_6_1m = compute_return_from_prices(closes, 126, skip)
-        ret_3m = compute_return_from_prices(closes, 63, 0)
-
-        if ret_12_1m is None or ret_6_1m is None or ret_3m is None:
-            return None
-
-        vol = annualized_volatility(closes, self.parameters["volatility_window"])
-
-        if len(volumes) >= 20:
-            avg_volume = sum(volumes[-20:]) / 20
-        else:
-            avg_volume = sum(volumes) / max(len(volumes), 1)
-        avg_dollar_volume = avg_volume * current_price
-
-        atr = compute_atr_from_df(df) if trading_days >= 15 else None
+        atr = compute_atr_from_df(df) if inputs.trading_days >= 15 else None
 
         return {
             "symbol": ticker,
-            "price": current_price,
-            "ret_12_1m": ret_12_1m,
-            "ret_6_1m": ret_6_1m,
-            "ret_3m": ret_3m,
-            "volatility": vol,
-            "avg_dollar_volume": avg_dollar_volume,
-            "trading_days": trading_days,
+            "price": inputs.price,
+            "ret_12_1m": inputs.ret_12_1m,
+            "ret_6_1m": inputs.ret_6_1m,
+            "ret_3m": inputs.ret_3m,
+            "volatility": inputs.volatility,
+            "avg_dollar_volume": inputs.avg_dollar_volume,
+            "trading_days": inputs.trading_days,
             "atr": atr,
             "closes": closes,
             "close_series": close_series(df),
