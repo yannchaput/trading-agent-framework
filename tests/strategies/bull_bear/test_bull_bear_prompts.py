@@ -37,3 +37,8 @@ def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
     text = prompts.retry_prompt("submit_picks", "pick between 5 and 10 stocks, got 4")
 
     assert "submit_picks" in text and "got 4" in text
+
+
+def test_no_prompt_mentions_forced_exits() -> None:
+    for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM, prompts.BULL_TASK, prompts.BEAR_TASK, prompts.JUDGE_TASK):
+        assert "forced" not in text.lower()

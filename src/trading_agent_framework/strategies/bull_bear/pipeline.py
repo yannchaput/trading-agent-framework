@@ -205,7 +205,6 @@ class ReviewPipeline:
                 for symbol in symbols
             ],
             "held": held,
-            "forced_exits": [asdict(exit) for exit in debate.forced_exits],
             "constraints": {"min_picks": params.min_picks, "max_picks": params.max_picks},
         }
         self._run_stage("judge", "submit_picks", JUDGE_TASK, context)

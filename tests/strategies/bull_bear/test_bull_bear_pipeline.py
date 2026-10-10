@@ -389,7 +389,7 @@ def test_the_parking_instrument_is_never_forced_out_and_a_position_outside_the_u
     assert h.bars.calls == [(UNIVERSE, ["OLD"])]  # SHV is not a holding of the ranking
     (line,) = h.log_lines()
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}]
-    assert h.agents["judge"].calls[0]["context"]["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}]
+    assert "forced_exits" not in h.agents["judge"].calls[0]["context"]  # forced exits never reach the agents
     assert h.agents["judge"].calls[0]["context"]["held"] == []
     assert seen == [["OLD"]]
     assert ("OLD", "sell", 20.0) in h.orders
