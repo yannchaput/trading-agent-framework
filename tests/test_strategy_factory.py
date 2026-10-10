@@ -5,6 +5,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.bull_bear import BullBearStrategy
 from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
@@ -30,6 +31,7 @@ def _set_universe(monkeypatch: pytest.MonkeyPatch, universe: list[str]) -> None:
 def test_strategy_names_are_the_cli_names() -> None:
     assert {strategy.value for strategy in Strategies} == {
         "bill_ackman",
+        "bull_bear",
         "congress_trades",
         "cross_momentum",
         "earnings_drift",
@@ -63,6 +65,7 @@ def test_congress_trades_returns_the_strategy_without_needing_a_universe_file(mo
     ("name", "strategy_class"),
     [
         (Strategies.BILL_ACKMAN, BillAckmanStrategy),
+        (Strategies.BULL_BEAR, BullBearStrategy),
         (Strategies.CROSS_MOMENTUM, CrossMomentumStrategy),
         (Strategies.EARNINGS_DRIFT, EarningsDriftStrategy),
         (Strategies.EARNINGS_DRIFT_BASELINE, EarningsDriftStrategy),
@@ -83,6 +86,7 @@ def test_universe_strategies_receive_the_universe(monkeypatch: pytest.MonkeyPatc
     "name",
     [
         Strategies.BILL_ACKMAN,
+        Strategies.BULL_BEAR,
         Strategies.CROSS_MOMENTUM,
         Strategies.EARNINGS_DRIFT,
         Strategies.EARNINGS_DRIFT_BASELINE,

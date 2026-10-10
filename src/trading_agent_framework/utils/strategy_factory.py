@@ -10,6 +10,7 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
+from trading_agent_framework.strategies.bull_bear import BullBearStrategy
 from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 class Strategies(StrEnum):
     BILL_ACKMAN = auto()
+    BULL_BEAR = auto()
     CONGRESS_TRADES = auto()
     CROSS_MOMENTUM = auto()
     EARNINGS_DRIFT = auto()
@@ -58,6 +60,10 @@ def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
     return _build_with_universe(BillAckmanStrategy, broker, mode)
 
 
+def _build_bull_bear(broker: Broker, mode: TradingMode) -> Strategy | None:
+    return _build_with_universe(BullBearStrategy, broker, mode)
+
+
 def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
     return CongressTradesStrategy(broker=broker, mode=mode)
 
@@ -81,6 +87,7 @@ def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strateg
 # Every Strategies member has a builder (pinned by a test), so build_strategy needs no "unknown" branch.
 _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
     Strategies.BILL_ACKMAN: _build_bill_ackman,
+    Strategies.BULL_BEAR: _build_bull_bear,
     Strategies.CONGRESS_TRADES: _build_congress_trades,
     Strategies.CROSS_MOMENTUM: _build_cross_momentum,
     Strategies.EARNINGS_DRIFT: _build_earnings_drift,
