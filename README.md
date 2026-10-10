@@ -70,9 +70,11 @@ pattern, so a plain `git add` will not pick it up.
 
 Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.
 
+`bull_bear` checks for a news source when it starts and refuses to run without one, in every mode (backtests included): set `ALPACA_NEWS_*` in its env file before the first run.
+
 `FRED_API_KEY` is needed only if a strategy wires in `agents.tools.macro_tools` (FRED macro series). Get a free key at <https://fred.stlouisfed.org/docs/api/api_key.html>.
 
-`SEC_EDGAR_USER_AGENT` is needed if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings) or uses the fundamentals quality screen (`bill_ackman`). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
+`SEC_EDGAR_USER_AGENT` is needed if a strategy wires in `agents.tools.fundamentals_tools` (SEC company facts/filings) or uses the fundamentals quality screen (`bill_ackman`) or the researcher's SEC tools (`bull_bear`). SEC's fair-access policy requires a real identity string on every request: `"<app or project name> <contact email>"`.
 
 `CONGRESS_USER_AGENT` is needed by the `congress_trades` strategy (House Clerk financial disclosures). Same format: `"<app or project name> <contact email>"`.
 
@@ -283,6 +285,22 @@ The strategy will rely on those symbols as input.
 | **Env file** | `env/.env.bill_ackman.<mode>`: `LLM_*`, `SEC_EDGAR_USER_AGENT`, `ALPACA_NEWS_*` (the short seller's news tool), plus the broker keys in paper/live |
 
 A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ackman example. Each day code screens the universe for simple, cash-generative, lightly indebted, reasonably priced companies (`strategies/bill_ackman/screen/`), the researcher ranks the best 5, the short seller attacks them and every stock already held, and the trader picks the weights. Code applies a hysteresis (a holding that fails the attack on 2 consecutive days is sold), validates every agent output, and places all orders; money not allocated to stocks is parked in SHV. Run `uv run agent bill_ackman backtesting` (default window `PredefinedWindow.BI_MONTH`); each run writes `reviews.jsonl` (one line per daily review) next to its report. The first run downloads about 5 GB of SEC data once.
+
+### 📈 `bull_bear` — Bull vs bear debate over the momentum ranking (researcher, bull, bear, judge)
+
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/bull_bear/agent_bull_bear.py` (`BullBearStrategy`) |
+| **Model** | from `LLM_MODEL` in the env file (one model for the four agents) |
+| **Agents** | `researcher` (one run per stock), `bull`, `bear`, `judge` |
+| **Tools** | researcher: news + SEC income statement and balance sheet; bull, bear, judge: none. Each agent ends with one submit tool (`submit_note`, `submit_bull_case`, `submit_bear_case`, `submit_picks`); none can place an order |
+| **Asset universe** | the `cross_momentum` universe file, cut to the top 15 by cross_momentum's momentum score (plus holdings still ranked 16-35), plus SHV |
+| **Agent frequency** | once a week, Tuesday 12:00 ET |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.bull_bear.<mode>`: `LLM_*`, `SEC_EDGAR_USER_AGENT`, `ALPACA_NEWS_*` (required in every mode: the strategy refuses to start without a news source), plus the broker keys in paper/live |
+
+A port of lumibot's "Bull vs Bear AI Stock Trading Bot": instead of a fixed list of 13 large caps, the agents debate the 15 strongest stocks of the cross_momentum ranking, computed by the same code (`strategies/common/scoring.py` and cross_momentum's own parameters). A researcher writes one note of dated facts per stock, the bull and the bear rate every stock from that same evidence without seeing each other, and the judge picks 5 to 10 winners and says why each held stock it does not pick is dropped. Code sizes the picks by inverse volatility (4% to 20% each, 98% invested), sells holdings that fell below rank 35 (the agents never see those) and the judge's drops, parks the rest in SHV, and places every order. A review that cannot complete (a debater that never submits, unusable data) trades nothing, and a backtest stops after 3 such reviews in a row. Sectors in the fact sheet come from yfinance as of today, even in a backtest. Run `uv run agent bull_bear backtesting` (default window `PredefinedWindow.HALF_YEAR`; each review runs one researcher call per debated stock, typically 15 to 25, so start short); each run writes `reviews.jsonl` (one line per weekly review) next to its report. The universe file must exist first (`uv run batch-universe`), or the strategy refuses to start.
 
 ### 📈 `congress_trades` — Copy Nancy Pelosi's disclosed stock holdings (researcher, portfolio manager, trader)
 
