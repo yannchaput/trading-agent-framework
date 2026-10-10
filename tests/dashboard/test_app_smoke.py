@@ -184,12 +184,13 @@ def test_run_detail_header_shows_the_agents_model(run_dir: Path) -> None:
 # --- Top navigation --------------------------------------------------------------------------------
 
 
-def test_the_tabs_are_backtesting_then_models() -> None:
+def test_the_tabs_are_backtesting_models_then_agents() -> None:
     from trading_agent_framework.dashboard import app
 
     assert [(title, url_path) for title, url_path, _ in app.NAV_PAGES] == [
         ("Backtesting", "backtesting"),
         ("Models", "models"),
+        ("Agents", "agents"),
     ]
 
 

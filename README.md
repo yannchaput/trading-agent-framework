@@ -170,7 +170,7 @@ passes on (SEC and FINRA TAF on sells, CAT on both sides). The run's totals are 
 
 ### 📊 Strategy Dashboard
 
-Compare backtesting runs across all strategies, and the local vLLM models benchmarked for the agents, in a dark-themed Streamlit web app with two tabs.
+Compare backtesting runs across all strategies, the local vLLM models benchmarked for the agents, and the agent strategies' review logs, in a dark-themed Streamlit web app with three tabs.
 
 **Run:** `uv run dashboard` (Models tab reads `../benchmark-vllm-models/results` by default; override with `uv run dashboard --benchmark-dir PATH`)
 
@@ -181,6 +181,7 @@ Compare backtesting runs across all strategies, and the local vLLM models benchm
   - **Run Detail page** — deep dive into a single run with equity curve (with cash/asset decomposition), drawdown chart, cumulative returns vs SPY benchmark, rolling Sharpe/Sortino/volatility charts, monthly returns heatmap, daily returns distribution, parameters & LLM telemetry table, and yearly returns vs benchmark table.
   - **Side-by-Side page** — compare two runs across all metrics.
 - **Models tab** — pick a benchmark run (latest by default): best/fastest model cards, a summary table (overall and per-category scores, runs passed, text tool calls, latency, tokens/s), category bars, a quality-vs-speed scatter, a per-scenario heatmap, and a drill-down listing each repeat's checks with their pass/fail reasons.
+- **Agents tab** — pick a backtesting run that wrote a `reviews.jsonl` (bill_ackman, bull_bear): one table row per review (date, completed/abandoned, stage, holdings, target weights, forced exits, orders, error), and any review's full record (verdicts, picks, bull/bear cases...) as JSON below.
 
 **Data sources:** Reads from `logs/` directory — auto-discovers backtesting runs by scanning for `*_tearsheet_metrics.json` files. No manual indexing needed.
 
