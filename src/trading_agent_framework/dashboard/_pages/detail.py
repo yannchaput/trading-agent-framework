@@ -108,7 +108,7 @@ def page_detail():
     if has_reviews(ref):
         labels.insert(4, "Agents")
     tabs = st.tabs(labels)
-    tab1, tab2, tab3, tab4, tab5 = tabs[:4] + tabs[-1:]
+    tab1, tab2, tab3, tab4, tab5 = tabs[:4] + tabs[-1:] # pyright: ignore[reportOperatorIssue]
 
     with tab1:
         st.subheader("Returns")
