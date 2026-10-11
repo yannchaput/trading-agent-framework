@@ -41,7 +41,32 @@ BALANCE_SHEET_TAGS: dict[str, list[str]] = {
     ],
 }
 
+# The same fields for filers of 20-F / 40-F reports, who tag under the `ifrs-full` taxonomy. Separate constants: the us-gaap
+# maps above are imported by the bill_ackman screen and must not change. Tag names checked against real payloads (UMC,
+# Kinross, Equinox Gold, Gold Fields, Abivax, ...). `RevenueFromSaleOfGoods` is left out: it can be a component of revenue.
+IFRS_INCOME_STATEMENT_TAGS: dict[str, list[str]] = {
+    "revenue": ["Revenue", "RevenueFromContractsWithCustomers"],
+    "cost_of_revenue": ["CostOfSales"],
+    "gross_profit": ["GrossProfit"],
+    "operating_income": ["ProfitLossFromOperatingActivities"],
+    "net_income": ["ProfitLossAttributableToOwnersOfParent", "ProfitLoss"],
+    "eps_basic": ["BasicEarningsLossPerShare"],
+    "eps_diluted": ["DilutedEarningsLossPerShare"],
+}
+
+IFRS_BALANCE_SHEET_TAGS: dict[str, list[str]] = {
+    "assets": ["Assets"],
+    "current_assets": ["CurrentAssets"],
+    "cash": ["CashAndCashEquivalents"],
+    "liabilities": ["Liabilities"],
+    "current_liabilities": ["CurrentLiabilities"],
+    "debt": ["Borrowings"],
+    "equity": ["EquityAttributableToOwnersOfParent", "Equity"],
+    "shares_outstanding": ["NumberOfSharesOutstanding"],
+}
+
 _PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
+_IFRS_PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*IFRS_INCOME_STATEMENT_TAGS.values(), *IFRS_BALANCE_SHEET_TAGS.values()) for tag in tags))
 
 _FORM_PRIORITY = {"10-K": 5, "20-F": 5, "40-F": 5, "10-Q": 4, "8-K": 2}
 
@@ -137,20 +162,40 @@ def latest_fact(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def compact_company_facts(payload: dict[str, Any], *, as_of: datetime, max_facts: int = 80) -> dict[str, Any]:
-    """The latest as-of value for each priority tag present, capped at `max_facts`."""
-    facts = payload.get("facts", {}).get("us-gaap", {})
-    ordered_tags = [tag for tag in _PRIORITY_COMPANY_FACT_TAGS if tag in facts]
-    ordered_tags.extend(tag for tag in sorted(facts) if tag not in ordered_tags)
+    """The latest as-of value for each priority tag present, capped at `max_facts`.
+
+    US GAAP facts come first, then `ifrs-full` facts (20-F / 40-F filers), each marked `"taxonomy": "ifrs-full"`. A tag
+    name used by both taxonomies keeps its more recently filed fact.
+    """
+    taxonomies = payload.get("facts", {})
+    gaap, ifrs = taxonomies.get("us-gaap", {}), taxonomies.get("ifrs-full", {})
+    gaap_priority = [tag for tag in _PRIORITY_COMPANY_FACT_TAGS if tag in gaap]
+    ifrs_priority = [tag for tag in _IFRS_PRIORITY_COMPANY_FACT_TAGS if tag in ifrs]
+    ordered = [
+        *((gaap, tag, None) for tag in gaap_priority),
+        *((ifrs, tag, "ifrs-full") for tag in ifrs_priority),
+        *((gaap, tag, None) for tag in sorted(gaap) if tag not in gaap_priority),
+        *((ifrs, tag, "ifrs-full") for tag in sorted(ifrs) if tag not in ifrs_priority),
+    ]
     limit = max(int(max_facts), 1)
     compact: dict[str, Any] = {}
     truncated = False
-    for tag in ordered_tags:
+    for facts, tag, taxonomy in ordered:
         if len(compact) >= limit:
             truncated = True
             break
         fact = latest_fact(filter_facts_as_of(facts, [tag], as_of))
-        if fact is not None:
-            compact[tag] = {"value": fact["value"], "unit": fact["unit"], "filed": fact["filed"], "form": fact["form"]}
+        if fact is None:
+            continue
+        entry = {"value": fact["value"], "unit": fact["unit"], "filed": fact["filed"], "form": fact["form"]}
+        if taxonomy is not None:
+            entry["taxonomy"] = taxonomy
+        if tag in compact:
+            # Both taxonomies use this tag name (`Assets`, `Liabilities`, ...): keep the more recently filed fact.
+            if str(fact["filed"] or "") > str(compact[tag]["filed"] or ""):
+                compact[tag] = entry
+            continue
+        compact[tag] = entry
     return {"facts": compact, "fact_count": len(compact), "truncated": truncated}
 
 
@@ -178,14 +223,35 @@ def _same_statement_period(candidate: dict[str, Any], anchor: dict[str, Any]) ->
     return True
 
 
-def statement_values(payload: dict[str, Any], tag_map: dict[str, list[str]], *, as_of: datetime) -> dict[str, dict[str, Any]]:
+def statement_values(
+    payload: dict[str, Any],
+    tag_map: dict[str, list[str]],
+    *,
+    as_of: datetime,
+    ifrs_tag_map: dict[str, list[str]] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Income-statement / balance-sheet field values as of `as_of`, from a raw company-facts payload.
 
     A field whose best candidate doesn't match the statement's period anchor is omitted, rather
     than mixing facts pulled from different SEC filings or periods.
+
+    `tag_map` is read from the `us-gaap` taxonomy. `ifrs_tag_map` (the same field names mapped to `ifrs-full` tags)
+    adds filers of 20-F / 40-F reports: both taxonomies' candidates compete and the most recently filed wins, so a
+    filer that changed framework reads from its current one. None reads `us-gaap` only.
     """
-    facts = payload.get("facts", {}).get("us-gaap", {})
-    field_candidates = {field: candidates for field, tags in tag_map.items() if (candidates := filter_facts_as_of(facts, tags, as_of))}
+    taxonomies = payload.get("facts", {})
+    gaap = taxonomies.get("us-gaap", {})
+    ifrs = taxonomies.get("ifrs-full", {}) if ifrs_tag_map is not None else {}
+    field_candidates: dict[str, list[dict[str, Any]]] = {}
+    for field, tags in tag_map.items():
+        candidates = filter_facts_as_of(gaap, tags, as_of)
+        ifrs_tags = (ifrs_tag_map or {}).get(field, [])
+        ifrs_candidates = filter_facts_as_of(ifrs, ifrs_tags, as_of) if ifrs_tags else []
+        if ifrs_candidates:
+            every_tag = [*tags, *ifrs_tags]
+            candidates = sorted([*candidates, *ifrs_candidates], key=lambda row: _candidate_sort_key(row, every_tag), reverse=True)
+        if candidates:
+            field_candidates[field] = candidates
     anchor = _statement_anchor(field_candidates)
     if anchor is None:
         return {}
