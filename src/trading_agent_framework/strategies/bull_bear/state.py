@@ -38,6 +38,22 @@ class BullBearState:
     abandoned_streak: int = 0  # abandoned reviews in a row
     verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date}
     cooldowns: dict[str, int] = field(default_factory=dict)  # symbol -> completed reviews it stays out of the candidates
+    history: list[dict[str, Any]] = field(default_factory=list)  # the last feedback_reviews reviews: {date, verdicts: {symbol: {verdict, reason, close}}}
+
+
+def _valid_review(entry: Any) -> bool:
+    """One `history` entry: {date, verdicts: {symbol: {verdict, reason, close}}}."""
+    if not isinstance(entry, dict) or set(entry) != {"date", "verdicts"} or not isinstance(entry["date"], str) or not isinstance(entry["verdicts"], dict):
+        return False
+    return all(
+        isinstance(item, dict)
+        and set(item) == {"verdict", "reason", "close"}
+        and isinstance(item["verdict"], str)
+        and isinstance(item["reason"], str)
+        and isinstance(item["close"], int | float)
+        and not isinstance(item["close"], bool)
+        for item in entry["verdicts"].values()
+    )
 
 
 def _valid(raw: Any) -> bool:
@@ -47,6 +63,7 @@ def _valid(raw: Any) -> bool:
     streak = raw.get("abandoned_streak", 0)
     verdicts = raw.get("verdicts", {})
     cooldowns = raw.get("cooldowns", {})
+    history = raw.get("history", [])
     return (
         (last is None or isinstance(last, str))
         and isinstance(streak, int)
@@ -56,6 +73,8 @@ def _valid(raw: Any) -> bool:
         and all(isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in verdicts.values())
         and isinstance(cooldowns, dict)
         and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
+        and isinstance(history, list)
+        and all(_valid_review(entry) for entry in history)
     )
 
 
@@ -80,6 +99,7 @@ class StateStore:
             abandoned_streak=raw.get("abandoned_streak", 0),
             verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
             cooldowns=dict(raw.get("cooldowns", {})),
+            history=[{"date": entry["date"], "verdicts": {symbol: dict(item) for symbol, item in entry["verdicts"].items()}} for entry in raw.get("history", [])],
         )
 
     def save(self, state: BullBearState) -> None:

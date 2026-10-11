@@ -96,3 +96,7 @@ def test_the_bear_may_not_rate_news_the_price_already_absorbed_high_by_itself() 
 
 def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> None:
     assert "previous_verdict" in prompts.JUDGE_SYSTEM and "what_changed" in prompts.JUDGE_SYSTEM
+
+
+def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
+    assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM

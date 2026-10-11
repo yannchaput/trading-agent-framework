@@ -23,6 +23,7 @@ from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldowns
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
+from trading_agent_framework.strategies.bull_bear.feedback import recent_outcomes
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
@@ -156,6 +157,7 @@ class ReviewPipeline:
             if row is not None:
                 rows.append(row)
         ranked = rank(rows)
+        closes_now = {symbol: data.closes[-1] for symbol, data in series.items() if data.closes}
 
         # 2. The debate set, and the holdings code sells without asking the agents.
         debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state.cooldowns)
@@ -213,6 +215,7 @@ class ReviewPipeline:
         # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
         previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
         self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
+        recent = recent_outcomes(state.history, closes_now)
         context = {
             "current_datetime": moment,
             "stocks": [
@@ -225,6 +228,7 @@ class ReviewPipeline:
                 }
                 for symbol in symbols
             ],
+            "recent_verdicts": recent,
             "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
         self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
@@ -249,6 +253,7 @@ class ReviewPipeline:
             verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
             book=list(book),
             cooldowns_started=sold,
+            recent_verdicts=recent,
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -260,7 +265,9 @@ class ReviewPipeline:
         # 9. Remember and log.
         decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
         cooldowns = advance_cooldowns(state.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns))
+        review = {"date": today, "verdicts": {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "close": closes_now[verdict.symbol]} for verdict in verdicts.verdicts}}
+        history = [*state.history, review][-params.feedback_reviews :]
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns, history=history))
         self._log.append(
             {
                 **record,

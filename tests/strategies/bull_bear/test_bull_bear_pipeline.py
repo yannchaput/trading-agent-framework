@@ -710,3 +710,40 @@ def test_a_holding_still_in_cooldown_is_sold_as_a_forced_exit(tmp_path: Path) ->
     (line,) = h.log_lines()
     assert line["forced_exits"] == [{"symbol": "S03", "reason": "cooldown"}]
     assert ("S03", "sell", 20.0) in h.orders
+
+
+# --- outcome feedback ----------------------------------------------------------------------------------------
+
+
+def test_the_judge_sees_how_its_recent_out_verdicts_did_since(tmp_path: Path) -> None:
+    series = _default_series()
+    now_close = {symbol: s.closes[-1] for symbol, s in series.items()}
+    history = [
+        {
+            "date": "2026-09-29",
+            "verdicts": {
+                "S00": {"verdict": "in", "reason": "r", "close": now_close["S00"] / 1.10},
+                "S18": {"verdict": "out", "reason": "dilution", "close": now_close["S18"] / 0.95},  # S18 is no candidate now, but priced
+            },
+        }
+    ]
+    h = _harness(tmp_path, series=series, state=BullBearState(history=history))
+
+    assert h.run().completed
+
+    shown = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
+    assert shown == [{"symbol": "S18", "date": "2026-09-29", "reason": "dilution", "return_since_pct": -5.0, "in_names_return_pct": 10.0}]
+    assert h.log_lines()[0]["recent_verdicts"] == shown
+
+
+def test_a_completed_review_stores_each_verdict_with_the_close_it_was_made_at(tmp_path: Path) -> None:
+    series = _default_series()
+    earlier = [{"date": "2026-09-22", "verdicts": {}}, {"date": "2026-09-29", "verdicts": {}}]
+    h = _harness(tmp_path, series=series, params=BullBearParams(feedback_reviews=2), state=BullBearState(history=earlier))
+
+    assert h.run().completed
+
+    history = h.store.load().history
+    assert [review["date"] for review in history] == ["2026-09-29", "2026-10-06"]  # trimmed to feedback_reviews
+    assert history[-1]["verdicts"]["S00"] == {"verdict": "in", "reason": "bull wins", "close": series["S00"].closes[-1]}
+    assert history[-1]["verdicts"]["S14"]["verdict"] == "out"

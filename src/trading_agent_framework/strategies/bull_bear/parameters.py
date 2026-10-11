@@ -31,6 +31,7 @@ class BullBearParams:
     argument_max_chars: int = 300
     reason_max_chars: int = 300
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates
+    feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
@@ -60,6 +61,7 @@ class BullBearParams:
             "research_tool_budget must be at least 1": self.research_tool_budget < 1,
             "note_max_chars, argument_max_chars and reason_max_chars must be at least 1": min(self.note_max_chars, self.argument_max_chars, self.reason_max_chars) < 1,
             "reentry_cooldown_reviews must be at least 0": self.reentry_cooldown_reviews < 0,
+            "feedback_reviews must be at least 1": self.feedback_reviews < 1,
             "max_consecutive_abandoned must be at least 1": self.max_consecutive_abandoned < 1,
             "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
             f"rebalance_time: {time_problem}": bool(time_problem),
