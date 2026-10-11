@@ -52,6 +52,7 @@ class BullBearStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # 300 completed sessions before the first review: the 12-1 month return needs 274 (as cross_momentum)
         "warmup_trading_days": 300,
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -181,6 +182,7 @@ class BullBearStrategy(Strategy):
             benchmark=self.parameters["benchmark_symbol"],
             timestep="day",
             warmup_trading_days=self.parameters["warmup_trading_days"],
+            slippage=self.parameters["slippage"],
             agent_telemetry=True,
         )
         return super().run_backtesting(**{**defaults, **overrides})

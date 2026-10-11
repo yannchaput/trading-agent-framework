@@ -25,6 +25,7 @@ import logging
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -115,6 +116,7 @@ class CrossMomentumStrategy(Strategy):
         # day one. Without it, every ticker trips min_trading_days=250 and the
         # first ~year of the backtest can never pass filters.
         "warmup_trading_days": 300,
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -886,5 +888,6 @@ class CrossMomentumStrategy(Strategy):
             preload_assets=self._backtest_preload_assets(),  # preload the ticker universe and the sleeve ETFs in memory
             benchmark=self.parameters["benchmark_symbol"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
+            slippage=self.parameters["slippage"],
         )
         return super().run_backtesting(**{**defaults, **overrides})
