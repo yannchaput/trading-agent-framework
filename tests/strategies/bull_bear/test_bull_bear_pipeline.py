@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Callable, Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
@@ -826,6 +828,22 @@ def test_the_judge_sees_how_its_recent_out_verdicts_did_since(tmp_path: Path) ->
     shown = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
     assert shown == [{"symbol": "S18", "date": "2026-09-29", "reason": "dilution", "return_since_pct": -5.0, "in_names_return_pct": 10.0}]
     assert h.log_lines()[0]["recent_verdicts"] == shown
+
+
+def test_the_feedback_prices_the_then_close_from_todays_series_not_from_the_stored_close(tmp_path: Path) -> None:
+    # a split since the review: the stored close (1000) is on the old basis; today's adjusted series is the truth
+    sessions = [day.date() for day in pd.bdate_range(end=date(2026, 10, 5), periods=300)]
+    series = {symbol: replace(data, dates=sessions) for symbol, data in _default_series().items()}
+    before = sessions.index(date(2026, 9, 28))  # the last session strictly before the review of 2026-09-29
+    expected = round((series["S18"].closes[-1] / series["S18"].closes[before] - 1) * 100, 1)
+    history = [{"date": "2026-09-29", "verdicts": {"S18": {"verdict": "out", "reason": "dilution", "close": 1000.0}}}]
+    h = _harness(tmp_path, series=series, state=BullBearState(history=history))
+
+    assert h.run().completed
+
+    (shown,) = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
+    assert shown["symbol"] == "S18" and shown["return_since_pct"] == expected
+    assert expected != round((series["S18"].closes[-1] / 1000.0 - 1) * 100, 1)
 
 
 def test_a_completed_review_stores_each_verdict_with_the_close_it_was_made_at(tmp_path: Path) -> None:

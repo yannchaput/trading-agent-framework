@@ -123,7 +123,9 @@ Once per review:
 - **Recent verdicts**: every `out` verdict of the last `feedback_reviews` (4) completed reviews, sells and names not
   bought alike: symbol, date, reason, the stock's return from the last close known at that review to the last close
   known now, and the mean return of that review's `in` names over the same span. Prices are closes up to `clock.now()` from the bars the review already loaded; an
-  entry without a price is left out, never estimated.
+  entry without a price is left out, never estimated. The "then" close is read from today's loaded series (the last
+  session before the review's date), so a stock split since then does not show a fake return; the close stored with
+  the verdict is only the fallback. Each reason is cut to 150 characters.
 - **Memory tools**: `search_memory` and `remember_lesson` (`memory/tools.py`, through `strategy.memory`; wiped at
   the start of every backtest), with `judge_memory_budget` (6) calls; `submit_verdicts` is exempt. The prompt: look
   up your lessons before deciding; when a recent outcome teaches something, record a lesson.

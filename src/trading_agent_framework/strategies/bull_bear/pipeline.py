@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
@@ -238,7 +238,14 @@ class ReviewPipeline:
         # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
         previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
         self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
-        recent = recent_outcomes(state.history, closes_now)
+
+        def close_before(symbol: str, review_date: str) -> float | None:
+            try:
+                return series[symbol].close_before(date.fromisoformat(review_date)) if symbol in series else None
+            except ValueError:  # a hand-edited date: the stored close is used
+                return None
+
+        recent = recent_outcomes(state.history, closes_now, close_before)
         context = {
             "current_datetime": moment,
             "stocks": [
