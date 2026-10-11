@@ -465,6 +465,90 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
 
 
+def _raises_after(h: Harness, monkeypatch: pytest.MonkeyPatch, placed: list[PlacedOrder]) -> None:
+    """The rebalance records `placed` as already sent, then fails: a connection lost half way."""
+
+    def half_way(target: Any, forced_exits: Any = ()) -> list[PlacedOrder]:
+        h.rebalancer.placed = list(placed)
+        raise BrokerError("connection reset")
+
+    monkeypatch.setattr(h.rebalancer, "rebalance", half_way)
+
+
+def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_stocks_cooldown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts={"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29"}}))
+
+    def sells_s03(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
+        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in symbols[:10] and s != "S03" else "out", "reason": "bull wins" if s != "S03" and s in symbols[:10] else "bear wins", **({"what_changed": "guidance cut"} if s == "S03" else {})} for s in symbols])
+
+    h.agents["judge"].script = sells_s03
+    _raises_after(h, monkeypatch, [PlacedOrder("S03", "sell", 20.0), PlacedOrder("S00", "buy", 10.0)])
+
+    outcome = h.run()
+
+    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    state = h.store.load()
+    assert state.verdicts["S03"] == {"verdict": "out", "reason": "bear wins", "date": "2026-10-06"}  # the stored "in" is replaced
+    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}
+    assert set(state.verdicts) == set(UNIVERSE[:15]) | {"S03"}
+    assert state.cooldowns == {"S03": 4}
+    assert state.history == [] and state.last_completed_review is None and state.abandoned_streak == 1
+    (line,) = h.log_lines()
+    assert line["stage"] == "execution" and line["cooldowns_started"] == ["S03"]
+
+
+def test_an_execution_abandonment_before_any_order_stores_the_verdicts_but_no_cooldown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path, held={"S03": 20})
+    h.agents["judge"].script = verdicts(set(UNIVERSE[:10]) - {"S03"})
+    _raises_after(h, monkeypatch, [])  # no order was sent: S03 is still held
+
+    assert not h.run().completed
+
+    state = h.store.load()
+    assert state.verdicts["S03"]["verdict"] == "out" and state.verdicts["S00"]["verdict"] == "in"
+    assert state.cooldowns == {}
+    assert state.history == [] and state.last_completed_review is None and state.abandoned_streak == 1
+    assert h.log_lines()[0]["cooldowns_started"] == []
+
+
+def test_an_execution_abandonment_starts_cooldowns_only_for_the_judges_sells_that_were_placed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # S03 was sold (placed), S04 is put out and held but its sell never went out, S05 was sold by a trim of a stock put in
+    h = _harness(tmp_path, held={"S03": 20, "S04": 20, "S05": 20})
+    h.agents["judge"].script = verdicts(set(UNIVERSE[:10]) - {"S03", "S04"})
+    _raises_after(h, monkeypatch, [PlacedOrder("S03", "sell", 20.0), PlacedOrder("S04", "buy", 1.0), PlacedOrder("S05", "sell", 5.0)])
+
+    assert not h.run().completed
+
+    assert h.store.load().cooldowns == {"S03": 4}
+    assert h.log_lines()[0]["cooldowns_started"] == ["S03"]
+
+
+def test_an_execution_abandonment_does_not_count_the_running_cooldowns_down(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(cooldowns={"S05": 2, "S06": 1}))
+    h.agents["judge"].script = verdicts(set(UNIVERSE[:10]) - {"S03"})
+    _raises_after(h, monkeypatch, [PlacedOrder("S03", "sell", 20.0)])
+
+    assert not h.run().completed
+
+    assert h.store.load().cooldowns == {"S05": 2, "S06": 1, "S03": 4}
+
+
+@pytest.mark.parametrize("stage", ["broker", "judge"])
+def test_an_abandonment_before_the_execution_stage_stores_nothing_but_the_streak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
+    earlier = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29"}}
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts=earlier, cooldowns={"S05": 2}))
+    if stage == "judge":
+        h.agents["judge"].script = does_nothing
+    else:
+        monkeypatch.setattr(h.rebalancer, "holdings", lambda: (_ for _ in ()).throw(BrokerError("positions unavailable")))
+
+    assert not h.run().completed
+
+    state = h.store.load()
+    assert state == BullBearState(abandoned_streak=1, verdicts=earlier, cooldowns={"S05": 2})
+
+
 # --- the streak and the same-day rule -------------------------------------------------------------------
 
 

@@ -155,7 +155,9 @@ forced retry applies; no valid submission after it abandons the review with no o
   each candidate's verdict). `last_book` goes.
 - `STATE_VERSION` bumps; an older file (picker or veto judge) loads as an empty state. Backtests wipe it in
   `initialize` (unchanged); paper/live start without previous verdicts.
-- An abandoned review changes nothing: no verdict stored, no cooldown counted down (bill_ackman's rule).
+- An abandoned review changes nothing (no verdict stored, no cooldown counted down; bill_ackman's rule), except at
+  the execution stage, where the judge has decided and orders may be out: its verdicts and the cooldown of each sell
+  actually placed are stored (running cooldowns are still not counted down, and no history entry is added).
 
 ### Parameters (`BullBearParams`)
 

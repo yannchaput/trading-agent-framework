@@ -60,6 +60,15 @@ class ReviewAbandoned(Exception):
 
 
 @dataclass(frozen=True, slots=True)
+class _Pending:
+    """What a review decided, kept for an abandonment during execution (the judge's verdicts are out in the market)."""
+
+    decided: dict[str, dict[str, str]]  # symbol -> the judge's {verdict, reason, date}
+    sold: list[str]  # the held stocks the judge put out
+    review: dict[str, Any]  # the `history` entry of a completed review
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewOutcome:
     completed: bool
     abandoned_streak: int  # abandoned reviews in a row after this one (0 after a completed review)
@@ -95,6 +104,7 @@ class ReviewPipeline:
         # max_volatility gates new entries only: holdings are scored with a copy that lifts it (CONFIG itself is never changed)
         self._holding_momentum = {**momentum, "max_volatility": math.inf}
         self._stage = "setup"  # "setup" until the rebalancer starts, then "execution": what a broker failure is attributed to
+        self._pending: _Pending | None = None  # set once the judge has decided, just before the stage becomes "execution"
 
     def _now(self) -> datetime:
         return self._strategy.clock.now().astimezone(MARKET_TZ)
@@ -110,6 +120,7 @@ class ReviewPipeline:
         now = self._now()
         record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
         self._stage = "setup"
+        self._pending = None
         extra: dict[str, Any] = {}
         try:
             self._review(now, record, state)
@@ -124,7 +135,18 @@ class ReviewPipeline:
             return ReviewOutcome(completed=True, abandoned_streak=0)
         streak = state.abandoned_streak + 1
         self._strategy.log_error(f"[bull_bear] review abandoned at the {stage} stage (streak {streak}): {error}")
-        self._state.save(replace(state, abandoned_streak=streak))
+        if stage == "execution" and self._pending is not None:
+            # The judge decided and orders may be out: remember its verdicts and the cooldown of each sell actually placed,
+            # so a stock sold today is not bought back next week. Running cooldowns are not counted down, nothing goes into
+            # `history` and the day stays open.
+            length = self._params.reentry_cooldown_reviews
+            sent = {order.symbol for order in self._rebalancer.placed if order.side == "sell"}
+            started = [symbol for symbol in self._pending.sold if symbol in sent] if length > 0 else []
+            extra["cooldowns_started"] = started
+            saved = replace(state, abandoned_streak=streak, verdicts={**state.verdicts, **self._pending.decided}, cooldowns={**state.cooldowns, **{symbol: length for symbol in started}})
+        else:
+            saved = replace(state, abandoned_streak=streak)
+        self._state.save(saved)
         self._log.append({**record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
         return ReviewOutcome(completed=False, abandoned_streak=streak)
 
@@ -251,7 +273,12 @@ class ReviewPipeline:
         target_weights = capped_inverse_volatility(volatilities, total=total, min_weight=params.min_weight, max_weight=params.max_weight) if book else {}
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
-        sold = [stock.symbol for stock in debate.stocks if stock.held and stock.symbol not in set(verdicts.chosen)]
+        chosen = set(verdicts.chosen)
+        sold = [stock.symbol for stock in debate.stocks if stock.held and stock.symbol not in chosen]
+        # What a completed review remembers, built before the first order so that nothing after it can fail on a missing close.
+        decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
+        review = {"date": today, "verdicts": {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "close": closes_now[verdict.symbol]} for verdict in verdicts.verdicts}}
+        self._pending = _Pending(decided=decided, sold=sold, review=review)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
             verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
@@ -268,9 +295,7 @@ class ReviewPipeline:
         orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
         # 9. Remember and log.
-        decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
         cooldowns = advance_cooldowns(state.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
-        review = {"date": today, "verdicts": {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "close": closes_now[verdict.symbol]} for verdict in verdicts.verdicts}}
         history = [*state.history, review][-params.feedback_reviews :]
         self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns, history=history))
         self._log.append(
