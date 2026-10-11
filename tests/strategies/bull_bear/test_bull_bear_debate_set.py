@@ -38,7 +38,7 @@ def test_a_holding_ranked_below_the_retention_rank_or_unranked_is_forced_out() -
     assert "S36" not in debate.symbols and "GONE" not in debate.symbols
 
 
-def test_a_holding_inside_the_shortlist_is_debated_once_and_never_forced_out() -> None:
+def test_a_holding_inside_the_debated_top_ranks_is_debated_once_and_never_forced_out() -> None:
     """SHV never reaches here: the pipeline passes `Rebalancer.holdings()`, which excludes the parking instrument."""
     debate = build_debate_set(_ranked(20), ["S05"], debate_size=15, retention_rank=35)
 

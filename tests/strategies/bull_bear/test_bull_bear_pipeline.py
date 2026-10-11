@@ -272,6 +272,30 @@ def test_the_veto_cap_shrinks_so_that_book_size_stocks_always_survive(tmp_path: 
     assert line["veto_cap"] == 2 and len(line["book"]) == 10
 
 
+def test_a_debate_set_of_exactly_book_size_leaves_the_judge_no_veto(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
+
+    outcome = h.run()
+
+    assert outcome.completed
+    assert h.agents["judge"].calls[0]["context"]["constraints"] == {"max_vetoes": 0, "reason_max_chars": 300}
+    (line,) = h.log_lines()
+    assert line["veto_cap"] == 0 and line["book"] == UNIVERSE[:10]
+
+
+def test_a_veto_at_cap_zero_is_refused_and_the_retry_keeps_everything(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
+    h.agents["judge"].overrides = [verdicts(vetoed={"S03"})]
+
+    outcome = h.run()
+
+    assert outcome.completed
+    retry = h.agents["judge"].calls[1]
+    assert retry["force_tool"] == "submit_verdicts" and "1 vetoes: veto at most 0" in retry["task"]
+    (line,) = h.log_lines()
+    assert line["veto_cap"] == 0 and line["judge_verdicts"] == {"keep": 10} and line["book"] == UNIVERSE[:10]
+
+
 def test_a_judge_over_the_veto_cap_is_refused_and_corrects_itself_on_the_retry(tmp_path: Path) -> None:
     h = _harness(tmp_path)
     h.agents["judge"].overrides = [verdicts(vetoed=set(UNIVERSE[:6]))]
@@ -417,6 +441,7 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0}]
     # The decision that led to those orders is in the same line.
     assert line["book"] == UNIVERSE[:10] and line["judge_verdicts"] == {"keep": 15}
+    assert len(line["verdicts"]) == 15 and line["veto_cap"] == 5
     stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert sorted(stock_targets) == UNIVERSE[:10] and "SHV" in line["targets"]
     assert sum(stock_targets.values()) == pytest.approx(0.98)

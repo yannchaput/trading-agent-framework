@@ -52,7 +52,7 @@ def build_debate_set(ranked: Sequence[RankedRow], holdings: Collection[str], *, 
     """`holdings` are the stocks held, the parking instrument excluded (`Rebalancer.holdings()`)."""
     held = set(holdings)
     rank_of = {entry.row.symbol: entry.rank for entry in ranked}
-    # Debate the stocks that are either in the shortlist or still held and within the retention rank; force exit the rest.
+    # Debate the top `debate_size` ranks and the holdings still within the retention rank; force exit the rest.
     stocks = tuple(
         DebateStock(entry.rank, entry.row, entry.row.symbol in held)
         for entry in ranked

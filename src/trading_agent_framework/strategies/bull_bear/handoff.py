@@ -8,7 +8,7 @@ This module deliberately has NO `from __future__ import annotations`: the agent 
 from the function's real annotations (as `bill_ackman/handoff.py` and `memory/tools.py` do).
 """
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,8 +18,8 @@ LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")
 VERDICTS = ("keep", "veto")
 
-NOTE, BULL, BEAR, PICKS, VERDICT = "note", "bull", "bear", "picks", "verdict"
-_TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", PICKS: "submit_picks", VERDICT: "submit_verdicts"}
+NOTE, BULL, BEAR, VERDICT = "note", "bull", "bear", "verdict"
+_TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", VERDICT: "submit_verdicts"}
 
 
 class HandoffError(ValueError):
@@ -45,18 +45,6 @@ class BearCase:
     risk: str  # one of LEVELS
     concern: str  # one of CONCERNS
     argument: str
-
-
-@dataclass(frozen=True, slots=True)
-class Choice:
-    symbol: str
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class Picks:
-    picks: tuple[Choice, ...]  # in the judge's order: the buy order
-    drops: tuple[Choice, ...]  # the held debate stocks not picked
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,40 +145,6 @@ def validate_bear_cases(raw: Any, *, expected: Sequence[str], max_chars: int) ->
     ]
 
 
-def validate_picks(picks_raw: Any, drops_raw: Any, *, allowed: Sequence[str], held: Collection[str], min_picks: int, max_picks: int, max_chars: int) -> Picks:
-    """`min_picks` to `max_picks` unique stocks from `allowed`; `drops` names exactly the `held` stocks not picked."""
-    items = _items(picks_raw, "picks")
-    if not min_picks <= len(items) <= max_picks:
-        raise HandoffError(f"pick between {min_picks} and {max_picks} stocks, got {len(items)}")
-    allowed_set = set(allowed)
-    picked: set[str] = set()
-    picks = []
-    for index, item in enumerate(items, start=1):
-        symbol = _symbol(item, index)
-        if symbol not in allowed_set:
-            raise HandoffError(f"{symbol} is not in the debate (choose from {', '.join(allowed)})")
-        if symbol in picked:
-            raise HandoffError(f"{symbol} appears twice")
-        picked.add(symbol)
-        picks.append(Choice(symbol, _text(item, "reason", symbol, max_chars)))
-    must_drop = [symbol for symbol in held if symbol not in picked]
-    dropped: set[str] = set()
-    drops = []
-    for index, item in enumerate(_items([] if drops_raw is None else drops_raw, "drops"), start=1):
-        symbol = _symbol(item, index)
-        if symbol not in must_drop:
-            raise HandoffError(f"{symbol} cannot be dropped: drops lists only the held stocks you did not pick ({', '.join(must_drop) or 'none'})")
-        if symbol in dropped:
-            raise HandoffError(f"{symbol} appears twice")
-        dropped.add(symbol)
-        drops.append(Choice(symbol, _text(item, "reason", symbol, max_chars)))
-    missing = [symbol for symbol in must_drop if symbol not in dropped]
-    if missing:
-        verb = "is" if len(missing) == 1 else "are"
-        raise HandoffError(f"{', '.join(missing)} {verb} held and not picked: list each in drops with a reason")
-    return Picks(picks=tuple(picks), drops=tuple(drops))
-
-
 def validate_verdicts(raw: Any, *, expected: Sequence[str], max_vetoes: int, max_chars: int) -> Verdicts:
     """One verdict (keep or veto) with a reason per `expected` symbol, and at most `max_vetoes` vetoes."""
     verdicts = tuple(Verdict(symbol, _one_of(item, "verdict", symbol, VERDICTS), _text(item, "reason", symbol, max_chars)) for symbol, item in _covering(raw, expected, "verdicts"))
@@ -223,9 +177,6 @@ class HandoffRecorder:
     def expect_bear(self, symbols: Sequence[str]) -> None:
         self._arm(BEAR, {"expected": list(symbols)})
 
-    def expect_picks(self, allowed: Sequence[str], held: Sequence[str]) -> None:
-        self._arm(PICKS, {"allowed": list(allowed), "held": list(held)})
-
     def expect_verdicts(self, symbols: Sequence[str], *, max_vetoes: int) -> None:
         self._arm(VERDICT, {"expected": list(symbols), "max_vetoes": max_vetoes})
 
@@ -240,7 +191,7 @@ class HandoffRecorder:
 
     @property
     def submission(self) -> Any:
-        """The armed stage's valid submission (`Note`, `list[BullCase]`, `list[BearCase]`, `Picks` or `Verdicts`), else None."""
+        """The armed stage's valid submission (`Note`, `list[BullCase]`, `list[BearCase]` or `Verdicts`), else None."""
         return self._submission
 
     def submit(self, stage: str, *args: Any) -> dict[str, Any]:
@@ -257,16 +208,6 @@ class HandoffRecorder:
                 value = validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             elif stage == BEAR:
                 value = validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
-            elif stage == PICKS:
-                value = validate_picks(
-                    args[0],
-                    args[1],
-                    allowed=context["allowed"],
-                    held=context["held"],
-                    min_picks=params.min_picks,
-                    max_picks=params.max_picks,
-                    max_chars=params.reason_max_chars,
-                )
             else:
                 value = validate_verdicts(args[0], expected=context["expected"], max_vetoes=context["max_vetoes"], max_chars=params.reason_max_chars)
         except HandoffError as exc:
@@ -283,7 +224,7 @@ class HandoffRecorder:
 
 
 def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str, Any]]]:
-    """The submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""
+    """The four submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""
 
     def submit_note(symbol: str, note: str) -> dict[str, Any]:
         """Submit your note on the stock: its symbol and the dated facts you found (no opinion)."""
@@ -297,10 +238,6 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         """Submit one case per stock: objects with symbol, risk (low, medium or high), concern and argument."""
         return recorder.submit(BEAR, cases)
 
-    def submit_picks(picks: list[dict[str, Any]], drops: list[dict[str, Any]] | None = None) -> dict[str, Any]:
-        """Submit the stocks that win the debate (objects with symbol and reason) and, for each held stock you do not pick, a drop (symbol and reason)."""
-        return recorder.submit(PICKS, picks, drops)
-
     def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit one verdict per stock: objects with symbol, verdict (keep or veto) and one short reason."""
         return recorder.submit(VERDICT, verdicts)
@@ -309,6 +246,5 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         "submit_note": submit_note,
         "submit_bull_case": submit_bull_case,
         "submit_bear_case": submit_bear_case,
-        "submit_picks": submit_picks,
         "submit_verdicts": submit_verdicts,
     }
