@@ -658,3 +658,55 @@ def test_a_judge_flipping_a_verdict_without_what_changed_is_refused_then_correct
     assert "your previous verdict on S00 was out" in h.agents["judge"].calls[1]["task"]
     (line,) = h.log_lines()
     assert line["verdicts"][0]["what_changed"] == "lawsuit dismissed"
+
+
+# --- the re-entry cooldown ---------------------------------------------------------------------------------
+
+
+def test_a_holding_the_judge_puts_out_starts_its_cooldown(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S03": 20})
+    h.agents["judge"].script = verdicts(set(UNIVERSE[:10]) - {"S03"})
+
+    assert h.run().completed
+
+    assert h.store.load().cooldowns == {"S03": 4}
+    (line,) = h.log_lines()
+    assert line["cooldowns_started"] == ["S03"] and line["cooldowns_active"] == {}
+    assert ("S03", "sell", 20.0) in h.orders
+
+
+def test_a_stock_put_out_that_was_not_held_starts_no_cooldown(tmp_path: Path) -> None:
+    h = _harness(tmp_path)  # the default judge puts S10-S14 out; none is held
+
+    assert h.run().completed
+    assert h.store.load().cooldowns == {}
+
+
+def test_a_stock_in_cooldown_is_not_debated_and_its_count_goes_down(tmp_path: Path) -> None:
+    h = _harness(tmp_path, state=BullBearState(cooldowns={"S03": 2, "S05": 1}))
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    debated = [stock["symbol"] for stock in line["debate_set"]]
+    assert "S03" not in debated and "S05" not in debated and len(debated) == 13
+    assert line["cooldowns_active"] == {"S03": 2, "S05": 1}
+    assert h.store.load().cooldowns == {"S03": 1}
+
+
+def test_an_abandoned_review_leaves_the_cooldowns_as_they_were(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(cooldowns={"S05": 2}))
+    h.agents["judge"].script = does_nothing
+
+    assert not h.run().completed
+    assert h.store.load().cooldowns == {"S05": 2}
+
+
+def test_a_holding_still_in_cooldown_is_sold_as_a_forced_exit(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(cooldowns={"S03": 3}))
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert line["forced_exits"] == [{"symbol": "S03", "reason": "cooldown"}]
+    assert ("S03", "sell", 20.0) in h.orders

@@ -1,7 +1,8 @@
 """What bull_bear remembers between reviews, and the per-review log.
 
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
-restart), the abandoned-review streak and the judge's latest verdict on every stock it judged, in one small JSON
+restart), the abandoned-review streak, the judge's latest verdict on every stock it judged and the re-entry
+cooldowns (the stocks the judge sold, and the completed reviews each stays out of the candidates), in one small JSON
 file per mode, written atomically. A missing or invalid file, or one from an older version (the picker, the veto
 judge), is an empty state. `ReviewLog` appends one JSON line per review to the run directory. Neither ever raises on an I/O problem:
 bookkeeping must not stop a review.
@@ -36,6 +37,7 @@ class BullBearState:
     last_completed_review: str | None = None  # ISO market date of the last completed review
     abandoned_streak: int = 0  # abandoned reviews in a row
     verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date}
+    cooldowns: dict[str, int] = field(default_factory=dict)  # symbol -> completed reviews it stays out of the candidates
 
 
 def _valid(raw: Any) -> bool:
@@ -44,6 +46,7 @@ def _valid(raw: Any) -> bool:
     last = raw.get("last_completed_review")
     streak = raw.get("abandoned_streak", 0)
     verdicts = raw.get("verdicts", {})
+    cooldowns = raw.get("cooldowns", {})
     return (
         (last is None or isinstance(last, str))
         and isinstance(streak, int)
@@ -51,6 +54,8 @@ def _valid(raw: Any) -> bool:
         and streak >= 0
         and isinstance(verdicts, dict)
         and all(isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in verdicts.values())
+        and isinstance(cooldowns, dict)
+        and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
     )
 
 
@@ -74,6 +79,7 @@ class StateStore:
             last_completed_review=raw.get("last_completed_review"),
             abandoned_streak=raw.get("abandoned_streak", 0),
             verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
+            cooldowns=dict(raw.get("cooldowns", {})),
         )
 
     def save(self, state: BullBearState) -> None:

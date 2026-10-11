@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.strategies.bull_bear.book import build_book
+from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldowns
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts
@@ -157,12 +158,13 @@ class ReviewPipeline:
         ranked = rank(rows)
 
         # 2. The debate set, and the holdings code sells without asking the agents.
-        debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank)
+        debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state.cooldowns)
         symbols = debate.symbols
         record.update(
             ranked=len(ranked),
             debate_set=[{"symbol": stock.symbol, "rank": stock.rank, "held": stock.held} for stock in debate.stocks],
             forced_exits=[asdict(exit) for exit in debate.forced_exits],
+            cooldowns_active=dict(state.cooldowns),
         )
         strategy.log_info(
             f"[bull_bear] {len(ranked)} stocks ranked; debate: {', '.join(f'{s.symbol} (#{s.rank}{", held" if s.held else ""})' for s in debate.stocks)}; "
@@ -239,11 +241,14 @@ class ReviewPipeline:
         total = min(params.investable, len(book) * params.max_weight)
         target_weights = capped_inverse_volatility(volatilities, total=total, min_weight=params.min_weight, max_weight=params.max_weight) if book else {}
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
+        # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
+        sold = [stock.symbol for stock in debate.stocks if stock.held and stock.symbol not in set(verdicts.chosen)]
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
             verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
             verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
             book=list(book),
+            cooldowns_started=sold,
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -254,7 +259,8 @@ class ReviewPipeline:
 
         # 9. Remember and log.
         decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}))
+        cooldowns = advance_cooldowns(state.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns))
         self._log.append(
             {
                 **record,

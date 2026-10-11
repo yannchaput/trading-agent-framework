@@ -44,3 +44,15 @@ def test_a_holding_inside_the_debated_top_ranks_is_debated_once_and_never_forced
 
     assert debate.symbols.count("S05") == 1 and debate.stock("S05").held
     assert debate.forced_exits == ()
+
+
+def test_a_stock_in_cooldown_is_not_debated() -> None:
+    debate = build_debate_set(_ranked(40), [], candidate_count=15, retention_rank=35, excluded={"S03"})
+
+    assert "S03" not in debate.symbols and len(debate.symbols) == 14
+
+
+def test_a_holding_still_in_cooldown_is_a_forced_exit() -> None:
+    debate = build_debate_set(_ranked(40), ["S03"], candidate_count=15, retention_rank=35, excluded={"S03"})
+
+    assert debate.forced_exits == (ForcedExit("S03", "cooldown"),) and "S03" not in debate.symbols

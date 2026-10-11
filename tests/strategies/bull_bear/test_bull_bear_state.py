@@ -20,7 +20,7 @@ def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
 
 def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "data" / "state.json")
-    state = BullBearState(last_completed_review="2026-10-06", abandoned_streak=0, verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}})
+    state = BullBearState(last_completed_review="2026-10-06", abandoned_streak=0, verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, cooldowns={"BBB": 3})
 
     store.save(state)
 
@@ -46,6 +46,8 @@ def test_a_state_from_the_picker_or_the_veto_judge_is_an_empty_state_with_a_warn
         json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "in"}}}),
         json.dumps({"version": STATE_VERSION, "verdicts": ["AAA"]}),
         json.dumps({"version": STATE_VERSION, "abandoned_streak": True}),
+        json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": 0}}),
+        json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": True}}),
     ],
 )
 def test_an_unreadable_or_invalid_file_is_an_empty_state_with_a_warning(tmp_path: Path, content: str, caplog: pytest.LogCaptureFixture) -> None:

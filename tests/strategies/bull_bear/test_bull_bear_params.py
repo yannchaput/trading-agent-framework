@@ -15,6 +15,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert (params.min_weight, params.max_weight, params.cash_buffer, params.rebalance_band) == (0.04, 0.20, 0.02, 0.03)
     assert params.investable == pytest.approx(0.98)
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
+    assert params.reentry_cooldown_reviews == 4
 
 
 @pytest.mark.parametrize(
@@ -33,6 +34,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"min_yahoo_coverage": 0.0}, "min_yahoo_coverage must be in (0, 1]"),
         ({"yahoo_retry_delays": (60.0, -1.0)}, "yahoo_retry_delays"),
         ({"research_tool_budget": 0}, "research_tool_budget must be at least 1"),
+        ({"reentry_cooldown_reviews": -1}, "reentry_cooldown_reviews must be at least 0"),
     ],
 )
 def test_an_invalid_value_is_refused_with_a_reason(overrides: dict, message: str) -> None:
