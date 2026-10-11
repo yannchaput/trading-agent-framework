@@ -84,6 +84,9 @@ def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_
         json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": True}}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "r"}}}]}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06"}]}),
+        json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "maybe", "reason": "r", "date": "2026-10-06"}}}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "veto", "reason": "r", "close": 1.0}}}]}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": ["in"], "reason": "r", "close": 1.0}}}]}),
     ],
 )
 def test_an_unreadable_or_invalid_file_is_an_empty_state_with_a_warning(tmp_path: Path, content: str, caplog: pytest.LogCaptureFixture) -> None:

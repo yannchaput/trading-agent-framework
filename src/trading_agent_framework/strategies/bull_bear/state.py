@@ -26,6 +26,7 @@ logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
 STATE_VERSION = 2
 _PICKER_VERSION = 1  # the picker's and the veto judge's file: a review date and a streak
 _VERDICT_KEYS = {"verdict", "reason", "date"}
+_VERDICTS = {"in", "out"}
 
 
 def state_path(project_root: Path, mode: TradingMode) -> Path:
@@ -50,6 +51,7 @@ def _valid_review(entry: Any) -> bool:
         isinstance(item, dict)
         and set(item) == {"verdict", "reason", "close"}
         and isinstance(item["verdict"], str)
+        and item["verdict"] in _VERDICTS
         and isinstance(item["reason"], str)
         and isinstance(item["close"], int | float)
         and not isinstance(item["close"], bool)
@@ -73,7 +75,10 @@ def _valid(raw: Any) -> bool:
     return (
         _valid_dates(raw)
         and isinstance(verdicts, dict)
-        and all(isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in verdicts.values())
+        and all(
+            isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) and entry["verdict"] in _VERDICTS
+            for entry in verdicts.values()
+        )
         and isinstance(cooldowns, dict)
         and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
         and isinstance(history, list)
