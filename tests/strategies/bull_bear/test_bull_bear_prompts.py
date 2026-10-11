@@ -59,15 +59,17 @@ def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None: 
 
 
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
-    text = prompts.retry_prompt("submit_verdicts", "6 vetoes: veto at most 5 stocks and keep the others")
+    text = prompts.retry_prompt("submit_verdicts", "11 stocks in: put at most 10 in and the others out")
 
-    assert "submit_verdicts" in text and "veto at most 5" in text
+    assert "submit_verdicts" in text and "put at most 10 in" in text
 
 
-def test_the_judge_gives_a_verdict_per_stock_and_a_trend_alone_is_no_reason_to_veto() -> None:
-    assert "keep or veto" in prompts.JUDGE_SYSTEM and "max_vetoes" in prompts.JUDGE_SYSTEM
-    assert "not a reason to veto" in prompts.JUDGE_SYSTEM
-    assert "pick" not in prompts.JUDGE_SYSTEM.lower() and "pick" not in prompts.judge_task(300).lower()
+def test_the_judge_puts_each_stock_in_or_out_under_a_cap_and_a_trend_alone_is_no_reason_for_out() -> None:
+    text = prompts.JUDGE_SYSTEM
+
+    assert "in or out" in text and "max_in" in text
+    assert "not a reason for out by itself" in text and "already reacted to" in text
+    assert "veto" not in text.lower() and "veto" not in prompts.judge_task(300).lower()
 
 
 def test_no_prompt_mentions_forced_exits() -> None:

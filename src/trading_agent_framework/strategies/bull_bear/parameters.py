@@ -17,9 +17,9 @@ _EPS = 1e-9
 
 @dataclass(frozen=True, slots=True)
 class BullBearParams:
-    retention_rank: int = 35  # a holding ranked worse (or unranked) is a forced exit; above debate_size
-    book_size: int = 10  # stocks held after every completed review
-    max_vetoes: int = 5  # most stocks the judge may veto in one review
+    retention_rank: int = 35  # a holding ranked worse (or unranked) is a forced exit; above candidate_count
+    candidate_count: int = 15  # the top ranks the judge rules on every review (plus the holdings ranked up to retention_rank)
+    max_book_size: int = 10  # most stocks the judge may put in; below 5 the rest of the money is parked
     min_weight: float = 0.04  # per-stock weight bounds, fractions of portfolio value
     max_weight: float = 0.20
     cash_buffer: float = 0.02  # never invested (fees, fill drift)
@@ -47,10 +47,9 @@ class BullBearParams:
             time_problem = str(exc)
         problems = {
             "weights, cash_buffer, rebalance_band, min_trade_pct and min_yahoo_coverage must be finite": not all(math.isfinite(value) for value in floats),
-            "book_size and max_vetoes must be at least 1": self.book_size < 1 or self.max_vetoes < 1,
-            "retention_rank must be above debate_size (book_size + max_vetoes)": self.retention_rank <= self.book_size + self.max_vetoes,
-            "book_size x min_weight must fit in 1 - cash_buffer": self.book_size * self.min_weight > investable + _EPS,
-            "book_size x max_weight must reach 1 - cash_buffer (the book is always fully invested)": self.book_size * self.max_weight < investable - _EPS,
+            "candidate_count and max_book_size must be at least 1": self.candidate_count < 1 or self.max_book_size < 1,
+            "retention_rank must be above candidate_count": self.retention_rank <= self.candidate_count,
+            "max_book_size x min_weight must fit in 1 - cash_buffer": self.max_book_size * self.min_weight > investable + _EPS,
             "min_weight must be above 0 and at most max_weight, which is at most 1": not 0 < self.min_weight <= self.max_weight <= 1,
             "min_weight must be above rebalance_band (a new stock below the band would never be bought)": self.min_weight <= self.rebalance_band,
             "cash_buffer must be in [0, 1)": not 0 <= self.cash_buffer < 1,
@@ -74,8 +73,3 @@ class BullBearParams:
     def investable(self) -> float:
         """The share of portfolio value the stock weights sum to: everything but the cash buffer."""
         return 1 - self.cash_buffer
-
-    @property
-    def debate_size(self) -> int:
-        """The top ranks debated: enough for `book_size` stocks to survive `max_vetoes` vetoes."""
-        return self.book_size + self.max_vetoes

@@ -59,7 +59,8 @@ def _bear(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None
 
 
 def _judge(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
-    tools["submit_verdicts"]([{"symbol": s["fact_sheet"]["symbol"], "verdict": "keep", "reason": "bull wins"} for s in context["stocks"]])
+    symbols = [s["fact_sheet"]["symbol"] for s in context["stocks"]]
+    tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if i < 5 else "out", "reason": "bull wins" if i < 5 else "bear wins"} for i, s in enumerate(symbols)])
 
 
 class _Manager:
@@ -101,7 +102,7 @@ def _run(tmp_path: Path, manager: _Manager) -> BullBearStrategy:
         universe=UNIVERSE,
         project_root=tmp_path,
         sector_of=lambda symbol: "Technology",
-        settings=BullBearParams(book_size=5, max_vetoes=1),  # six stocks: debate the top 6, hold 5
+        settings=BullBearParams(candidate_count=6, max_book_size=5),  # six stocks: the judge rules on all six and puts five in
     )
     strategy._agents = cast(AgentManager, manager)
     Strategy.run_backtesting(strategy, start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=source, budget=Decimal(10000), benchmark="SPY", news_source=FakeNewsProvider())

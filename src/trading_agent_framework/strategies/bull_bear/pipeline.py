@@ -1,11 +1,11 @@
-"""One review: data → debate set → researcher (one run per stock) → bull → bear → judge → book → sizing → rebalance.
+"""One review: data → candidates → researcher (one run per stock) → bull → bear → judge → book → sizing → rebalance.
 
-The judge gives a verdict, keep or veto, on every debated stock; code validates (through the `HandoffRecorder`),
-builds the book (the kept holdings, then the kept new names, by rank, up to `book_size`), sizes, remembers
-(`StateStore`) and calls the `Rebalancer`. A debater stage that never yields a valid submission abandons the review:
-no order at all, forced exits included. One stock's failed research only gives it the note "research unavailable".
-Free text from an agent is logged and otherwise ignored. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
-and docs/superpowers/specs/2026-10-11-bull-bear-veto-judge-design.md.
+The judge puts every candidate in or out; code validates (through the `HandoffRecorder`), builds the book from the
+stocks put in (rank order), sizes it, remembers (`StateStore`) and calls the `Rebalancer`. A debater stage that
+never yields a valid submission abandons the review: no order at all, forced exits included. One stock's failed
+research only gives it the note "research unavailable". Free text from an agent is logged and otherwise ignored.
+See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md and
+docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ class ReviewPipeline:
         ranked = rank(rows)
 
         # 2. The debate set, and the holdings code sells without asking the agents.
-        debate = build_debate_set(ranked, holdings, debate_size=params.debate_size, retention_rank=params.retention_rank)
+        debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank)
         symbols = debate.symbols
         record.update(
             ranked=len(ranked),
@@ -168,9 +168,8 @@ class ReviewPipeline:
             f"[bull_bear] {len(ranked)} stocks ranked; debate: {', '.join(f'{s.symbol} (#{s.rank}{", held" if s.held else ""})' for s in debate.stocks)}; "
             f"forced exits: {', '.join(f'{e.symbol} ({e.reason})' for e in debate.forced_exits) or 'none'}"
         )
-        if len(symbols) < params.book_size:
-            raise ReviewAbandoned("data", f"only {len(symbols)} stocks in the debate set, fewer than book_size ({params.book_size})")
-        veto_cap = min(params.max_vetoes, len(symbols) - params.book_size)  # at least book_size stocks always survive
+        if not symbols:
+            raise ReviewAbandoned("data", "no stock to debate")
 
         # 3. Fact sheet.
         sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol)) for stock in debate.stocks}
@@ -209,8 +208,8 @@ class ReviewPipeline:
         for symbol in symbols:
             strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
 
-        # 6. Judge: a verdict, keep or veto, on every debated stock, on merit (no hint of which stocks code would hold).
-        self._recorder.expect_verdicts(symbols, max_vetoes=veto_cap)
+        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held).
+        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size)
         context = {
             "current_datetime": moment,
             "stocks": [
@@ -222,27 +221,26 @@ class ReviewPipeline:
                 }
                 for symbol in symbols
             ],
-            "constraints": {"max_vetoes": veto_cap, "reason_max_chars": params.reason_max_chars},
+            "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
         self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
         verdicts: Verdicts = self._recorder.submission
-        vetoed = verdicts.vetoed
-        vetoes = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "veto")
-        strategy.log_info(f"[judge] vetoes: {vetoes or 'none'}; kept {len(verdicts.verdicts) - len(vetoed)}")
+        outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
+        strategy.log_info(f"[judge] in: {', '.join(verdicts.chosen) or 'none'}; out: {outs or 'none'}")
 
-        # 7. The book: the kept holdings, then the kept new names, by rank, up to book_size.
-        book = build_book(debate, vetoed, params.book_size)
-        strategy.log_info(f"[bull_bear] book: {', '.join(book)}")
+        # 7. The book: every stock the judge put in, in rank order.
+        book = build_book(debate, verdicts.chosen)
+        strategy.log_info(f"[bull_bear] book: {', '.join(book) or 'empty, everything parked'}")
 
-        # 8. Sizing and execution.
+        # 8. Sizing and execution: inverse volatility within the weight bounds; below 5 stocks the rest is parked.
         volatilities = {symbol: debate.stock(symbol).row.volatility for symbol in book}
-        target_weights = capped_inverse_volatility(volatilities, total=params.investable, min_weight=params.min_weight, max_weight=params.max_weight)
+        total = min(params.investable, len(book) * params.max_weight)
+        target_weights = capped_inverse_volatility(volatilities, total=total, min_weight=params.min_weight, max_weight=params.max_weight) if book else {}
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
             verdicts=[asdict(verdict) for verdict in verdicts.verdicts],
-            judge_verdicts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
-            veto_cap=veto_cap,
+            verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
             book=list(book),
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )

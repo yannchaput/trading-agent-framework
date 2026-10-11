@@ -16,7 +16,7 @@ from trading_agent_framework.strategies.bull_bear.parameters import BullBearPara
 
 LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")
-VERDICTS = ("keep", "veto")
+VERDICTS = ("in", "out")
 
 NOTE, BULL, BEAR, VERDICT = "note", "bull", "bear", "verdict"
 _TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", VERDICT: "submit_verdicts"}
@@ -56,12 +56,12 @@ class Verdict:
 
 @dataclass(frozen=True, slots=True)
 class Verdicts:
-    verdicts: tuple[Verdict, ...]  # one per debated stock, in submission order
+    verdicts: tuple[Verdict, ...]  # one per candidate, in submission order
 
     @property
-    def vetoed(self) -> list[str]:
-        """The vetoed symbols, in submission order."""
-        return [verdict.symbol for verdict in self.verdicts if verdict.verdict == "veto"]
+    def chosen(self) -> list[str]:
+        """The symbols the judge put in, in submission order."""
+        return [verdict.symbol for verdict in self.verdicts if verdict.verdict == "in"]
 
 
 # --- validation (pure) --------------------------------------------------------------------------
@@ -145,12 +145,12 @@ def validate_bear_cases(raw: Any, *, expected: Sequence[str], max_chars: int) ->
     ]
 
 
-def validate_verdicts(raw: Any, *, expected: Sequence[str], max_vetoes: int, max_chars: int) -> Verdicts:
-    """One verdict (keep or veto) with a reason per `expected` symbol, and at most `max_vetoes` vetoes."""
+def validate_verdicts(raw: Any, *, expected: Sequence[str], max_in: int, max_chars: int) -> Verdicts:
+    """One verdict (in or out) with a reason per `expected` symbol, and at most `max_in` in."""
     verdicts = tuple(Verdict(symbol, _one_of(item, "verdict", symbol, VERDICTS), _text(item, "reason", symbol, max_chars)) for symbol, item in _covering(raw, expected, "verdicts"))
-    vetoes = sum(1 for verdict in verdicts if verdict.verdict == "veto")
-    if vetoes > max_vetoes:
-        raise HandoffError(f"{vetoes} vetoes: veto at most {max_vetoes} stocks and keep the others")
+    chosen = sum(1 for verdict in verdicts if verdict.verdict == "in")
+    if chosen > max_in:
+        raise HandoffError(f"{chosen} stocks in: put at most {max_in} in and the others out")
     return Verdicts(verdicts)
 
 
@@ -177,8 +177,8 @@ class HandoffRecorder:
     def expect_bear(self, symbols: Sequence[str]) -> None:
         self._arm(BEAR, {"expected": list(symbols)})
 
-    def expect_verdicts(self, symbols: Sequence[str], *, max_vetoes: int) -> None:
-        self._arm(VERDICT, {"expected": list(symbols), "max_vetoes": max_vetoes})
+    def expect_verdicts(self, symbols: Sequence[str], *, max_in: int) -> None:
+        self._arm(VERDICT, {"expected": list(symbols), "max_in": max_in})
 
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
         self._stage, self._context = stage, context
@@ -209,7 +209,7 @@ class HandoffRecorder:
             elif stage == BEAR:
                 value = validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             else:
-                value = validate_verdicts(args[0], expected=context["expected"], max_vetoes=context["max_vetoes"], max_chars=params.reason_max_chars)
+                value = validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_max_chars)
         except HandoffError as exc:
             return self._fail(str(exc))
         self._submission, self._submitted, self.last_error = value, True, None
@@ -239,7 +239,7 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         return recorder.submit(BEAR, cases)
 
     def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
-        """Submit one verdict per stock: objects with symbol, verdict (keep or veto) and one short reason."""
+        """Submit one verdict per stock: objects with symbol, verdict (in or out) and one short reason."""
         return recorder.submit(VERDICT, verdicts)
 
     return {

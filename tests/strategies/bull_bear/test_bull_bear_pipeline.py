@@ -87,12 +87,13 @@ def bear_cases(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> Non
     tools["submit_bear_case"]([{"symbol": s["fact_sheet"]["symbol"], "risk": "low", "concern": "none", "argument": "no red flag"} for s in ctx["stocks"]])
 
 
-def verdicts(vetoed: Collection[str] = ()) -> Script:
-    """The judge keeps every stock but `vetoed`."""
+def verdicts(chosen: Collection[str] | None = None) -> Script:
+    """The judge puts `chosen` in (default: the first 10 stocks it is shown, the best ranked) and the others out."""
 
     def step(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
         symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
-        tools["submit_verdicts"]([{"symbol": s, "verdict": "veto" if s in vetoed else "keep", "reason": "bear wins" if s in vetoed else "bull wins"} for s in symbols])
+        put_in = set(symbols[:10]) if chosen is None else set(chosen)
+        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in put_in else "out", "reason": "bull wins" if s in put_in else "bear wins"} for s in symbols])
 
     return step
 
@@ -168,7 +169,7 @@ def _harness(
 # --- the happy path ---------------------------------------------------------------------------------
 
 
-def test_a_review_debates_the_top_15_and_buys_the_top_10_the_judge_keeps(tmp_path: Path) -> None:
+def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: Path) -> None:
     h = _harness(tmp_path)
 
     outcome = h.run()
@@ -195,7 +196,7 @@ def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_p
 
     bull, bear, judge = (h.agents[name].calls[0] for name in ("bull", "bear", "judge"))
     assert bull["context"]["constraints"] == bear["context"]["constraints"] == {"argument_max_chars": 123}
-    assert judge["context"]["constraints"] == {"max_vetoes": 5, "reason_max_chars": 77}
+    assert judge["context"]["constraints"] == {"max_in": 10, "reason_max_chars": 77}
     assert "123 characters" in bull["task"] and "123 characters" in bear["task"] and "77 characters" in judge["task"]
 
 
@@ -212,8 +213,8 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["notes"] == {"written": 15, "failed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
     assert "picks" not in line and "drops" not in line
-    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "keep", "reason": "bull wins"} and len(line["verdicts"]) == 15
-    assert line["judge_verdicts"] == {"keep": 15} and line["veto_cap"] == 5
+    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins"} and len(line["verdicts"]) == 15
+    assert line["verdict_counts"] == {"in": 10, "out": 5} and "veto_cap" not in line and "judge_verdicts" not in line
     assert line["book"] == UNIVERSE[:10]
     stock_weights = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert list(stock_weights) == UNIVERSE[:10]
@@ -224,7 +225,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
 
 def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_out(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={"S16": 20, "S19": 20, "OLD": 20}, params=BullBearParams(retention_rank=18))
-    h.agents["judge"].script = verdicts(vetoed={"S16"})
+    h.agents["judge"].script = verdicts(UNIVERSE[:10])
 
     outcome = h.run()
 
@@ -234,78 +235,76 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert line["debate_set"][-1] == {"symbol": "S16", "rank": 17, "held": True}
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}, {"symbol": "S19", "reason": "rank 20"}]
     assert "held" not in h.agents["judge"].calls[0]["context"]  # the fact sheet says held; the judge decides on merit
-    assert {"symbol": "S16", "verdict": "veto", "reason": "bear wins"} in line["verdicts"]
+    assert {"symbol": "S16", "verdict": "out", "reason": "bear wins"} in line["verdicts"]
     assert line["book"] == UNIVERSE[:10]
-    assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a vetoed holding is sold
+    assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a holding put out is sold
     assert h.bars.calls == [(UNIVERSE, ["OLD", "S16", "S19"])]
 
 
-def test_a_kept_holding_takes_its_slot_before_better_ranked_new_names(tmp_path: Path) -> None:
+def test_a_holding_put_in_stays_whatever_its_rank_and_gets_no_preferred_slot(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={"S16": 20}, params=BullBearParams(retention_rank=18))
+    h.agents["judge"].script = verdicts([*UNIVERSE[:9], "S16"])
 
     assert h.run().completed
 
     (line,) = h.log_lines()
-    assert line["book"] == ["S16", *UNIVERSE[:9]]
+    assert line["book"] == [*UNIVERSE[:9], "S16"]  # rank order: the holding comes last
     assert not any(order[0] == "S16" for order in h.orders)  # held at 10%, target ~9.8%: inside the band
 
 
-def test_vetoed_stocks_are_replaced_by_the_next_ranked_survivors(tmp_path: Path) -> None:
+def test_the_judges_choice_not_the_rank_decides_the_book(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    h.agents["judge"].script = verdicts(vetoed={"S00", "S03"})
+    h.agents["judge"].script = verdicts({"S03", "S14", "S07", "S11", "S12"})
 
     assert h.run().completed
 
     (line,) = h.log_lines()
-    assert line["book"] == [symbol for symbol in UNIVERSE[:12] if symbol not in {"S00", "S03"}]
-    assert line["judge_verdicts"] == {"keep": 13, "veto": 2}
+    assert line["book"] == ["S03", "S07", "S11", "S12", "S14"]
     assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in line["book"]]
 
 
-def test_the_veto_cap_shrinks_so_that_book_size_stocks_always_survive(tmp_path: Path) -> None:
-    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:12]})
+def test_fewer_than_five_stocks_put_in_leave_the_rest_parked(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts({"S03", "S14"})
 
     assert h.run().completed
 
-    assert h.agents["judge"].calls[0]["context"]["constraints"]["max_vetoes"] == 2
     (line,) = h.log_lines()
-    assert line["veto_cap"] == 2 and len(line["book"]) == 10
+    assert line["book"] == ["S03", "S14"]
+    assert line["targets"] == pytest.approx({"S03": 0.20, "S14": 0.20, "SHV": 0.58})
+    assert any(order[0] == "SHV" and order[1] == "buy" for order in h.orders)
 
 
-def test_a_debate_set_of_exactly_book_size_leaves_the_judge_no_veto(tmp_path: Path) -> None:
-    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
+def test_a_judge_putting_nothing_in_parks_everything(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S00": 20})
+    h.agents["judge"].script = verdicts(set())
 
     outcome = h.run()
 
-    assert outcome.completed
-    assert h.agents["judge"].calls[0]["context"]["constraints"] == {"max_vetoes": 0, "reason_max_chars": 300}
+    assert outcome.completed  # not an abandonment
     (line,) = h.log_lines()
-    assert line["veto_cap"] == 0 and line["book"] == UNIVERSE[:10]
+    assert line["book"] == [] and line["verdict_counts"] == {"out": 15}
+    assert line["targets"] == pytest.approx({"SHV": 0.98})
+    assert ("S00", "sell", 20.0) in h.orders and any(order[0] == "SHV" and order[1] == "buy" for order in h.orders)
 
 
-def test_a_veto_at_cap_zero_is_refused_and_the_retry_keeps_everything(tmp_path: Path) -> None:
-    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
-    h.agents["judge"].overrides = [verdicts(vetoed={"S03"})]
-
-    outcome = h.run()
-
-    assert outcome.completed
-    retry = h.agents["judge"].calls[1]
-    assert retry["force_tool"] == "submit_verdicts" and "1 vetoes: veto at most 0" in retry["task"]
-    (line,) = h.log_lines()
-    assert line["veto_cap"] == 0 and line["judge_verdicts"] == {"keep": 10} and line["book"] == UNIVERSE[:10]
-
-
-def test_a_judge_over_the_veto_cap_is_refused_and_corrects_itself_on_the_retry(tmp_path: Path) -> None:
+def test_a_judge_putting_more_than_max_book_size_in_is_refused_and_corrects_itself_on_the_retry(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    h.agents["judge"].overrides = [verdicts(vetoed=set(UNIVERSE[:6]))]
+    h.agents["judge"].overrides = [verdicts(UNIVERSE[:11])]
 
     outcome = h.run()
 
     assert outcome.completed
     retry = h.agents["judge"].calls[1]
-    assert retry["force_tool"] == "submit_verdicts" and "6 vetoes: veto at most 5" in retry["task"]
+    assert retry["force_tool"] == "submit_verdicts" and "11 stocks in: put at most 10 in" in retry["task"]
     assert h.log_lines()[0]["book"] == UNIVERSE[:10]
+
+
+def test_a_debate_smaller_than_max_book_size_still_completes(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:9]})
+
+    assert h.run().completed
+    assert h.log_lines()[0]["book"] == UNIVERSE[:9]
 
 
 def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_path: Path) -> None:
@@ -321,11 +320,11 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
     assert debated["S03"]["held"] is True
     assert "S04" not in debated
     assert line["forced_exits"] == []
-    assert line["book"][0] == "S03"  # the high-volatility holding is kept first in the book...
+    assert "S03" in line["book"]  # the high-volatility holding the judge put in, kept in the book...
     assert line["targets"]["S03"] == pytest.approx(0.04)  # ...and sized at the minimum weight
 
 
-def test_more_kept_holdings_than_book_size_keep_the_best_ranked_and_sell_the_rest(tmp_path: Path) -> None:
+def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={symbol: 20 for symbol in UNIVERSE[:12]})  # 12 holdings of 20 shares at 50 = 1,000 each
 
     outcome = h.run()
@@ -414,14 +413,14 @@ def test_unusable_data_abandons_the_review_before_any_agent_runs(tmp_path: Path)
     assert (line["stage"], line["error"]) == ("data", "Yahoo covers only 3/20 symbols")
 
 
-def test_a_debate_set_smaller_than_book_size_abandons_the_review(tmp_path: Path) -> None:
-    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:9]})
+def test_no_stock_to_debate_abandons_the_review(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={})
 
     outcome = h.run()
 
     assert not outcome.completed and h.agents["researcher"].calls == []
     (line,) = h.log_lines()
-    assert line["stage"] == "data" and "fewer than book_size (10)" in line["error"]
+    assert line["stage"] == "data" and "no stock to debate" in line["error"]
 
 
 def test_a_broker_error_before_the_rebalance_abandons_at_the_broker_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -454,8 +453,8 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     (line,) = h.log_lines()
     assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0}]
     # The decision that led to those orders is in the same line.
-    assert line["book"] == UNIVERSE[:10] and line["judge_verdicts"] == {"keep": 15}
-    assert len(line["verdicts"]) == 15 and line["veto_cap"] == 5
+    assert line["book"] == UNIVERSE[:10] and line["verdict_counts"] == {"in": 10, "out": 5}
+    assert len(line["verdicts"]) == 15
     stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert sorted(stock_targets) == UNIVERSE[:10] and "SHV" in line["targets"]
     assert sum(stock_targets.values()) == pytest.approx(0.98)
@@ -589,29 +588,29 @@ def test_each_bear_case_is_logged_with_its_risk_concern_and_argument(tmp_path: P
     assert "[bear] S14: low risk (none): no red flag" in caplog.text
 
 
-def test_every_judge_verdict_is_logged_keeps_and_vetoes_alike(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_every_judge_verdict_is_logged_ins_and_outs_alike(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     h = _harness(tmp_path)
-    h.agents["judge"].script = verdicts({"S01"})
+    h.agents["judge"].script = verdicts({"S00", "S14"})
     with caplog.at_level(logging.INFO):
         h.run()
 
-    assert "[judge] S00: keep: bull wins" in caplog.text
-    assert "[judge] S01: veto: bear wins" in caplog.text
-    assert "[judge] S14: keep: bull wins" in caplog.text
+    assert "[judge] S00: in: bull wins" in caplog.text
+    assert "[judge] S01: out: bear wins" in caplog.text
+    assert "[judge] S14: in: bull wins" in caplog.text
 
 
 def test_a_rejected_submission_is_logged_as_a_warning_with_the_reason_and_not_as_recorded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     h = _harness(tmp_path)
-    h.agents["judge"].overrides = [verdicts(vetoed=set(UNIVERSE[:6]))]  # 6 vetoes against a cap of 5: refused, then the retry keeps all
+    h.agents["judge"].overrides = [verdicts(UNIVERSE[:11])]  # 11 in against a cap of 10: refused, then the retry puts the first 10 in
     with caplog.at_level(logging.INFO):
         assert h.run().completed
 
     (rejection,) = [record for record in caplog.records if "rejected" in record.getMessage()]
     assert rejection.levelno == logging.WARNING
-    assert "[judge]" in rejection.getMessage() and "6 vetoes: veto at most 5" in rejection.getMessage()
+    assert "[judge]" in rejection.getMessage() and "11 stocks in: put at most 10 in" in rejection.getMessage()
     # only the accepted retry is logged as recorded: none of the refused submission's verdicts
-    assert "[judge] S00: veto: bear wins" not in caplog.text
-    assert "[judge] S00: keep: bull wins" in caplog.text
+    assert "[judge] S10: in: bull wins" not in caplog.text
+    assert "[judge] S10: out: bear wins" in caplog.text
 
 
 def test_an_agent_that_ends_without_calling_its_submit_tool_is_warned_about_on_each_attempt(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

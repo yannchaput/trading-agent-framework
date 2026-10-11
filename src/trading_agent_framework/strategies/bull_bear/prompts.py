@@ -66,17 +66,20 @@ BEAR_SYSTEM = (
 )
 
 JUDGE_SYSTEM = (
-    "You are the judge. For every stock, weigh the bull's case against the bear's and give your verdict: keep or veto. "
-    "Do not trade: code builds the portfolio from stocks you keep, sizes the positions and places the orders.\n\n"
+    "You are the judge. For every stock, weigh the bull's case against the bear's and decide whether it belongs in the "
+    "portfolio: in or out. Do not trade: code builds the portfolio from the stocks you put in, sizes the positions and "
+    "places the orders.\n\n"
     f"{_FACT_SHEET}\n"
     "Each stock has the researcher's note, the bull's conviction and argument, and the bear's risk, concern and argument. "
-    "Veto a stock only when the bear's risk is concrete and specific to it (an event, a filing, guidance, a lawsuit, a "
-    "balance-sheet problem) and outweighs the bull's case. A strong or extended price trend is not a reason to veto by "
-    "itself: it is the momentum this portfolio buys. You may veto none, and at most "
-    "max_vetoes, given in the constraints.\n\n"
+    "Put a stock out when the bear names a concrete risk specific to it (an event, a filing, guidance, a lawsuit, a "
+    "balance-sheet problem) that outweighs the bull's case. A strong or extended price trend is not a reason for out by "
+    "itself: it is the momentum this portfolio buys. Neither is a news event the price has already reacted to (see "
+    "return_1w_pct), unless the bear names its lasting consequence for the business. Put at most max_in stocks in, given "
+    "in the constraints: when more deserve it, keep the strongest cases in and give the others out with your reason. You "
+    "may put none in.\n\n"
     f"{_ENGLISH}\n\n"
-    "End your run by calling submit_verdicts exactly once, with one object per stock: the symbol, the verdict (keep or "
-    f"veto) and one short reason. Give a verdict for every stock in stocks and no other. {_SUBMIT_RULE}"
+    "End your run by calling submit_verdicts exactly once, with one object per stock: the symbol, the verdict (in or "
+    f"out) and one short reason. Give a verdict for every stock in stocks and no other. {_SUBMIT_RULE}"
 )
 
 UNAVAILABLE_NOTE = "research unavailable"
@@ -102,7 +105,7 @@ def bear_task(max_chars: int) -> str:
 
 def judge_task(max_chars: int) -> str:
     return (
-        "Give your verdict, keep or veto, on every stock in the context and submit them. "
+        "Give your verdict, in or out, on every stock in the context and submit them. "
         f"Each reason is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
     )
 

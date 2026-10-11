@@ -16,14 +16,14 @@ def _ranked(count: int) -> list[RankedRow]:
 
 
 def test_the_top_15_are_debated_in_rank_order() -> None:
-    debate = build_debate_set(_ranked(40), [], debate_size=15, retention_rank=35)
+    debate = build_debate_set(_ranked(40), [], candidate_count=15, retention_rank=35)
 
     assert debate.symbols == [f"S{rank:02d}" for rank in range(1, 16)]
     assert debate.held == [] and debate.forced_exits == ()
 
 
 def test_a_holding_ranked_16_to_35_joins_the_debate_tagged_held() -> None:
-    debate = build_debate_set(_ranked(40), ["S20", "S35", "S03"], debate_size=15, retention_rank=35)
+    debate = build_debate_set(_ranked(40), ["S20", "S35", "S03"], candidate_count=15, retention_rank=35)
 
     assert debate.symbols == [*(f"S{rank:02d}" for rank in range(1, 16)), "S20", "S35"]
     assert debate.held == ["S03", "S20", "S35"]
@@ -32,7 +32,7 @@ def test_a_holding_ranked_16_to_35_joins_the_debate_tagged_held() -> None:
 
 
 def test_a_holding_ranked_below_the_retention_rank_or_unranked_is_forced_out() -> None:
-    debate = build_debate_set(_ranked(40), ["S36", "GONE", "S02"], debate_size=15, retention_rank=35)
+    debate = build_debate_set(_ranked(40), ["S36", "GONE", "S02"], candidate_count=15, retention_rank=35)
 
     assert debate.forced_exits == (ForcedExit("GONE", "unranked"), ForcedExit("S36", "rank 36"))
     assert "S36" not in debate.symbols and "GONE" not in debate.symbols
@@ -40,7 +40,7 @@ def test_a_holding_ranked_below_the_retention_rank_or_unranked_is_forced_out() -
 
 def test_a_holding_inside_the_debated_top_ranks_is_debated_once_and_never_forced_out() -> None:
     """SHV never reaches here: the pipeline passes `Rebalancer.holdings()`, which excludes the parking instrument."""
-    debate = build_debate_set(_ranked(20), ["S05"], debate_size=15, retention_rank=35)
+    debate = build_debate_set(_ranked(20), ["S05"], candidate_count=15, retention_rank=35)
 
     assert debate.symbols.count("S05") == 1 and debate.stock("S05").held
     assert debate.forced_exits == ()
