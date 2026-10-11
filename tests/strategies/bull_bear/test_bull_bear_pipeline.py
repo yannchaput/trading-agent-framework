@@ -170,6 +170,24 @@ def _harness(
     return Harness(pipeline, broker, bars, agents, rebalancer, store, log_path)
 
 
+def assert_no_agent_is_told_what_is_held(h: Harness) -> None:
+    """No context any of the four agents received, at any depth, carries a `held` or a `weight` key."""
+    for name, agent in h.agents.items():
+        assert agent.calls, f"the {name} agent never ran"
+        seen = json.dumps([call["context"] for call in agent.calls], default=str)
+        assert '"held' not in seen and '"weight' not in seen, f"the {name} agent was told what is held"
+
+
+def test_no_agent_is_told_what_is_held_or_at_what_weight(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S03": 20})  # S03 is a holding and a candidate: it is debated like any other
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert {"symbol": "S03", "rank": 4, "held": True} in line["debate_set"]  # the review knows; the agents do not
+    assert_no_agent_is_told_what_is_held(h)
+
+
 # --- the happy path ---------------------------------------------------------------------------------
 
 
@@ -239,7 +257,7 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert [stock["symbol"] for stock in line["debate_set"]] == [*UNIVERSE[:15], "S16"]
     assert line["debate_set"][-1] == {"symbol": "S16", "rank": 17, "held": True}
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}, {"symbol": "S19", "reason": "rank 20"}]
-    assert "held" not in h.agents["judge"].calls[0]["context"]  # the fact sheet says held; the judge decides on merit
+    assert_no_agent_is_told_what_is_held(h)
     assert {"symbol": "S16", "verdict": "out", "reason": "bear wins", "what_changed": None, "previous_verdict": None} in line["verdicts"]
     assert line["book"] == UNIVERSE[:10]
     assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a holding put out is sold
@@ -611,7 +629,7 @@ def test_the_parking_instrument_is_never_forced_out_and_a_position_outside_the_u
     (line,) = h.log_lines()
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}]
     assert "forced_exits" not in h.agents["judge"].calls[0]["context"]  # forced exits never reach the agents
-    assert "held" not in h.agents["judge"].calls[0]["context"]
+    assert_no_agent_is_told_what_is_held(h)
     assert seen == [["OLD"]]
     assert ("OLD", "sell", 20.0) in h.orders
 
