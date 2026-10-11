@@ -103,6 +103,13 @@ def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> N
     assert "previous_verdict" in prompts.JUDGE_SYSTEM and "what_changed" in prompts.JUDGE_SYSTEM
 
 
+def test_a_stronger_candidate_needing_a_place_is_a_new_material_fact_for_the_previous_verdict() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+
+    assert "A stronger candidate that needs a place under max_in is a new, material fact: put the weaker stock out and say so in what_changed." in text
+    assert text.index("change it only for a new, material fact") < text.index("A stronger candidate")
+
+
 def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
     assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM
 
