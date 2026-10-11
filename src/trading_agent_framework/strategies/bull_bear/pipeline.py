@@ -364,8 +364,9 @@ _ERROR_KEY = re.compile(r"""["']error["']\s*:""")
 
 def _failed(result: str) -> bool:
     """Whether a tool result says the call did nothing: an `{"error": ...}` (a tool's own refusal, or the tool-budget
-    middleware's, as JSON or as a Python dict repr), or no result at all (the call was requested but never answered)."""
-    return not result.strip() or _ERROR_KEY.search(result) is not None
+    middleware's, as JSON or as a Python dict repr), an "Error invoking tool ..." message (the tool raised), or no
+    result at all (the call was requested but never answered)."""
+    return not result.strip() or result.lstrip().startswith("Error") or _ERROR_KEY.search(result) is not None
 
 
 def _submission_lines(agent_name: str, submission: Any) -> list[str]:

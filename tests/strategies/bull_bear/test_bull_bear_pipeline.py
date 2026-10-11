@@ -918,12 +918,13 @@ def test_a_refused_or_invalid_remember_lesson_counts_as_a_call_but_is_not_a_less
         ToolCallRecord("remember_lesson", {"text": "python repr"}, "{'error': 'text must be a non-empty string'}"),
         ToolCallRecord("remember_lesson", {"symbol": "CRDO"}, '{"id": "lesson_2", "kind": "lesson", "status": "active"}'),  # no text: not a lesson
         ToolCallRecord("remember_lesson", {"text": "never answered"}, ""),
+        ToolCallRecord("remember_lesson", {"text": "tool raised"}, "Error invoking tool 'remember_lesson' with kwargs {'text': 'tool raised'} with error: boom"),
         ToolCallRecord("submit_verdicts", {}, "{}"),
     ]
 
     assert h.run().completed
 
-    assert h.log_lines()[0]["memory"] == {"calls": 6, "lessons": ["stored"]}
+    assert h.log_lines()[0]["memory"] == {"calls": 7, "lessons": ["stored"]}
 
 
 def test_an_abandoned_judge_stage_still_logs_the_memory_calls_it_made(tmp_path: Path) -> None:
