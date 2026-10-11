@@ -34,9 +34,37 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "data" / "state.json").read_text())["version"] == STATE_VERSION
 
 
-def test_a_state_from_the_picker_or_the_veto_judge_is_an_empty_state_with_a_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_state_from_the_picker_or_the_veto_judge_keeps_its_review_date_and_streak(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     path = tmp_path / "state.json"
     path.write_text(json.dumps({"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": 1, "last_book": [{"symbol": "AAA", "reason": "won", "date": "2026-10-06"}]}))
+
+    with caplog.at_level(logging.WARNING):
+        state = StateStore(path).load()
+
+    assert state == BullBearState(last_completed_review="2026-10-06", abandoned_streak=1)  # a completed Tuesday is not reviewed again
+    assert caplog.text == ""
+
+
+def test_a_version_1_state_without_a_review_date_keeps_its_streak(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 1, "last_completed_review": None, "abandoned_streak": 2}))
+
+    assert StateStore(path).load() == BullBearState(abandoned_streak=2)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"version": 1, "last_completed_review": 20261006, "abandoned_streak": 0},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": -1},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": True},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": "1"},
+        {"version": 3, "last_completed_review": "2026-10-06", "abandoned_streak": 1},
+    ],
+)
+def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_warning(tmp_path: Path, content: dict[str, object], caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(content))
 
     with caplog.at_level(logging.WARNING):
         assert StateStore(path).load() == BullBearState()

@@ -3,9 +3,9 @@
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
 restart), the abandoned-review streak, the judge's latest verdict on every stock it judged and the re-entry
 cooldowns (the stocks the judge sold, and the completed reviews each stays out of the candidates), in one small JSON
-file per mode, written atomically. A missing or invalid file, or one from an older version (the picker, the veto
-judge), is an empty state. `ReviewLog` appends one JSON line per review to the run directory. Neither ever raises on an I/O problem:
-bookkeeping must not stop a review.
+file per mode, written atomically. A missing or invalid file is an empty state; a version-1 file (the picker, the
+veto judge) keeps its review date and streak and nothing else. `ReviewLog` appends one JSON line per review to the
+run directory. Neither ever raises on an I/O problem: bookkeeping must not stop a review.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from trading_agent_framework.utils.log import ColorLogger
 logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
 
 STATE_VERSION = 2
+_PICKER_VERSION = 1  # the picker's and the veto judge's file: a review date and a streak
 _VERDICT_KEYS = {"verdict", "reason", "date"}
 
 
@@ -56,19 +57,21 @@ def _valid_review(entry: Any) -> bool:
     )
 
 
+def _valid_dates(raw: dict[str, Any]) -> bool:
+    """The review date (a string or None) and the abandoned streak (a non-negative integer) every version carries."""
+    last = raw.get("last_completed_review")
+    streak = raw.get("abandoned_streak", 0)
+    return (last is None or isinstance(last, str)) and isinstance(streak, int) and not isinstance(streak, bool) and streak >= 0
+
+
 def _valid(raw: Any) -> bool:
     if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return False
-    last = raw.get("last_completed_review")
-    streak = raw.get("abandoned_streak", 0)
     verdicts = raw.get("verdicts", {})
     cooldowns = raw.get("cooldowns", {})
     history = raw.get("history", [])
     return (
-        (last is None or isinstance(last, str))
-        and isinstance(streak, int)
-        and not isinstance(streak, bool)
-        and streak >= 0
+        _valid_dates(raw)
         and isinstance(verdicts, dict)
         and all(isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in verdicts.values())
         and isinstance(cooldowns, dict)
@@ -91,6 +94,9 @@ class StateStore:
         except (OSError, ValueError) as exc:
             logger.log_warning(f"state file {self._path} is unreadable, starting from an empty state: {exc}")
             return BullBearState()
+        if isinstance(raw, dict) and raw.get("version") == _PICKER_VERSION and _valid_dates(raw):
+            # The picker's file: nothing else of it applies, but a completed Tuesday is not reviewed again after the upgrade.
+            return BullBearState(last_completed_review=raw.get("last_completed_review"), abandoned_streak=raw.get("abandoned_streak", 0))
         if not _valid(raw):
             logger.log_warning(f"state file {self._path} is not a valid state, starting from an empty state")
             return BullBearState()

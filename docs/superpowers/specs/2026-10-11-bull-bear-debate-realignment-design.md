@@ -155,7 +155,8 @@ forced retry applies; no valid submission after it abandons the review with no o
 - `last_completed_review`, `abandoned_streak` (unchanged); `verdicts` (per symbol: latest `verdict`, `reason`,
   `date`); `cooldowns` (symbol to completed reviews left); `history` (the last `feedback_reviews` reviews: date and
   each candidate's verdict). `last_book` goes.
-- `STATE_VERSION` bumps; an older file (picker or veto judge) loads as an empty state. Backtests wipe it in
+- `STATE_VERSION` bumps; an older file (picker or veto judge) keeps its `last_completed_review` and
+  `abandoned_streak` and loads as an empty state otherwise (a completed Tuesday is not reviewed again). Backtests wipe it in
   `initialize` (unchanged); paper/live start without previous verdicts.
 - An abandoned review changes nothing (no verdict stored, no cooldown counted down; bill_ackman's rule), except at
   the execution stage, where the judge has decided and orders may be out: its verdicts and the cooldown of each sell
@@ -204,7 +205,7 @@ dashboard does not). `settings.json` carries `research_news` through the paramet
   `what_changed` on a flip); the book from `in` verdicts; sizing under 5 names and with none; the cooldown (starts
   on a sell, counts completed reviews only, removes the stock from the candidates); the feedback block reads no
   price after `clock.now()`; `research_news=False` (no news tool, no provider check); parameters; state loading an
-  older file; pipeline tests rewritten for `in`/`out` (the book and veto tests go).
+  older file (keeps the date and the streak); pipeline tests rewritten for `in`/`out` (the book and veto tests go).
 
 Manual, reported in the merge: the screen-record gate above, `scripts/tests/smoke_quality_screen.py`, and `B`.
 
