@@ -11,6 +11,7 @@ docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 from __future__ import annotations
 
 import math
+import re
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -231,7 +232,11 @@ class ReviewPipeline:
             "recent_verdicts": recent,
             "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
-        judge_calls = self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget)
+        judge_calls: list[ToolCallRecord] = []
+        try:
+            self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget, calls_out=judge_calls)
+        finally:
+            record["memory"] = _memory_record(judge_calls)  # lessons may be stored even when the stage then abandons the review
         verdicts: Verdicts = self._recorder.submission
         outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
         strategy.log_info(f"[judge] in: {', '.join(verdicts.chosen) or 'none'}; out: {outs or 'none'}")
@@ -254,7 +259,6 @@ class ReviewPipeline:
             book=list(book),
             cooldowns_started=sold,
             recent_verdicts=recent,
-            memory=_memory_record(judge_calls),
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -280,20 +284,20 @@ class ReviewPipeline:
 
     # --- helpers -----------------------------------------------------------------------------------
 
-    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> list[ToolCallRecord]:
+    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None, calls_out: list[ToolCallRecord] | None = None) -> None:
         """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
 
-        Returns the tool calls of the run that submitted.
+        When `calls_out` is given, the tool calls of every attempt (failed, rejected or submitting) are appended to it.
         """
         agent = self._agents[agent_name]
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
         for _ in range(2):
             self._recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
-            calls: list[ToolCallRecord] = []
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget)
-                calls = result.tool_calls
+                if calls_out is not None:
+                    calls_out.extend(result.tool_calls)
                 self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
@@ -303,7 +307,7 @@ class ReviewPipeline:
             if self._recorder.submitted:
                 for line in _submission_lines(agent_name, self._recorder.submission):
                     self._strategy.log_info(line)
-                return calls
+                return
             if self._recorder.last_error:
                 self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}")
             elif not error:  # a failed run was already logged as an error above
@@ -317,9 +321,19 @@ _MEMORY_TOOLS = ("search_memory", "remember_lesson")
 
 
 def _memory_record(calls: Sequence[ToolCallRecord]) -> dict[str, Any]:
-    """The judge's memory use in one review: how many memory calls, and the text of each lesson it recorded."""
+    """The judge's memory use in one review: how many memory calls it made (refused ones too), and the text of each lesson that was stored."""
     used = [call for call in calls if call.name in _MEMORY_TOOLS]
-    return {"calls": len(used), "lessons": [str(call.args.get("text", "")) for call in used if call.name == "remember_lesson"]}
+    lessons = [call.args["text"] for call in used if call.name == "remember_lesson" and isinstance(call.args.get("text"), str) and not _failed(call.result)]
+    return {"calls": len(used), "lessons": lessons}
+
+
+_ERROR_KEY = re.compile(r"""["']error["']\s*:""")
+
+
+def _failed(result: str) -> bool:
+    """Whether a tool result says the call did nothing: an `{"error": ...}` (a tool's own refusal, or the tool-budget
+    middleware's, as JSON or as a Python dict repr), or no result at all (the call was requested but never answered)."""
+    return not result.strip() or _ERROR_KEY.search(result) is not None
 
 
 def _submission_lines(agent_name: str, submission: Any) -> list[str]:

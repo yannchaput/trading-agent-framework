@@ -68,12 +68,13 @@ class FakeAgent:
         self.calls: list[dict[str, Any]] = []
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
         self.tool_calls: list[ToolCallRecord] = []
+        self.attempt_tool_calls: list[list[ToolCallRecord]] = []  # the next runs' tool calls, one list per run, before `tool_calls`
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=self.tool_calls)
+        return AgentRunResult(output="done", tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls)
 
 
 def notes(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
@@ -762,3 +763,62 @@ def test_the_judge_runs_with_its_memory_budget_and_its_lessons_are_logged(tmp_pa
 
     assert h.agents["judge"].calls[0]["tool_budget"] == 4
     assert h.log_lines()[0]["memory"] == {"calls": 2, "lessons": ["out on a shelf filing alone was wrong"]}
+
+
+def test_lessons_from_a_rejected_first_attempt_and_from_the_retry_are_both_logged(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].overrides = [verdicts(UNIVERSE[:11])]  # 11 in against a cap of 10: refused, then the retry submits
+    h.agents["judge"].attempt_tool_calls = [
+        [ToolCallRecord("remember_lesson", {"text": "first lesson"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}'), ToolCallRecord("submit_verdicts", {}, '{"error": "too many in"}')],
+        [
+            ToolCallRecord("search_memory", {"query": "S03"}, "{}"),
+            ToolCallRecord("remember_lesson", {"text": "second lesson"}, '{"id": "lesson_2", "kind": "lesson", "status": "active"}'),
+            ToolCallRecord("submit_verdicts", {}, "{}"),
+        ],
+    ]
+
+    assert h.run().completed
+
+    assert len(h.agents["judge"].calls) == 2
+    assert h.log_lines()[0]["memory"] == {"calls": 3, "lessons": ["first lesson", "second lesson"]}
+
+
+def test_a_refused_or_invalid_remember_lesson_counts_as_a_call_but_is_not_a_lesson(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].tool_calls = [
+        ToolCallRecord("remember_lesson", {"text": "stored"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}'),
+        ToolCallRecord("remember_lesson", {"text": "over the budget"}, '{"error": "tool budget of 6 calls spent; remember_lesson was not run. Finish now: call submit_verdicts."}'),
+        ToolCallRecord("remember_lesson", {"text": ""}, '{"error": "text must be a non-empty string"}'),
+        ToolCallRecord("remember_lesson", {"text": "python repr"}, "{'error': 'text must be a non-empty string'}"),
+        ToolCallRecord("remember_lesson", {"symbol": "CRDO"}, '{"id": "lesson_2", "kind": "lesson", "status": "active"}'),  # no text: not a lesson
+        ToolCallRecord("remember_lesson", {"text": "never answered"}, ""),
+        ToolCallRecord("submit_verdicts", {}, "{}"),
+    ]
+
+    assert h.run().completed
+
+    assert h.log_lines()[0]["memory"] == {"calls": 6, "lessons": ["stored"]}
+
+
+def test_an_abandoned_judge_stage_still_logs_the_memory_calls_it_made(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = does_nothing
+    h.agents["judge"].attempt_tool_calls = [
+        [ToolCallRecord("remember_lesson", {"text": "kept before the failure"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}')],
+        [ToolCallRecord("search_memory", {"query": "S00"}, "{}")],
+    ]
+
+    outcome = h.run()
+
+    assert not outcome.completed
+    (line,) = h.log_lines()
+    assert line["abandoned"] is True and line["stage"] == "judge"
+    assert line["memory"] == {"calls": 2, "lessons": ["kept before the failure"]}
+
+
+def test_a_judge_that_used_no_memory_tool_logs_an_empty_record(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+
+    assert h.run().completed
+
+    assert h.log_lines()[0]["memory"] == {"calls": 0, "lessons": []}
