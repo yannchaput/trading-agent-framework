@@ -100,3 +100,7 @@ def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> N
 
 def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
     assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM
+
+
+def test_the_judge_is_told_about_its_memory_tools() -> None:
+    assert "search_memory" in prompts.JUDGE_SYSTEM and "remember_lesson" in prompts.JUDGE_SYSTEM

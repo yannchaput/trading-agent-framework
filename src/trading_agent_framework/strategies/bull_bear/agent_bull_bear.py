@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
 
 _RESEARCH_TOOLS = {"search_news", "get_income_statement", "get_balance_sheet"}
+_JUDGE_MEMORY_TOOLS = {"search_memory", "remember_lesson"}
 
 
 class BullBearStrategy(Strategy):
@@ -92,14 +93,17 @@ class BullBearStrategy(Strategy):
             submit = submit_tools(recorder)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
             from trading_agent_framework.agents.tools.news import news_tools
+            from trading_agent_framework.memory.tools import memory_tools
 
             temperature = self.settings.agent_temperature
             research = only([*news_tools(self), *fundamentals_tools(self)], _RESEARCH_TOOLS)
             self.agents.create(name="researcher", system_prompt=RESEARCHER_SYSTEM, tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
-            # The bull, the bear and the judge argue from the same evidence pack: no research tool, only their submit tool.
+            # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature)
             self.agents.create(name="bear", system_prompt=BEAR_SYSTEM, tools=[submit["submit_bear_case"]], temperature=temperature)
-            self.agents.create(name="judge", system_prompt=JUDGE_SYSTEM, tools=[submit["submit_verdicts"]], temperature=temperature)
+            # The judge also keeps lessons between reviews (`strategy.memory`, wiped at the start of every backtest).
+            lessons = only(memory_tools(self.memory), _JUDGE_MEMORY_TOOLS)
+            self.agents.create(name="judge", system_prompt=JUDGE_SYSTEM, tools=[*lessons, submit["submit_verdicts"]], temperature=temperature, exempt_tools=["submit_verdicts"])
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc

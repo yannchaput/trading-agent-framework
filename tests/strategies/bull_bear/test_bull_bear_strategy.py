@@ -93,16 +93,16 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
         "researcher": {"search_news", "get_income_statement", "get_balance_sheet", "submit_note"},
         "bull": {"submit_bull_case"},
         "bear": {"submit_bear_case"},
-        "judge": {"submit_verdicts"},
+        "judge": {"submit_verdicts", "search_memory", "remember_lesson"},
     }
 
 
-def test_only_the_researcher_has_a_budget_exempt_tool_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
+def test_the_researcher_and_the_judge_end_with_a_budget_exempt_submit_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(agent_temperature=0.1))
 
     strategy.initialize()
 
-    assert {created["name"]: created.get("exempt_tools") for created in agents.created} == {"researcher": ["submit_note"], "bull": None, "bear": None, "judge": None}
+    assert {created["name"]: created.get("exempt_tools") for created in agents.created} == {"researcher": ["submit_note"], "bull": None, "bear": None, "judge": ["submit_verdicts"]}
     assert {created["temperature"] for created in agents.created} == {0.1}
 
 

@@ -18,7 +18,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldowns
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
@@ -231,7 +231,7 @@ class ReviewPipeline:
             "recent_verdicts": recent,
             "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
-        self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
+        judge_calls = self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget)
         verdicts: Verdicts = self._recorder.submission
         outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
         strategy.log_info(f"[judge] in: {', '.join(verdicts.chosen) or 'none'}; out: {outs or 'none'}")
@@ -254,6 +254,7 @@ class ReviewPipeline:
             book=list(book),
             cooldowns_started=sold,
             recent_verdicts=recent,
+            memory=_memory_record(judge_calls),
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -279,15 +280,20 @@ class ReviewPipeline:
 
     # --- helpers -----------------------------------------------------------------------------------
 
-    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> None:
-        """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon."""
+    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> list[ToolCallRecord]:
+        """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
+
+        Returns the tool calls of the run that submitted.
+        """
         agent = self._agents[agent_name]
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
         for _ in range(2):
             self._recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
+            calls: list[ToolCallRecord] = []
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget)
+                calls = result.tool_calls
                 self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
@@ -297,7 +303,7 @@ class ReviewPipeline:
             if self._recorder.submitted:
                 for line in _submission_lines(agent_name, self._recorder.submission):
                     self._strategy.log_info(line)
-                return
+                return calls
             if self._recorder.last_error:
                 self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}")
             elif not error:  # a failed run was already logged as an error above
@@ -305,6 +311,15 @@ class ReviewPipeline:
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(tool, error), tool
         raise ReviewAbandoned(agent_name, error)
+
+
+_MEMORY_TOOLS = ("search_memory", "remember_lesson")
+
+
+def _memory_record(calls: Sequence[ToolCallRecord]) -> dict[str, Any]:
+    """The judge's memory use in one review: how many memory calls, and the text of each lesson it recorded."""
+    used = [call for call in calls if call.name in _MEMORY_TOOLS]
+    return {"calls": len(used), "lessons": [str(call.args.get("text", "")) for call in used if call.name == "remember_lesson"]}
 
 
 def _submission_lines(agent_name: str, submission: Any) -> list[str]:

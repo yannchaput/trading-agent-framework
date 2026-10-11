@@ -27,6 +27,7 @@ class BullBearParams:
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes
     research_tool_budget: int = 3  # tool calls per researcher run; submit_note is exempt
+    judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
     note_max_chars: int = 500
     argument_max_chars: int = 300
     reason_max_chars: int = 300
@@ -59,6 +60,7 @@ class BullBearParams:
             "min_trade_pct must be in [0, 1)": not 0 <= self.min_trade_pct < 1,
             "parking_symbol must not be blank": not self.parking_symbol.strip(),
             "research_tool_budget must be at least 1": self.research_tool_budget < 1,
+            "judge_memory_budget must be at least 0": self.judge_memory_budget < 0,
             "note_max_chars, argument_max_chars and reason_max_chars must be at least 1": min(self.note_max_chars, self.argument_max_chars, self.reason_max_chars) < 1,
             "reentry_cooldown_reviews must be at least 0": self.reentry_cooldown_reviews < 0,
             "feedback_reviews must be at least 1": self.feedback_reviews < 1,

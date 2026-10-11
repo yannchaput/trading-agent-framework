@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -67,12 +67,13 @@ class FakeAgent:
         self.overrides: list[Callable[..., Any]] = []
         self.calls: list[dict[str, Any]] = []
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
+        self.tool_calls: list[ToolCallRecord] = []
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=[])
+        return AgentRunResult(output="done", tool_calls=self.tool_calls)
 
 
 def notes(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
@@ -747,3 +748,17 @@ def test_a_completed_review_stores_each_verdict_with_the_close_it_was_made_at(tm
     assert [review["date"] for review in history] == ["2026-09-29", "2026-10-06"]  # trimmed to feedback_reviews
     assert history[-1]["verdicts"]["S00"] == {"verdict": "in", "reason": "bull wins", "close": series["S00"].closes[-1]}
     assert history[-1]["verdicts"]["S14"]["verdict"] == "out"
+
+
+def test_the_judge_runs_with_its_memory_budget_and_its_lessons_are_logged(tmp_path: Path) -> None:
+    h = _harness(tmp_path, params=BullBearParams(judge_memory_budget=4))
+    h.agents["judge"].tool_calls = [
+        ToolCallRecord("search_memory", {"query": "S03"}, "{}"),
+        ToolCallRecord("remember_lesson", {"text": "out on a shelf filing alone was wrong", "symbol": "CRDO"}, "{}"),
+        ToolCallRecord("submit_verdicts", {}, "{}"),
+    ]
+
+    assert h.run().completed
+
+    assert h.agents["judge"].calls[0]["tool_budget"] == 4
+    assert h.log_lines()[0]["memory"] == {"calls": 2, "lessons": ["out on a shelf filing alone was wrong"]}
