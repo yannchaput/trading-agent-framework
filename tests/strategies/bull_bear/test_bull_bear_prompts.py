@@ -73,3 +73,20 @@ def test_the_judge_gives_a_verdict_per_stock_and_a_trend_alone_is_no_reason_to_v
 def test_no_prompt_mentions_forced_exits() -> None:
     for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM, prompts.bull_task(300), prompts.bear_task(300), prompts.judge_task(300)):
         assert "forced" not in text.lower()
+
+
+def test_no_prompt_explains_held_or_weight() -> None:
+    for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM):
+        assert "held" not in text and "weight_pct" not in text
+
+
+def test_the_fact_sheet_explains_the_one_week_return() -> None:
+    assert "return_1w_pct" in prompts.BULL_SYSTEM and "return_1w_pct" in prompts.BEAR_SYSTEM
+
+
+def test_the_researcher_reads_the_prior_year_and_is_not_asked_for_a_trend_it_cannot_see() -> None:
+    assert "prior_year" in prompts.RESEARCHER_SYSTEM and "trend of revenue" not in prompts.RESEARCHER_SYSTEM
+
+
+def test_the_bear_may_not_rate_news_the_price_already_absorbed_high_by_itself() -> None:
+    assert "already reacted to" in prompts.BEAR_SYSTEM and "lasting consequence" in prompts.BEAR_SYSTEM

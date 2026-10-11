@@ -173,8 +173,7 @@ class ReviewPipeline:
         veto_cap = min(params.max_vetoes, len(symbols) - params.book_size)  # at least book_size stocks always survive
 
         # 3. Fact sheet.
-        weights = self._rebalancer.current_weights()
-        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), weight=weights.get(stock.symbol, 0.0)) for stock in debate.stocks}
+        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol)) for stock in debate.stocks}
 
         # 4. Researcher: one short run per stock, so one failure costs one note, not the review.
         notes: dict[str, str] = {}
