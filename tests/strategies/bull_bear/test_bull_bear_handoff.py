@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, Choice, HandoffRecorder, Note, Picks, submit_tools
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, Choice, HandoffRecorder, Note, Picks, Verdict, submit_tools
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
@@ -25,6 +25,10 @@ def _bear(symbols: list[str]) -> list[dict[str, Any]]:
 
 def _choices(symbols: list[str]) -> list[dict[str, Any]]:
     return [{"symbol": s, "reason": "won the debate"} for s in symbols]
+
+
+def _verdicts(keep: list[str], veto: list[str] | None = None) -> list[dict[str, Any]]:
+    return [{"symbol": s, "verdict": "keep", "reason": "bull wins"} for s in keep] + [{"symbol": s, "verdict": "veto", "reason": "bear wins"} for s in veto or []]
 
 
 # --- note ---------------------------------------------------------------------------------------
@@ -136,6 +140,60 @@ def test_bad_picks_are_refused(picks: list[dict[str, Any]], drops: list[dict[str
     recorder.expect_picks(DEBATE, held=["FFF"])
 
     assert message in tools["submit_picks"](picks, drops)["error"]
+
+
+# --- verdicts -----------------------------------------------------------------------------------
+
+
+def test_a_verdict_for_every_stock_is_recorded_with_its_vetoes() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_vetoes=2)
+
+    result = tools["submit_verdicts"](_verdicts(["AAA", "BBB", "CCC", "DDD"], ["EEE", "FFF"]))
+
+    assert result == {"status": "recorded"}
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "keep", "bull wins")
+    assert recorder.submission.vetoed == ["EEE", "FFF"]
+
+
+def test_keeping_every_stock_is_valid_even_with_no_veto_allowed() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_vetoes=0)
+
+    assert tools["submit_verdicts"](_verdicts(DEBATE)) == {"status": "recorded"}
+    assert recorder.submission.vetoed == []
+
+
+def test_verdicts_and_symbols_are_normalised_like_the_debaters_cases() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_vetoes=1)
+
+    raw = [{"symbol": " aaa ", "verdict": "Veto ", "reason": "  lawsuit filed  "}, *_verdicts(DEBATE[1:])]
+
+    assert tools["submit_verdicts"](raw) == {"status": "recorded"}
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "veto", "lawsuit filed")
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "message"),
+    [
+        ({"AAA": "keep"}, "verdicts must be a list of objects"),
+        (_verdicts(DEBATE[:5]), "no case for FFF"),
+        (_verdicts([*DEBATE, "ZZZ"]), "ZZZ is not in the debate"),
+        (_verdicts([*DEBATE, "AAA"]), "AAA appears twice"),
+        ([{"symbol": "AAA", "verdict": "sell", "reason": "x"}, *_verdicts(DEBATE[1:])], "the verdict for AAA must be one of keep, veto"),
+        ([{"symbol": "AAA", "verdict": "keep", "reason": " "}, *_verdicts(DEBATE[1:])], "AAA has no reason"),
+        ([{"symbol": "AAA", "verdict": "keep", "reason": "x" * 301}, *_verdicts(DEBATE[1:])], "the reason for AAA is 301 characters"),
+        (_verdicts(DEBATE[:4], DEBATE[4:]), "2 vetoes: veto at most 1 stocks and keep the others"),
+    ],
+)
+def test_bad_verdicts_are_refused(verdicts: Any, message: str) -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_vetoes=1)
+
+    result = tools["submit_verdicts"](verdicts)
+
+    assert message in result["error"] and not recorder.submitted
 
 
 # --- the recorder -------------------------------------------------------------------------------

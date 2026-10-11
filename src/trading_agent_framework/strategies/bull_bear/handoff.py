@@ -16,9 +16,10 @@ from trading_agent_framework.strategies.bull_bear.parameters import BullBearPara
 
 LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")
+VERDICTS = ("keep", "veto")
 
-NOTE, BULL, BEAR, PICKS = "note", "bull", "bear", "picks"
-_TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", PICKS: "submit_picks"}
+NOTE, BULL, BEAR, PICKS, VERDICT = "note", "bull", "bear", "picks", "verdict"
+_TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", PICKS: "submit_picks", VERDICT: "submit_verdicts"}
 
 
 class HandoffError(ValueError):
@@ -56,6 +57,23 @@ class Choice:
 class Picks:
     picks: tuple[Choice, ...]  # in the judge's order: the buy order
     drops: tuple[Choice, ...]  # the held debate stocks not picked
+
+
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    symbol: str
+    verdict: str  # one of VERDICTS
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class Verdicts:
+    verdicts: tuple[Verdict, ...]  # one per debated stock, in submission order
+
+    @property
+    def vetoed(self) -> list[str]:
+        """The vetoed symbols, in submission order."""
+        return [verdict.symbol for verdict in self.verdicts if verdict.verdict == "veto"]
 
 
 # --- validation (pure) --------------------------------------------------------------------------
@@ -97,9 +115,9 @@ def _one_of(item: Mapping[str, Any], key: str, symbol: str, allowed: Sequence[st
     return choice
 
 
-def _covering(raw: Any, expected: Sequence[str]) -> list[tuple[str, Mapping[str, Any]]]:
+def _covering(raw: Any, expected: Sequence[str], what: str = "cases") -> list[tuple[str, Mapping[str, Any]]]:
     """(symbol, item) for exactly one item per symbol in `expected`, in submission order."""
-    items = _items(raw, "cases")
+    items = _items(raw, what)
     wanted = set(expected)
     seen: set[str] = set()
     covered = []
@@ -173,6 +191,15 @@ def validate_picks(picks_raw: Any, drops_raw: Any, *, allowed: Sequence[str], he
     return Picks(picks=tuple(picks), drops=tuple(drops))
 
 
+def validate_verdicts(raw: Any, *, expected: Sequence[str], max_vetoes: int, max_chars: int) -> Verdicts:
+    """One verdict (keep or veto) with a reason per `expected` symbol, and at most `max_vetoes` vetoes."""
+    verdicts = tuple(Verdict(symbol, _one_of(item, "verdict", symbol, VERDICTS), _text(item, "reason", symbol, max_chars)) for symbol, item in _covering(raw, expected, "verdicts"))
+    vetoes = sum(1 for verdict in verdicts if verdict.verdict == "veto")
+    if vetoes > max_vetoes:
+        raise HandoffError(f"{vetoes} vetoes: veto at most {max_vetoes} stocks and keep the others")
+    return Verdicts(verdicts)
+
+
 # --- the recorder ---------------------------------------------------------------------------------
 
 
@@ -199,6 +226,9 @@ class HandoffRecorder:
     def expect_picks(self, allowed: Sequence[str], held: Sequence[str]) -> None:
         self._arm(PICKS, {"allowed": list(allowed), "held": list(held)})
 
+    def expect_verdicts(self, symbols: Sequence[str], *, max_vetoes: int) -> None:
+        self._arm(VERDICT, {"expected": list(symbols), "max_vetoes": max_vetoes})
+
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
         self._stage, self._context = stage, context
         self._submission, self._submitted, self.last_error = None, False, None
@@ -210,7 +240,7 @@ class HandoffRecorder:
 
     @property
     def submission(self) -> Any:
-        """The armed stage's valid submission (`Note`, `list[BullCase]`, `list[BearCase]` or `Picks`), else None."""
+        """The armed stage's valid submission (`Note`, `list[BullCase]`, `list[BearCase]`, `Picks` or `Verdicts`), else None."""
         return self._submission
 
     def submit(self, stage: str, *args: Any) -> dict[str, Any]:
@@ -227,7 +257,7 @@ class HandoffRecorder:
                 value = validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             elif stage == BEAR:
                 value = validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
-            else:
+            elif stage == PICKS:
                 value = validate_picks(
                     args[0],
                     args[1],
@@ -237,6 +267,8 @@ class HandoffRecorder:
                     max_picks=params.max_picks,
                     max_chars=params.reason_max_chars,
                 )
+            else:
+                value = validate_verdicts(args[0], expected=context["expected"], max_vetoes=context["max_vetoes"], max_chars=params.reason_max_chars)
         except HandoffError as exc:
             return self._fail(str(exc))
         self._submission, self._submitted, self.last_error = value, True, None
@@ -251,7 +283,7 @@ class HandoffRecorder:
 
 
 def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str, Any]]]:
-    """The four submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""
+    """The submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""
 
     def submit_note(symbol: str, note: str) -> dict[str, Any]:
         """Submit your note on the stock: its symbol and the dated facts you found (no opinion)."""
@@ -269,4 +301,14 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         """Submit the stocks that win the debate (objects with symbol and reason) and, for each held stock you do not pick, a drop (symbol and reason)."""
         return recorder.submit(PICKS, picks, drops)
 
-    return {"submit_note": submit_note, "submit_bull_case": submit_bull_case, "submit_bear_case": submit_bear_case, "submit_picks": submit_picks}
+    def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
+        """Submit one verdict per stock: objects with symbol, verdict (keep or veto) and one short reason."""
+        return recorder.submit(VERDICT, verdicts)
+
+    return {
+        "submit_note": submit_note,
+        "submit_bull_case": submit_bull_case,
+        "submit_bear_case": submit_bear_case,
+        "submit_picks": submit_picks,
+        "submit_verdicts": submit_verdicts,
+    }
