@@ -20,12 +20,21 @@ def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
 
 def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "data" / "state.json")
-    state = BullBearState(last_completed_review="2026-10-06", abandoned_streak=0, last_picks=[{"symbol": "AAA", "reason": "won", "date": "2026-10-06"}])
+    state = BullBearState(last_completed_review="2026-10-06", abandoned_streak=0, last_book=[{"symbol": "AAA", "reason": "bull wins", "date": "2026-10-06"}])
 
     store.save(state)
 
     assert store.load() == state
     assert json.loads((tmp_path / "data" / "state.json").read_text())["version"] == STATE_VERSION
+
+
+def test_a_state_saved_before_the_veto_judge_loads_without_its_last_picks(tmp_path: Path) -> None:
+    """A paper/live file from the picker keeps its date and streak: a completed Tuesday is not reviewed again."""
+    path = tmp_path / "state.json"
+    old = {"version": STATE_VERSION, "last_completed_review": "2026-10-06", "abandoned_streak": 1, "last_picks": [{"symbol": "AAA", "reason": "won", "date": "2026-10-06"}]}
+    path.write_text(json.dumps(old))
+
+    assert StateStore(path).load() == BullBearState(last_completed_review="2026-10-06", abandoned_streak=1)
 
 
 @pytest.mark.parametrize(
@@ -34,7 +43,7 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
         "not json",
         json.dumps({"version": 99, "abandoned_streak": 1}),
         json.dumps({"version": STATE_VERSION, "abandoned_streak": -1}),
-        json.dumps({"version": STATE_VERSION, "last_picks": [{"symbol": "AAA"}]}),
+        json.dumps({"version": STATE_VERSION, "last_book": [{"symbol": "AAA"}]}),
         json.dumps({"version": STATE_VERSION, "abandoned_streak": True}),
     ],
 )

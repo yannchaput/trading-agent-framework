@@ -244,7 +244,7 @@ class ReviewPipeline:
         orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
         # 8. Remember and log.
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_picks=[{"symbol": pick.symbol, "reason": pick.reason, "date": today} for pick in picks.picks]))
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_book=[{"symbol": pick.symbol, "reason": pick.reason, "date": today} for pick in picks.picks]))
         self._log.append(
             {
                 **record,

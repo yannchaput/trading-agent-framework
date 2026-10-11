@@ -183,7 +183,7 @@ def test_a_review_debates_the_top_15_and_buys_the_judges_picks(tmp_path: Path) -
     assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:5]]  # in the judge's order
     state = h.store.load()
     assert state.last_completed_review == "2026-10-06" and state.abandoned_streak == 0
-    assert [pick["symbol"] for pick in state.last_picks] == UNIVERSE[:5]
+    assert [entry["symbol"] for entry in state.last_book] == UNIVERSE[:5]
 
 
 def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_path: Path) -> None:
