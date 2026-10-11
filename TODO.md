@@ -38,6 +38,7 @@
 
 * ~~Add a column for the broker~~
 * ~~REplace VIX, ADX etc with a "regime" indicator: 1 =bullish, neutral =0, bearish = -1~~
+* Review  Agent table pivot format to be consistent with all strategies
 
 ### Cross sectional momentum
 
