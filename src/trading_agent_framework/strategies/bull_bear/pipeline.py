@@ -283,7 +283,24 @@ class ReviewPipeline:
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
             if self._recorder.submitted:
+                for line in _submission_lines(agent_name, self._recorder.submission):
+                    self._strategy.log_info(line)
                 return
+            if self._recorder.last_error:
+                self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}")
+            elif not error:  # a failed run was already logged as an error above
+                self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}")
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(tool, error), tool
         raise ReviewAbandoned(agent_name, error)
+
+
+def _submission_lines(agent_name: str, submission: Any) -> list[str]:
+    """One log line per item of a recorded submission: what the agent said, not its "submitted successfully"."""
+    if isinstance(submission, Note):
+        return [f"[{agent_name}] {submission.symbol}: {submission.note}"]
+    if agent_name == "bull":
+        return [f"[bull] {case.symbol}: {case.conviction} conviction: {case.argument}" for case in submission]
+    if agent_name == "bear":
+        return [f"[bear] {case.symbol}: {case.risk} risk ({case.concern}): {case.argument}" for case in submission]
+    return [f"[{agent_name}] {verdict.symbol}: {verdict.verdict}: {verdict.reason}" for verdict in submission.verdicts]

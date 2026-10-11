@@ -557,3 +557,71 @@ def test_an_abandoned_review_does_not_log_a_forced_exit_warning(tmp_path: Path, 
     assert not outcome.completed
     assert h.orders == []
     assert _forced_exit_warnings(caplog) == []
+
+
+# --- the log carries what each agent submitted -------------------------------------------------------------
+
+
+def test_each_researcher_note_is_logged_with_its_text(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[researcher] S00: 2026-09-30: quarterly revenue up 12% y/y" in caplog.text
+    assert "[researcher] S14: 2026-09-30: quarterly revenue up 12% y/y" in caplog.text
+
+
+def test_each_bull_case_is_logged_with_its_conviction_and_argument(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[bull] S00: high conviction: strong trend" in caplog.text
+    assert "[bull] S14: high conviction: strong trend" in caplog.text
+
+
+def test_each_bear_case_is_logged_with_its_risk_concern_and_argument(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[bear] S00: low risk (none): no red flag" in caplog.text
+    assert "[bear] S14: low risk (none): no red flag" in caplog.text
+
+
+def test_every_judge_verdict_is_logged_keeps_and_vetoes_alike(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts({"S01"})
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[judge] S00: keep: bull wins" in caplog.text
+    assert "[judge] S01: veto: bear wins" in caplog.text
+    assert "[judge] S14: keep: bull wins" in caplog.text
+
+
+def test_a_rejected_submission_is_logged_as_a_warning_with_the_reason_and_not_as_recorded(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].overrides = [verdicts(vetoed=set(UNIVERSE[:6]))]  # 6 vetoes against a cap of 5: refused, then the retry keeps all
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    (rejection,) = [record for record in caplog.records if "rejected" in record.getMessage()]
+    assert rejection.levelno == logging.WARNING
+    assert "[judge]" in rejection.getMessage() and "6 vetoes: veto at most 5" in rejection.getMessage()
+    # only the accepted retry is logged as recorded: none of the refused submission's verdicts
+    assert "[judge] S00: veto: bear wins" not in caplog.text
+    assert "[judge] S00: keep: bull wins" in caplog.text
+
+
+def test_an_agent_that_ends_without_calling_its_submit_tool_is_warned_about_on_each_attempt(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = does_nothing  # no verdict ever lands: the review is abandoned
+    with caplog.at_level(logging.INFO):
+        assert not h.run().completed
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING and "[judge]" in record.getMessage()]
+    assert len(warnings) == 2  # the first attempt and the forced retry
+    assert all("without calling submit_verdicts" in message for message in warnings)
+    assert not any("rejected" in message for message in warnings)  # nothing was submitted, so nothing was rejected
+    assert "[judge] S00:" not in caplog.text  # and no verdict is logged as recorded
