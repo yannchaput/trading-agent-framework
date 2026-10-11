@@ -95,7 +95,8 @@ IFRS_CASH_FLOW_TAGS: dict[str, list[str]] = {
     ],
 }
 
-STATEMENT_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A"})
+# The agent tools' forms: quarterly and annual reports, and the 20-F / 40-F reports of foreign filers that tag us-gaap.
+STATEMENT_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A", "20-F", "20-F/A", "40-F", "40-F/A"})
 STALE_STATEMENT_DAYS = 548  # about 18 months: a statement whose newest period ended earlier is flagged `stale`
 
 _PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
@@ -204,18 +205,18 @@ def _debt_row(row: dict[str, Any]) -> dict[str, Any]:
     return {"end": row["end"], "value": row["val"], "filed": row["filed"]}
 
 
-def _summed_debt(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str, forms: frozenset[str]) -> list[dict[str, Any]]:
+def _summed_debt(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str, forms: frozenset[str], unit: str) -> list[dict[str, Any]]:
     """Noncurrent + current debt per filing; the current part counts as 0 when the filing lacks it."""
-    current = {(row["end"], row["filed"]): row["val"] for row in unit_rows(gaap, current_tag, "USD", forms)}
-    return [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in unit_rows(gaap, noncurrent_tag, "USD", forms)]
+    current = {(row["end"], row["filed"]): row["val"] for row in unit_rows(gaap, current_tag, unit, forms)}
+    return [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in unit_rows(gaap, noncurrent_tag, unit, forms)]
 
 
-def total_debt_sources(gaap: dict[str, Any], forms: frozenset[str]) -> list[list[dict[str, Any]]]:
-    """Total-debt rows (`end`, `value`, `filed`; USD) from `forms`, one list per source, in order of preference."""
+def total_debt_sources(gaap: dict[str, Any], forms: frozenset[str], *, unit: str = "USD") -> list[list[dict[str, Any]]]:
+    """Total-debt rows (`end`, `value`, `filed`; one `unit`, USD by default) from `forms`, one list per source, in order of preference."""
     return [
-        *([_debt_row(row) for row in unit_rows(gaap, tag, "USD", forms)] for tag in TOTAL_DEBT_TAGS),
-        *(_summed_debt(gaap, noncurrent, current, forms) for noncurrent, current in SUMMED_DEBT_TAGS),
-        [_debt_row(row) for row in unit_rows(gaap, COMBINED_DEBT_TAG, "USD", forms)],
+        *([_debt_row(row) for row in unit_rows(gaap, tag, unit, forms)] for tag in TOTAL_DEBT_TAGS),
+        *(_summed_debt(gaap, noncurrent, current, forms, unit) for noncurrent, current in SUMMED_DEBT_TAGS),
+        [_debt_row(row) for row in unit_rows(gaap, COMBINED_DEBT_TAG, unit, forms)],
     ]
 
 
@@ -363,35 +364,37 @@ def statement_values(
     return values
 
 
-def _known_debt(gaap: dict[str, Any], as_of: datetime, end_matches: Callable[[str], bool]) -> dict[str, Any] | None:
-    """The newest-filed total-debt row known at `as_of` whose end satisfies `end_matches`, from the most preferred source with one."""
-    for rows in total_debt_sources(gaap, STATEMENT_FORMS):
+def _known_debt(gaap: dict[str, Any], as_of: datetime, unit: str, end_matches: Callable[[str], bool]) -> dict[str, Any] | None:
+    """The newest-filed total-debt row in `unit` known at `as_of` whose end satisfies `end_matches`, from the most preferred source with one."""
+    for rows in total_debt_sources(gaap, STATEMENT_FORMS, unit=unit):
         known = [row for row in rows if end_matches(row["end"]) and (filed := parse_dt(row["filed"])) is not None and _same_tz(filed, as_of) <= as_of]
         if known:
             return max(known, key=lambda row: row["filed"])
     return None
 
 
-def total_debt(gaap: dict[str, Any], *, end: str, as_of: datetime) -> dict[str, Any] | None:
-    """Total debt (USD) at the balance-sheet date `end`, with the figure a year earlier when reported; None without one."""
+def total_debt(gaap: dict[str, Any], *, end: str, as_of: datetime, unit: str = "USD") -> dict[str, Any] | None:
+    """Total debt in `unit` at the balance-sheet date `end`, with the figure a year earlier when reported; None without one."""
     target = parse_dt(end)
-    row = _known_debt(gaap, as_of, lambda row_end: row_end == end)
+    row = _known_debt(gaap, as_of, unit, lambda row_end: row_end == end)
     if row is None or target is None:
         return None
-    value: dict[str, Any] = {"value": row["value"], "unit": "USD", "filed": row["filed"], "end": row["end"]}
-    prior = _known_debt(gaap, as_of, lambda row_end: (other := parse_dt(row_end)) is not None and _a_year_before(target, other))
+    value: dict[str, Any] = {"value": row["value"], "unit": unit, "filed": row["filed"], "end": row["end"]}
+    prior = _known_debt(gaap, as_of, unit, lambda row_end: (other := parse_dt(row_end)) is not None and _a_year_before(target, other))
     if prior is not None:
         value["prior_year"] = {"value": prior["value"], "end": prior["end"]}
     return value
 
 
 def balance_sheet(payload: dict[str, Any], *, as_of: datetime) -> dict[str, dict[str, Any]]:
-    """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`), never a current portion."""
+    """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`) in the statement's reporting
+    currency, never a current portion."""
     values = statement_values(payload, {**BALANCE_SHEET_TAGS, "debt": []}, as_of=as_of, ifrs_tag_map=IFRS_BALANCE_SHEET_TAGS)
     gaap = payload.get("facts", {}).get("us-gaap", {})
     end = next((value["end"] for value in values.values() if value.get("end")), None)
+    unit = (values.get("assets") or next((value for value in values.values() if value.get("unit")), {})).get("unit", "USD")
     if gaap and end is not None and "debt" not in values:
-        debt = total_debt(gaap, end=end, as_of=as_of)
+        debt = total_debt(gaap, end=end, as_of=as_of, unit=unit)
         if debt is not None:
             values["debt"] = debt
     return values

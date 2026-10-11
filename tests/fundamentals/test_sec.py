@@ -456,3 +456,56 @@ def test_a_statement_whose_newest_period_ended_over_18_months_ago_is_stale() -> 
     assert sec.is_stale_statement(sec.balance_sheet(old, as_of=_AS_OF), as_of=_AS_OF)
     assert not sec.is_stale_statement(sec.balance_sheet(fresh, as_of=_AS_OF), as_of=_AS_OF)
     assert not sec.is_stale_statement({}, as_of=_AS_OF)
+
+
+# --- total debt for 20-F / 40-F filers and non-USD reporters ------------------------------------------------------
+
+
+def _in(unit: str, *rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {unit: list(rows)}}
+
+
+def _annual_report(val: object, form: str, end: str = "2025-12-31", filed: str = "2026-03-01", accn: str = "a1") -> dict[str, object]:
+    return {"val": val, "end": end, "filed": filed, "form": form, "accn": accn}
+
+
+def test_a_us_gaap_filer_of_a_20f_still_has_debt() -> None:
+    """Nebius's shape: us-gaap debt facts exist only under 20-F; the statement used to drop the debt field."""
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "20-F")), "LongTermDebt": _usd(_annual_report(2_400, "20-F"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"] == {"value": 2_400, "unit": "USD", "filed": "2026-03-01", "end": "2025-12-31"}
+
+
+def test_a_40f_filers_debt_is_read_too() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "40-F")), "LongTermDebt": _usd(_annual_report(700, "40-F"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["value"] == 700
+
+
+def test_a_non_usd_reporters_debt_carries_its_currency() -> None:
+    """Hesai's shape: assets and debt both in CNY; the debt is read in that unit, never converted or dropped."""
+    payload = {"facts": {"us-gaap": {"Assets": _in("CNY", _annual_report(9_000, "20-F")), "LongTermDebt": _in("CNY", _annual_report(116, "20-F"))}}}
+
+    values = sec.balance_sheet(payload, as_of=_AS_OF)
+
+    assert values["assets"]["unit"] == "CNY"
+    assert values["debt"] == {"value": 116, "unit": "CNY", "filed": "2026-03-01", "end": "2025-12-31"}
+
+
+def test_debt_in_another_currency_than_the_statements_is_not_mixed_in() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "10-K")), "LongTermDebt": _in("CNY", _annual_report(116, "10-K"))}}}
+
+    assert "debt" not in sec.balance_sheet(payload, as_of=_AS_OF)
+
+
+def test_a_10k_filers_debt_still_resolves_in_usd() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "10-K")), "LongTermDebt": _usd(_annual_report(2_400, "10-K"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["unit"] == "USD"
+
+
+def test_the_screens_total_debt_sources_stay_usd_only() -> None:
+    gaap = {"LongTermDebt": _in("CNY", _annual_report(116, "10-K")), "LongTermDebtNoncurrent": _in("CNY", _annual_report(50, "10-K"))}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL) == [[], [], [], [], []]
+    assert sec.total_debt_sources(gaap, _ANNUAL, unit="CNY")[0] == [{"end": "2025-12-31", "value": 116, "filed": "2026-03-01"}]
