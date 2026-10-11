@@ -1,7 +1,7 @@
 """One review: data → debate set → researcher (one run per stock) → bull → bear → judge → book → sizing → rebalance.
 
-The judge gives a verdict, keep or veto, on every debated stock; code builds the book (the kept holdings, then the
-kept new names, by rank, up to `book_size`), validates (through the `HandoffRecorder`), sizes, remembers
+The judge gives a verdict, keep or veto, on every debated stock; code validates (through the `HandoffRecorder`),
+builds the book (the kept holdings, then the kept new names, by rank, up to `book_size`), sizes, remembers
 (`StateStore`) and calls the `Rebalancer`. A debater stage that never yields a valid submission abandons the review:
 no order at all, forced exits included. One stock's failed research only gives it the note "research unavailable".
 Free text from an agent is logged and otherwise ignored. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md

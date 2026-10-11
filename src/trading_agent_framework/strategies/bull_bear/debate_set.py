@@ -41,7 +41,7 @@ class DebateSet:
 
     @property
     def held(self) -> list[str]:
-        """The held stocks in the debate, sorted (the judge must keep or drop each)."""
+        """The held stocks in the debate, sorted (each gets a verdict from the judge)."""
         return sorted(stock.symbol for stock in self.stocks if stock.held)
 
     def stock(self, symbol: str) -> DebateStock:

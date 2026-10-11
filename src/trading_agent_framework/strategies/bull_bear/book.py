@@ -1,8 +1,9 @@
 """The book: the stocks bull_bear holds after a review, built by code from the judge's verdicts (pure).
 
 The survivors are the debated stocks the judge did not veto. Holdings come first, so a kept holding ranked within
-`retention_rank` keeps its slot (cross_momentum's hysteresis), then new names; each group in rank order. The first
-`book_size` survivors form the book. The pipeline caps the vetoes so that at least `book_size` stocks survive.
+`retention_rank` keeps its slot (hysteresis in cross_momentum's spirit: `build_debate_set` already drops holdings
+ranked worse than `retention_rank`), then new names; each group in rank order. The first `book_size` survivors form
+the book. The pipeline caps the vetoes so that at least `book_size` stocks survive.
 """
 
 from __future__ import annotations

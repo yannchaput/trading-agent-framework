@@ -321,6 +321,20 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
     assert debated["S03"]["held"] is True
     assert "S04" not in debated
     assert line["forced_exits"] == []
+    assert line["book"][0] == "S03"  # the high-volatility holding is kept first in the book...
+    assert line["targets"]["S03"] == pytest.approx(0.04)  # ...and sized at the minimum weight
+
+
+def test_more_kept_holdings_than_book_size_keep_the_best_ranked_and_sell_the_rest(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={symbol: 20 for symbol in UNIVERSE[:12]})  # 12 holdings of 20 shares at 50 = 1,000 each
+
+    outcome = h.run()
+
+    assert outcome.completed
+    (line,) = h.log_lines()
+    assert line["book"] == UNIVERSE[:10]
+    assert ("S10", "sell", 20.0) in h.orders
+    assert ("S11", "sell", 20.0) in h.orders
 
 
 # --- research failures --------------------------------------------------------------------------------

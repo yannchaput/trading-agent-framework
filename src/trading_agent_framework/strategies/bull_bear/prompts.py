@@ -59,7 +59,7 @@ BEAR_SYSTEM = (
 
 JUDGE_SYSTEM = (
     "You are the judge. For every stock, weigh the bull's case against the bear's and give your verdict: keep or veto. "
-    "Do not trade: code builds the portfolio from the stocks you keep, sizes the positions and places the orders.\n\n"
+    "Do not trade: code builds the portfolio from stocks you keep, sizes the positions and places the orders.\n\n"
     f"{_FACT_SHEET}\n"
     "Each stock has the researcher's note, the bull's conviction and argument, and the bear's risk, concern and argument. "
     "Veto a stock only when the bear's risk is concrete and specific to it (an event, a filing, guidance, a lawsuit, a "

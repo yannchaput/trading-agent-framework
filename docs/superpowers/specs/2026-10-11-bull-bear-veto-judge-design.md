@@ -134,7 +134,7 @@ The bear's prompt is not changed here.
 
 ## Risks and open points
 
-- A judge that keeps everything turns the strategy into a code-only top-10 book; `judge_verdicts` makes that visible.
+- A judge that keeps everything turns the strategy into a code-only book (kept holdings first, then the top ranks); `judge_verdicts` makes that visible.
 - 15+ reasons per verdict list: each over-long one rejects the submission. The bull and the bear already submit 15+
   arguments under the same 300-character cap with no forced retry in the 53 reviews of run `085928`.
 - The comparison with run `085928` is a single 1Y path with a nondeterministic LLM; the book also changes size (5-10
