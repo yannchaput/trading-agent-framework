@@ -262,3 +262,47 @@ def test_compact_company_facts_keeps_the_newer_fact_when_both_taxonomies_use_a_t
     result = sec.compact_company_facts(_both_taxonomies(), as_of=_AS_OF)
 
     assert result["facts"]["Assets"]["value"] == 6_700 and "taxonomy" not in result["facts"]["Assets"]
+
+
+# --- total debt and cash flow: one definition for the agent tools and bill_ackman's screen ---------------------------
+
+_ANNUAL = frozenset({"10-K", "10-K/A"})
+
+
+def _usd(*rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {"USD": list(rows)}}
+
+
+def test_total_debt_sources_follow_the_order_of_preference() -> None:
+    year_end = {"end": "2025-12-31", "filed": "2026-02-01", "form": "10-K"}
+    gaap = {
+        "LongTermDebt": _usd({"val": 900, **year_end}),
+        "LongTermDebtNoncurrent": _usd({"val": 700, **year_end}),
+        "LongTermDebtCurrent": _usd({"val": 200, **year_end}),
+        "DebtLongtermAndShorttermCombinedAmount": _usd({"val": 950, **year_end}),
+    }
+
+    sources = sec.total_debt_sources(gaap, _ANNUAL)
+
+    assert [rows[0]["value"] if rows else None for rows in sources] == [900, None, 900, None, 950]
+    assert sources[0][0] == {"end": "2025-12-31", "value": 900, "filed": "2026-02-01"}
+
+
+def test_a_noncurrent_debt_without_its_current_part_counts_the_current_part_as_zero() -> None:
+    gaap = {"LongTermDebtNoncurrent": _usd({"val": 700, "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K"})}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL)[2] == [{"end": "2025-12-31", "value": 700, "filed": "2026-02-01"}]
+
+
+def test_total_debt_sources_read_only_the_forms_asked_for() -> None:
+    gaap = {"LongTermDebt": _usd({"val": 900, "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"})}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL)[0] == []
+    assert sec.total_debt_sources(gaap, frozenset({"10-Q"}))[0] == [{"end": "2026-03-31", "value": 900, "filed": "2026-05-01"}]
+
+
+def test_the_cash_flow_tags_are_shared_with_bill_ackmans_screen() -> None:
+    from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import ANNUAL_FLOW_TAGS
+
+    assert ANNUAL_FLOW_TAGS["operating_cash_flow"] is sec.CASH_FLOW_TAGS["operating_cash_flow"]
+    assert ANNUAL_FLOW_TAGS["capex"] is sec.CASH_FLOW_TAGS["capex"]

@@ -41,9 +41,11 @@ BALANCE_SHEET_TAGS: dict[str, list[str]] = {
     ],
 }
 
-# The same fields for filers of 20-F / 40-F reports, who tag under the `ifrs-full` taxonomy. Separate constants: the us-gaap
-# maps above are imported by the bill_ackman screen and must not change. Tag names checked against real payloads (UMC,
-# Kinross, Equinox Gold, Gold Fields, Abivax, ...). `RevenueFromSaleOfGoods` is left out: it can be a component of revenue.
+# The same fields for filers of 20-F / 40-F reports, who tag under the `ifrs-full` taxonomy. bill_ackman's screen imports
+# INCOME_STATEMENT_TAGS["revenue"] and ["operating_income"], BALANCE_SHEET_TAGS["cash"], CASH_FLOW_TAGS and
+# `total_debt_sources`: changing those changes its records (bump its `annual_store.SCHEMA_VERSION`). Tag names checked
+# against real payloads (UMC, Kinross, Equinox Gold, Gold Fields, Abivax, ...). `RevenueFromSaleOfGoods` is left out:
+# it can be a component of revenue.
 IFRS_INCOME_STATEMENT_TAGS: dict[str, list[str]] = {
     "revenue": ["Revenue", "RevenueFromContractsWithCustomers"],
     "cost_of_revenue": ["CostOfSales"],
@@ -63,6 +65,23 @@ IFRS_BALANCE_SHEET_TAGS: dict[str, list[str]] = {
     "debt": ["Borrowings"],
     "equity": ["EquityAttributableToOwnersOfParent", "Equity"],
     "shares_outstanding": ["NumberOfSharesOutstanding"],
+}
+
+# Total debt, in order of preference: the total tags, then noncurrent + current sums, then the combined tag. Real filers
+# use `LongTermDebt` (LOW), the lease-inclusive total (KO, MDLZ), `LongTermDebtNoncurrent` + `LongTermDebtCurrent` (QSR,
+# NEE), or only the lease-inclusive pair (HLT). Known limitation: commercial paper and other short-term borrowings
+# (`CommercialPaper`, `ShortTermBorrowings`) are not added, since filers disagree on whether the long-term tags include them.
+TOTAL_DEBT_TAGS: tuple[str, ...] = ("LongTermDebt", "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities")
+SUMMED_DEBT_TAGS: tuple[tuple[str, str], ...] = (
+    ("LongTermDebtNoncurrent", "LongTermDebtCurrent"),
+    ("LongTermDebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligationsCurrent"),
+)
+COMBINED_DEBT_TAG = "DebtLongtermAndShorttermCombinedAmount"
+
+# Cash flow: the screen reads annual reports, the agent tools quarterly ones too.
+CASH_FLOW_TAGS: dict[str, list[str]] = {
+    "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
+    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
 }
 
 _PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
@@ -159,6 +178,31 @@ def filter_facts_as_of(facts: dict[str, Any], tags: list[str], as_of: datetime) 
 def latest_fact(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
     """The most relevant candidate; `filter_facts_as_of` already sorts best-first."""
     return candidates[0] if candidates else None
+
+
+def unit_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str]) -> list[dict[str, Any]]:
+    """One tag's facts in one unit, from `forms` only, that carry a value, a period end and a filing date."""
+    rows = (facts.get(tag) or {}).get("units", {}).get(unit, [])
+    return [row for row in rows if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")]
+
+
+def _debt_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {"end": row["end"], "value": row["val"], "filed": row["filed"]}
+
+
+def _summed_debt(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str, forms: frozenset[str]) -> list[dict[str, Any]]:
+    """Noncurrent + current debt per filing; the current part counts as 0 when the filing lacks it."""
+    current = {(row["end"], row["filed"]): row["val"] for row in unit_rows(gaap, current_tag, "USD", forms)}
+    return [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in unit_rows(gaap, noncurrent_tag, "USD", forms)]
+
+
+def total_debt_sources(gaap: dict[str, Any], forms: frozenset[str]) -> list[list[dict[str, Any]]]:
+    """Total-debt rows (`end`, `value`, `filed`; USD) from `forms`, one list per source, in order of preference."""
+    return [
+        *([_debt_row(row) for row in unit_rows(gaap, tag, "USD", forms)] for tag in TOTAL_DEBT_TAGS),
+        *(_summed_debt(gaap, noncurrent, current, forms) for noncurrent, current in SUMMED_DEBT_TAGS),
+        [_debt_row(row) for row in unit_rows(gaap, COMBINED_DEBT_TAG, "USD", forms)],
+    ]
 
 
 def compact_company_facts(payload: dict[str, Any], *, as_of: datetime, max_facts: int = 80) -> dict[str, Any]:
