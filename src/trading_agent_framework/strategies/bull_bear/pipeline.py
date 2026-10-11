@@ -119,8 +119,6 @@ class ReviewPipeline:
         state = self._state.load()
         now = self._now()
         record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
-        self._stage = "setup"
-        self._pending = None
         extra: dict[str, Any] = {}
         try:
             self._review(now, record, state)
@@ -152,6 +150,9 @@ class ReviewPipeline:
 
     def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
         params, strategy = self._params, self._strategy
+        # Reset here, not in `run`: pyright keeps the `None` it narrowed `self._pending` to across the `_review` call.
+        self._stage = "setup"
+        self._pending = None
         today = now.date().isoformat()
         moment = now.isoformat()
 
