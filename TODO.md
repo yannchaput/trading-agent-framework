@@ -57,7 +57,8 @@
 
 ### Bull Bear
 
-* Enrich logging, specifically the research agent
+* Retest a 1Y backtest with news 'off'
+* ~~Enrich logging, specifically the research agent~~
 * Show P&L in the log when a stock is sold
 * Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)
 
