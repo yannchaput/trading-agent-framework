@@ -32,14 +32,14 @@ def fundamentals_tools(
     """SEC fundamentals tools bound to `strategy`, backed by one shared `SecEdgarClient`."""
     edgar = client if client is not None else _default_client(strategy)
 
-    def _statement(symbol: str, tag_map: dict[str, list[str]]) -> dict[str, Any]:
+    def _statement(symbol: str, tag_map: dict[str, list[str]], ifrs_tag_map: dict[str, list[str]]) -> dict[str, Any]:
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
             payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
         except FundamentalsError as exc:
             return {"error": str(exc)}
-        values = sec.statement_values(payload, tag_map, as_of=as_of)
+        values = sec.statement_values(payload, tag_map, as_of=as_of, ifrs_tag_map=ifrs_tag_map)
         return {"symbol": symbol.upper(), "as_of": as_of.isoformat(), "values": values}
 
     def get_company_facts(symbol: str, max_facts: int = 40) -> dict[str, Any]:
@@ -55,11 +55,11 @@ def fundamentals_tools(
 
     def get_income_statement(symbol: str) -> dict[str, Any]:
         """Get a company's income statement (revenue, net income, EPS, ...) as of now."""
-        return _statement(symbol, sec.INCOME_STATEMENT_TAGS)
+        return _statement(symbol, sec.INCOME_STATEMENT_TAGS, sec.IFRS_INCOME_STATEMENT_TAGS)
 
     def get_balance_sheet(symbol: str) -> dict[str, Any]:
         """Get a company's balance sheet (assets, liabilities, equity, ...) as of now."""
-        return _statement(symbol, sec.BALANCE_SHEET_TAGS)
+        return _statement(symbol, sec.BALANCE_SHEET_TAGS, sec.IFRS_BALANCE_SHEET_TAGS)
 
     def get_filings(symbol: str, form: str | None = None, limit: int = 10) -> dict[str, Any]:
         """List a company's recent SEC filings (10-K, 10-Q, 8-K, ...) as of now."""

@@ -96,6 +96,29 @@ def test_get_balance_sheet_returns_values_for_the_symbol() -> None:
     assert result["values"]["assets"]["value"] == 999
 
 
+def test_an_ifrs_filers_income_statement_and_balance_sheet_are_not_empty() -> None:
+    """20-F / 40-F filers report under `ifrs-full`; an empty result reads to an agent as 'no revenue'."""
+    row = {"filed": "2026-03-26", "end": "2025-12-31", "form": "20-F", "accn": "a1"}
+    client = _FakeEdgarClient()
+    client.company_facts = {
+        "facts": {
+            "ifrs-full": {
+                "RevenueFromContractsWithCustomers": {"units": {"EUR": [{"val": 7051, **row}]}},
+                "Assets": {"units": {"EUR": [{"val": 12411, **row}]}},
+            }
+        }
+    }
+    tools = _tools(client)
+
+    income = tools["get_income_statement"]("ABVX")  # type: ignore
+    balance = tools["get_balance_sheet"]("ABVX")  # type: ignore
+    facts = tools["get_company_facts"]("ABVX")  # type: ignore
+
+    assert income["values"]["revenue"] == {"value": 7051, "unit": "EUR", "filed": "2026-03-26", "form": "20-F"}
+    assert balance["values"]["assets"]["value"] == 12411
+    assert facts["fact_count"] == 2
+
+
 def test_get_filings_omits_primary_document_from_the_returned_rows() -> None:
     client = _FakeEdgarClient()
     client.submissions = {
