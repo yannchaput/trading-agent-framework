@@ -480,7 +480,13 @@ def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_
 
     def sells_s03(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
         symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
-        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in symbols[:10] and s != "S03" else "out", "reason": "bull wins" if s != "S03" and s in symbols[:10] else "bear wins", **({"what_changed": "guidance cut"} if s == "S03" else {})} for s in symbols])
+        put_in = set(symbols[:10]) - {"S03"}
+        tools["submit_verdicts"](
+            [
+                {"symbol": s, "verdict": "in" if s in put_in else "out", "reason": "bull wins" if s in put_in else "bear wins", **({"what_changed": "guidance cut"} if s == "S03" else {})}
+                for s in symbols
+            ]
+        )
 
     h.agents["judge"].script = sells_s03
     _raises_after(h, monkeypatch, [PlacedOrder("S03", "sell", 20.0), PlacedOrder("S00", "buy", 10.0)])
