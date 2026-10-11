@@ -20,6 +20,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.strategies.bull_bear import BullBearStrategy
+from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 PRIOR = weekday_sessions(date(2025, 7, 21), 300)  # history before the window: 300 completed sessions to score on
 SESSIONS = weekday_sessions(date(2026, 9, 14), 7)  # Monday 14th to Tuesday 22nd: two Tuesdays
@@ -58,8 +59,7 @@ def _bear(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None
 
 
 def _judge(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
-    picked = [s["fact_sheet"]["symbol"] for s in context["stocks"]][:5]
-    tools["submit_picks"]([{"symbol": s, "reason": "won"} for s in picked], [{"symbol": s, "reason": "lost"} for s in context["held"] if s not in picked])
+    tools["submit_verdicts"]([{"symbol": s["fact_sheet"]["symbol"], "verdict": "keep", "reason": "bull wins"} for s in context["stocks"]])
 
 
 class _Manager:
@@ -101,6 +101,7 @@ def _run(tmp_path: Path, manager: _Manager) -> BullBearStrategy:
         universe=UNIVERSE,
         project_root=tmp_path,
         sector_of=lambda symbol: "Technology",
+        settings=BullBearParams(book_size=5, max_vetoes=1),  # six stocks: debate the top 6, hold 5
     )
     strategy._agents = cast(AgentManager, manager)
     Strategy.run_backtesting(strategy, start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=source, budget=Decimal(10000), benchmark="SPY", news_source=FakeNewsProvider())
@@ -112,7 +113,7 @@ def _review_lines(tmp_path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_a_backtest_reviews_on_the_two_tuesdays_and_buys_the_judges_picks(tmp_path: Path) -> None:
+def test_a_backtest_reviews_on_the_two_tuesdays_and_buys_the_book(tmp_path: Path) -> None:
     manager = _Manager()
 
     _run(tmp_path, manager)
@@ -131,10 +132,10 @@ def test_the_first_reviews_orders_fill_and_the_second_review_trades_nothing(tmp_
     _run(tmp_path, _Manager())
 
     lines = _review_lines(tmp_path)
-    assert lines[1]["orders"] == []  # same picks, positions inside the band: nothing to trade
+    assert lines[1]["orders"] == []  # same book, positions inside the band: nothing to trade
     trades = _read_run_file(tmp_path, "trades.parquet")
     buys = trades[(trades["side"] == "buy") & (trades["status"] == "fill") & (trades["symbol"] != "SHV")]
-    assert sorted(buys["symbol"]) == sorted(UNIVERSE[:5])  # the judge's five picks, each filled once
+    assert sorted(buys["symbol"]) == sorted(UNIVERSE[:5])  # the book's five stocks, each filled once
     assert (buys["filled_quantity"] > 0).all()
     equity = _read_run_file(tmp_path, "equity.parquet")
     assert equity["portfolio_value"].nunique() > 1  # the book was invested and marked to market

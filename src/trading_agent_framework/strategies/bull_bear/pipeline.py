@@ -1,9 +1,11 @@
-"""One review: data → debate set → researcher (one run per stock) → bull → bear → judge → sizing → rebalance.
+"""One review: data → debate set → researcher (one run per stock) → bull → bear → judge → book → sizing → rebalance.
 
-The agents decide which stocks win; this module validates (through the `HandoffRecorder`), sizes, remembers
+The judge gives a verdict, keep or veto, on every debated stock; code builds the book (the kept holdings, then the
+kept new names, by rank, up to `book_size`), validates (through the `HandoffRecorder`), sizes, remembers
 (`StateStore`) and calls the `Rebalancer`. A debater stage that never yields a valid submission abandons the review:
 no order at all, forced exits included. One stock's failed research only gives it the note "research unavailable".
-Free text from an agent is logged and otherwise ignored. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md.
+Free text from an agent is logged and otherwise ignored. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
+and docs/superpowers/specs/2026-10-11-bull-bear-veto-judge-design.md.
 """
 
 from __future__ import annotations
@@ -17,9 +19,10 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Picks
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
@@ -165,8 +168,9 @@ class ReviewPipeline:
             f"[bull_bear] {len(ranked)} stocks ranked; debate: {', '.join(f'{s.symbol} (#{s.rank}{", held" if s.held else ""})' for s in debate.stocks)}; "
             f"forced exits: {', '.join(f'{e.symbol} ({e.reason})' for e in debate.forced_exits) or 'none'}"
         )
-        if len(symbols) < params.min_picks:
-            raise ReviewAbandoned("data", f"only {len(symbols)} stocks in the debate set, fewer than min_picks ({params.min_picks})")
+        if len(symbols) < params.book_size:
+            raise ReviewAbandoned("data", f"only {len(symbols)} stocks in the debate set, fewer than book_size ({params.book_size})")
+        veto_cap = min(params.max_vetoes, len(symbols) - params.book_size)  # at least book_size stocks always survive
 
         # 3. Fact sheet.
         weights = self._rebalancer.current_weights()
@@ -206,9 +210,8 @@ class ReviewPipeline:
         for symbol in symbols:
             strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
 
-        # 6. Judge.
-        held = debate.held
-        self._recorder.expect_picks(symbols, held=held)
+        # 6. Judge: a verdict, keep or veto, on every debated stock, on merit (no hint of which stocks code would hold).
+        self._recorder.expect_verdicts(symbols, max_vetoes=veto_cap)
         context = {
             "current_datetime": moment,
             "stocks": [
@@ -220,21 +223,28 @@ class ReviewPipeline:
                 }
                 for symbol in symbols
             ],
-            "held": held,
-            "constraints": {"min_picks": params.min_picks, "max_picks": params.max_picks, "reason_max_chars": params.reason_max_chars},
+            "constraints": {"max_vetoes": veto_cap, "reason_max_chars": params.reason_max_chars},
         }
-        self._run_stage("judge", "submit_picks", judge_task(params.reason_max_chars), context)
-        picks: Picks = self._recorder.submission
-        strategy.log_info(f"[judge] picks: {', '.join(f'{p.symbol} ({p.reason})' for p in picks.picks)}; drops: {', '.join(f'{d.symbol} ({d.reason})' for d in picks.drops) or 'none'}")
+        self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
+        verdicts: Verdicts = self._recorder.submission
+        vetoed = verdicts.vetoed
+        vetoes = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "veto")
+        strategy.log_info(f"[judge] vetoes: {vetoes or 'none'}; kept {len(verdicts.verdicts) - len(vetoed)}")
 
-        # 7. Sizing and execution.
-        volatilities = {pick.symbol: debate.stock(pick.symbol).row.volatility for pick in picks.picks}
+        # 7. The book: the kept holdings, then the kept new names, by rank, up to book_size.
+        book = build_book(debate, vetoed, params.book_size)
+        strategy.log_info(f"[bull_bear] book: {', '.join(book)}")
+
+        # 8. Sizing and execution.
+        volatilities = {symbol: debate.stock(symbol).row.volatility for symbol in book}
         target_weights = capped_inverse_volatility(volatilities, total=params.investable, min_weight=params.min_weight, max_weight=params.max_weight)
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
-            picks=[asdict(pick) for pick in picks.picks],
-            drops=[asdict(drop) for drop in picks.drops],
+            verdicts=[asdict(verdict) for verdict in verdicts.verdicts],
+            judge_verdicts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
+            veto_cap=veto_cap,
+            book=list(book),
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -243,8 +253,9 @@ class ReviewPipeline:
         self._stage = "execution"
         orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
-        # 8. Remember and log.
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_book=[{"symbol": pick.symbol, "reason": pick.reason, "date": today} for pick in picks.picks]))
+        # 9. Remember and log.
+        reasons = {verdict.symbol: verdict.reason for verdict in verdicts.verdicts}
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_book=[{"symbol": symbol, "reason": reasons[symbol], "date": today} for symbol in book]))
         self._log.append(
             {
                 **record,
