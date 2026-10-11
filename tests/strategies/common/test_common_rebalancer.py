@@ -31,9 +31,19 @@ def _book(
     cash: float,
     portfolio_value: float = 10_000.0,
     buying_power: float = 1_000_000.0,
+    costs: dict[str, float] | None = None,
 ) -> tuple[Strategy, FakeBroker, Rebalancer]:
     broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman")
-    broker.positions = [Position(strategy_name="bill_ackman", asset=Asset(symbol), quantity=Decimal(str(quantity)), side=PositionSide.LONG) for symbol, quantity in positions.items()]
+    broker.positions = [
+        Position(
+            strategy_name="bill_ackman",
+            asset=Asset(symbol),
+            quantity=Decimal(str(quantity)),
+            side=PositionSide.LONG,
+            avg_fill_price=Decimal(str((costs or {})[symbol])) if symbol in (costs or {}) else None,
+        )
+        for symbol, quantity in positions.items()
+    ]
     broker.last_prices = {symbol: Decimal(str(price)) for symbol, price in prices.items()}
     broker.account = AccountBalances(cash=Decimal(str(cash)), portfolio_value=Decimal(str(portfolio_value)), buying_power=Decimal(str(buying_power)))
     strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
@@ -368,3 +378,61 @@ def test_a_live_filled_buy_is_not_deducted_twice_from_the_next_buy(tmp_path: Pat
 
     assert placed[:2] == [PlacedOrder("B", "buy", 96.0), PlacedOrder("C", "buy", 120.0)]
     assert broker.account.cash >= Decimal(0)
+
+
+def test_a_sell_logs_the_estimated_gain_against_the_positions_average_cost(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, _, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500, costs={"B": 20})
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+
+    assert "sell 100 B @ $25.00 (not in the target portfolio, est. P&L +$500.00 / +25.0%)" in caplog.text
+
+
+def test_a_sell_logs_the_estimated_loss_with_a_minus_sign(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, _, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "SHV": 100}, cash=5000, costs={"A": 60})
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
+
+    assert "sell 100 A @ $50.00 (forced exit, est. P&L -$1000.00 / -16.7%)" in caplog.text
+
+
+def test_a_trim_reports_the_pnl_of_the_quantity_sold_only(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, _, rebalancer = _book(tmp_path, positions={"A": 90}, prices={"A": 50, "SHV": 100}, cash=5500, costs={"A": 40})  # sells 20
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+
+    assert "sell 20 A @ $50.00 (trim above target, est. P&L +$200.00 / +25.0%)" in caplog.text
+
+
+def test_a_sell_without_a_known_cost_logs_no_pnl(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, _, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500)
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+
+    assert "sell 100 B @ $25.00 (not in the target portfolio)" in caplog.text
+    assert "P&L" not in caplog.text
+
+
+def test_a_buy_logs_no_pnl(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, _, rebalancer = _book(tmp_path, positions={"A": 59}, prices={"A": 50, "SHV": 100}, cash=7050, costs={"A": 40})
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+
+    assert "buy 11 A @ $50.00 (toward target)" in caplog.text
+    assert "P&L" not in caplog.text
+
+
+def test_a_sell_priced_at_zero_logs_no_pnl(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={}, cash=0, costs={"A": 60})
+    broker.market_data_error = BrokerError("market data is down")
+
+    with caplog.at_level(logging.INFO):
+        rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
+
+    assert "sell 100 A @ $0.00 (forced exit)" in caplog.text
+    assert "P&L" not in caplog.text

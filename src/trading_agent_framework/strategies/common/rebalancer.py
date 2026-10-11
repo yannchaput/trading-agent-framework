@@ -48,6 +48,13 @@ class PlacedOrder:
     quantity: float
 
 
+def _estimated_pnl(price: float, cost: float, quantity: float) -> str:
+    """The log suffix for a sell: its gain or loss against the position's average cost, at the quoted price."""
+    pnl = (price - cost) * quantity
+    sign = "+" if pnl >= 0 else "-"
+    return f", est. P&L {sign}${abs(pnl):.2f} / {(price / cost - 1) * 100:+.1f}%"
+
+
 class Rebalancer:
     def __init__(self, strategy: Strategy, params: RebalanceParams) -> None:
         self._strategy = strategy
@@ -125,7 +132,9 @@ class Rebalancer:
         parking = params.parking_symbol
         forced = set(forced_exits)
         targets = {symbol: weight for symbol, weight in target.weights.items() if symbol not in forced and symbol != parking}
-        held = {position.asset.symbol: float(position.quantity) for position in strategy.get_positions() if position.quantity > 0}
+        positions = [position for position in strategy.get_positions() if position.quantity > 0]
+        held = {position.asset.symbol: float(position.quantity) for position in positions}
+        costs = {position.asset.symbol: float(position.avg_fill_price) for position in positions if position.avg_fill_price}
         incoming, outgoing = self._in_flight()
         prices = {symbol: self._price(symbol) for symbol in dict.fromkeys([*held, *incoming, *outgoing, *targets, parking])}
         band = params.rebalance_band * portfolio_value
@@ -148,7 +157,8 @@ class Rebalancer:
                 refusals[:] = [exc]
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
                 return False
-            strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why})")
+            note = _estimated_pnl(prices[symbol], costs[symbol], quantity) if side == "sell" and symbol in costs and prices[symbol] > 0 else ""
+            strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why}{note})")
             self.placed.append(PlacedOrder(symbol, side, quantity))
             return True
 

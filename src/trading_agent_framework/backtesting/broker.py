@@ -587,12 +587,20 @@ class BacktestBroker(Broker):
         if new_quantity == 0:
             self._positions.pop(asset, None)
             return
+        # `avg_fill_price` is the position's average cost, as the live brokers report it: a buy averages in at the
+        # fill price (fees excluded), a sell leaves the cost of what remains unchanged.
+        if side is OrderSide.BUY:
+            previous = existing.avg_fill_price if existing is not None and existing.avg_fill_price is not None else price
+            average_cost = (held * previous + quantity * price) / new_quantity
+        else:
+            assert existing is not None  # a sell leaves a remainder, so something was held
+            average_cost = existing.avg_fill_price
         self._positions[asset] = Position(
             strategy_name=self.strategy_name,
             asset=asset,
             quantity=new_quantity,
             side=PositionSide.LONG,
-            avg_fill_price=price,
+            avg_fill_price=average_cost,
         )
 
     def _sample_equity(self, cutoff: datetime) -> None:

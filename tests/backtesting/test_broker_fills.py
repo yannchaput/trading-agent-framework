@@ -466,3 +466,54 @@ def test_a_limit_order_fills_on_an_intermediate_bar_that_touches_it_within_one_j
 
 def _never() -> threading.Event:
     return threading.Event()
+
+
+# --- the position's average cost ---------------------------------------------------------------------------------
+
+
+def _broker_with_closes(*closes: float) -> tuple[BacktestBroker, BacktestClock]:
+    source = FakeBacktestDataSource()
+    source.set_bars(AAPL, make_close_indexed_frame(list(closes), start=DAY1, freq="1D"))
+    clock = BacktestClock(start=DAY1, sessions=[])
+    broker = BacktestBroker("momentum", data_source=source, clock=clock, budget=Decimal(100000))
+    clock.on_advance = broker.on_advance
+    return broker, clock
+
+
+def _trade_then_next_day(broker: BacktestBroker, clock: BacktestClock, side: OrderSide, quantity: int) -> None:
+    """Submit at the current time and advance one day: the order fills at the next bar's close."""
+    broker.submit_order(Order(strategy_name="momentum", asset=AAPL, side=side, quantity=Decimal(quantity)))
+    before = clock._now
+    clock._now = before + timedelta(days=1)  # test-only direct time jump; production code goes through clock.wait()
+    broker.on_advance(before, clock._now)
+
+
+def test_a_second_buy_averages_into_the_positions_cost() -> None:
+    broker, clock = _broker_with_closes(100.0, 100.0, 120.0)
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 10)  # fills at 100
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 30)  # fills at 120
+
+    position = broker.pull_positions()[0]
+    assert position.quantity == Decimal(40)
+    assert position.avg_fill_price == Decimal("115")  # (10 * 100 + 30 * 120) / 40
+
+
+def test_a_partial_sell_leaves_the_positions_cost_unchanged() -> None:
+    broker, clock = _broker_with_closes(100.0, 100.0, 120.0, 150.0)
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 10)  # fills at 100
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 10)  # fills at 120 -> average 110
+    _trade_then_next_day(broker, clock, OrderSide.SELL, 5)  # fills at 150
+
+    position = broker.pull_positions()[0]
+    assert position.quantity == Decimal(15)
+    assert position.avg_fill_price == Decimal("110")
+
+
+def test_buying_again_after_a_full_sell_starts_a_new_cost() -> None:
+    broker, clock = _broker_with_closes(100.0, 100.0, 150.0, 90.0)
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 10)  # fills at 100
+    _trade_then_next_day(broker, clock, OrderSide.SELL, 10)  # fills at 150: the position is gone
+    assert broker.pull_positions() == []
+    _trade_then_next_day(broker, clock, OrderSide.BUY, 10)  # fills at 90
+
+    assert broker.pull_positions()[0].avg_fill_price == Decimal("90")
