@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
@@ -39,9 +40,11 @@ def _bars(growth: float, base: float = 50.0) -> pd.DataFrame:
 class _Handle:
     def __init__(self, tools: dict[str, Callable[..., dict[str, Any]]], script: Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]) -> None:
         self.tools, self.script, self.runs = tools, script, 0
+        self.contexts: list[Any] = []  # the context of every run, in order
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.runs += 1
+        self.contexts.append(context)
         self.script(self.tools, context)
         return AgentRunResult(output="ok", tool_calls=[])
 
@@ -140,3 +143,26 @@ def test_the_first_reviews_orders_fill_and_the_second_review_trades_nothing(tmp_
     assert (buys["filled_quantity"] > 0).all()
     equity = _read_run_file(tmp_path, "equity.parquet")
     assert equity["portfolio_value"].nunique() > 1  # the book was invested and marked to market
+
+
+def test_the_second_review_shows_the_judge_its_previous_verdicts_and_the_priced_outcome_of_its_out(tmp_path: Path) -> None:
+    manager = _Manager()
+
+    _run(tmp_path, manager)
+
+    first, second = manager.handles["judge"].contexts
+    assert all("previous_verdict" not in stock for stock in first["stocks"]) and first["recent_verdicts"] == []
+    stocks = {stock["fact_sheet"]["symbol"]: stock for stock in second["stocks"]}
+    assert set(stocks) == set(UNIVERSE)
+    for symbol, stock in stocks.items():
+        expected = "out" if symbol == UNIVERSE[5] else "in"  # the fixture's judge puts the sixth stock out
+        assert stock["previous_verdict"]["verdict"] == expected and stock["previous_verdict"]["date"] == "2026-09-15"
+    (shown,) = second["recent_verdicts"]
+    # from the gated bars: the close of Monday the 14th (the last completed session of the first review) to Monday the 21st
+    frame = _bars(0.003 - 5 * 0.0002)
+    closes = {stamp.date(): close for stamp, close in zip(frame.index, frame["close"], strict=True)}
+    assert shown["symbol"] == UNIVERSE[5] and shown["date"] == "2026-09-15" and shown["reason"] == "bear wins"
+    assert math.isfinite(shown["return_since_pct"])
+    assert shown["return_since_pct"] == round((closes[date(2026, 9, 21)] / closes[date(2026, 9, 14)] - 1) * 100, 1)
+    assert math.isfinite(shown["in_names_return_pct"])
+    assert _review_lines(tmp_path)[1]["recent_verdicts"] == second["recent_verdicts"]
