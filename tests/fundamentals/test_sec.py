@@ -367,3 +367,92 @@ def test_the_prior_year_is_point_in_time() -> None:
     values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
 
     assert "prior_year" not in values["revenue"]
+
+
+# --- the agent statements: total debt, cash flow, staleness -------------------------------------------------------
+
+
+def _q(val: object, end: str = "2026-03-31", filed: str = "2026-05-01", accn: str = "q1") -> dict[str, object]:
+    return {"val": val, "end": end, "filed": filed, "form": "10-Q", "accn": accn}
+
+
+def test_the_balance_sheets_debt_is_total_debt_not_the_current_portion() -> None:
+    """VSXY's shape: the agent tool used to show $4M (the current portion) against $3.93B of liabilities."""
+    payload = {"facts": {"us-gaap": {"Liabilities": _usd(_q(3_930)), "LongTermDebtCurrent": _usd(_q(4)), "LongTermDebtNoncurrent": _usd(_q(1_200))}}}
+
+    values = sec.balance_sheet(payload, as_of=_AS_OF)
+
+    assert values["debt"] == {"value": 1_204, "unit": "USD", "filed": "2026-05-01", "end": "2026-03-31"}
+    assert values["liabilities"]["value"] == 3_930
+
+
+def test_total_debt_carries_the_balance_a_year_earlier() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_q(9_000)), "LongTermDebt": _usd(_q(900), _q(800, end="2025-03-31", filed="2025-05-01", accn="q0"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["prior_year"] == {"value": 800, "end": "2025-03-31"}
+
+
+def test_an_ifrs_filers_debt_is_still_its_borrowings() -> None:
+    assert sec.balance_sheet(_ifrs_payload(), as_of=_AS_OF)["debt"]["value"] == 738
+
+
+def test_a_company_without_a_debt_figure_has_no_debt_field() -> None:
+    assert "debt" not in sec.balance_sheet({"facts": {"us-gaap": {"Assets": _usd(_q(9_000))}}}, as_of=_AS_OF)
+
+
+def test_the_income_statement_adds_cash_flow_and_free_cash_flow() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    before = {"start": "2024-01-01", "end": "2024-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": _usd({"val": 1_000, **year}),
+                "NetCashProvidedByUsedInOperatingActivities": _usd({"val": 300, **year}, {"val": 250, **before}),
+                "PaymentsToAcquirePropertyPlantAndEquipment": _usd({"val": 100, **year}, {"val": 90, **before}),
+            }
+        }
+    }
+
+    values = sec.income_statement(payload, as_of=_AS_OF)
+
+    assert values["operating_cash_flow"]["value"] == 300 and values["capex"]["value"] == 100
+    assert values["free_cash_flow"] == {
+        "value": 200,
+        "unit": "USD",
+        "start": "2025-01-01",
+        "end": "2025-12-31",
+        "prior_year": {"value": 160, "start": "2024-01-01", "end": "2024-12-31"},
+    }
+
+
+def test_free_cash_flow_needs_both_figures_over_the_same_period() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {"facts": {"us-gaap": {"NetCashProvidedByUsedInOperatingActivities": _usd({"val": 300, **year})}}}
+
+    assert "free_cash_flow" not in sec.income_statement(payload, as_of=_AS_OF)
+
+
+def test_an_ifrs_filers_cash_flow_is_read_from_the_ifrs_full_taxonomy() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-03-26", "form": "20-F", "accn": "a1"}
+    payload = {
+        "facts": {
+            "ifrs-full": {
+                "CashFlowsFromUsedInOperatingActivities": {"units": {"EUR": [{"val": 500, **year}]}},
+                "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": {"units": {"EUR": [{"val": 120, **year}]}},
+            }
+        }
+    }
+
+    values = sec.income_statement(payload, as_of=_AS_OF)
+
+    assert values["free_cash_flow"]["value"] == 380 and values["free_cash_flow"]["unit"] == "EUR"
+
+
+def test_a_statement_whose_newest_period_ended_over_18_months_ago_is_stale() -> None:
+    """Ticker B (2026-02-17) returned 2011 figures, and the bear called the company's data 'unknowable'."""
+    old = {"facts": {"us-gaap": {"Assets": _usd({"val": 1, "end": "2011-03-31", "filed": "2011-04-05", "form": "10-K", "accn": "o"})}}}
+    fresh = {"facts": {"us-gaap": {"Assets": _usd(_q(1))}}}
+
+    assert sec.is_stale_statement(sec.balance_sheet(old, as_of=_AS_OF), as_of=_AS_OF)
+    assert not sec.is_stale_statement(sec.balance_sheet(fresh, as_of=_AS_OF), as_of=_AS_OF)
+    assert not sec.is_stale_statement({}, as_of=_AS_OF)

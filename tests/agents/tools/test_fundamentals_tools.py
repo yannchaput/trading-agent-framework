@@ -198,3 +198,21 @@ def test_every_payload_read_passes_the_strategy_clock_and_a_thirty_day_freshness
 
     assert [endpoint for endpoint, _, _ in client.freshness_args] == ["companyfacts", "companyfacts", "companyfacts", "submissions", "submissions"]
     assert all(as_of == now and max_age_days == 30 for _, as_of, max_age_days in client.freshness_args)
+
+
+def test_the_income_statement_tool_has_cash_flow_and_flags_a_stale_statement() -> None:
+    client = _FakeEdgarClient()
+    row = {"val": 7, "start": "2010-01-01", "end": "2010-12-31", "filed": "2011-02-01", "form": "10-K", "accn": "a1"}
+    client.company_facts = {"facts": {"us-gaap": {"NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [row]}}}}}
+
+    result = _tools(client)["get_income_statement"]("B")  # type: ignore
+
+    assert result["values"]["operating_cash_flow"]["value"] == 7
+    assert result["stale"] is True
+
+
+def test_a_fresh_statement_has_no_stale_key() -> None:
+    client = _FakeEdgarClient()
+    client.company_facts = {"facts": {"us-gaap": {"Assets": {"units": {"USD": [{"val": 999, "filed": "2026-08-01", "form": "10-Q", "end": "2026-06-30", "accn": "a1"}]}}}}}
+
+    assert "stale" not in _tools(client)["get_balance_sheet"]("AAPL")  # type: ignore

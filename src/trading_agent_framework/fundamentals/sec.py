@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Callable
 from datetime import date, datetime
 from typing import Any
 
@@ -83,6 +84,19 @@ CASH_FLOW_TAGS: dict[str, list[str]] = {
     "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities", "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"],
     "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
 }
+
+# Checked against the 17 cached ifrs-full payloads (2026-10-11): all 17 tag the operating total, 16 the PP&E purchase,
+# 4 only the broader PP&E-and-other-assets purchase.
+IFRS_CASH_FLOW_TAGS: dict[str, list[str]] = {
+    "operating_cash_flow": ["CashFlowsFromUsedInOperatingActivities"],
+    "capex": [
+        "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities",
+        "PurchaseOfPropertyPlantAndEquipmentIntangibleAssetsOtherThanGoodwillInvestmentPropertyAndOtherNoncurrentAssets",
+    ],
+}
+
+STATEMENT_FORMS = frozenset({"10-K", "10-K/A", "10-Q", "10-Q/A"})
+STALE_STATEMENT_DAYS = 548  # about 18 months: a statement whose newest period ended earlier is flagged `stale`
 
 _PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*INCOME_STATEMENT_TAGS.values(), *BALANCE_SHEET_TAGS.values()) for tag in tags))
 _IFRS_PRIORITY_COMPANY_FACT_TAGS = tuple(dict.fromkeys(tag for tags in (*IFRS_INCOME_STATEMENT_TAGS.values(), *IFRS_BALANCE_SHEET_TAGS.values()) for tag in tags))
@@ -347,6 +361,67 @@ def statement_values(
                 values[field] = value
                 break
     return values
+
+
+def _known_debt(gaap: dict[str, Any], as_of: datetime, end_matches: Callable[[str], bool]) -> dict[str, Any] | None:
+    """The newest-filed total-debt row known at `as_of` whose end satisfies `end_matches`, from the most preferred source with one."""
+    for rows in total_debt_sources(gaap, STATEMENT_FORMS):
+        known = [row for row in rows if end_matches(row["end"]) and (filed := parse_dt(row["filed"])) is not None and _same_tz(filed, as_of) <= as_of]
+        if known:
+            return max(known, key=lambda row: row["filed"])
+    return None
+
+
+def total_debt(gaap: dict[str, Any], *, end: str, as_of: datetime) -> dict[str, Any] | None:
+    """Total debt (USD) at the balance-sheet date `end`, with the figure a year earlier when reported; None without one."""
+    target = parse_dt(end)
+    row = _known_debt(gaap, as_of, lambda row_end: row_end == end)
+    if row is None or target is None:
+        return None
+    value: dict[str, Any] = {"value": row["value"], "unit": "USD", "filed": row["filed"], "end": row["end"]}
+    prior = _known_debt(gaap, as_of, lambda row_end: (other := parse_dt(row_end)) is not None and _a_year_before(target, other))
+    if prior is not None:
+        value["prior_year"] = {"value": prior["value"], "end": prior["end"]}
+    return value
+
+
+def balance_sheet(payload: dict[str, Any], *, as_of: datetime) -> dict[str, dict[str, Any]]:
+    """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`), never a current portion."""
+    values = statement_values(payload, {**BALANCE_SHEET_TAGS, "debt": []}, as_of=as_of, ifrs_tag_map=IFRS_BALANCE_SHEET_TAGS)
+    gaap = payload.get("facts", {}).get("us-gaap", {})
+    end = next((value["end"] for value in values.values() if value.get("end")), None)
+    if gaap and end is not None and "debt" not in values:
+        debt = total_debt(gaap, end=end, as_of=as_of)
+        if debt is not None:
+            values["debt"] = debt
+    return values
+
+
+def free_cash_flow(values: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    """Operating cash flow minus capex over the same period and unit, with its prior year when both have one."""
+    operating, capex = values.get("operating_cash_flow"), values.get("capex")
+    if operating is None or capex is None or _period(operating) != _period(capex) or operating["unit"] != capex["unit"]:
+        return None
+    value: dict[str, Any] = {"value": operating["value"] - capex["value"], "unit": operating["unit"], **_period(operating)}
+    before, capex_before = operating.get("prior_year"), capex.get("prior_year")
+    if before is not None and capex_before is not None and _period(before) == _period(capex_before):
+        value["prior_year"] = {"value": before["value"] - capex_before["value"], **_period(before)}
+    return value
+
+
+def income_statement(payload: dict[str, Any], *, as_of: datetime) -> dict[str, dict[str, Any]]:
+    """The income statement and cash flow as of `as_of`, with `free_cash_flow` when both cash-flow figures cover one period."""
+    values = statement_values(payload, {**INCOME_STATEMENT_TAGS, **CASH_FLOW_TAGS}, as_of=as_of, ifrs_tag_map={**IFRS_INCOME_STATEMENT_TAGS, **IFRS_CASH_FLOW_TAGS})
+    fcf = free_cash_flow(values)
+    if fcf is not None:
+        values["free_cash_flow"] = fcf
+    return values
+
+
+def is_stale_statement(values: dict[str, dict[str, Any]], *, as_of: datetime) -> bool:
+    """Whether the newest period in `values` ended more than `STALE_STATEMENT_DAYS` before `as_of`."""
+    ends = [end for value in values.values() if (end := parse_dt(value.get("end"))) is not None]
+    return bool(ends) and (as_of - _same_tz(max(ends), as_of)).days > STALE_STATEMENT_DAYS
 
 
 def parse_filings(

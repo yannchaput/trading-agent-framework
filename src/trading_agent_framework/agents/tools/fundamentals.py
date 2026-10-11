@@ -32,15 +32,18 @@ def fundamentals_tools(
     """SEC fundamentals tools bound to `strategy`, backed by one shared `SecEdgarClient`."""
     edgar = client if client is not None else _default_client(strategy)
 
-    def _statement(symbol: str, tag_map: dict[str, list[str]], ifrs_tag_map: dict[str, list[str]]) -> dict[str, Any]:
+    def _statement(symbol: str, build: Callable[..., dict[str, dict[str, Any]]]) -> dict[str, Any]:
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
             payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
         except FundamentalsError as exc:
             return {"error": str(exc)}
-        values = sec.statement_values(payload, tag_map, as_of=as_of, ifrs_tag_map=ifrs_tag_map)
-        return {"symbol": symbol.upper(), "as_of": as_of.isoformat(), "values": values}
+        values = build(payload, as_of=as_of)
+        result: dict[str, Any] = {"symbol": symbol.upper(), "as_of": as_of.isoformat(), "values": values}
+        if sec.is_stale_statement(values, as_of=as_of):
+            result["stale"] = True
+        return result
 
     def get_company_facts(symbol: str, max_facts: int = 40) -> dict[str, Any]:
         """Get a company's latest SEC XBRL facts (revenue, assets, EPS, ...) as of now."""
@@ -54,12 +57,12 @@ def fundamentals_tools(
         return {"symbol": symbol.upper(), "cik": cik, "as_of": as_of.isoformat(), **compact}
 
     def get_income_statement(symbol: str) -> dict[str, Any]:
-        """Get a company's income statement (revenue, net income, EPS, ...) as of now."""
-        return _statement(symbol, sec.INCOME_STATEMENT_TAGS, sec.IFRS_INCOME_STATEMENT_TAGS)
+        """Get a company's income statement and cash flow (revenue, net income, free cash flow, ...) with the prior year, as of now."""
+        return _statement(symbol, sec.income_statement)
 
     def get_balance_sheet(symbol: str) -> dict[str, Any]:
-        """Get a company's balance sheet (assets, liabilities, equity, ...) as of now."""
-        return _statement(symbol, sec.BALANCE_SHEET_TAGS, sec.IFRS_BALANCE_SHEET_TAGS)
+        """Get a company's balance sheet (assets, liabilities, total debt, ...) with the prior year, as of now."""
+        return _statement(symbol, sec.balance_sheet)
 
     def get_filings(symbol: str, form: str | None = None, limit: int = 10) -> dict[str, Any]:
         """List a company's recent SEC filings (10-K, 10-Q, 8-K, ...) as of now."""
