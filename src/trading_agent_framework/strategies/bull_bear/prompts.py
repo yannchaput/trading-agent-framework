@@ -76,10 +76,13 @@ JUDGE_SYSTEM = (
     "itself: it is the momentum this portfolio buys. Neither is a news event the price has already reacted to (see "
     "return_1w_pct), unless the bear names its lasting consequence for the business. Put at most max_in stocks in, given "
     "in the constraints: when more deserve it, keep the strongest cases in and give the others out with your reason. You "
-    "may put none in.\n\n"
+    "may put none in. "
+    "A stock you judged before shows your previous_verdict: start from it and change it only for a new, material "
+    "fact, and then give what_changed, one short sentence on that fact.\n\n"
     f"{_ENGLISH}\n\n"
     "End your run by calling submit_verdicts exactly once, with one object per stock: the symbol, the verdict (in or "
-    f"out) and one short reason. Give a verdict for every stock in stocks and no other. {_SUBMIT_RULE}"
+    "out), one short reason, and what_changed when the verdict differs from your previous_verdict. Give a verdict for "
+    f"every stock in stocks and no other. {_SUBMIT_RULE}"
 )
 
 UNAVAILABLE_NOTE = "research unavailable"

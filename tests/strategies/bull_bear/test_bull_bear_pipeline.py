@@ -185,8 +185,9 @@ def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: P
     assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:10]]  # in the book's order
     state = h.store.load()
     assert state.last_completed_review == "2026-10-06" and state.abandoned_streak == 0
-    assert [entry["symbol"] for entry in state.last_book] == UNIVERSE[:10]
-    assert {entry["reason"] for entry in state.last_book} == {"bull wins"}
+    assert set(state.verdicts) == set(UNIVERSE[:15])
+    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}
+    assert state.verdicts["S14"]["verdict"] == "out"
 
 
 def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_path: Path) -> None:
@@ -213,7 +214,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["notes"] == {"written": 15, "failed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
     assert "picks" not in line and "drops" not in line
-    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins"} and len(line["verdicts"]) == 15
+    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins", "what_changed": None, "previous_verdict": None} and len(line["verdicts"]) == 15
     assert line["verdict_counts"] == {"in": 10, "out": 5} and "veto_cap" not in line and "judge_verdicts" not in line
     assert line["book"] == UNIVERSE[:10]
     stock_weights = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
@@ -235,7 +236,7 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert line["debate_set"][-1] == {"symbol": "S16", "rank": 17, "held": True}
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}, {"symbol": "S19", "reason": "rank 20"}]
     assert "held" not in h.agents["judge"].calls[0]["context"]  # the fact sheet says held; the judge decides on merit
-    assert {"symbol": "S16", "verdict": "out", "reason": "bear wins"} in line["verdicts"]
+    assert {"symbol": "S16", "verdict": "out", "reason": "bear wins", "what_changed": None, "previous_verdict": None} in line["verdicts"]
     assert line["book"] == UNIVERSE[:10]
     assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a holding put out is sold
     assert h.bars.calls == [(UNIVERSE, ["OLD", "S16", "S19"])]
@@ -624,3 +625,36 @@ def test_an_agent_that_ends_without_calling_its_submit_tool_is_warned_about_on_e
     assert all("without calling submit_verdicts" in message for message in warnings)
     assert not any("rejected" in message for message in warnings)  # nothing was submitted, so nothing was rejected
     assert "[judge] S00:" not in caplog.text  # and no verdict is logged as recorded
+
+
+def test_the_judge_sees_its_previous_verdict_on_a_stock_it_judged_before(tmp_path: Path) -> None:
+    earlier = {"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29"}, "ZZZ": {"verdict": "in", "reason": "x", "date": "2026-09-29"}}
+    h = _harness(tmp_path, state=BullBearState(verdicts=earlier))
+    h.agents["judge"].script = verdicts(UNIVERSE[1:11])  # S00 stays out: no what_changed needed
+
+    assert h.run().completed
+
+    stocks = {s["fact_sheet"]["symbol"]: s for s in h.agents["judge"].calls[0]["context"]["stocks"]}
+    assert stocks["S00"]["previous_verdict"] == {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29"}
+    assert "previous_verdict" not in stocks["S01"]
+    (line,) = h.log_lines()
+    assert line["verdicts"][0]["previous_verdict"] == "out"
+    assert h.store.load().verdicts["ZZZ"] == earlier["ZZZ"]  # a stock not judged this time keeps its last verdict
+
+
+def test_a_judge_flipping_a_verdict_without_what_changed_is_refused_then_corrects_itself(tmp_path: Path) -> None:
+    # a verdict from months ago still counts
+    h = _harness(tmp_path, state=BullBearState(verdicts={"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-07-07"}}))
+    h.agents["judge"].overrides = [verdicts()]  # puts S00 in with no what_changed
+
+    def with_what_changed(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
+        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in symbols[:10] else "out", "reason": "r", **({"what_changed": "lawsuit dismissed"} if s == "S00" else {})} for s in symbols])
+
+    h.agents["judge"].script = with_what_changed
+
+    assert h.run().completed
+
+    assert "your previous verdict on S00 was out" in h.agents["judge"].calls[1]["task"]
+    (line,) = h.log_lines()
+    assert line["verdicts"][0]["what_changed"] == "lawsuit dismissed"

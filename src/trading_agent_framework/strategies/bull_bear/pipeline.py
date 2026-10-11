@@ -109,7 +109,7 @@ class ReviewPipeline:
         self._stage = "setup"
         extra: dict[str, Any] = {}
         try:
-            self._review(now, record)
+            self._review(now, record, state)
         except ReviewAbandoned as exc:
             stage, error = exc.stage, exc
         except (BrokerError, BacktestError) as exc:
@@ -125,7 +125,7 @@ class ReviewPipeline:
         self._log.append({**record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
         return ReviewOutcome(completed=False, abandoned_streak=streak)
 
-    def _review(self, now: datetime, record: dict[str, Any]) -> None:
+    def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
         params, strategy = self._params, self._strategy
         today = now.date().isoformat()
         moment = now.isoformat()
@@ -208,8 +208,9 @@ class ReviewPipeline:
         for symbol in symbols:
             strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
 
-        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held).
-        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size)
+        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
+        previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
+        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
         context = {
             "current_datetime": moment,
             "stocks": [
@@ -218,6 +219,7 @@ class ReviewPipeline:
                     "note": notes[symbol],
                     "bull": {"conviction": bull[symbol].conviction, "argument": bull[symbol].argument},
                     "bear": {"risk": bear[symbol].risk, "concern": bear[symbol].concern, "argument": bear[symbol].argument},
+                    **({"previous_verdict": previous[symbol]} if symbol in previous else {}),
                 }
                 for symbol in symbols
             ],
@@ -239,7 +241,7 @@ class ReviewPipeline:
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
-            verdicts=[asdict(verdict) for verdict in verdicts.verdicts],
+            verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
             verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
             book=list(book),
             targets={**target.weights, params.parking_symbol: target.parking_weight},
@@ -251,8 +253,8 @@ class ReviewPipeline:
         orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
         # 9. Remember and log.
-        reasons = {verdict.symbol: verdict.reason for verdict in verdicts.verdicts}
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, last_book=[{"symbol": symbol, "reason": reasons[symbol], "date": today} for symbol in book]))
+        decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}))
         self._log.append(
             {
                 **record,
@@ -300,4 +302,4 @@ def _submission_lines(agent_name: str, submission: Any) -> list[str]:
         return [f"[bull] {case.symbol}: {case.conviction} conviction: {case.argument}" for case in submission]
     if agent_name == "bear":
         return [f"[bear] {case.symbol}: {case.risk} risk ({case.concern}): {case.argument}" for case in submission]
-    return [f"[{agent_name}] {verdict.symbol}: {verdict.verdict}: {verdict.reason}" for verdict in submission.verdicts]
+    return [f"[{agent_name}] {verdict.symbol}: {verdict.verdict}: {verdict.reason}" + (f" (changed: {verdict.what_changed})" if verdict.what_changed else "") for verdict in submission.verdicts]

@@ -187,3 +187,37 @@ def test_arming_a_stage_clears_the_previous_submission_and_error() -> None:
     recorder.expect_note("BBB")
 
     assert (recorder.submitted, recorder.submission, recorder.last_error) == (False, None, None)
+
+
+def test_a_changed_verdict_needs_what_changed() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+
+    result = tools["submit_verdicts"](_verdicts(DEBATE[1:], ["AAA"]))
+
+    assert "your previous verdict on AAA was in: to put it out, give what_changed" in result["error"]
+
+
+def test_a_changed_verdict_with_what_changed_is_recorded_with_it() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in", "BBB": "in"})
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "bear wins", "what_changed": "8-K: guidance cut"}, *_verdicts(DEBATE[1:])]
+
+    assert tools["submit_verdicts"](raw) == {"status": "recorded"}
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "bear wins", "8-K: guidance cut")
+    assert recorder.submission.verdicts[1].what_changed is None
+
+
+def test_an_unchanged_verdict_or_a_first_verdict_needs_no_what_changed() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+
+    assert tools["submit_verdicts"](_verdicts(DEBATE)) == {"status": "recorded"}
+
+
+def test_a_long_what_changed_is_refused() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
+
+    assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]

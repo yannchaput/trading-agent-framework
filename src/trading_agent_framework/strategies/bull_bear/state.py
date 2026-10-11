@@ -1,9 +1,9 @@
 """What bull_bear remembers between reviews, and the per-review log.
 
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
-restart), the abandoned-review streak and the last book, in one small JSON file per mode, written atomically. A
-missing or invalid file is an empty state; a file from before the veto judge (with `last_picks`) loads, the old key
-ignored. `ReviewLog` appends one JSON line per review to the run directory. Neither ever raises on an I/O problem:
+restart), the abandoned-review streak and the judge's latest verdict on every stock it judged, in one small JSON
+file per mode, written atomically. A missing or invalid file, or one from an older version (the picker, the veto
+judge), is an empty state. `ReviewLog` appends one JSON line per review to the run directory. Neither ever raises on an I/O problem:
 bookkeeping must not stop a review.
 """
 
@@ -22,8 +22,8 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
 
-STATE_VERSION = 1
-_BOOK_KEYS = {"symbol", "reason", "date"}
+STATE_VERSION = 2
+_VERDICT_KEYS = {"verdict", "reason", "date"}
 
 
 def state_path(project_root: Path, mode: TradingMode) -> Path:
@@ -35,7 +35,7 @@ def state_path(project_root: Path, mode: TradingMode) -> Path:
 class BullBearState:
     last_completed_review: str | None = None  # ISO market date of the last completed review
     abandoned_streak: int = 0  # abandoned reviews in a row
-    last_book: list[dict[str, str]] = field(default_factory=list)  # [{symbol, reason, date}] of the last completed review
+    verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date}
 
 
 def _valid(raw: Any) -> bool:
@@ -43,14 +43,14 @@ def _valid(raw: Any) -> bool:
         return False
     last = raw.get("last_completed_review")
     streak = raw.get("abandoned_streak", 0)
-    book = raw.get("last_book", [])
+    verdicts = raw.get("verdicts", {})
     return (
         (last is None or isinstance(last, str))
         and isinstance(streak, int)
         and not isinstance(streak, bool)
         and streak >= 0
-        and isinstance(book, list)
-        and all(isinstance(entry, dict) and set(entry) == _BOOK_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in book)
+        and isinstance(verdicts, dict)
+        and all(isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in verdicts.values())
     )
 
 
@@ -73,7 +73,7 @@ class StateStore:
         return BullBearState(
             last_completed_review=raw.get("last_completed_review"),
             abandoned_streak=raw.get("abandoned_streak", 0),
-            last_book=[dict(entry) for entry in raw.get("last_book", [])],
+            verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
         )
 
     def save(self, state: BullBearState) -> None:

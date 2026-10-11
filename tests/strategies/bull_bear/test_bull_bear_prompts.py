@@ -92,3 +92,7 @@ def test_the_researcher_reads_the_prior_year_and_is_not_asked_for_a_trend_it_can
 
 def test_the_bear_may_not_rate_news_the_price_already_absorbed_high_by_itself() -> None:
     assert "already reacted to" in prompts.BEAR_SYSTEM and "lasting consequence" in prompts.BEAR_SYSTEM
+
+
+def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> None:
+    assert "previous_verdict" in prompts.JUDGE_SYSTEM and "what_changed" in prompts.JUDGE_SYSTEM
