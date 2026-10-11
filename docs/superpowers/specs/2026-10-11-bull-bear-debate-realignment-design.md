@@ -186,8 +186,9 @@ forced retry applies; no valid submission after it abandons the review with no o
 
 Each verdict with `previous_verdict` and `what_changed`; `verdict_counts` (`in`/`out`); `book`; book size and parked
 weight; cooldowns started and active; the recent-verdicts block as the judge saw it; memory calls and the text of
-every lesson written. `veto_cap` and `judge_verdicts` go. Nothing outside bull_bear reads these fields (the
-dashboard does not). `settings.json` carries `research_news` through the parameters.
+every lesson written. `veto_cap` and `judge_verdicts` go. Outside bull_bear only `dashboard/reviews_reader.py`
+reads the record, and only `debate_set[].held`, `forced_exits`, `targets` and `orders`, which stay as they are; nothing
+reads the fields above. `settings.json` carries `research_news` through the parameters.
 
 ### Errors
 
