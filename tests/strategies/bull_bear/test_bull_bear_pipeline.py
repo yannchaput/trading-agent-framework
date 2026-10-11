@@ -33,9 +33,9 @@ UNIVERSE = [f"S{i:02d}" for i in range(20)]  # S00 has the strongest momentum, S
 Script = Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]
 
 
-def _series(growth: float, sessions: int = 300) -> DailySeries:
-    """A trend with a +-1% zigzag, so the volatility is above zero; 50 x 1e6 shares clears the dollar-volume filter."""
-    closes = [50.0 * (1 + growth) ** i * (1.01 if i % 2 else 0.99) for i in range(sessions)]
+def _series(growth: float, sessions: int = 300, swing: float = 0.01) -> DailySeries:
+    """A trend with a +-`swing` zigzag, so the volatility is above zero; 50 x 1e6 shares clears the dollar-volume filter."""
+    closes = [50.0 * (1 + growth) ** i * (1 + swing if i % 2 else 1 - swing) for i in range(sessions)]
     return DailySeries(closes=closes, volumes=[1e6] * sessions)
 
 
@@ -230,6 +230,21 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert line["drops"] == [{"symbol": "S16", "reason": "lost the debate"}]
     assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)
     assert h.bars.calls == [(UNIVERSE, ["OLD", "S16", "S19"])]
+
+
+def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_path: Path) -> None:
+    series = _default_series()
+    series["S03"] = _series(0.0037, swing=0.06)  # held: annualised volatility far above max_volatility (80%)
+    series["S04"] = _series(0.0036, swing=0.06)  # not held: the same volatility
+    h = _harness(tmp_path, held={"S03": 20}, series=series)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    debated = {stock["symbol"]: stock for stock in line["debate_set"]}
+    assert debated["S03"]["held"] is True
+    assert "S04" not in debated
+    assert line["forced_exits"] == []
 
 
 # --- research failures --------------------------------------------------------------------------------

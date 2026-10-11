@@ -1,8 +1,8 @@
 """The stocks the agents debate this week, and the holdings code sells without asking them (pure).
 
 The top `shortlist_size` by momentum rank, plus every holding still ranked within `retention_rank` (cross_momentum's
-own sell threshold). A holding ranked worse, or unranked (no data, failed a filter, left the universe), is a forced
-exit: it never reaches the agents.
+own sell threshold). A holding ranked worse, or unranked (no data, failed a filter other than max_volatility, which
+the pipeline applies to new entries only, left the universe), is a forced exit: it never reaches the agents.
 """
 
 from __future__ import annotations

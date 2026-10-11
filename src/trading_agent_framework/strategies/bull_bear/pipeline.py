@@ -8,6 +8,7 @@ Free text from an agent is logged and otherwise ignored. See docs/superpowers/sp
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -85,6 +86,8 @@ class ReviewPipeline:
         self._bars = bars
         self._sector_of = sector_of
         self._momentum = momentum  # cross_momentum's CONFIG: the score weights, the skip and the filters
+        # max_volatility gates new entries only: holdings are scored with a copy that lifts it (CONFIG itself is never changed)
+        self._holding_momentum = {**momentum, "max_volatility": math.inf}
         self._stage = "setup"  # "setup" until the rebalancer starts, then "execution": what a broker failure is attributed to
 
     def _now(self) -> datetime:
@@ -130,12 +133,24 @@ class ReviewPipeline:
             series = self._bars.load(self._universe, holdings)
         except DataUnavailable as exc:
             raise ReviewAbandoned("data", str(exc)) from exc
+        held_now = set(holdings)
+        max_volatility = self._momentum["max_volatility"]
         rows: list[MomentumRow] = []
         for symbol in self._universe:
-            if symbol in series:
-                row = score_stock(symbol, series[symbol].closes, series[symbol].volumes, self._momentum)
-                if row is not None:
-                    rows.append(row)
+            if symbol not in series:
+                continue
+            closes, volumes = series[symbol].closes, series[symbol].volumes
+            if symbol in held_now:
+                # A holding: every filter but max_volatility. A volatility spike after a crash must not force it out
+                # near its low; at or below the cap this is the very row the full filters would give.
+                row = score_stock(symbol, closes, volumes, self._holding_momentum)
+                if row is not None and row.volatility > max_volatility:
+                    strategy.log_info(f"[bull_bear] {symbol} is held at a volatility of {row.volatility:.0%}, above max_volatility ({max_volatility:.0%}): kept in the ranking")
+            else:
+                # A possible new entry: cross_momentum's filters in full, max_volatility included.
+                row = score_stock(symbol, closes, volumes, self._momentum)
+            if row is not None:
+                rows.append(row)
         ranked = rank(rows)
 
         # 2. The debate set, and the holdings code sells without asking the agents.
