@@ -114,7 +114,7 @@ def test_an_ifrs_filers_income_statement_and_balance_sheet_are_not_empty() -> No
     balance = tools["get_balance_sheet"]("ABVX")  # type: ignore
     facts = tools["get_company_facts"]("ABVX")  # type: ignore
 
-    assert income["values"]["revenue"] == {"value": 7051, "unit": "EUR", "filed": "2026-03-26", "form": "20-F"}
+    assert income["values"]["revenue"] == {"value": 7051, "unit": "EUR", "filed": "2026-03-26", "form": "20-F", "end": "2025-12-31"}
     assert balance["values"]["assets"]["value"] == 12411
     assert facts["fact_count"] == 2
 

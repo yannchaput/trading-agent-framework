@@ -267,6 +267,40 @@ def _same_statement_period(candidate: dict[str, Any], anchor: dict[str, Any]) ->
     return True
 
 
+_YEAR_DAYS = 365
+_PERIOD_TOLERANCE_DAYS = 15  # fiscal periods can end a few days off the calendar (52/53-week years)
+
+
+def _period(row: dict[str, Any]) -> dict[str, Any]:
+    """The `start` (flows only) and `end` a value covers."""
+    return {**({"start": row["start"]} if row.get("start") else {}), **({"end": row["end"]} if row.get("end") else {})}
+
+
+def _a_year_before(end: datetime, other_end: datetime) -> bool:
+    return abs((end - other_end).days - _YEAR_DAYS) <= _PERIOD_TOLERANCE_DAYS
+
+
+def _prior_year(candidates: list[dict[str, Any]], chosen: dict[str, Any]) -> dict[str, Any] | None:
+    """The same-length period ending about a year before `chosen`, in its unit, from `candidates` (best first).
+
+    A flow (with a `start`) matches only a flow of the same length, so a quarter is never paired with a year-to-date
+    figure; a balance (no `start`) matches only a balance.
+    """
+    end, start = parse_dt(chosen.get("end")), parse_dt(chosen.get("start"))
+    if end is None:
+        return None
+    for row in candidates:
+        row_end, row_start = parse_dt(row.get("end")), parse_dt(row.get("start"))
+        if row_end is None or row.get("unit") != chosen.get("unit") or not _a_year_before(end, row_end):
+            continue
+        if (start is None) != (row_start is None):
+            continue
+        if start is not None and row_start is not None and abs((row_end - row_start).days - (end - start).days) > _PERIOD_TOLERANCE_DAYS:
+            continue
+        return {"value": row["value"], **_period(row)}
+    return None
+
+
 def statement_values(
     payload: dict[str, Any],
     tag_map: dict[str, list[str]],
@@ -278,6 +312,9 @@ def statement_values(
 
     A field whose best candidate doesn't match the statement's period anchor is omitted, rather
     than mixing facts pulled from different SEC filings or periods.
+
+    Each value carries its period (`start` for a flow, `end`) and, when the filings known at `as_of` report it,
+    `prior_year`: the same-length period ending about a year earlier (`value`, `start`, `end`).
 
     `tag_map` is read from the `us-gaap` taxonomy. `ifrs_tag_map` (the same field names mapped to `ifrs-full` tags)
     adds filers of 20-F / 40-F reports: both taxonomies' candidates compete and the most recently filed wins, so a
@@ -303,12 +340,11 @@ def statement_values(
     for field, candidates in field_candidates.items():
         for candidate in candidates:
             if _same_statement_period(candidate, anchor):
-                values[field] = {
-                    "value": candidate["value"],
-                    "unit": candidate["unit"],
-                    "filed": candidate["filed"],
-                    "form": candidate["form"],
-                }
+                value = {"value": candidate["value"], "unit": candidate["unit"], "filed": candidate["filed"], "form": candidate["form"], **_period(candidate)}
+                prior = _prior_year(candidates, candidate)
+                if prior is not None:
+                    value["prior_year"] = prior
+                values[field] = value
                 break
     return values
 

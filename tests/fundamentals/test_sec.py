@@ -306,3 +306,64 @@ def test_the_cash_flow_tags_are_shared_with_bill_ackmans_screen() -> None:
 
     assert ANNUAL_FLOW_TAGS["operating_cash_flow"] is sec.CASH_FLOW_TAGS["operating_cash_flow"]
     assert ANNUAL_FLOW_TAGS["capex"] is sec.CASH_FLOW_TAGS["capex"]
+
+
+# --- statement periods and the prior year -------------------------------------------------------------------------
+
+
+def _flow(val: object, start: str, end: str, filed: str = "2026-05-01", form: str = "10-Q", accn: str = "q1") -> dict[str, object]:
+    return {"val": val, "start": start, "end": end, "filed": filed, "form": form, "accn": accn}
+
+
+def test_a_value_carries_its_period_and_the_same_quarter_a_year_earlier() -> None:
+    payload = {"facts": {"us-gaap": {"Revenues": _usd(_flow(120, "2026-01-01", "2026-03-31"), _flow(100, "2025-01-01", "2025-03-31"))}}}
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert values["revenue"] == {
+        "value": 120,
+        "unit": "USD",
+        "filed": "2026-05-01",
+        "form": "10-Q",
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "prior_year": {"value": 100, "start": "2025-01-01", "end": "2025-03-31"},
+    }
+
+
+def test_a_quarter_is_never_compared_with_a_year_to_date_figure() -> None:
+    """A 10-Q tags a 3-month and a 9-month figure ending the same day: each has its own prior year."""
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": _usd(
+                    _flow(120, "2025-07-01", "2025-09-30", filed="2025-11-01"),
+                    _flow(330, "2025-01-01", "2025-09-30", filed="2025-11-01"),
+                    _flow(270, "2024-01-01", "2024-09-30", filed="2025-11-01"),  # only the 9-month prior year is reported
+                )
+            }
+        }
+    }
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert values["revenue"]["value"] == 120 and values["revenue"]["start"] == "2025-07-01"
+    assert "prior_year" not in values["revenue"]  # 270 covers nine months, not three
+
+
+def test_a_balance_compares_with_the_balance_a_year_earlier() -> None:
+    k1 = {"filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {"facts": {"us-gaap": {"Assets": _usd({"val": 50, "end": "2025-12-31", **k1}, {"val": 40, "end": "2024-12-31", **k1})}}}
+
+    values = sec.statement_values(payload, {"assets": ["Assets"]}, as_of=_AS_OF)
+
+    assert values["assets"] == {"value": 50, "unit": "USD", "filed": "2026-02-01", "form": "10-K", "end": "2025-12-31", "prior_year": {"value": 40, "end": "2024-12-31"}}
+
+
+def test_the_prior_year_is_point_in_time() -> None:
+    """No look-ahead: a prior-year figure first filed after `as_of` (a later restatement) is not read."""
+    payload = {"facts": {"us-gaap": {"Revenues": _usd(_flow(120, "2026-01-01", "2026-03-31"), _flow(100, "2025-01-01", "2025-03-31", filed="2026-07-01", accn="later"))}}}
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert "prior_year" not in values["revenue"]
