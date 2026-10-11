@@ -154,7 +154,7 @@ class ReviewPipeline:
         ranked = rank(rows)
 
         # 2. The debate set, and the holdings code sells without asking the agents.
-        debate = build_debate_set(ranked, holdings, shortlist_size=params.shortlist_size, retention_rank=params.retention_rank)
+        debate = build_debate_set(ranked, holdings, debate_size=params.debate_size, retention_rank=params.retention_rank)
         symbols = debate.symbols
         record.update(
             ranked=len(ranked),

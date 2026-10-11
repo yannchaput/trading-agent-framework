@@ -16,6 +16,13 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
 
 
+def test_the_book_defaults_debate_the_top_15() -> None:
+    params = BullBearParams()
+
+    assert (params.book_size, params.max_vetoes, params.debate_size) == (10, 5, 15)
+    assert BullBearParams(book_size=8, max_vetoes=7).debate_size == 15
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
@@ -31,6 +38,11 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"min_yahoo_coverage": 0.0}, "min_yahoo_coverage must be in (0, 1]"),
         ({"yahoo_retry_delays": (60.0, -1.0)}, "yahoo_retry_delays"),
         ({"research_tool_budget": 0}, "research_tool_budget must be at least 1"),
+        ({"book_size": 30, "retention_rank": 40}, "book_size x min_weight must fit"),
+        ({"book_size": 4}, "book_size x max_weight must reach"),
+        ({"max_vetoes": 25}, "retention_rank must be above debate_size"),
+        ({"book_size": 0}, "book_size and max_vetoes must be at least 1"),
+        ({"max_vetoes": 0}, "book_size and max_vetoes must be at least 1"),
     ],
 )
 def test_an_invalid_value_is_refused_with_a_reason(overrides: dict, message: str) -> None:
