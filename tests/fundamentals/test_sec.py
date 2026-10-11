@@ -262,3 +262,250 @@ def test_compact_company_facts_keeps_the_newer_fact_when_both_taxonomies_use_a_t
     result = sec.compact_company_facts(_both_taxonomies(), as_of=_AS_OF)
 
     assert result["facts"]["Assets"]["value"] == 6_700 and "taxonomy" not in result["facts"]["Assets"]
+
+
+# --- total debt and cash flow: one definition for the agent tools and bill_ackman's screen ---------------------------
+
+_ANNUAL = frozenset({"10-K", "10-K/A"})
+
+
+def _usd(*rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {"USD": list(rows)}}
+
+
+def test_total_debt_sources_follow_the_order_of_preference() -> None:
+    year_end = {"end": "2025-12-31", "filed": "2026-02-01", "form": "10-K"}
+    gaap = {
+        "LongTermDebt": _usd({"val": 900, **year_end}),
+        "LongTermDebtNoncurrent": _usd({"val": 700, **year_end}),
+        "LongTermDebtCurrent": _usd({"val": 200, **year_end}),
+        "DebtLongtermAndShorttermCombinedAmount": _usd({"val": 950, **year_end}),
+    }
+
+    sources = sec.total_debt_sources(gaap, _ANNUAL)
+
+    assert [rows[0]["value"] if rows else None for rows in sources] == [900, None, 900, None, 950]
+    assert sources[0][0] == {"end": "2025-12-31", "value": 900, "filed": "2026-02-01"}
+
+
+def test_a_noncurrent_debt_without_its_current_part_counts_the_current_part_as_zero() -> None:
+    gaap = {"LongTermDebtNoncurrent": _usd({"val": 700, "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K"})}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL)[2] == [{"end": "2025-12-31", "value": 700, "filed": "2026-02-01"}]
+
+
+def test_total_debt_sources_read_only_the_forms_asked_for() -> None:
+    gaap = {"LongTermDebt": _usd({"val": 900, "end": "2026-03-31", "filed": "2026-05-01", "form": "10-Q"})}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL)[0] == []
+    assert sec.total_debt_sources(gaap, frozenset({"10-Q"}))[0] == [{"end": "2026-03-31", "value": 900, "filed": "2026-05-01"}]
+
+
+def test_the_cash_flow_tags_are_shared_with_bill_ackmans_screen() -> None:
+    from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import ANNUAL_FLOW_TAGS
+
+    assert ANNUAL_FLOW_TAGS["operating_cash_flow"] is sec.CASH_FLOW_TAGS["operating_cash_flow"]
+    assert ANNUAL_FLOW_TAGS["capex"] is sec.CASH_FLOW_TAGS["capex"]
+
+
+# --- statement periods and the prior year -------------------------------------------------------------------------
+
+
+def _flow(val: object, start: str, end: str, filed: str = "2026-05-01", form: str = "10-Q", accn: str = "q1") -> dict[str, object]:
+    return {"val": val, "start": start, "end": end, "filed": filed, "form": form, "accn": accn}
+
+
+def test_a_value_carries_its_period_and_the_same_quarter_a_year_earlier() -> None:
+    payload = {"facts": {"us-gaap": {"Revenues": _usd(_flow(120, "2026-01-01", "2026-03-31"), _flow(100, "2025-01-01", "2025-03-31"))}}}
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert values["revenue"] == {
+        "value": 120,
+        "unit": "USD",
+        "filed": "2026-05-01",
+        "form": "10-Q",
+        "start": "2026-01-01",
+        "end": "2026-03-31",
+        "prior_year": {"value": 100, "start": "2025-01-01", "end": "2025-03-31"},
+    }
+
+
+def test_a_quarter_is_never_compared_with_a_year_to_date_figure() -> None:
+    """A 10-Q tags a 3-month and a 9-month figure ending the same day: each has its own prior year."""
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": _usd(
+                    _flow(120, "2025-07-01", "2025-09-30", filed="2025-11-01"),
+                    _flow(330, "2025-01-01", "2025-09-30", filed="2025-11-01"),
+                    _flow(270, "2024-01-01", "2024-09-30", filed="2025-11-01"),  # only the 9-month prior year is reported
+                )
+            }
+        }
+    }
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert values["revenue"]["value"] == 120 and values["revenue"]["start"] == "2025-07-01"
+    assert "prior_year" not in values["revenue"]  # 270 covers nine months, not three
+
+
+def test_a_balance_compares_with_the_balance_a_year_earlier() -> None:
+    k1 = {"filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {"facts": {"us-gaap": {"Assets": _usd({"val": 50, "end": "2025-12-31", **k1}, {"val": 40, "end": "2024-12-31", **k1})}}}
+
+    values = sec.statement_values(payload, {"assets": ["Assets"]}, as_of=_AS_OF)
+
+    assert values["assets"] == {"value": 50, "unit": "USD", "filed": "2026-02-01", "form": "10-K", "end": "2025-12-31", "prior_year": {"value": 40, "end": "2024-12-31"}}
+
+
+def test_the_prior_year_is_point_in_time() -> None:
+    """No look-ahead: a prior-year figure first filed after `as_of` (a later restatement) is not read."""
+    payload = {"facts": {"us-gaap": {"Revenues": _usd(_flow(120, "2026-01-01", "2026-03-31"), _flow(100, "2025-01-01", "2025-03-31", filed="2026-07-01", accn="later"))}}}
+
+    values = sec.statement_values(payload, {"revenue": ["Revenues"]}, as_of=_AS_OF)
+
+    assert "prior_year" not in values["revenue"]
+
+
+# --- the agent statements: total debt, cash flow, staleness -------------------------------------------------------
+
+
+def _q(val: object, end: str = "2026-03-31", filed: str = "2026-05-01", accn: str = "q1") -> dict[str, object]:
+    return {"val": val, "end": end, "filed": filed, "form": "10-Q", "accn": accn}
+
+
+def test_the_balance_sheets_debt_is_total_debt_not_the_current_portion() -> None:
+    """VSXY's shape: the agent tool used to show $4M (the current portion) against $3.93B of liabilities."""
+    payload = {"facts": {"us-gaap": {"Liabilities": _usd(_q(3_930)), "LongTermDebtCurrent": _usd(_q(4)), "LongTermDebtNoncurrent": _usd(_q(1_200))}}}
+
+    values = sec.balance_sheet(payload, as_of=_AS_OF)
+
+    assert values["debt"] == {"value": 1_204, "unit": "USD", "filed": "2026-05-01", "end": "2026-03-31"}
+    assert values["liabilities"]["value"] == 3_930
+
+
+def test_total_debt_carries_the_balance_a_year_earlier() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_q(9_000)), "LongTermDebt": _usd(_q(900), _q(800, end="2025-03-31", filed="2025-05-01", accn="q0"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["prior_year"] == {"value": 800, "end": "2025-03-31"}
+
+
+def test_an_ifrs_filers_debt_is_still_its_borrowings() -> None:
+    assert sec.balance_sheet(_ifrs_payload(), as_of=_AS_OF)["debt"]["value"] == 738
+
+
+def test_a_company_without_a_debt_figure_has_no_debt_field() -> None:
+    assert "debt" not in sec.balance_sheet({"facts": {"us-gaap": {"Assets": _usd(_q(9_000))}}}, as_of=_AS_OF)
+
+
+def test_the_income_statement_adds_cash_flow_and_free_cash_flow() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    before = {"start": "2024-01-01", "end": "2024-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {
+        "facts": {
+            "us-gaap": {
+                "Revenues": _usd({"val": 1_000, **year}),
+                "NetCashProvidedByUsedInOperatingActivities": _usd({"val": 300, **year}, {"val": 250, **before}),
+                "PaymentsToAcquirePropertyPlantAndEquipment": _usd({"val": 100, **year}, {"val": 90, **before}),
+            }
+        }
+    }
+
+    values = sec.income_statement(payload, as_of=_AS_OF)
+
+    assert values["operating_cash_flow"]["value"] == 300 and values["capex"]["value"] == 100
+    assert values["free_cash_flow"] == {
+        "value": 200,
+        "unit": "USD",
+        "start": "2025-01-01",
+        "end": "2025-12-31",
+        "prior_year": {"value": 160, "start": "2024-01-01", "end": "2024-12-31"},
+    }
+
+
+def test_free_cash_flow_needs_both_figures_over_the_same_period() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-02-01", "form": "10-K", "accn": "k1"}
+    payload = {"facts": {"us-gaap": {"NetCashProvidedByUsedInOperatingActivities": _usd({"val": 300, **year})}}}
+
+    assert "free_cash_flow" not in sec.income_statement(payload, as_of=_AS_OF)
+
+
+def test_an_ifrs_filers_cash_flow_is_read_from_the_ifrs_full_taxonomy() -> None:
+    year = {"start": "2025-01-01", "end": "2025-12-31", "filed": "2026-03-26", "form": "20-F", "accn": "a1"}
+    payload = {
+        "facts": {
+            "ifrs-full": {
+                "CashFlowsFromUsedInOperatingActivities": {"units": {"EUR": [{"val": 500, **year}]}},
+                "PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities": {"units": {"EUR": [{"val": 120, **year}]}},
+            }
+        }
+    }
+
+    values = sec.income_statement(payload, as_of=_AS_OF)
+
+    assert values["free_cash_flow"]["value"] == 380 and values["free_cash_flow"]["unit"] == "EUR"
+
+
+def test_a_statement_whose_newest_period_ended_over_18_months_ago_is_stale() -> None:
+    """Ticker B (2026-02-17) returned 2011 figures, and the bear called the company's data 'unknowable'."""
+    old = {"facts": {"us-gaap": {"Assets": _usd({"val": 1, "end": "2011-03-31", "filed": "2011-04-05", "form": "10-K", "accn": "o"})}}}
+    fresh = {"facts": {"us-gaap": {"Assets": _usd(_q(1))}}}
+
+    assert sec.is_stale_statement(sec.balance_sheet(old, as_of=_AS_OF), as_of=_AS_OF)
+    assert not sec.is_stale_statement(sec.balance_sheet(fresh, as_of=_AS_OF), as_of=_AS_OF)
+    assert not sec.is_stale_statement({}, as_of=_AS_OF)
+
+
+# --- total debt for 20-F / 40-F filers and non-USD reporters ------------------------------------------------------
+
+
+def _in(unit: str, *rows: dict[str, object]) -> dict[str, object]:
+    return {"units": {unit: list(rows)}}
+
+
+def _annual_report(val: object, form: str, end: str = "2025-12-31", filed: str = "2026-03-01", accn: str = "a1") -> dict[str, object]:
+    return {"val": val, "end": end, "filed": filed, "form": form, "accn": accn}
+
+
+def test_a_us_gaap_filer_of_a_20f_still_has_debt() -> None:
+    """Nebius's shape: us-gaap debt facts exist only under 20-F; the statement used to drop the debt field."""
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "20-F")), "LongTermDebt": _usd(_annual_report(2_400, "20-F"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"] == {"value": 2_400, "unit": "USD", "filed": "2026-03-01", "end": "2025-12-31"}
+
+
+def test_a_40f_filers_debt_is_read_too() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "40-F")), "LongTermDebt": _usd(_annual_report(700, "40-F"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["value"] == 700
+
+
+def test_a_non_usd_reporters_debt_carries_its_currency() -> None:
+    """Hesai's shape: assets and debt both in CNY; the debt is read in that unit, never converted or dropped."""
+    payload = {"facts": {"us-gaap": {"Assets": _in("CNY", _annual_report(9_000, "20-F")), "LongTermDebt": _in("CNY", _annual_report(116, "20-F"))}}}
+
+    values = sec.balance_sheet(payload, as_of=_AS_OF)
+
+    assert values["assets"]["unit"] == "CNY"
+    assert values["debt"] == {"value": 116, "unit": "CNY", "filed": "2026-03-01", "end": "2025-12-31"}
+
+
+def test_debt_in_another_currency_than_the_statements_is_not_mixed_in() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "10-K")), "LongTermDebt": _in("CNY", _annual_report(116, "10-K"))}}}
+
+    assert "debt" not in sec.balance_sheet(payload, as_of=_AS_OF)
+
+
+def test_a_10k_filers_debt_still_resolves_in_usd() -> None:
+    payload = {"facts": {"us-gaap": {"Assets": _usd(_annual_report(9_000, "10-K")), "LongTermDebt": _usd(_annual_report(2_400, "10-K"))}}}
+
+    assert sec.balance_sheet(payload, as_of=_AS_OF)["debt"]["unit"] == "USD"
+
+
+def test_the_screens_total_debt_sources_stay_usd_only() -> None:
+    gaap = {"LongTermDebt": _in("CNY", _annual_report(116, "10-K")), "LongTermDebtNoncurrent": _in("CNY", _annual_report(50, "10-K"))}
+
+    assert sec.total_debt_sources(gaap, _ANNUAL) == [[], [], [], [], []]
+    assert sec.total_debt_sources(gaap, _ANNUAL, unit="CNY")[0] == [{"end": "2025-12-31", "value": 116, "filed": "2026-03-01"}]

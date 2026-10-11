@@ -59,17 +59,60 @@ def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None: 
 
 
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
-    text = prompts.retry_prompt("submit_verdicts", "6 vetoes: veto at most 5 stocks and keep the others")
+    text = prompts.retry_prompt("submit_verdicts", "11 stocks in: put at most 10 in and the others out")
 
-    assert "submit_verdicts" in text and "veto at most 5" in text
+    assert "submit_verdicts" in text and "put at most 10 in" in text
 
 
-def test_the_judge_gives_a_verdict_per_stock_and_a_trend_alone_is_no_reason_to_veto() -> None:
-    assert "keep or veto" in prompts.JUDGE_SYSTEM and "max_vetoes" in prompts.JUDGE_SYSTEM
-    assert "not a reason to veto" in prompts.JUDGE_SYSTEM
-    assert "pick" not in prompts.JUDGE_SYSTEM.lower() and "pick" not in prompts.judge_task(300).lower()
+def test_the_judge_puts_each_stock_in_or_out_under_a_cap_and_a_trend_alone_is_no_reason_for_out() -> None:
+    text = prompts.JUDGE_SYSTEM
+
+    assert "in or out" in text and "max_in" in text
+    assert "not a reason for out by itself" in text and "already reacted to" in text
+    assert "veto" not in text.lower() and "veto" not in prompts.judge_task(300).lower()
 
 
 def test_no_prompt_mentions_forced_exits() -> None:
     for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM, prompts.bull_task(300), prompts.bear_task(300), prompts.judge_task(300)):
         assert "forced" not in text.lower()
+
+
+def test_no_prompt_explains_held_or_weight() -> None:
+    for text in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM):
+        assert "held" not in text and "weight_pct" not in text
+
+
+def test_the_fact_sheet_explains_the_one_week_return() -> None:
+    assert "return_1w_pct" in prompts.BULL_SYSTEM and "return_1w_pct" in prompts.BEAR_SYSTEM
+
+
+def test_the_researcher_reads_the_prior_year_and_is_not_asked_for_a_trend_it_cannot_see() -> None:
+    assert "prior_year" in prompts.RESEARCHER_SYSTEM and "trend of revenue" not in prompts.RESEARCHER_SYSTEM
+
+
+def test_the_researcher_without_news_is_not_told_about_news() -> None:
+    assert "news" in prompts.researcher_system(True) and "news" not in prompts.researcher_system(False).lower()
+    assert prompts.RESEARCHER_SYSTEM == prompts.researcher_system(True)
+
+
+def test_the_bear_may_not_rate_news_the_price_already_absorbed_high_by_itself() -> None:
+    assert "already reacted to" in prompts.BEAR_SYSTEM and "lasting consequence" in prompts.BEAR_SYSTEM
+
+
+def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> None:
+    assert "previous_verdict" in prompts.JUDGE_SYSTEM and "what_changed" in prompts.JUDGE_SYSTEM
+
+
+def test_a_stronger_candidate_needing_a_place_is_a_new_material_fact_for_the_previous_verdict() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+
+    assert "A stronger candidate that needs a place under max_in is a new, material fact: put the weaker stock out and say so in what_changed." in text
+    assert text.index("change it only for a new, material fact") < text.index("A stronger candidate")
+
+
+def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
+    assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM
+
+
+def test_the_judge_is_told_about_its_memory_tools() -> None:
+    assert "search_memory" in prompts.JUDGE_SYSTEM and "remember_lesson" in prompts.JUDGE_SYSTEM

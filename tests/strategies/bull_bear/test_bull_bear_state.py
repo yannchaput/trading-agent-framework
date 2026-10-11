@@ -20,7 +20,13 @@ def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
 
 def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     store = StateStore(tmp_path / "data" / "state.json")
-    state = BullBearState(last_completed_review="2026-10-06", abandoned_streak=0, last_book=[{"symbol": "AAA", "reason": "bull wins", "date": "2026-10-06"}])
+    state = BullBearState(
+        last_completed_review="2026-10-06",
+        abandoned_streak=0,
+        verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}},
+        cooldowns={"BBB": 3},
+        history=[{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "close": 51.5}}}],
+    )
 
     store.save(state)
 
@@ -28,13 +34,41 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     assert json.loads((tmp_path / "data" / "state.json").read_text())["version"] == STATE_VERSION
 
 
-def test_a_state_saved_before_the_veto_judge_loads_without_its_last_picks(tmp_path: Path) -> None:
-    """A paper/live file from the picker keeps its date and streak: a completed Tuesday is not reviewed again."""
+def test_a_state_from_the_picker_or_the_veto_judge_keeps_its_review_date_and_streak(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     path = tmp_path / "state.json"
-    old = {"version": STATE_VERSION, "last_completed_review": "2026-10-06", "abandoned_streak": 1, "last_picks": [{"symbol": "AAA", "reason": "won", "date": "2026-10-06"}]}
-    path.write_text(json.dumps(old))
+    path.write_text(json.dumps({"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": 1, "last_book": [{"symbol": "AAA", "reason": "won", "date": "2026-10-06"}]}))
 
-    assert StateStore(path).load() == BullBearState(last_completed_review="2026-10-06", abandoned_streak=1)
+    with caplog.at_level(logging.WARNING):
+        state = StateStore(path).load()
+
+    assert state == BullBearState(last_completed_review="2026-10-06", abandoned_streak=1)  # a completed Tuesday is not reviewed again
+    assert caplog.text == ""
+
+
+def test_a_version_1_state_without_a_review_date_keeps_its_streak(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 1, "last_completed_review": None, "abandoned_streak": 2}))
+
+    assert StateStore(path).load() == BullBearState(abandoned_streak=2)
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        {"version": 1, "last_completed_review": 20261006, "abandoned_streak": 0},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": -1},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": True},
+        {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": "1"},
+        {"version": 3, "last_completed_review": "2026-10-06", "abandoned_streak": 1},
+    ],
+)
+def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_warning(tmp_path: Path, content: dict[str, object], caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps(content))
+
+    with caplog.at_level(logging.WARNING):
+        assert StateStore(path).load() == BullBearState()
+    assert "starting from an empty state" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -43,8 +77,16 @@ def test_a_state_saved_before_the_veto_judge_loads_without_its_last_picks(tmp_pa
         "not json",
         json.dumps({"version": 99, "abandoned_streak": 1}),
         json.dumps({"version": STATE_VERSION, "abandoned_streak": -1}),
-        json.dumps({"version": STATE_VERSION, "last_book": [{"symbol": "AAA"}]}),
+        json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "in"}}}),
+        json.dumps({"version": STATE_VERSION, "verdicts": ["AAA"]}),
         json.dumps({"version": STATE_VERSION, "abandoned_streak": True}),
+        json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": 0}}),
+        json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": True}}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "r"}}}]}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06"}]}),
+        json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "maybe", "reason": "r", "date": "2026-10-06"}}}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "veto", "reason": "r", "close": 1.0}}}]}),
+        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": ["in"], "reason": "r", "close": 1.0}}}]}),
     ],
 )
 def test_an_unreadable_or_invalid_file_is_an_empty_state_with_a_warning(tmp_path: Path, content: str, caplog: pytest.LogCaptureFixture) -> None:

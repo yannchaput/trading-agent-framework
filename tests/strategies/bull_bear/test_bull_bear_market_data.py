@@ -7,7 +7,7 @@ import pytest
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
-from trading_agent_framework.strategies.bull_bear.market_data import DataUnavailable, GateBars, YahooBars
+from trading_agent_framework.strategies.bull_bear.market_data import DailySeries, DataUnavailable, GateBars, YahooBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError, YahooDataError
 
@@ -51,6 +51,31 @@ def test_a_usable_batch_gives_300_completed_sessions_per_universe_symbol() -> No
     assert series["AAA"].closes[0] == 101.0
     assert series["AAA"].volumes == [1e6] * 300
     assert source.calls == [(["AAA", "BBB"], TODAY)]
+
+
+def test_each_close_carries_its_market_date_oldest_first() -> None:
+    source = FakeSource([{"AAA": _bars("AAA")}])
+
+    series = _yahoo(source, [], []).load(["AAA"], held=[])["AAA"]
+
+    assert len(series.dates) == len(series.closes) == 300
+    assert series.dates[-1] == date(2026, 10, 5)  # today's partial bar is dropped
+    assert series.dates == sorted(series.dates)
+    assert series.dates[0] == [d.date() for d in pd.bdate_range(end=date(2026, 10, 5), periods=300)][0]
+
+
+def test_the_gate_path_fills_the_dates_too() -> None:
+    gate = GateBars(lambda symbol, count: _bars(symbol, last=date(2026, 10, 5)), today=lambda: TODAY, warn=lambda message: None)
+
+    series = gate.load(["AAA"], held=[])["AAA"]
+
+    assert series.dates[-1] == date(2026, 10, 5) and len(series.dates) == len(series.closes)
+
+
+def test_a_series_built_without_dates_stays_valid() -> None:
+    series = DailySeries(closes=[1.0], volumes=[2.0])
+
+    assert series.dates == []
 
 
 def test_a_batch_covering_too_little_of_the_universe_is_retried_then_unavailable() -> None:

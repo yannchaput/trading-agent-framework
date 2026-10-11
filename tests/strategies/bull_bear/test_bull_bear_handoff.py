@@ -23,8 +23,8 @@ def _bear(symbols: list[str]) -> list[dict[str, Any]]:
     return [{"symbol": s, "risk": "low", "concern": "none", "argument": "no red flag"} for s in symbols]
 
 
-def _verdicts(keep: list[str], veto: list[str] | None = None) -> list[dict[str, Any]]:
-    return [{"symbol": s, "verdict": "keep", "reason": "bull wins"} for s in keep] + [{"symbol": s, "verdict": "veto", "reason": "bear wins"} for s in veto or []]
+def _verdicts(chosen: list[str], out: list[str] | None = None) -> list[dict[str, Any]]:
+    return [{"symbol": s, "verdict": "in", "reason": "bull wins"} for s in chosen] + [{"symbol": s, "verdict": "out", "reason": "bear wins"} for s in out or []]
 
 
 # --- note ---------------------------------------------------------------------------------------
@@ -110,51 +110,51 @@ def test_the_judge_has_submit_verdicts_and_no_picker_tool_is_left() -> None:
     assert set(tools) == {"submit_note", "submit_bull_case", "submit_bear_case", "submit_verdicts"}
 
 
-def test_a_verdict_for_every_stock_is_recorded_with_its_vetoes() -> None:
+def test_a_verdict_for_every_stock_is_recorded_with_the_stocks_put_in() -> None:
     recorder, tools = _tools()
-    recorder.expect_verdicts(DEBATE, max_vetoes=2)
+    recorder.expect_verdicts(DEBATE, max_in=4)
 
     result = tools["submit_verdicts"](_verdicts(["AAA", "BBB", "CCC", "DDD"], ["EEE", "FFF"]))
 
     assert result == {"status": "recorded"}
-    assert recorder.submission.verdicts[0] == Verdict("AAA", "keep", "bull wins")
-    assert recorder.submission.vetoed == ["EEE", "FFF"]
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "in", "bull wins")
+    assert recorder.submission.chosen == ["AAA", "BBB", "CCC", "DDD"]
 
 
-def test_keeping_every_stock_is_valid_even_with_no_veto_allowed() -> None:
+def test_putting_every_stock_out_is_valid() -> None:
     recorder, tools = _tools()
-    recorder.expect_verdicts(DEBATE, max_vetoes=0)
+    recorder.expect_verdicts(DEBATE, max_in=4)
 
-    assert tools["submit_verdicts"](_verdicts(DEBATE)) == {"status": "recorded"}
-    assert recorder.submission.vetoed == []
+    assert tools["submit_verdicts"](_verdicts([], DEBATE)) == {"status": "recorded"}
+    assert recorder.submission.chosen == []
 
 
 def test_verdicts_and_symbols_are_normalised_like_the_debaters_cases() -> None:
     recorder, tools = _tools()
-    recorder.expect_verdicts(DEBATE, max_vetoes=1)
+    recorder.expect_verdicts(DEBATE, max_in=6)
 
-    raw = [{"symbol": " aaa ", "verdict": "Veto ", "reason": "  lawsuit filed  "}, *_verdicts(DEBATE[1:])]
+    raw = [{"symbol": " aaa ", "verdict": "Out ", "reason": "  lawsuit filed  "}, *_verdicts(DEBATE[1:])]
 
     assert tools["submit_verdicts"](raw) == {"status": "recorded"}
-    assert recorder.submission.verdicts[0] == Verdict("AAA", "veto", "lawsuit filed")
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "lawsuit filed")
 
 
 @pytest.mark.parametrize(
     ("verdicts", "message"),
     [
-        ({"AAA": "keep"}, "verdicts must be a list of objects"),
+        ({"AAA": "in"}, "verdicts must be a list of objects"),
         (_verdicts(DEBATE[:5]), "no case for FFF"),
         (_verdicts([*DEBATE, "ZZZ"]), "ZZZ is not in the debate"),
         (_verdicts([*DEBATE, "AAA"]), "AAA appears twice"),
-        ([{"symbol": "AAA", "verdict": "sell", "reason": "x"}, *_verdicts(DEBATE[1:])], "the verdict for AAA must be one of keep, veto"),
-        ([{"symbol": "AAA", "verdict": "keep", "reason": " "}, *_verdicts(DEBATE[1:])], "AAA has no reason"),
-        ([{"symbol": "AAA", "verdict": "keep", "reason": "x" * 301}, *_verdicts(DEBATE[1:])], "the reason for AAA is 301 characters"),
-        (_verdicts(DEBATE[:4], DEBATE[4:]), "2 vetoes: veto at most 1 stocks and keep the others"),
+        ([{"symbol": "AAA", "verdict": "keep", "reason": "x"}, *_verdicts([], DEBATE[1:])], "the verdict for AAA must be one of in, out"),
+        ([{"symbol": "AAA", "verdict": "in", "reason": " "}, *_verdicts([], DEBATE[1:])], "AAA has no reason"),
+        ([{"symbol": "AAA", "verdict": "in", "reason": "x" * 301}, *_verdicts([], DEBATE[1:])], "the reason for AAA is 301 characters"),
+        (_verdicts(DEBATE[:3], DEBATE[3:]), "3 stocks in: put at most 2 in and the others out"),
     ],
 )
 def test_bad_verdicts_are_refused(verdicts: Any, message: str) -> None:
     recorder, tools = _tools()
-    recorder.expect_verdicts(DEBATE, max_vetoes=1)
+    recorder.expect_verdicts(DEBATE, max_in=2)
 
     result = tools["submit_verdicts"](verdicts)
 
@@ -187,3 +187,37 @@ def test_arming_a_stage_clears_the_previous_submission_and_error() -> None:
     recorder.expect_note("BBB")
 
     assert (recorder.submitted, recorder.submission, recorder.last_error) == (False, None, None)
+
+
+def test_a_changed_verdict_needs_what_changed() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+
+    result = tools["submit_verdicts"](_verdicts(DEBATE[1:], ["AAA"]))
+
+    assert "your previous verdict on AAA was in: to put it out, give what_changed" in result["error"]
+
+
+def test_a_changed_verdict_with_what_changed_is_recorded_with_it() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in", "BBB": "in"})
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "bear wins", "what_changed": "8-K: guidance cut"}, *_verdicts(DEBATE[1:])]
+
+    assert tools["submit_verdicts"](raw) == {"status": "recorded"}
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "bear wins", "8-K: guidance cut")
+    assert recorder.submission.verdicts[1].what_changed is None
+
+
+def test_an_unchanged_verdict_or_a_first_verdict_needs_no_what_changed() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+
+    assert tools["submit_verdicts"](_verdicts(DEBATE)) == {"status": "recorded"}
+
+
+def test_a_long_what_changed_is_refused() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
+
+    assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]

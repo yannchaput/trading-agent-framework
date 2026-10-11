@@ -1,10 +1,11 @@
 """What bull_bear remembers between reviews, and the per-review log.
 
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
-restart), the abandoned-review streak and the last book, in one small JSON file per mode, written atomically. A
-missing or invalid file is an empty state; a file from before the veto judge (with `last_picks`) loads, the old key
-ignored. `ReviewLog` appends one JSON line per review to the run directory. Neither ever raises on an I/O problem:
-bookkeeping must not stop a review.
+restart), the abandoned-review streak, the judge's latest verdict on every stock it judged and the re-entry
+cooldowns (the stocks the judge sold, and the completed reviews each stays out of the candidates), in one small JSON
+file per mode, written atomically. A missing or invalid file is an empty state; a version-1 file (the picker, the
+veto judge) keeps its review date and streak and nothing else. `ReviewLog` appends one JSON line per review to the
+run directory. Neither ever raises on an I/O problem: bookkeeping must not stop a review.
 """
 
 from __future__ import annotations
@@ -22,8 +23,10 @@ from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
 
-STATE_VERSION = 1
-_BOOK_KEYS = {"symbol", "reason", "date"}
+STATE_VERSION = 2
+_PICKER_VERSION = 1  # the picker's and the veto judge's file: a review date and a streak
+_VERDICT_KEYS = {"verdict", "reason", "date"}
+_VERDICTS = {"in", "out"}
 
 
 def state_path(project_root: Path, mode: TradingMode) -> Path:
@@ -35,22 +38,51 @@ def state_path(project_root: Path, mode: TradingMode) -> Path:
 class BullBearState:
     last_completed_review: str | None = None  # ISO market date of the last completed review
     abandoned_streak: int = 0  # abandoned reviews in a row
-    last_book: list[dict[str, str]] = field(default_factory=list)  # [{symbol, reason, date}] of the last completed review
+    verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date}
+    cooldowns: dict[str, int] = field(default_factory=dict)  # symbol -> completed reviews it stays out of the candidates
+    history: list[dict[str, Any]] = field(default_factory=list)  # the last feedback_reviews reviews: {date, verdicts: {symbol: {verdict, reason, close}}}
+
+
+def _valid_review(entry: Any) -> bool:
+    """One `history` entry: {date, verdicts: {symbol: {verdict, reason, close}}}."""
+    if not isinstance(entry, dict) or set(entry) != {"date", "verdicts"} or not isinstance(entry["date"], str) or not isinstance(entry["verdicts"], dict):
+        return False
+    return all(
+        isinstance(item, dict)
+        and set(item) == {"verdict", "reason", "close"}
+        and isinstance(item["verdict"], str)
+        and item["verdict"] in _VERDICTS
+        and isinstance(item["reason"], str)
+        and isinstance(item["close"], int | float)
+        and not isinstance(item["close"], bool)
+        for item in entry["verdicts"].values()
+    )
+
+
+def _valid_dates(raw: dict[str, Any]) -> bool:
+    """The review date (a string or None) and the abandoned streak (a non-negative integer) every version carries."""
+    last = raw.get("last_completed_review")
+    streak = raw.get("abandoned_streak", 0)
+    return (last is None or isinstance(last, str)) and isinstance(streak, int) and not isinstance(streak, bool) and streak >= 0
 
 
 def _valid(raw: Any) -> bool:
     if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
         return False
-    last = raw.get("last_completed_review")
-    streak = raw.get("abandoned_streak", 0)
-    book = raw.get("last_book", [])
+    verdicts = raw.get("verdicts", {})
+    cooldowns = raw.get("cooldowns", {})
+    history = raw.get("history", [])
     return (
-        (last is None or isinstance(last, str))
-        and isinstance(streak, int)
-        and not isinstance(streak, bool)
-        and streak >= 0
-        and isinstance(book, list)
-        and all(isinstance(entry, dict) and set(entry) == _BOOK_KEYS and all(isinstance(value, str) for value in entry.values()) for entry in book)
+        _valid_dates(raw)
+        and isinstance(verdicts, dict)
+        and all(
+            isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) and entry["verdict"] in _VERDICTS
+            for entry in verdicts.values()
+        )
+        and isinstance(cooldowns, dict)
+        and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
+        and isinstance(history, list)
+        and all(_valid_review(entry) for entry in history)
     )
 
 
@@ -67,13 +99,18 @@ class StateStore:
         except (OSError, ValueError) as exc:
             logger.log_warning(f"state file {self._path} is unreadable, starting from an empty state: {exc}")
             return BullBearState()
+        if isinstance(raw, dict) and raw.get("version") == _PICKER_VERSION and _valid_dates(raw):
+            # The picker's file: nothing else of it applies, but a completed Tuesday is not reviewed again after the upgrade.
+            return BullBearState(last_completed_review=raw.get("last_completed_review"), abandoned_streak=raw.get("abandoned_streak", 0))
         if not _valid(raw):
             logger.log_warning(f"state file {self._path} is not a valid state, starting from an empty state")
             return BullBearState()
         return BullBearState(
             last_completed_review=raw.get("last_completed_review"),
             abandoned_streak=raw.get("abandoned_streak", 0),
-            last_book=[dict(entry) for entry in raw.get("last_book", [])],
+            verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
+            cooldowns=dict(raw.get("cooldowns", {})),
+            history=[{"date": entry["date"], "verdicts": {symbol: dict(item) for symbol, item in entry["verdicts"].items()}} for entry in raw.get("history", [])],
         )
 
     def save(self, state: BullBearState) -> None:

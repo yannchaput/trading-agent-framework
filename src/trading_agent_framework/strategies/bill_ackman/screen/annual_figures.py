@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from trading_agent_framework.fundamentals.sec import BALANCE_SHEET_TAGS, INCOME_STATEMENT_TAGS, parse_dt
+from trading_agent_framework.fundamentals.sec import BALANCE_SHEET_TAGS, CASH_FLOW_TAGS, INCOME_STATEMENT_TAGS, parse_dt, total_debt_sources, unit_rows
 
 MIN_FISCAL_YEAR_DAYS = 350
 MAX_FISCAL_YEAR_DAYS = 380
@@ -28,18 +28,9 @@ ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
         "RevenueFromContractWithCustomerIncludingAssessedTax",
     ],
     "operating_income": INCOME_STATEMENT_TAGS["operating_income"],
-    "operating_cash_flow": [
-        "NetCashProvidedByUsedInOperatingActivities",
-        "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations",
-    ],
-    "capex": ["PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"],
+    "operating_cash_flow": CASH_FLOW_TAGS["operating_cash_flow"],
+    "capex": CASH_FLOW_TAGS["capex"],
 }
-
-
-def _tag_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str]) -> list[dict[str, Any]]:
-    """One tag's facts in one unit, from `forms` only, that carry a value, a period end and a filing date."""
-    rows = (facts.get(tag) or {}).get("units", {}).get(unit, [])
-    return [row for row in rows if isinstance(row, dict) and row.get("form") in forms and row.get("val") is not None and row.get("end") and row.get("filed")]
 
 
 def _is_fiscal_year(row: dict[str, Any]) -> bool:
@@ -86,29 +77,6 @@ def _largest_per_period(sources: list[list[dict[str, Any]]]) -> list[dict[str, A
     return sorted(kept.values(), key=lambda row: (row["end"], row["filed"]))
 
 
-def _summed(gaap: dict[str, Any], noncurrent_tag: str, current_tag: str) -> list[dict[str, Any]]:
-    """Noncurrent + current debt per filing; the current part counts as 0 when the filing lacks it."""
-    current = {(row["end"], row["filed"]): row["val"] for row in _tag_rows(gaap, current_tag, "USD", _ANNUAL_FORMS)}
-    return [{"end": row["end"], "value": row["val"] + current.get((row["end"], row["filed"]), 0), "filed": row["filed"]} for row in _tag_rows(gaap, noncurrent_tag, "USD", _ANNUAL_FORMS)]
-
-
-def _debt_sources(gaap: dict[str, Any]) -> list[list[dict[str, Any]]]:
-    """Total debt, in order of preference: the total tags, then noncurrent + current sums, then the combined tag.
-
-    Real filers use `LongTermDebt` (LOW), the lease-inclusive total (KO, MDLZ), `LongTermDebtNoncurrent` +
-    `LongTermDebtCurrent` (QSR, NEE), or only the lease-inclusive pair (HLT). Known limitation: commercial
-    paper and other short-term borrowings (`CommercialPaper`, `ShortTermBorrowings`) are not added, since
-    filers disagree on whether the long-term tags already include them.
-    """
-    return [
-        [_slim(row) for row in _tag_rows(gaap, "LongTermDebt", "USD", _ANNUAL_FORMS)],
-        [_slim(row) for row in _tag_rows(gaap, "LongTermDebtAndCapitalLeaseObligationsIncludingCurrentMaturities", "USD", _ANNUAL_FORMS)],
-        _summed(gaap, "LongTermDebtNoncurrent", "LongTermDebtCurrent"),
-        _summed(gaap, "LongTermDebtAndCapitalLeaseObligations", "LongTermDebtAndCapitalLeaseObligationsCurrent"),
-        [_slim(row) for row in _tag_rows(gaap, "DebtLongtermAndShorttermCombinedAmount", "USD", _ANNUAL_FORMS)],
-    ]
-
-
 def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     """Reduce a company-facts payload (about 4 MB) to the rows the quality screen needs (a few KB).
 
@@ -121,19 +89,19 @@ def annual_figures(payload: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 
     flows: list[dict[str, Any]] = []
     for field, tags in ANNUAL_FLOW_TAGS.items():
-        sources = [[_slim(row, with_start=True) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS) if _is_fiscal_year(row)] for tag in tags]
+        sources = [[_slim(row, with_start=True) for row in unit_rows(gaap, tag, "USD", _ANNUAL_FORMS) if _is_fiscal_year(row)] for tag in tags]
         pick = _largest_per_period if field == "revenue" else _first_source_per_period
         flows.extend({"field": field, **row} for row in pick(sources))
 
-    cash_sources = [[_slim(row) for row in _tag_rows(gaap, tag, "USD", _ANNUAL_FORMS)] for tag in BALANCE_SHEET_TAGS["cash"]]
+    cash_sources = [[_slim(row) for row in unit_rows(gaap, tag, "USD", _ANNUAL_FORMS)] for tag in BALANCE_SHEET_TAGS["cash"]]
     balances: list[dict[str, Any]] = []
-    for field, sources in (("debt", _debt_sources(gaap)), ("cash", cash_sources)):
+    for field, sources in (("debt", total_debt_sources(gaap, _ANNUAL_FORMS)), ("cash", cash_sources)):
         balances.extend({"field": field, **row} for row in _first_source_per_period(sources))
 
-    cover = [_slim(row) for row in _tag_rows(dei, "EntityCommonStockSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
+    cover = [_slim(row) for row in unit_rows(dei, "EntityCommonStockSharesOutstanding", "shares", _SHARE_COUNT_FORMS)]
     # A 10-Q reports a 3-month and a year-to-date count under one (end, filed), and `_first_source_per_period`
     # keeps the last row of a source: order by start so the shortest period (the latest start) is last.
-    weighted_facts = sorted(_tag_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS), key=lambda row: row.get("start") or "")
+    weighted_facts = sorted(unit_rows(gaap, "WeightedAverageNumberOfDilutedSharesOutstanding", "shares", _SHARE_COUNT_FORMS), key=lambda row: row.get("start") or "")
     weighted = [_slim(row) for row in weighted_facts]
     shares = [
         *({**row, "kind": "cover"} for row in _first_source_per_period([cover])),

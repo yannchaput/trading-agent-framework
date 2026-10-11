@@ -1,10 +1,10 @@
 """BullBearStrategy: a researcher, a bull, a bear and a judge debate the top of cross_momentum's ranking.
 
 Port of lumibot's "Bull vs Bear AI Stock Trading Bot", hardened for a local model: code ranks the universe with
-cross_momentum's own score and filters, builds the fact sheets, builds a book of `book_size` stocks from those the
-judge keeps, sizes it by inverse volatility and places every order (`ReviewPipeline`, `Rebalancer`). No agent has an
-order tool. One review a week, on Tuesday at 12:00 ET, as cross_momentum. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
-and docs/superpowers/specs/2026-10-11-bull-bear-veto-judge-design.md.
+cross_momentum's own score and filters, builds the fact sheets, builds the book from the stocks the judge puts in,
+sizes it by inverse volatility and places every order (`ReviewPipeline`, `Rebalancer`). No agent has an order tool.
+One review a week, on Tuesday at 12:00 ET, as cross_momentum. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
+and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder
 from trading_agent_framework.strategies.bull_bear.market_data import BarsSource, DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewPipeline
-from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, RESEARCHER_SYSTEM
+from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateStore, state_path
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
 
 _RESEARCH_TOOLS = {"search_news", "get_income_statement", "get_balance_sheet"}
+_JUDGE_MEMORY_TOOLS = {"search_memory", "remember_lesson"}
 
 
 class BullBearStrategy(Strategy):
@@ -70,6 +71,7 @@ class BullBearStrategy(Strategy):
     ) -> None:
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or BullBearParams()
+        self.parameters = {**self.parameters, "research_news": self.settings.research_news}  # recorded in settings.json, so the news-on and news-off runs can be told apart
         self.iteration_start_time = parse_rebalance_time(self.settings.rebalance_time)
         self.universe = [symbol for symbol in universe if symbol != self.settings.parking_symbol]  # SHV is parking, never a stock
         # Paper/live read Yahoo's daily bars (Alpaca's IEX volume would empty the dollar-volume filter); a backtest reads the gate.
@@ -87,19 +89,25 @@ class BullBearStrategy(Strategy):
         if self.is_backtesting:
             state_store.wipe()  # one run's streak and date must not leak into the next; paper and live state is never wiped
         try:
-            self._require_news_provider()
+            news = self.settings.research_news
+            if news:
+                self._require_news_provider()
             recorder = HandoffRecorder(self.settings)
             submit = submit_tools(recorder)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
             from trading_agent_framework.agents.tools.news import news_tools
+            from trading_agent_framework.memory.tools import memory_tools
 
             temperature = self.settings.agent_temperature
-            research = only([*news_tools(self), *fundamentals_tools(self)], _RESEARCH_TOOLS)
-            self.agents.create(name="researcher", system_prompt=RESEARCHER_SYSTEM, tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
-            # The bull, the bear and the judge argue from the same evidence pack: no research tool, only their submit tool.
+            sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
+            research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
+            self.agents.create(name="researcher", system_prompt=researcher_system(news), tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
+            # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature)
             self.agents.create(name="bear", system_prompt=BEAR_SYSTEM, tools=[submit["submit_bear_case"]], temperature=temperature)
-            self.agents.create(name="judge", system_prompt=JUDGE_SYSTEM, tools=[submit["submit_verdicts"]], temperature=temperature)
+            # The judge also keeps lessons between reviews (`strategy.memory`, wiped at the start of every backtest).
+            lessons = only(memory_tools(self.memory), _JUDGE_MEMORY_TOOLS)
+            self.agents.create(name="judge", system_prompt=JUDGE_SYSTEM, tools=[*lessons, submit["submit_verdicts"]], temperature=temperature, exempt_tools=["submit_verdicts"])
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc
@@ -116,7 +124,11 @@ class BullBearStrategy(Strategy):
             sector_of=self._sector_of or SectorProvider().get_sector,
             momentum=CONFIG,
         )
-        self.log_info(f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}")
+        news_state = "on" if self.settings.research_news else "off"
+        self.log_info(
+            f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} "
+            f"at {self.iteration_start_time}, research news {news_state}"
+        )
 
     def _require_news_provider(self) -> None:
         """Refuse to start without a news source: the researcher's `search_news` would only ever return `{"error": ...}`.

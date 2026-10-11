@@ -21,26 +21,19 @@ def _symbols(ranks: list[int]) -> tuple[str, ...]:
     return tuple(f"S{rank:02d}" for rank in ranks)
 
 
-def test_without_a_veto_the_book_is_the_top_book_size_ranks() -> None:
-    assert build_book(_debate(list(range(1, 16))), [], 10) == _symbols(list(range(1, 11)))
+def test_the_book_is_the_chosen_stocks_in_rank_order() -> None:
+    assert build_book(_debate(list(range(1, 16))), ["S07", "S02", "S11"]) == _symbols([2, 7, 11])
 
 
-def test_a_vetoed_stock_is_replaced_by_the_next_ranked_survivor() -> None:
-    book = build_book(_debate(list(range(1, 16))), ["S01", "S05", "S07"], 10)
+def test_a_holding_gets_no_preferred_slot() -> None:
+    debate = _debate([*range(1, 16), 22], held=frozenset({22}))
 
-    assert book == _symbols([2, 3, 4, 6, 8, 9, 10, 11, 12, 13])
-
-
-def test_kept_holdings_come_first_then_new_names_in_rank_order() -> None:
-    """The spec's example: holdings at ranks 2, 9 and 22; the judge vetoes rank 9 and ranks 1, 5 and 7."""
-    debate = _debate([*range(1, 16), 22], held=frozenset({2, 9, 22}))
-
-    book = build_book(debate, ["S09", "S01", "S05", "S07"], 10)
-
-    assert book == _symbols([2, 22, 3, 4, 6, 8, 10, 11, 12, 13])
+    assert build_book(debate, ["S22", "S01"]) == _symbols([1, 22])
 
 
-def test_more_surviving_holdings_than_book_size_keeps_the_best_ranked_holdings() -> None:
-    debate = _debate(list(range(1, 16)), held=frozenset({2, 4, 6, 8}))
+def test_nothing_chosen_is_an_empty_book() -> None:
+    assert build_book(_debate(list(range(1, 16))), []) == ()
 
-    assert build_book(debate, [], 3) == _symbols([2, 4, 6])
+
+def test_a_chosen_symbol_outside_the_debate_is_ignored() -> None:
+    assert build_book(_debate([1, 2, 3]), ["S02", "ZZZ"]) == _symbols([2])

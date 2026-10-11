@@ -15,6 +15,7 @@ from trading_agent_framework.strategies.common.scoring import compute_return_fro
 _YEAR = 252
 _SMA = 200
 _MONTH = 21
+_WEEK = 5
 
 
 def _pct(value: float | None) -> float | None:
@@ -36,8 +37,8 @@ def versus_sma200(closes: Sequence[float]) -> float | None:
     return None if sma <= 0 else closes[-1] / sma - 1
 
 
-def fact_sheet_row(stock: DebateStock, *, sector: str, weight: float) -> dict[str, Any]:
-    """`weight` is the current share of portfolio value (open orders counted), 0 when not held."""
+def fact_sheet_row(stock: DebateStock, *, sector: str) -> dict[str, Any]:
+    """What every agent reads about a stock. Whether it is held is left out on purpose: no agent's view may depend on it."""
     row = stock.row
     inputs = row.inputs
     return {
@@ -48,10 +49,9 @@ def fact_sheet_row(stock: DebateStock, *, sector: str, weight: float) -> dict[st
         "return_6m_skip_1m_pct": _pct(inputs.ret_6_1m),
         "return_3m_pct": _pct(inputs.ret_3m),
         "return_1m_pct": _pct(compute_return_from_prices(row.closes, _MONTH, 0)),
+        "return_1w_pct": _pct(compute_return_from_prices(row.closes, _WEEK, 0)),
         "volatility_pct": _pct(row.volatility),
         "drawdown_from_52w_high_pct": _pct(drawdown_from_high(row.closes)),
         "vs_sma200_pct": _pct(versus_sma200(row.closes)),
         "sector": sector,
-        "held": stock.held,
-        "weight_pct": _pct(weight),
     }
