@@ -18,6 +18,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.reentry_cooldown_reviews == 4
     assert params.feedback_reviews == 4
     assert params.judge_memory_budget == 6
+    assert params.research_news is True
 
 
 @pytest.mark.parametrize(

@@ -26,7 +26,7 @@ from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder
 from trading_agent_framework.strategies.bull_bear.market_data import BarsSource, DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewPipeline
-from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, RESEARCHER_SYSTEM
+from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateStore, state_path
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
@@ -71,6 +71,7 @@ class BullBearStrategy(Strategy):
     ) -> None:
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or BullBearParams()
+        self.parameters = {**self.parameters, "research_news": self.settings.research_news}  # recorded in settings.json, so the news-on and news-off runs can be told apart
         self.iteration_start_time = parse_rebalance_time(self.settings.rebalance_time)
         self.universe = [symbol for symbol in universe if symbol != self.settings.parking_symbol]  # SHV is parking, never a stock
         # Paper/live read Yahoo's daily bars (Alpaca's IEX volume would empty the dollar-volume filter); a backtest reads the gate.
@@ -88,7 +89,9 @@ class BullBearStrategy(Strategy):
         if self.is_backtesting:
             state_store.wipe()  # one run's streak and date must not leak into the next; paper and live state is never wiped
         try:
-            self._require_news_provider()
+            news = self.settings.research_news
+            if news:
+                self._require_news_provider()
             recorder = HandoffRecorder(self.settings)
             submit = submit_tools(recorder)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
@@ -96,8 +99,9 @@ class BullBearStrategy(Strategy):
             from trading_agent_framework.memory.tools import memory_tools
 
             temperature = self.settings.agent_temperature
-            research = only([*news_tools(self), *fundamentals_tools(self)], _RESEARCH_TOOLS)
-            self.agents.create(name="researcher", system_prompt=RESEARCHER_SYSTEM, tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
+            sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
+            research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
+            self.agents.create(name="researcher", system_prompt=researcher_system(news), tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature)
             self.agents.create(name="bear", system_prompt=BEAR_SYSTEM, tools=[submit["submit_bear_case"]], temperature=temperature)
@@ -120,7 +124,11 @@ class BullBearStrategy(Strategy):
             sector_of=self._sector_of or SectorProvider().get_sector,
             momentum=CONFIG,
         )
-        self.log_info(f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}")
+        news_state = "on" if self.settings.research_news else "off"
+        self.log_info(
+            f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} "
+            f"at {self.iteration_start_time}, research news {news_state}"
+        )
 
     def _require_news_provider(self) -> None:
         """Refuse to start without a news source: the researcher's `search_news` would only ever return `{"error": ...}`.

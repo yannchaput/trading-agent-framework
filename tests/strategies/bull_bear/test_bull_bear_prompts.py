@@ -90,6 +90,11 @@ def test_the_researcher_reads_the_prior_year_and_is_not_asked_for_a_trend_it_can
     assert "prior_year" in prompts.RESEARCHER_SYSTEM and "trend of revenue" not in prompts.RESEARCHER_SYSTEM
 
 
+def test_the_researcher_without_news_is_not_told_about_news() -> None:
+    assert "news" in prompts.researcher_system(True) and "news" not in prompts.researcher_system(False).lower()
+    assert prompts.RESEARCHER_SYSTEM == prompts.researcher_system(True)
+
+
 def test_the_bear_may_not_rate_news_the_price_already_absorbed_high_by_itself() -> None:
     assert "already reacted to" in prompts.BEAR_SYSTEM and "lasting consequence" in prompts.BEAR_SYSTEM
 

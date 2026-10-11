@@ -27,6 +27,7 @@ class BullBearParams:
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes
     research_tool_budget: int = 3  # tool calls per researcher run; submit_note is exempt
+    research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
     note_max_chars: int = 500
     argument_max_chars: int = 300

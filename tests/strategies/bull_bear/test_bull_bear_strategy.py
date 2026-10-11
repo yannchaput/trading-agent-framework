@@ -97,6 +97,24 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
     }
 
 
+def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_source_is_needed(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))
+    strategy.broker.news = None  # type: ignore[attr-defined]
+
+    strategy.initialize()
+
+    researcher = next(created for created in agents.created if created["name"] == "researcher")
+    assert _tool_names(researcher) == {"get_income_statement", "get_balance_sheet", "submit_note"}
+    assert "news" not in researcher["system_prompt"].lower()
+    assert strategy.parameters["research_news"] is False
+
+
+def test_research_news_is_on_by_default_and_recorded_in_the_parameters(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+
+    assert strategy.settings.research_news is True and strategy.parameters["research_news"] is True
+
+
 def test_the_researcher_and_the_judge_end_with_a_budget_exempt_submit_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(agent_temperature=0.1))
 

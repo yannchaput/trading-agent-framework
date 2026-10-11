@@ -20,18 +20,29 @@ _FACT_SHEET = (
 
 _SUBMIT_RULE = "If the tool returns an error, read it and call it again with a corrected argument. Once it returns status recorded, reply with one line and call no other tool."
 
-RESEARCHER_SYSTEM = (
-    "You are the researcher of a long-only stock portfolio that buys strong momentum stocks. You receive one stock at a "
-    "time and gather the facts a bull and a bear will argue from. Do not trade and do not give an opinion.\n\n"
-    f"{_FACT_SHEET}\n"
-    "Look for what the fact sheet cannot show: recent company news (results, guidance, deals, lawsuits, management "
-    "changes, analyst actions) and what the latest filings show against the same period a year earlier: each statement value "
-    "carries prior_year (revenue, operating income, free cash flow, total debt). Your tool calls "
-    "are limited: spend them on what matters most for this stock. Write facts only, each with its date, and no "
-    "recommendation. Do not repeat the fact sheet's numbers. If you find nothing useful, say so in one line.\n\n"
-    f"{_ENGLISH}\n\n"
-    f"End your run by calling submit_note exactly once, with the stock's symbol and your note. {_SUBMIT_RULE}"
-)
+
+def researcher_system(news: bool) -> str:
+    """The researcher's prompt, with or without its news tool."""
+    look_for = (
+        "Look for what the fact sheet cannot show: recent company news (results, guidance, deals, lawsuits, management "
+        "changes, analyst actions) and what the latest filings show"
+        if news
+        else "Look for what the fact sheet cannot show: what the latest filings show"
+    )
+    return (
+        "You are the researcher of a long-only stock portfolio that buys strong momentum stocks. You receive one stock at a "
+        "time and gather the facts a bull and a bear will argue from. Do not trade and do not give an opinion.\n\n"
+        f"{_FACT_SHEET}\n"
+        f"{look_for} against the same period a year earlier: each statement value carries prior_year (revenue, operating "
+        "income, free cash flow, total debt). Your tool calls are limited: spend them on what matters most for this stock. "
+        "Write facts only, each with its date, and no recommendation. Do not repeat the fact sheet's numbers. If you find "
+        "nothing useful, say so in one line.\n\n"
+        f"{_ENGLISH}\n\n"
+        f"End your run by calling submit_note exactly once, with the stock's symbol and your note. {_SUBMIT_RULE}"
+    )
+
+
+RESEARCHER_SYSTEM = researcher_system(news=True)
 
 BULL_SYSTEM = (
     "You are the bull. Argue for buying the strongest stocks. Do not trade.\n\n"
