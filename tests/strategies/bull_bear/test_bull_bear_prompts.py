@@ -27,6 +27,24 @@ def test_only_the_bear_prompt_lists_the_concerns() -> None:
     assert "momentum_exhaustion" in prompts.BEAR_SYSTEM and "momentum_exhaustion" not in prompts.BULL_SYSTEM
 
 
+def test_the_bear_may_not_call_a_strong_trend_or_a_stretched_price_a_risk() -> None:
+    """Run 2026-10-10_085928: 244 `momentum_exhaustion` flags, 88% of them 'high' on ranks 1-3, returned +2.2% the next week against +1.4% overall."""
+    text = prompts.BEAR_SYSTEM
+
+    assert "far above its 200-day average" in text and "large three-month gain" in text  # named as NOT a risk
+    assert "price far above its 200-day average)" not in text  # no longer offered as an example of exhaustion
+    assert "one-month return far above its three-month pace" not in text
+
+
+def test_momentum_exhaustion_needs_a_reversal_already_under_way() -> None:
+    text = prompts.BEAR_SYSTEM
+
+    # the fact sheet's drawdown is NEGATIVE below the high (-21.0 for 21% down), so the threshold must be stated as -15
+    assert "negative one-month return" in text and "drawdown_from_52w_high_pct of -15 or below" in text
+    assert "still rising is never momentum_exhaustion" in text
+    assert "concrete risk" in text  # a stock is rated high only for a risk the bear can name
+
+
 def test_the_researcher_task_names_the_symbol_and_the_note_limit() -> None:
     task = prompts.researcher_task("AAA", 500)
 
