@@ -93,7 +93,7 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
         "researcher": {"search_news", "get_income_statement", "get_balance_sheet", "submit_note"},
         "bull": {"submit_bull_case"},
         "bear": {"submit_bear_case"},
-        "judge": {"submit_picks"},
+        "judge": {"submit_verdicts"},
     }
 
 

@@ -58,16 +58,17 @@ BEAR_SYSTEM = (
 )
 
 JUDGE_SYSTEM = (
-    "You are the judge. Weigh the debate between the bull and the bear and pick the stocks that win it. Do not trade: "
-    "code sizes the positions and places the orders.\n\n"
+    "You are the judge. For every stock, weigh the bull's case against the bear's and give your verdict: keep or veto. "
+    "Do not trade: code builds the portfolio from stocks you keep, sizes the positions and places the orders.\n\n"
     f"{_FACT_SHEET}\n"
     "Each stock has the researcher's note, the bull's conviction and argument, and the bear's risk, concern and argument. "
-    "A stock wins when the bull's case is stronger than the bear's risk. Pick between the minimum and maximum number of "
-    "stocks given in the constraints, best first. The stocks in held are owned now: keep one unless the bear's case beats "
-    "the bull's, since every change costs fees; for each held stock you do not pick, give a drop with its reason.\n\n"
+    "Veto a stock only when the bear's risk is concrete and specific to it (an event, a filing, guidance, a lawsuit, a "
+    "balance-sheet problem) and outweighs the bull's case. A strong or extended price trend is not a reason to veto by "
+    "itself: it is the momentum this portfolio buys. A held stock you veto is sold. You may veto none, and at most "
+    "max_vetoes, given in the constraints.\n\n"
     f"{_ENGLISH}\n\n"
-    "End your run by calling submit_picks exactly once: picks is a list of objects with the symbol and one short reason, "
-    f"best first; drops lists each held stock you did not pick, with the symbol and one short reason. {_SUBMIT_RULE}"
+    "End your run by calling submit_verdicts exactly once, with one object per stock: the symbol, the verdict (keep or "
+    f"veto) and one short reason. Give a verdict for every stock in stocks and no other. {_SUBMIT_RULE}"
 )
 
 UNAVAILABLE_NOTE = "research unavailable"
@@ -93,7 +94,7 @@ def bear_task(max_chars: int) -> str:
 
 def judge_task(max_chars: int) -> str:
     return (
-        "Judge the debate over the stocks in the context and submit your picks and drops. "
+        "Give your verdict, keep or veto, on every stock in the context and submit them. "
         f"Each reason is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
     )
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -33,9 +33,9 @@ UNIVERSE = [f"S{i:02d}" for i in range(20)]  # S00 has the strongest momentum, S
 Script = Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]
 
 
-def _series(growth: float, sessions: int = 300) -> DailySeries:
-    """A trend with a +-1% zigzag, so the volatility is above zero; 50 x 1e6 shares clears the dollar-volume filter."""
-    closes = [50.0 * (1 + growth) ** i * (1.01 if i % 2 else 0.99) for i in range(sessions)]
+def _series(growth: float, sessions: int = 300, swing: float = 0.01) -> DailySeries:
+    """A trend with a +-`swing` zigzag, so the volatility is above zero; 50 x 1e6 shares clears the dollar-volume filter."""
+    closes = [50.0 * (1 + growth) ** i * (1 + swing if i % 2 else 1 - swing) for i in range(sessions)]
     return DailySeries(closes=closes, volumes=[1e6] * sessions)
 
 
@@ -87,11 +87,12 @@ def bear_cases(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> Non
     tools["submit_bear_case"]([{"symbol": s["fact_sheet"]["symbol"], "risk": "low", "concern": "none", "argument": "no red flag"} for s in ctx["stocks"]])
 
 
-def picks_first(count: int) -> Script:
+def verdicts(vetoed: Collection[str] = ()) -> Script:
+    """The judge keeps every stock but `vetoed`."""
+
     def step(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
-        picked = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]][:count]
-        drops = [{"symbol": symbol, "reason": "lost the debate"} for symbol in ctx["held"] if symbol not in picked]
-        tools["submit_picks"]([{"symbol": symbol, "reason": "won the debate"} for symbol in picked], drops)
+        symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
+        tools["submit_verdicts"]([{"symbol": s, "verdict": "veto" if s in vetoed else "keep", "reason": "bear wins" if s in vetoed else "bull wins"} for s in symbols])
 
     return step
 
@@ -142,7 +143,7 @@ def _harness(
     if state is not None:
         store.save(state)
     recorder = HandoffRecorder(params)
-    agents = {"researcher": FakeAgent(notes), "bull": FakeAgent(bull_cases), "bear": FakeAgent(bear_cases), "judge": FakeAgent(picks_first(5))}
+    agents = {"researcher": FakeAgent(notes), "bull": FakeAgent(bull_cases), "bear": FakeAgent(bear_cases), "judge": FakeAgent(verdicts())}
     for agent in agents.values():
         agent.tools = submit_tools(recorder)
     bars = FakeBars(series if series is not None else _default_series())
@@ -167,7 +168,7 @@ def _harness(
 # --- the happy path ---------------------------------------------------------------------------------
 
 
-def test_a_review_debates_the_top_15_and_buys_the_judges_picks(tmp_path: Path) -> None:
+def test_a_review_debates_the_top_15_and_buys_the_top_10_the_judge_keeps(tmp_path: Path) -> None:
     h = _harness(tmp_path)
 
     outcome = h.run()
@@ -180,10 +181,11 @@ def test_a_review_debates_the_top_15_and_buys_the_judges_picks(tmp_path: Path) -
     assert [stock["fact_sheet"]["symbol"] for stock in bull_context["stocks"]] == UNIVERSE[:15]
     assert bull_context["stocks"][0]["note"] == "2026-09-30: quarterly revenue up 12% y/y"
     assert h.agents["bear"].calls[0]["context"] == bull_context  # the same evidence, and not the bull's case
-    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:5]]  # in the judge's order
+    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:10]]  # in the book's order
     state = h.store.load()
     assert state.last_completed_review == "2026-10-06" and state.abandoned_streak == 0
-    assert [pick["symbol"] for pick in state.last_picks] == UNIVERSE[:5]
+    assert [entry["symbol"] for entry in state.last_book] == UNIVERSE[:10]
+    assert {entry["reason"] for entry in state.last_book} == {"bull wins"}
 
 
 def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_path: Path) -> None:
@@ -193,7 +195,7 @@ def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_p
 
     bull, bear, judge = (h.agents[name].calls[0] for name in ("bull", "bear", "judge"))
     assert bull["context"]["constraints"] == bear["context"]["constraints"] == {"argument_max_chars": 123}
-    assert judge["context"]["constraints"] == {"min_picks": 5, "max_picks": 10, "reason_max_chars": 77}
+    assert judge["context"]["constraints"] == {"max_vetoes": 5, "reason_max_chars": 77}
     assert "123 characters" in bull["task"] and "123 characters" in bear["task"] and "77 characters" in judge["task"]
 
 
@@ -209,15 +211,20 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["forced_exits"] == []
     assert line["notes"] == {"written": 15, "failed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
-    assert [pick["symbol"] for pick in line["picks"]] == UNIVERSE[:5] and line["drops"] == []
+    assert "picks" not in line and "drops" not in line
+    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "keep", "reason": "bull wins"} and len(line["verdicts"]) == 15
+    assert line["judge_verdicts"] == {"keep": 15} and line["veto_cap"] == 5
+    assert line["book"] == UNIVERSE[:10]
     stock_weights = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
+    assert list(stock_weights) == UNIVERSE[:10]
     assert sum(stock_weights.values()) == pytest.approx(0.98)
     assert all(0.04 <= weight <= 0.20 for weight in stock_weights.values())
-    assert [order["symbol"] for order in line["orders"]] == UNIVERSE[:5]
+    assert [order["symbol"] for order in line["orders"]] == UNIVERSE[:10]
 
 
 def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_out(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={"S16": 20, "S19": 20, "OLD": 20}, params=BullBearParams(retention_rank=18))
+    h.agents["judge"].script = verdicts(vetoed={"S16"})
 
     outcome = h.run()
 
@@ -226,10 +233,108 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert [stock["symbol"] for stock in line["debate_set"]] == [*UNIVERSE[:15], "S16"]
     assert line["debate_set"][-1] == {"symbol": "S16", "rank": 17, "held": True}
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}, {"symbol": "S19", "reason": "rank 20"}]
-    assert h.agents["judge"].calls[0]["context"]["held"] == ["S16"]
-    assert line["drops"] == [{"symbol": "S16", "reason": "lost the debate"}]
-    assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)
+    assert "held" not in h.agents["judge"].calls[0]["context"]  # the fact sheet says held; the judge decides on merit
+    assert {"symbol": "S16", "verdict": "veto", "reason": "bear wins"} in line["verdicts"]
+    assert line["book"] == UNIVERSE[:10]
+    assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a vetoed holding is sold
     assert h.bars.calls == [(UNIVERSE, ["OLD", "S16", "S19"])]
+
+
+def test_a_kept_holding_takes_its_slot_before_better_ranked_new_names(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S16": 20}, params=BullBearParams(retention_rank=18))
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert line["book"] == ["S16", *UNIVERSE[:9]]
+    assert not any(order[0] == "S16" for order in h.orders)  # held at 10%, target ~9.8%: inside the band
+
+
+def test_vetoed_stocks_are_replaced_by_the_next_ranked_survivors(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts(vetoed={"S00", "S03"})
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert line["book"] == [symbol for symbol in UNIVERSE[:12] if symbol not in {"S00", "S03"}]
+    assert line["judge_verdicts"] == {"keep": 13, "veto": 2}
+    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in line["book"]]
+
+
+def test_the_veto_cap_shrinks_so_that_book_size_stocks_always_survive(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:12]})
+
+    assert h.run().completed
+
+    assert h.agents["judge"].calls[0]["context"]["constraints"]["max_vetoes"] == 2
+    (line,) = h.log_lines()
+    assert line["veto_cap"] == 2 and len(line["book"]) == 10
+
+
+def test_a_debate_set_of_exactly_book_size_leaves_the_judge_no_veto(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
+
+    outcome = h.run()
+
+    assert outcome.completed
+    assert h.agents["judge"].calls[0]["context"]["constraints"] == {"max_vetoes": 0, "reason_max_chars": 300}
+    (line,) = h.log_lines()
+    assert line["veto_cap"] == 0 and line["book"] == UNIVERSE[:10]
+
+
+def test_a_veto_at_cap_zero_is_refused_and_the_retry_keeps_everything(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:10]})
+    h.agents["judge"].overrides = [verdicts(vetoed={"S03"})]
+
+    outcome = h.run()
+
+    assert outcome.completed
+    retry = h.agents["judge"].calls[1]
+    assert retry["force_tool"] == "submit_verdicts" and "1 vetoes: veto at most 0" in retry["task"]
+    (line,) = h.log_lines()
+    assert line["veto_cap"] == 0 and line["judge_verdicts"] == {"keep": 10} and line["book"] == UNIVERSE[:10]
+
+
+def test_a_judge_over_the_veto_cap_is_refused_and_corrects_itself_on_the_retry(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].overrides = [verdicts(vetoed=set(UNIVERSE[:6]))]
+
+    outcome = h.run()
+
+    assert outcome.completed
+    retry = h.agents["judge"].calls[1]
+    assert retry["force_tool"] == "submit_verdicts" and "6 vetoes: veto at most 5" in retry["task"]
+    assert h.log_lines()[0]["book"] == UNIVERSE[:10]
+
+
+def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_path: Path) -> None:
+    series = _default_series()
+    series["S03"] = _series(0.0037, swing=0.06)  # held: annualised volatility far above max_volatility (80%)
+    series["S04"] = _series(0.0036, swing=0.06)  # not held: the same volatility
+    h = _harness(tmp_path, held={"S03": 20}, series=series)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    debated = {stock["symbol"]: stock for stock in line["debate_set"]}
+    assert debated["S03"]["held"] is True
+    assert "S04" not in debated
+    assert line["forced_exits"] == []
+    assert line["book"][0] == "S03"  # the high-volatility holding is kept first in the book...
+    assert line["targets"]["S03"] == pytest.approx(0.04)  # ...and sized at the minimum weight
+
+
+def test_more_kept_holdings_than_book_size_keep_the_best_ranked_and_sell_the_rest(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={symbol: 20 for symbol in UNIVERSE[:12]})  # 12 holdings of 20 shares at 50 = 1,000 each
+
+    outcome = h.run()
+
+    assert outcome.completed
+    (line,) = h.log_lines()
+    assert line["book"] == UNIVERSE[:10]
+    assert ("S10", "sell", 20.0) in h.orders
+    assert ("S11", "sell", 20.0) in h.orders
 
 
 # --- research failures --------------------------------------------------------------------------------
@@ -270,7 +375,7 @@ def test_a_configuration_error_from_an_agent_propagates_and_leaves_the_state(tmp
 # --- abandoned reviews --------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(("agent", "tool"), [("bull", "submit_bull_case"), ("bear", "submit_bear_case"), ("judge", "submit_picks")])
+@pytest.mark.parametrize(("agent", "tool"), [("bull", "submit_bull_case"), ("bear", "submit_bear_case"), ("judge", "submit_verdicts")])
 def test_a_debater_without_a_valid_submission_abandons_the_review_with_no_order(tmp_path: Path, agent: str, tool: str) -> None:
     h = _harness(tmp_path, held={"OLD": 20})
     h.agents[agent].script = does_nothing
@@ -309,14 +414,14 @@ def test_unusable_data_abandons_the_review_before_any_agent_runs(tmp_path: Path)
     assert (line["stage"], line["error"]) == ("data", "Yahoo covers only 3/20 symbols")
 
 
-def test_a_debate_set_smaller_than_min_picks_abandons_the_review(tmp_path: Path) -> None:
-    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:4]})
+def test_a_debate_set_smaller_than_book_size_abandons_the_review(tmp_path: Path) -> None:
+    h = _harness(tmp_path, series={symbol: series for symbol, series in _default_series().items() if symbol in UNIVERSE[:9]})
 
     outcome = h.run()
 
     assert not outcome.completed and h.agents["researcher"].calls == []
     (line,) = h.log_lines()
-    assert line["stage"] == "data" and "fewer than min_picks (5)" in line["error"]
+    assert line["stage"] == "data" and "fewer than book_size (10)" in line["error"]
 
 
 def test_a_broker_error_before_the_rebalance_abandons_at_the_broker_stage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -349,9 +454,10 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     (line,) = h.log_lines()
     assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0}]
     # The decision that led to those orders is in the same line.
-    assert [pick["symbol"] for pick in line["picks"]] == UNIVERSE[:5] and line["drops"] == []
+    assert line["book"] == UNIVERSE[:10] and line["judge_verdicts"] == {"keep": 15}
+    assert len(line["verdicts"]) == 15 and line["veto_cap"] == 5
     stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
-    assert sorted(stock_targets) == UNIVERSE[:5] and "SHV" in line["targets"]
+    assert sorted(stock_targets) == UNIVERSE[:10] and "SHV" in line["targets"]
     assert sum(stock_targets.values()) == pytest.approx(0.98)
     state = h.store.load()
     assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
@@ -411,7 +517,7 @@ def test_the_parking_instrument_is_never_forced_out_and_a_position_outside_the_u
     (line,) = h.log_lines()
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}]
     assert "forced_exits" not in h.agents["judge"].calls[0]["context"]  # forced exits never reach the agents
-    assert h.agents["judge"].calls[0]["context"]["held"] == []
+    assert "held" not in h.agents["judge"].calls[0]["context"]
     assert seen == [["OLD"]]
     assert ("OLD", "sell", 20.0) in h.orders
 

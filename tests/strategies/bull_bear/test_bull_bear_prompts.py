@@ -11,7 +11,7 @@ from trading_agent_framework.strategies.bull_bear import prompts
         (prompts.RESEARCHER_SYSTEM, "submit_note"),
         (prompts.BULL_SYSTEM, "submit_bull_case"),
         (prompts.BEAR_SYSTEM, "submit_bear_case"),
-        (prompts.JUDGE_SYSTEM, "submit_picks"),
+        (prompts.JUDGE_SYSTEM, "submit_verdicts"),
     ],
 )
 def test_every_system_prompt_requires_english_and_names_its_submit_tool(system: str, tool: str) -> None:
@@ -41,9 +41,15 @@ def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None: 
 
 
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
-    text = prompts.retry_prompt("submit_picks", "pick between 5 and 10 stocks, got 4")
+    text = prompts.retry_prompt("submit_verdicts", "6 vetoes: veto at most 5 stocks and keep the others")
 
-    assert "submit_picks" in text and "got 4" in text
+    assert "submit_verdicts" in text and "veto at most 5" in text
+
+
+def test_the_judge_gives_a_verdict_per_stock_and_a_trend_alone_is_no_reason_to_veto() -> None:
+    assert "keep or veto" in prompts.JUDGE_SYSTEM and "max_vetoes" in prompts.JUDGE_SYSTEM
+    assert "not a reason to veto" in prompts.JUDGE_SYSTEM
+    assert "pick" not in prompts.JUDGE_SYSTEM.lower() and "pick" not in prompts.judge_task(300).lower()
 
 
 def test_no_prompt_mentions_forced_exits() -> None:

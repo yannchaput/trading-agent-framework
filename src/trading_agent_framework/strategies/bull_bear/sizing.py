@@ -1,4 +1,4 @@
-"""Target weights from the judge's picks (pure): inverse volatility, bounded per stock, summing to what is investable.
+"""Target weights for the book (pure): inverse volatility, bounded per stock, summing to what is investable.
 
 cross_momentum's `inverse_volatility_weights` renormalises after capping, so with few names it breaks the cap; this
 one finds the single scale at which the clipped weights sum to the total, so both bounds hold exactly.

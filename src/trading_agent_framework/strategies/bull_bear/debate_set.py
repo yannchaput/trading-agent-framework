@@ -1,8 +1,8 @@
 """The stocks the agents debate this week, and the holdings code sells without asking them (pure).
 
-The top `shortlist_size` by momentum rank, plus every holding still ranked within `retention_rank` (cross_momentum's
-own sell threshold). A holding ranked worse, or unranked (no data, failed a filter, left the universe), is a forced
-exit: it never reaches the agents.
+The top `debate_size` by momentum rank, plus every holding still ranked within `retention_rank` (cross_momentum's
+own sell threshold). A holding ranked worse, or unranked (no data, failed a filter other than max_volatility, which
+the pipeline applies to new entries only, left the universe), is a forced exit: it never reaches the agents.
 """
 
 from __future__ import annotations
@@ -41,22 +41,22 @@ class DebateSet:
 
     @property
     def held(self) -> list[str]:
-        """The held stocks in the debate, sorted (the judge must keep or drop each)."""
+        """The held stocks in the debate, sorted (each gets a verdict from the judge)."""
         return sorted(stock.symbol for stock in self.stocks if stock.held)
 
     def stock(self, symbol: str) -> DebateStock:
         return next(stock for stock in self.stocks if stock.symbol == symbol)
 
 
-def build_debate_set(ranked: Sequence[RankedRow], holdings: Collection[str], *, shortlist_size: int, retention_rank: int) -> DebateSet:
+def build_debate_set(ranked: Sequence[RankedRow], holdings: Collection[str], *, debate_size: int, retention_rank: int) -> DebateSet:
     """`holdings` are the stocks held, the parking instrument excluded (`Rebalancer.holdings()`)."""
     held = set(holdings)
     rank_of = {entry.row.symbol: entry.rank for entry in ranked}
-    # Debate the stocks that are either in the shortlist or still held and within the retention rank; force exit the rest.
+    # Debate the top `debate_size` ranks and the holdings still within the retention rank; force exit the rest.
     stocks = tuple(
         DebateStock(entry.rank, entry.row, entry.row.symbol in held)
         for entry in ranked
-        if entry.rank <= shortlist_size or (entry.row.symbol in held and entry.rank <= retention_rank) # histeresis: keep held stocks that are still ranked within the retention threshold
+        if entry.rank <= debate_size or (entry.row.symbol in held and entry.rank <= retention_rank)  # hysteresis: held stocks still ranked within the retention threshold are debated
     )
     forced = tuple(
         ForcedExit(symbol, "unranked" if symbol not in rank_of else f"rank {rank_of[symbol]}")
