@@ -111,7 +111,7 @@ def unfilled_sell_proceeds(sells: Iterable[tuple[Order, float]]) -> float:
     seconds); a sell no longer active (filled, canceled, rejected) brings nothing more. In a backtest nothing fills
     before the next session, so every sell counts in full.
     """
-    return sum(float(order.quantity - order.filled_quantity) * price for order, price in sells if order.is_active())
+    return sum(float(order.quantity - order.filled_quantity) * price for order, price in sells if order.is_active() and order.quantity is not None)
 
 
 def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
