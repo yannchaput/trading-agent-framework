@@ -132,8 +132,6 @@ class CrossMomentumStrategy(Strategy):
     ):
         super().__init__(broker, mode=mode, **kwargs)
         self.parameters = {**CONFIG, **self.parameters}
-        # The executor runs each session's iteration, so the Tuesday rebalance, at this market time
-        self.iteration_start_time = parse_rebalance_time(self.parameters["rebalance_time"])
 
         if not universe:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
@@ -176,7 +174,9 @@ class CrossMomentumStrategy(Strategy):
     def initialize(self):
         """Set up the strategy before trading starts."""
         self.sleeptime = "1D"
-        self.log_info(f"Sleeptime set to {self.sleeptime}")
+        # The executor runs each session's iteration, so the Tuesday rebalance, at this market time
+        self.iteration_start_time = parse_rebalance_time(self.parameters["rebalance_time"])
+        self.log_info(f"Sleeptime set to {self.sleeptime}, iteration start time {self.iteration_start_time}")
         # Track actual portfolio equity for realized-vol computation
         self.vars.equity_history = load_equity_history(self.vars.history_file_path)
         self.log_info(f"Initialize equity history for volatility exposure compute {self.vars.equity_history}")
