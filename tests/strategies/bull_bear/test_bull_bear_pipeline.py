@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field, replace
 from datetime import date
@@ -71,12 +72,13 @@ class FakeAgent:
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
         self.tool_calls: list[ToolCallRecord] = []
         self.attempt_tool_calls: list[list[ToolCallRecord]] = []  # the next runs' tool calls, one list per run, before `tool_calls`
+        self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason, total_tokens, reasoning_tokens
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls)
+        return AgentRunResult(output="done", tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls, **self.stop)
 
 
 def notes(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
@@ -596,6 +598,79 @@ def test_an_abandoned_review_leaves_the_day_open_so_a_restart_reviews_again(tmp_
 
     assert h.run() == ReviewOutcome(completed=True, abandoned_streak=0)
     assert len(h.agents["judge"].calls) == 3
+
+
+def _no_submit_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """The warnings with their ANSI colour codes stripped (the log keeps them on purpose)."""
+    messages = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.WARNING]
+    return [message for message in messages if "ended without calling" in message]
+
+
+def test_the_no_submit_warning_says_how_the_run_ended_and_what_it_cost(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    judge = h.agents["judge"]
+    judge.overrides = [does_nothing]  # the first run ends with no verdicts, the retry submits
+    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    (message,) = _no_submit_warnings(caplog)
+    assert "[judge] the agent ended without calling submit_verdicts" in message
+    assert "finish_reason=length" in message and "32768 tokens" in message and "22699 reasoning" in message
+
+
+def test_the_no_submit_warning_is_unchanged_when_the_run_reports_nothing(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].overrides = [does_nothing]
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    (message,) = _no_submit_warnings(caplog)
+    assert message.endswith("[judge] the agent ended without calling submit_verdicts")
+
+
+def _info_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.INFO]
+
+
+def test_a_forced_retry_that_submits_is_logged_at_info_with_its_outcome(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].overrides = [does_nothing]  # the first run ends with no verdicts, the forced retry submits
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    records = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records]
+    warned = next(i for i, message in enumerate(records) if "[judge] the agent ended without calling submit_verdicts" in message)
+    retried = next(i for i, message in enumerate(records) if "[judge] retrying with submit_verdicts forced" in message)
+    recorded = next(i for i, message in enumerate(records) if "[judge] forced retry recorded submit_verdicts" in message)
+    assert warned < retried < recorded
+    assert sum("forced retry recorded" in message for message in records) == 1
+    assert h.agents["judge"].calls[1]["force_tool"] == "submit_verdicts"
+
+
+def test_a_first_attempt_that_submits_logs_no_retry(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    assert not [message for message in _info_messages(caplog) if "retrying with" in message or "forced retry" in message]
+
+
+def test_a_forced_retry_that_fails_too_logs_the_retry_and_no_success(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = does_nothing  # neither the run nor its forced retry submits: the review is abandoned
+
+    with caplog.at_level(logging.INFO):
+        assert not h.run().completed
+
+    messages = _info_messages(caplog)
+    assert any("[judge] retrying with submit_verdicts forced" in message for message in messages)
+    assert not [message for message in messages if "forced retry recorded" in message]
+    assert len(_no_submit_warnings(caplog)) == 2  # the first run's and the retry's own
 
 
 def test_a_hand_edited_review_date_never_stops_a_review(tmp_path: Path) -> None:

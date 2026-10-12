@@ -325,10 +325,13 @@ class ReviewPipeline:
         agent = self._agents[agent_name]
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
-        for _ in range(2):
-            self._recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
+        for attempt in range(2):
+            self._recorder.last_error, error, stop = None, "", ""  # an error from the first attempt must not be reported for the second
+            if attempt:
+                self._strategy.log_info(f"[{agent_name}] retrying with {tool} forced")
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget)
+                stop = _stop_detail(result)
                 if calls_out is not None:
                     calls_out.extend(result.tool_calls)
                 self._strategy.log_info(f"[{agent_name}] {result.output}")
@@ -338,16 +341,32 @@ class ReviewPipeline:
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
             if self._recorder.submitted:
+                if attempt:
+                    self._strategy.log_info(f"[{agent_name}] forced retry recorded {tool}")
                 for line in _submission_lines(agent_name, self._recorder.submission):
                     self._strategy.log_info(line)
                 return
             if self._recorder.last_error:
                 self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}")
             elif not error:  # a failed run was already logged as an error above
-                self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}")
+                self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(tool, error), tool
         raise ReviewAbandoned(agent_name, error)
+
+
+def _stop_detail(result: AgentRunResult) -> str:
+    """` (finish_reason=length, 32768 tokens, 22699 reasoning)`: how the run's last model call ended, for a run that reports it; else empty.
+
+    A `length` stop with everything spent on reasoning is what a reasoning model that hit its token limit looks like: no text, no tool call.
+    """
+    parts = [
+        f"finish_reason={result.finish_reason}" if result.finish_reason else "",
+        f"{result.total_tokens} tokens" if result.total_tokens is not None else "",
+        f"{result.reasoning_tokens} reasoning" if result.reasoning_tokens is not None else "",
+    ]
+    known = [part for part in parts if part]
+    return f" ({', '.join(known)})" if known else ""
 
 
 _MEMORY_TOOLS = ("search_memory", "remember_lesson")
