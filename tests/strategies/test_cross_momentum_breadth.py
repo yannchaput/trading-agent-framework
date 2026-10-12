@@ -1,7 +1,7 @@
 """Breadth overlay for cross_momentum: pure breadth/step/exposure functions, step persistence, wiring."""
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from types import SimpleNamespace
 
 import pandas as pd
@@ -161,6 +161,7 @@ class FakeBreadthStrategy:
 
     initialize = CrossMomentumStrategy.initialize
     _breadth_exposure = CrossMomentumStrategy._breadth_exposure
+    iteration_start_time = time(12, 0)  # set by `CrossMomentumStrategy.__init__`; `initialize` logs it
 
     def __init__(self, tmp_path, *, breadth=None, step=None, enabled=True):
         self.parameters = {"breadth_overlay": {**CONFIG["breadth_overlay"], "enabled": enabled}}
@@ -234,6 +235,14 @@ def test_a_restart_resumes_on_the_persisted_step_so_hysteresis_survives(tmp_path
 
     after_restart.vars.breadth = 0.36
     assert after_restart._breadth_exposure() == pytest.approx(0.7)
+
+
+def test_initialize_logs_the_iteration_start_time(tmp_path):
+    fake = FakeBreadthStrategy(tmp_path)
+
+    fake.initialize()
+
+    assert any("iteration start time 12:00:00" in message for message in fake.infos)
 
 
 def test_a_restart_with_no_saved_step_applies_the_first_reading_directly(tmp_path):
