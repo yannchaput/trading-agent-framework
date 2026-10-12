@@ -348,6 +348,7 @@ A strictly intraday long-only strategy: it buys a strong stock that pulls back i
 Run: `uv run agent vwap_pullback_continuation backtesting` (default window: the last 5 years, minute bars from Alpaca, fetched one year at a time). Each backtest writes `trades.jsonl` (one line per closed trade, with realised P&L and R) next to its report. The universe file must exist first, or the strategy refuses to start.
 
 ### 📈 `earnings_drift` — Post-earnings announcement drift (PEAD)
+
 | Field | Value |
 | --- | --- |
 | **File** | `strategies/earnings_drift/agent_earnings_drift.py` (`EarningsDriftStrategy`) |
