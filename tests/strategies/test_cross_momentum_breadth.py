@@ -1,7 +1,7 @@
 """Breadth overlay for cross_momentum: pure breadth/step/exposure functions, step persistence, wiring."""
 
 import json
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pandas as pd
@@ -161,10 +161,9 @@ class FakeBreadthStrategy:
 
     initialize = CrossMomentumStrategy.initialize
     _breadth_exposure = CrossMomentumStrategy._breadth_exposure
-    iteration_start_time = time(12, 0)  # set by `CrossMomentumStrategy.__init__`; `initialize` logs it
 
     def __init__(self, tmp_path, *, breadth=None, step=None, enabled=True):
-        self.parameters = {"breadth_overlay": {**CONFIG["breadth_overlay"], "enabled": enabled}}
+        self.parameters = {"rebalance_time": CONFIG["rebalance_time"], "breadth_overlay": {**CONFIG["breadth_overlay"], "enabled": enabled}}
         self.vars = SimpleNamespace(
             breadth=breadth,
             breadth_step=step,

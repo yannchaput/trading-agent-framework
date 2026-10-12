@@ -66,16 +66,36 @@ def _strategy(**parameters):
     return CrossMomentumStrategy(broker, mode=TradingMode.BACKTESTING, universe=["AAA"], parameters=parameters)
 
 
-def test_the_strategy_iterates_at_its_rebalance_time():
-    assert _strategy().iteration_start_time == time(12, 0)
-    assert _strategy(rebalance_time="10:30").iteration_start_time == time(10, 30)
+def _initialized(tmp_path, **parameters):
+    """A strategy through `initialize()`, with the two state files it reads pointed at `tmp_path` (never the repo's `data/`)."""
+    strategy = _strategy(**parameters)
+    strategy.vars.history_file_path = tmp_path / "history.json"
+    strategy.vars.breadth_file_path = tmp_path / "breadth.json"
+    strategy.initialize()
+    return strategy
 
 
-def test_a_malformed_rebalance_time_fails_at_construction():
+def test_initialize_sets_the_iteration_start_time_with_the_sleeptime(tmp_path):
+    strategy = _strategy()
+    assert strategy.iteration_start_time is None  # a run configuration, set by initialize() next to the sleeptime
+
+    strategy.vars.history_file_path = tmp_path / "history.json"
+    strategy.vars.breadth_file_path = tmp_path / "breadth.json"
+    strategy.initialize()
+
+    assert (strategy.sleeptime, strategy.iteration_start_time) == ("1D", time(12, 0))
+
+
+def test_the_strategy_iterates_at_its_rebalance_time(tmp_path):
+    assert _initialized(tmp_path).iteration_start_time == time(12, 0)
+    assert _initialized(tmp_path, rebalance_time="10:30").iteration_start_time == time(10, 30)
+
+
+@pytest.mark.parametrize("value", ["noon", "24:00"])
+def test_a_malformed_rebalance_time_fails_at_initialize(tmp_path, value):
+    strategy = _strategy(rebalance_time=value)  # construction accepts it: the value is read when the run is configured
+    strategy.vars.history_file_path = tmp_path / "history.json"
+    strategy.vars.breadth_file_path = tmp_path / "breadth.json"
+
     with pytest.raises(ConfigurationError, match="rebalance_time"):
-        _strategy(rebalance_time="noon")
-
-
-def test_a_rebalance_time_of_24_00_fails_at_construction():
-    with pytest.raises(ConfigurationError, match="rebalance_time"):
-        _strategy(rebalance_time="24:00")
+        strategy.initialize()
