@@ -32,10 +32,10 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 
-from trading_agent_framework.congress import holdings
-from trading_agent_framework.congress.annual import VALUE_BANDS, unread_stock_rows
-from trading_agent_framework.congress.clerk_client import CLERK_BASE_URL, ClerkClient
-from trading_agent_framework.congress.source import CongressSource
+from trading_agent_framework.strategies.congress_trades.congress import holdings
+from trading_agent_framework.strategies.congress_trades.congress.annual import VALUE_BANDS, unread_stock_rows
+from trading_agent_framework.strategies.congress_trades.congress.clerk_client import CLERK_BASE_URL, ClerkClient
+from trading_agent_framework.strategies.congress_trades.congress.source import CongressSource
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
