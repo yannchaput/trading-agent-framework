@@ -581,6 +581,72 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
     return rows
 
 
+def load_session_pnl(ref: RunRef) -> list[dict[str, Any]] | None:
+    """Per trading session, the realized P&L of the positions sold, rebuilt from the fills.
+
+    A sale is priced against the position's average cost (the convention of `load_intraday_exposure`), with
+    every buy fee in that cost and the sell fee deducted from the proceeds, so the figures are net of fees.
+    The sales of one symbol in a session are merged into one position. Each row is
+    ``{date, pnl, positions: [{symbol, qty, avg_cost, sell_price, pnl, pnl_pct}]}``; a session without a sale has
+    no row, and neither has a sale with no position to cost it against. None when there are no fills.
+    """
+    path = os.path.join(ref.path, "trades.parquet")
+    if not os.path.isfile(path):
+        return None
+    try:
+        df = pd.read_parquet(path)
+    except Exception:
+        return None
+    if df.empty or "status" not in df.columns:
+        return None
+    fills = cast(pd.DataFrame, df[df["status"] == "fill"]).copy()
+    if fills.empty:
+        return None
+    fills["time"] = cast(pd.Series, pd.to_datetime(fills["time"], utc=True)).dt.tz_convert(MARKET_TZ)
+    fills = fills.sort_values("time", kind="stable")
+
+    holdings: dict[str, list[float]] = {}  # symbol -> [shares, remaining cost, buy fees included]
+    rows: list[dict[str, Any]] = []
+    for day, day_fills in cast(Any, fills.groupby(fills["time"].dt.date, sort=True)):
+        sold: dict[str, dict[str, float]] = {}  # symbol -> shares sold, gross proceeds, fees, cost basis
+        for _, fill in day_fills.iterrows():
+            symbol, qty, price, fee = str(fill["symbol"]), float(fill["filled_quantity"]), float(fill["price"]), float(fill["trade_cost"])
+            shares, cost = holdings.get(symbol, [0.0, 0.0])
+            if str(fill["side"]).lower() == "buy":
+                shares, cost = shares + qty, cost + qty * price + fee
+            elif shares > 1e-9:
+                closed = min(qty, shares)
+                basis = cost * closed / shares  # the sold shares leave at their average cost
+                entry = sold.setdefault(symbol, {"qty": 0.0, "gross": 0.0, "fees": 0.0, "basis": 0.0})
+                entry["qty"] += closed
+                entry["gross"] += closed * price
+                entry["fees"] += fee * closed / qty
+                entry["basis"] += basis
+                cost -= basis
+                shares -= closed
+            if shares > 1e-9:
+                holdings[symbol] = [shares, cost]
+            else:
+                holdings.pop(symbol, None)
+        if not sold:
+            continue
+        positions = []
+        for symbol, entry in sold.items():
+            pnl = entry["gross"] - entry["fees"] - entry["basis"]
+            positions.append(
+                {
+                    "symbol": symbol,
+                    "qty": round(entry["qty"], 6),
+                    "avg_cost": round(entry["basis"] / entry["qty"], 4),
+                    "sell_price": round(entry["gross"] / entry["qty"], 4),
+                    "pnl": round(pnl, 2),
+                    "pnl_pct": round(100 * pnl / entry["basis"], 2) if entry["basis"] else None,
+                }
+            )
+        rows.append({"date": day.isoformat(), "pnl": round(sum(p["pnl"] for p in positions), 2), "positions": positions})
+    return rows
+
+
 def load_run(ref: RunRef) -> Run:
     """Load all data for a run: settings, metrics, and the equity curve (from equity.parquet)."""
     settings = load_settings(ref)

@@ -15,6 +15,7 @@ from trading_agent_framework.dashboard.components.charts import (
     rolling_sharpe_chart,
     rolling_sortino_chart,
     rolling_volatility_chart,
+    session_pnl_chart,
     trades_chart,
 )
 from trading_agent_framework.dashboard.components.metric_cards import render_header_card, render_metric_card
@@ -27,6 +28,7 @@ from trading_agent_framework.dashboard.reader import (
     load_parameters,
     load_portfolio_breakdown,
     load_run,
+    load_session_pnl,
     load_trades_curve,
     load_yearly_returns,
 )
@@ -199,6 +201,11 @@ def page_detail():
             n_buys = sum(1 for t in trades_data["trades"] if t["side"] == "buy")
             n_sells = sum(1 for t in trades_data["trades"] if t["side"] == "sell")
             st.caption(f"{len(trades_data['trades'])} trades — {n_buys} buys, {n_sells} sells")
+            session_pnl = load_session_pnl(ref)
+            if session_pnl:
+                st.subheader("Realized P&L per session")
+                st.plotly_chart(session_pnl_chart(session_pnl), width="stretch")
+                st.caption("Each point is the P&L realized by the positions sold during that session, net of fees, against their average cost. Hover a point for the detail of each position sold.")
             exposure = load_intraday_exposure(ref)
             if exposure:
                 st.subheader("Intraday exposure")

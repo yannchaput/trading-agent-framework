@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -25,6 +26,7 @@ from trading_agent_framework.dashboard.reader import (
     load_parameters,
     load_portfolio_breakdown,
     load_run,
+    load_session_pnl,
     load_settings,
     load_trades_curve,
     load_yearly_returns,
@@ -661,3 +663,128 @@ def test_load_indicator_lines_returns_none_without_a_file_or_lines(tmp_path: Pat
     assert load_indicator_lines(_ref(run_dir)) is None
     report.write_indicators(run_dir, Ledger())
     assert load_indicator_lines(_ref(run_dir)) is None
+
+
+# --- load_session_pnl: realized P&L of the positions sold in each session ---------------------------
+
+
+def _with_cost(fill: FillRecord, cost: str) -> FillRecord:
+    return dataclasses.replace(fill, trade_cost=Decimal(cost))
+
+
+def test_load_session_pnl_reports_the_gain_of_a_sold_position(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(run_dir, [_fill(10, 0, "AAA", OrderSide.BUY, 10, "100"), _fill(15, 0, "AAA", OrderSide.SELL, 10, "110")])
+
+    assert load_session_pnl(_ref(run_dir)) == [
+        {
+            "date": "2026-01-05",
+            "pnl": 100.0,
+            "positions": [{"symbol": "AAA", "qty": 10.0, "avg_cost": 100.0, "sell_price": 110.0, "pnl": 100.0, "pnl_pct": 10.0}],
+        },
+    ]
+
+
+def test_load_session_pnl_is_net_of_the_buy_and_sell_fees(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(
+        run_dir,
+        [
+            _with_cost(_fill(10, 0, "AAA", OrderSide.BUY, 10, "100"), "1"),
+            _with_cost(_fill(15, 0, "AAA", OrderSide.SELL, 10, "110"), "2"),
+        ],
+    )
+
+    (row,) = load_session_pnl(_ref(run_dir))
+
+    assert row["pnl"] == pytest.approx(97.0)  # 1,100 - 2 received, against 1,000 + 1 paid
+    assert row["positions"][0]["avg_cost"] == pytest.approx(100.1)
+
+
+def test_load_session_pnl_prices_a_sale_at_the_average_cost_of_several_buys(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+            _fill(11, 0, "AAA", OrderSide.BUY, 10, "120"),  # average cost 110
+            _fill(15, 0, "AAA", OrderSide.SELL, 10, "130"),
+        ],
+    )
+
+    (row,) = load_session_pnl(_ref(run_dir))
+
+    assert row["pnl"] == 200.0
+    assert row["positions"][0]["avg_cost"] == 110.0
+
+
+def test_load_session_pnl_books_a_partial_sale_in_the_session_it_happens(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+            _fill(15, 0, "AAA", OrderSide.SELL, 4, "110"),
+            _fill(15, 0, "AAA", OrderSide.SELL, 6, "90", day=6),  # carried overnight, sold at a loss
+        ],
+    )
+
+    rows = load_session_pnl(_ref(run_dir))
+
+    assert [(r["date"], r["pnl"]) for r in rows] == [("2026-01-05", 40.0), ("2026-01-06", -60.0)]
+
+
+def test_load_session_pnl_totals_every_position_sold_in_a_session(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+            _fill(10, 0, "BBB", OrderSide.BUY, 5, "200"),
+            _fill(15, 0, "AAA", OrderSide.SELL, 10, "110"),
+            _fill(15, 0, "BBB", OrderSide.SELL, 5, "190"),
+        ],
+    )
+
+    (row,) = load_session_pnl(_ref(run_dir))
+
+    assert row["pnl"] == 50.0
+    assert [(p["symbol"], p["pnl"], p["pnl_pct"]) for p in row["positions"]] == [("AAA", 100.0, 10.0), ("BBB", -50.0, -5.0)]
+
+
+def test_load_session_pnl_merges_the_sales_of_one_symbol_in_a_session(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(
+        run_dir,
+        [
+            _fill(10, 0, "AAA", OrderSide.BUY, 10, "100"),
+            _fill(14, 0, "AAA", OrderSide.SELL, 4, "110"),
+            _fill(15, 0, "AAA", OrderSide.SELL, 6, "120"),
+        ],
+    )
+
+    (row,) = load_session_pnl(_ref(run_dir))
+
+    (position,) = row["positions"]
+    assert (position["qty"], position["sell_price"], position["pnl"]) == (10.0, 116.0, 160.0)
+
+
+def test_load_session_pnl_leaves_out_a_session_without_a_sale(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(run_dir, [_fill(10, 0, "AAA", OrderSide.BUY, 10, "100"), _fill(15, 0, "AAA", OrderSide.SELL, 10, "110", day=6)])
+
+    assert [r["date"] for r in load_session_pnl(_ref(run_dir))] == ["2026-01-06"]
+
+
+def test_load_session_pnl_ignores_a_sale_with_no_position_to_cost_it_against(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    _write_fills(run_dir, [_fill(15, 0, "AAA", OrderSide.SELL, 10, "110")])
+
+    assert load_session_pnl(_ref(run_dir)) == []
+
+
+def test_load_session_pnl_returns_none_without_fills(tmp_path: Path) -> None:
+    run_dir = _run_dir(tmp_path)
+    report.write_trades(run_dir, Ledger())
+
+    assert load_session_pnl(_ref(run_dir)) is None

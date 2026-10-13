@@ -234,6 +234,40 @@ def test_run_detail_shows_the_intraday_exposure_of_a_run_with_fills(run_dir: Pat
     assert "Intraday exposure" in [subheader.value for subheader in at.subheader]
 
 
+def _fill_at(time: datetime, side: OrderSide, price: str) -> FillRecord:
+    return FillRecord(
+        time=time,
+        identifier=f"{side.value}-{time.isoformat()}",
+        symbol="AAPL",
+        side=side,
+        order_type=OrderType.MARKET,
+        quantity=Decimal(10),
+        filled_quantity=Decimal(10),
+        price=Decimal(price),
+        trade_cost=Decimal(0),
+        trade_slippage=Decimal(0),
+    )
+
+
+def test_run_detail_shows_the_realized_pnl_per_session_of_a_run_with_a_sale(run_dir: Path) -> None:
+    ledger = Ledger()
+    ledger.record_fill(_fill_at(NOW, OrderSide.BUY, "100"))
+    ledger.record_fill(_fill_at(LATER, OrderSide.SELL, "110"))
+    report.write_trades(run_dir, ledger)
+
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert not at.exception
+    assert "Realized P&L per session" in [subheader.value for subheader in at.subheader]
+
+
+def test_run_detail_has_no_pnl_plot_for_a_run_that_sold_nothing(run_dir: Path) -> None:
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)  # the fixture's only fill is a buy
+
+    assert not at.exception
+    assert "Realized P&L per session" not in [subheader.value for subheader in at.subheader]
+
+
 # --- Run Detail: Agents tab (reviews.jsonl) --------------------------------------------------------
 
 

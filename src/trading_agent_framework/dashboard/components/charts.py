@@ -836,6 +836,53 @@ def intraday_exposure_chart(rows: list[dict[str, Any]], title: str = "Intraday e
     return fig
 
 
+def _signed_usd(value: float) -> str:
+    return f"{'+' if value >= 0 else '-'}${abs(value):,.2f}"
+
+
+def session_pnl_chart(rows: list[dict[str, Any]], title: str = "Realized P&L per session") -> go.Figure:
+    """One point per session at the P&L realized by the positions sold in it (`reader.load_session_pnl`).
+
+    The hover lists each position sold that session: its P&L in $ and %, quantity, sell price and average cost.
+    """
+    if not rows:
+        fig = go.Figure()
+        fig.add_annotation(text="No trade data available", showarrow=False)
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
+        return fig
+
+    hover = []
+    for row in rows:
+        lines = [f"<b>{row['date']}</b>", f"Session P&L: <b>{_signed_usd(row['pnl'])}</b>"]
+        for p in row["positions"]:
+            pct = "" if p["pnl_pct"] is None else f" ({p['pnl_pct']:+.1f}%)"
+            lines.append(f"{p['symbol']}: {_signed_usd(p['pnl'])}{pct} — {p['qty']:g} @ ${p['sell_price']:,.2f} (cost ${p['avg_cost']:,.2f})")
+        hover.append("<br>".join(lines))
+
+    fig = go.Figure(
+        go.Scatter(
+            x=[row["date"] for row in rows],
+            y=[row["pnl"] for row in rows],
+            mode="lines+markers",
+            line=dict(color="#0891b2", width=1.5),
+            marker=dict(size=8, color=["#16a34a" if row["pnl"] >= 0 else "#dc2626" for row in rows]),
+            hovertext=hover,
+            hoverinfo="text",
+        )
+    )
+    fig.add_hline(y=0, line_dash="dot", line_color="#6b7280")
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Realized P&L ($)",
+        template=CHART_TEMPLATE,
+        showlegend=False,
+        hovermode="closest",
+        margin=dict(l=40, r=20, t=40, b=40),
+    )
+    return fig
+
+
 def rolling_sortino_chart(
     dates: list[str],
     strategy_daily: list[float],
