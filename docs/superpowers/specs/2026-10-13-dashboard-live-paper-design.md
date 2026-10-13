@@ -77,7 +77,11 @@ account between strategies; auto-refresh; writing anything anywhere; changing wh
   - **realized[d]**: the P&L of the sales on day d, net of their fees, at average cost; `FEE` activities (regulatory
     fees, `net_amount` negative) on day d are added to realized[d].
   - **unrealized[d]** for a past day: sum over the symbols held at d's close of `shares * close[d] - remaining cost`.
-  - **unrealized[today]**: the sum of `get_all_positions()`'s `unrealized_pl`, not a bar close.
+  - **unrealized[today]** (amended after the final review): never a bar close. Per position, the replayed shares at
+    the position's `current_price` against their replayed (average) cost, so it shares the realized P&L's cost
+    basis; Alpaca re-bases overnight positions to compressed FIFO, which would otherwise make Total mix two
+    bases. A position the fills do not explain (other quantity, not replayed, no price) keeps the broker's
+    `unrealized_pl`. `AccountPnl.broker_unrealized` keeps Alpaca's own sum and the page explains a difference.
   - Days: every trading day from the first fill to today that has a bar for at least one held symbol, plus any day with
     a sale; today always has a row when positions or fills exist.
   - Missing close for a held symbol on a day (halt, delisting): the last earlier close is carried forward; with none,
@@ -98,7 +102,8 @@ account between strategies; auto-refresh; writing anything anywhere; changing wh
    `session_pnl_chart`.
 4. Caption explaining the two bars (realized = sales that day, net of fees; unrealized = open positions at that day's
    close, today at the current price).
-5. `st.warning` listing `mismatches` and the `unpriced` symbols when not empty.
+5. `st.warning` listing `mismatches`, `unmatched_sales` and the `unpriced` symbols when not empty. The caption names the
+   account the keys really hit (`BROKER_API_IS_PAPER`), with a warning when that is not the tab's mode.
 6. Current positions table (`st.dataframe`, USD and % column formats).
 
 Caching: the page calls `load_account_pnl` through an `st.cache_data` wrapper keyed by `(strategy, mode, today)`

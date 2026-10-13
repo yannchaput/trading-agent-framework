@@ -18,6 +18,7 @@ PNL = AccountPnl(
     days=[{"date": "2026-10-12", "realized": 0.0, "unrealized": 20.0}, {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0}],
     realized_total=5.0,
     unrealized_now=30.0,
+    broker_unrealized=30.0,
     positions=[BrokerPosition("AAA", 10.0, 100.0, 103.0, 1030.0, 30.0, 0.03)],
     mismatches=[],
     unmatched_sales={},
@@ -168,3 +169,42 @@ def test_a_mode_without_env_files_says_how_to_add_one(tmp_path: Path, monkeypatc
 
     assert not at.exception
     assert ".env.<strategy>.paper" in at.info[0].value
+
+
+def test_a_brokers_unrealized_figure_on_another_cost_basis_is_explained(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    at, _ = _run(_paper_script, monkeypatch, dataclasses.replace(PNL, unrealized_now=0.0, broker_unrealized=-500.0))
+
+    (caption,) = [c.value for c in at.caption if "FIFO" in c.value]
+    assert "-$500.00" in caption and "average cost" in caption
+
+
+def test_the_same_figure_needs_no_explanation(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+
+    assert not [c for c in at.caption if "FIFO" in c.value]
+
+
+def test_a_paper_tab_whose_keys_hit_the_live_account_says_so(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (env_dir / ".env.alpha.paper").write_text("BROKER_API_IS_PAPER=false\n" + KEYS, encoding="utf-8")
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+
+    (warning,) = at.warning
+    assert "LIVE" in warning.value and ".env.alpha.paper" in warning.value
+    assert "live Alpaca account" in " ".join(c.value for c in at.caption)
+
+
+def test_a_live_tab_whose_keys_hit_the_paper_account_says_so(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (env_dir / ".env.alpha.live").write_text(KEYS, encoding="utf-8")  # BROKER_API_IS_PAPER unset: paper
+    at, _ = _run(_live_script, monkeypatch, PNL)
+
+    (warning,) = at.warning
+    assert "PAPER" in warning.value and ".env.alpha.live" in warning.value
+
+
+def test_keys_that_match_their_tab_raise_no_account_warning(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    paper, _ = _run(_paper_script, monkeypatch, PNL)
+    live, _ = _run(_live_script, monkeypatch, PNL)
+
+    assert not paper.warning and not live.warning

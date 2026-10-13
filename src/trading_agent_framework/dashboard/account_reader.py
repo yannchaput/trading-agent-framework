@@ -57,6 +57,11 @@ def load_account_credentials(strategy: str, mode: str, env_dir: Path) -> tuple[A
     return AlpacaCredentials.for_trading(env=values), AlpacaCredentials.for_data(env=values)
 
 
+def account_is_paper(strategy: str, mode: str, env_dir: Path) -> bool:
+    """Whether the strategy's trading keys hit Alpaca's paper endpoint (`BROKER_API_IS_PAPER`), whatever its mode."""
+    return load_account_credentials(strategy, mode, env_dir)[0].is_paper
+
+
 PAGE_SIZE = 100  # Alpaca's maximum for /account/activities
 
 

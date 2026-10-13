@@ -83,9 +83,13 @@ def page_account(mode: str) -> None:
     st.session_state[remembered] = strategy
     if st.sidebar.button("Refresh", icon=":material/refresh:", width="stretch", key=f"account_refresh_{mode}"):
         _account_pnl.clear()
-    st.caption(f"{strategy} · {mode} Alpaca account")
 
     try:
+        # The account the keys really hit, which the env file's name may not say (BROKER_API_IS_PAPER).
+        is_paper = account_reader.account_is_paper(strategy, mode, account_reader.default_env_dir())
+        st.caption(f"{strategy} · {'paper' if is_paper else 'live'} Alpaca account")
+        if is_paper != (mode == "paper"):
+            st.warning(f"env/.env.{strategy}.{mode} points at the {'PAPER' if is_paper else 'LIVE'} Alpaca account (BROKER_API_IS_PAPER={'true' if is_paper else 'false'}), not a {mode} one.")
         pnl = _account_pnl(strategy, mode, datetime.now(MARKET_TZ).date())
     except ConfigurationError as exc:
         st.error(f"env/.env.{strategy}.{mode}: {exc}")
@@ -99,6 +103,11 @@ def page_account(mode: str) -> None:
         return
 
     _render_metrics(pnl)
+    if abs(pnl.unrealized_now - pnl.broker_unrealized) > 0.005:
+        st.caption(
+            f"Alpaca's own unrealized figure is {signed_usd(pnl.broker_unrealized)}: it keeps a FIFO cost basis for positions "
+            "held overnight, while this page keeps the average cost the realized P&L uses."
+        )
     if pnl.days:
         st.plotly_chart(account_pnl_chart(pnl.days), width="stretch")
         st.caption("Realized: the P&L of that day's sales, net of fees, against the average cost. Unrealized (hatched): the open positions at that day's close; today, at the current price.")

@@ -49,6 +49,16 @@ def test_credentials_come_from_the_file_without_touching_the_environment(tmp_pat
     assert "ALPACA_API_KEY" not in os.environ
 
 
+def test_the_endpoint_is_the_one_the_keys_file_selects_whatever_the_file_name(tmp_path: Path) -> None:
+    _env(tmp_path, ".env.alpha.paper", "BROKER_API_IS_PAPER=false\n" + KEYS)
+    _env(tmp_path, ".env.alpha.live", KEYS)
+    _env(tmp_path, ".env.beta.paper", KEYS)
+
+    assert account_reader.account_is_paper("alpha", "paper", tmp_path) is False
+    assert account_reader.account_is_paper("alpha", "live", tmp_path) is True
+    assert account_reader.account_is_paper("beta", "paper", tmp_path) is True
+
+
 def test_blank_keys_raise_a_configuration_error_without_the_values(tmp_path: Path) -> None:
     _env(tmp_path, ".env.alpha.paper", "ALPACA_API_KEY=\nALPACA_API_SECRET=s3cret\n")
 

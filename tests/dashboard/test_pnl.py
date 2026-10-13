@@ -67,7 +67,7 @@ def test_selling_more_than_held_closes_the_held_shares_and_counts_the_rest_unmat
 
 # --- daily_account_pnl --------------------------------------------------------------------------
 
-MON, TUE, WED = date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)
+MON, TUE, WED, THU = date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7), date(2026, 10, 8)
 
 
 def _at(day: date, hour_utc: int = 15) -> datetime:
@@ -139,3 +139,29 @@ def test_positions_without_fills_give_no_days_but_today_unrealized() -> None:
     assert result.days == []
     assert result.realized_total == 0.0
     assert result.unrealized_now == -12.5
+
+
+def _priced_position(symbol: str, qty: float, current_price: float, unrealized_pl: float) -> BrokerPosition:
+    return BrokerPosition(symbol=symbol, qty=qty, avg_entry_price=100.0, current_price=current_price, market_value=None, unrealized_pl=unrealized_pl, unrealized_plpc=None)
+
+
+def test_today_unrealized_keeps_the_cost_basis_the_realized_pnl_uses_not_the_brokers_fifo_one() -> None:
+    # Alpaca re-bases overnight positions to compressed FIFO: after selling 10 of 20 shares bought at 100 and 200,
+    # it keeps the lot bought at 200 (loss of 500 at 150); the average cost kept by the replay is 150 (loss of 0).
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100), Fill(_at(TUE), "AAA", "buy", 10, 200), Fill(_at(WED), "AAA", "sell", 10, 150)]
+    closes = {"AAA": {MON: 100.0, TUE: 200.0, WED: 150.0}}
+
+    result = daily_account_pnl(fills, [], closes, [_priced_position("AAA", 10, 150.0, -500.0)], THU)
+
+    assert result.days[-1] == {"date": "2026-10-08", "realized": 0.0, "unrealized": 0.0}
+    assert result.unrealized_now == 0.0
+    assert result.broker_unrealized == -500.0
+
+
+def test_today_unrealized_falls_back_to_the_brokers_when_the_fills_do_not_explain_the_position() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100)]  # the broker holds 15
+
+    result = daily_account_pnl(fills, [], {"AAA": {MON: 100.0}}, [_priced_position("AAA", 15, 110.0, 99.0)], TUE)
+
+    assert result.unrealized_now == 99.0
+    assert result.broker_unrealized == 99.0
