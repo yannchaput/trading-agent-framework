@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import pytest
 
-from trading_agent_framework.dashboard.pnl import AverageCostBook, Fill
+from trading_agent_framework.dashboard.pnl import AverageCostBook, BrokerPosition, Fee, Fill, daily_account_pnl
 
 T0 = datetime(2026, 10, 5, 14, tzinfo=UTC)
 
@@ -63,3 +63,79 @@ def test_selling_more_than_held_closes_the_held_shares_and_counts_the_rest_unmat
     assert (sale.qty, sale.fees, sale.basis) == (4, pytest.approx(2), 400)
     assert book.unmatched == {"AAA": pytest.approx(2)}
     assert book.holdings() == {}
+
+
+# --- daily_account_pnl --------------------------------------------------------------------------
+
+MON, TUE, WED = date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)
+
+
+def _at(day: date, hour_utc: int = 15) -> datetime:
+    return datetime(day.year, day.month, day.day, hour_utc, tzinfo=UTC)
+
+
+def _position(symbol: str, qty: float, unrealized_pl: float) -> BrokerPosition:
+    return BrokerPosition(symbol=symbol, qty=qty, avg_entry_price=100.0, current_price=None, market_value=None, unrealized_pl=unrealized_pl, unrealized_plpc=None)
+
+
+def test_realized_is_booked_on_the_sale_day_net_of_fills_fees_and_fee_activities() -> None:
+    fills = [
+        Fill(_at(MON), "AAA", "buy", 10, 100, fee=1),
+        Fill(_at(TUE), "AAA", "sell", 10, 110, fee=2),
+    ]
+    fees = [Fee(TUE, -0.05)]
+    closes = {"AAA": {MON: 105.0, TUE: 111.0}}
+
+    result = daily_account_pnl(fills, fees, closes, [], WED)
+
+    assert result.days == [
+        {"date": "2026-10-05", "realized": 0.0, "unrealized": 49.0},  # 10 * 105 - 1,001
+        {"date": "2026-10-06", "realized": 96.95, "unrealized": 0.0},  # 1,100 - 2 - 1,001 - 0.05
+        {"date": "2026-10-07", "realized": 0.0, "unrealized": 0.0},
+    ]
+    assert result.realized_total == pytest.approx(96.95)
+
+
+def test_today_unrealized_comes_from_the_positions_not_a_close() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100)]
+    closes = {"AAA": {MON: 101.0, TUE: 999.0}}  # a partial bar for today must be ignored
+
+    result = daily_account_pnl(fills, [], closes, [_position("AAA", 10, 42.0)], TUE)
+
+    assert result.days[-1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 42.0}
+    assert result.unrealized_now == 42.0
+
+
+def test_a_fill_in_the_evening_utc_belongs_to_the_new_york_day() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100), Fill(datetime(2026, 10, 6, 1, 30, tzinfo=UTC), "AAA", "sell", 10, 110)]
+
+    result = daily_account_pnl(fills, [], {"AAA": {MON: 100.0}}, [], WED)
+
+    assert result.days[0] == {"date": "2026-10-05", "realized": 100.0, "unrealized": 0.0}
+
+
+def test_a_missing_close_is_carried_forward_and_a_symbol_never_priced_is_named() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100), Fill(_at(MON), "ZZZ", "buy", 1, 50)]
+    closes = {"AAA": {MON: 102.0}, "BBB": {TUE: 7.0}}  # AAA has no Tuesday bar; ZZZ has none at all
+
+    result = daily_account_pnl(fills, [], closes, [_position("AAA", 10, 0.0), _position("ZZZ", 1, 0.0)], WED)
+
+    assert result.days[1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 20.0}  # 10 * 102 - 1,000
+    assert result.unpriced == ["ZZZ"]
+
+
+def test_replayed_holdings_differing_from_the_broker_are_reported() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100), Fill(_at(MON), "BBB", "sell", 5, 50)]
+
+    result = daily_account_pnl(fills, [], {}, [_position("AAA", 15, 0.0), _position("CCC", 3, 0.0)], TUE)
+
+    assert result.mismatches == [("AAA", 10, 15), ("CCC", 0.0, 3)]
+    assert result.unmatched_sales == {"BBB": 5}
+
+
+def test_positions_without_fills_give_no_days_but_today_unrealized() -> None:
+    result = daily_account_pnl([], [], {}, [_position("AAA", 10, -12.5)], TUE)
+
+    assert result.days == []
+    assert result.realized_total == 0.0
+    assert result.unrealized_now == -12.5
