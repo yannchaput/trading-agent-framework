@@ -56,7 +56,9 @@ JSON-lines file is a few lines, and a strategy depending on the UI layer would i
 - Entry: the open of the first SPY session strictly after the review date. A Tuesday 12:00 review's market orders
   fill at the next bar's open (`backtesting/fills.py`), so this is the price the book actually paid.
 - Exit: the open `h` sessions after the entry session, `h` in {5, 20} (about one and four weeks).
-- Raw return `exit / entry - 1`. A candidate with no open on either day is dropped and counted.
+- Raw return `exit / entry - 1`. A candidate with no open on either day is dropped and counted; so is every candidate of
+  a review dated before the calendar's first session (the session that followed it is not in the calendar, so its open
+  is unknown). An exit past the last session is immature, a count of its own: not yet knowable, not a data problem.
 - Excess return: the raw return minus the equal-weight mean raw return of that review's candidates that have a
   return at the same horizon (the candidates move together; excess measures the agent's discrimination, not the
   market).
@@ -81,8 +83,11 @@ Per agent, per horizon, per run:
 ### Output
 
 Plain text on stdout, one block per agent, runs as column groups (run directory name), each with a 5d and a 20d
-column. A group row shows `n`, mean excess and hit rate; the spread row shows the mean spread and its t-stat. A final
-line per run counts the dropped rows and the skipped reviews. No options besides the run directories.
+column. A group row shows `n`, mean excess and hit rate; the spread row shows the mean spread and its t-stat. Under
+the blocks, each run has three lines: the reviews scored and the malformed lines; the candidate x horizon pairs left
+out, without prices and with an exit past the end of the data; and, per agent and horizon, the reviews without a
+spread because a group was missing. A t-stat is shown only when the spreads vary beyond float noise. No options
+besides the run directories.
 
 ### Errors
 

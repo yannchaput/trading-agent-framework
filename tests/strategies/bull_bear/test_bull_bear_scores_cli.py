@@ -86,6 +86,26 @@ def test_two_runs_print_the_bull_the_bear_and_the_judge_side_by_side(tmp_path: P
     assert len(spread_rows) == 3 and all("+" in row for row in spread_rows)  # AAA rises, BBB falls: every agent is right
 
 
+def test_each_run_reports_the_reviews_without_a_spread_per_agent_and_horizon(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    record = _judge_review("2026-01-06")
+    record["bull"] = [{"symbol": "AAA", "conviction": "high", "argument": "x"}, {"symbol": "BBB", "conviction": "high", "argument": "x"}]  # no low: no bull spread
+    run = _run(tmp_path, "skipping", [json.dumps(record), json.dumps(_judge_review("2026-01-13"))])
+
+    assert main([str(run)], download=FakeDownload(_prices()), today=TODAY) == 0
+
+    out = capsys.readouterr().out
+    assert "  reviews without a spread (a group missing): bull 5d 1, 20d 1; bear 5d 0, 20d 0; judge 5d 0, 20d 0" in out
+
+
+def test_exits_past_the_end_of_the_data_are_counted_apart_from_missing_prices(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    late = _run(tmp_path, "late", [json.dumps(_judge_review("2026-03-17"))])  # entry 2026-03-18: the 5d exit exists, the 20d one is past the data
+
+    assert main([str(late)], download=FakeDownload(_prices()), today=TODAY) == 0
+
+    out = capsys.readouterr().out
+    assert "  candidate x horizon pairs left out: 0 without prices, 2 whose exit is past the end of the data" in out
+
+
 def test_the_download_covers_every_run_from_a_week_before_the_first_review_to_forty_days_after_the_last(tmp_path: Path) -> None:
     first = _run(tmp_path, "a", [json.dumps(_judge_review("2026-01-06"))])
     second = _run(tmp_path, "b", [json.dumps(_judge_review("2026-01-13"))])

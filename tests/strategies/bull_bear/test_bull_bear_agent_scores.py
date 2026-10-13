@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 from typing import Any
 
@@ -53,13 +54,22 @@ def test_a_candidate_without_an_open_is_dropped_counted_and_left_out_of_the_mean
     assert result.dropped == 2
 
 
-def test_a_review_whose_exit_is_past_the_last_session_is_dropped_and_counted() -> None:
+def test_an_exit_past_the_last_session_is_immature_and_counted_apart_from_missing_prices() -> None:
     late = SESSIONS[-3]  # entry SESSIONS[-2]; 5 sessions later is past the calendar
     opens = {"AAA": {day: 100.0 for day in SESSIONS}}
 
     result = forward_returns([_review(late, ["AAA"])], opens, SESSIONS, horizons=(5, 20))
 
-    assert result.rows == [] and result.dropped == 2  # one candidate x two horizons
+    assert result.rows == [] and result.immature == 2 and result.dropped == 0  # one candidate x two horizons
+
+
+def test_a_review_before_the_calendars_first_session_is_dropped_not_given_a_later_entry() -> None:
+    early = SESSIONS[0] - timedelta(days=3)  # the calendar does not show the session that followed it
+    opens = {"AAA": {day: 100.0 for day in SESSIONS}}
+
+    result = forward_returns([_review(early, ["AAA"])], opens, SESSIONS, horizons=(5, 20))
+
+    assert result.rows == [] and result.dropped == 2 and result.immature == 0
 
 
 def test_each_horizon_gets_its_own_rows_and_its_own_candidate_mean() -> None:
@@ -100,6 +110,11 @@ def test_newey_west_adds_the_bartlett_weighted_autocovariances() -> None:
 def test_the_t_stat_needs_two_values_and_some_variance() -> None:
     assert newey_west_t([0.01], lags=0) is None
     assert newey_west_t([0.02, 0.02, 0.02], lags=0) is None
+
+
+def test_values_equal_up_to_float_noise_have_no_variance_and_no_t_stat() -> None:
+    # two reviews whose spreads are the same number, computed from prices that differ by rounding only
+    assert newey_west_t([0.05, math.nextafter(0.05, 1.0), 0.05], lags=0) is None
 
 
 # --- agent scores -------------------------------------------------------------------------------------------
@@ -218,6 +233,12 @@ def test_a_verdict_on_a_symbol_outside_the_debate_set_is_ignored() -> None:
     score = score_agents(reviews, returns, horizons=(5,)).agents[2].by_horizon[5]
 
     assert score.groups["in"].n == 1 and score.spread.mean == pytest.approx(0.02)
+
+
+def test_the_run_scores_carry_both_counts_of_candidates_left_out() -> None:
+    scores = score_agents([], Returns([], dropped=3, immature=5), horizons=(5,))
+
+    assert (scores.dropped, scores.immature) == (3, 5)
 
 
 def test_the_four_week_spread_uses_newey_west_with_three_lags() -> None:

@@ -139,7 +139,11 @@ def format_report(runs: Sequence[RunReport], horizons: Sequence[int] = HORIZONS)
             lines.append(_row(f"  concern {concern}", [[score.concerns.get(concern, EMPTY_GROUP) for score in run] for run in scores], _group_cell))
         lines.append(_row("  spread", [[score.spread for score in run] for run in scores], _spread_cell))
     lines.append("")
-    lines += [f"{run.name}: {run.reviews} reviews scored, {run.scores.dropped} candidate x horizon pairs without prices, {run.malformed} malformed lines" for run in runs]
+    for run in runs:
+        lines.append(f"{run.name}: {run.reviews} reviews scored, {run.malformed} malformed lines")
+        lines.append(f"  candidate x horizon pairs left out: {run.scores.dropped} without prices, {run.scores.immature} whose exit is past the end of the data")
+        skipped = "; ".join(f"{agent.agent} " + ", ".join(f"{horizon}d {agent.by_horizon[horizon].spread.skipped}" for horizon in horizons) for agent in run.scores.agents)
+        lines.append(f"  reviews without a spread (a group missing): {skipped}")
     return "\n".join(lines)
 
 

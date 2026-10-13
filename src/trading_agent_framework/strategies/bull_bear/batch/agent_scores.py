@@ -34,7 +34,8 @@ class ForwardReturn:
 @dataclass(frozen=True, slots=True)
 class Returns:
     rows: list[ForwardReturn]
-    dropped: int  # candidate x horizon pairs with no entry or no exit open
+    dropped: int  # candidate x horizon pairs with no entry or no exit open (no data, or a review before the calendar starts)
+    immature: int = 0  # candidate x horizon pairs whose exit is past the last session: not yet knowable, not a data problem
 
 
 def scored_reviews(reviews: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
@@ -56,18 +57,23 @@ def forward_returns(
 ) -> Returns:
     """Each scored review's candidates, at each horizon: entry at the open of the first `calendar` session strictly
     after the review date, exit at the open `horizon` sessions later. A candidate with no open on either day, or a
-    review whose exit is past the calendar, is dropped and counted."""
+    review the calendar does not reach back to (the session that followed it is not in the calendar), is dropped and
+    counted; an exit past the last session is immature, counted apart."""
     sessions = sorted(calendar)
     rows: list[ForwardReturn] = []
     dropped = 0
+    immature = 0
     for review in scored_reviews(reviews):
         day = date.fromisoformat(review["date"])
         entry_index = bisect_right(sessions, day)  # the first session strictly after the review date
         symbols = candidates(review)
+        if entry_index == 0:  # every session is after the review: the one that followed it may be missing, so its open is unknown
+            dropped += len(symbols) * len(horizons)
+            continue
         for horizon in horizons:
             exit_index = entry_index + horizon
             if exit_index >= len(sessions):
-                dropped += len(symbols)
+                immature += len(symbols)
                 continue
             entry_day, exit_day = sessions[entry_index], sessions[exit_index]
             raw: dict[str, float] = {}
@@ -81,7 +87,7 @@ def forward_returns(
             if raw:
                 mean = sum(raw.values()) / len(raw)
                 rows.extend(ForwardReturn(day, symbol, horizon, value, value - mean) for symbol, value in raw.items())
-    return Returns(rows, dropped)
+    return Returns(rows, dropped, immature)
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +125,8 @@ class AgentScore:
 @dataclass(frozen=True, slots=True)
 class RunScores:
     agents: list[AgentScore]  # bull, bear, judge
-    dropped: int  # from `Returns.dropped`
+    dropped: int  # from `Returns.dropped`: candidate x horizon pairs left out for want of prices
+    immature: int = 0  # from `Returns.immature`: pairs whose exit is past the end of the data
 
 
 def bull_calls(review: Mapping[str, Any]) -> dict[str, str]:
@@ -189,7 +196,7 @@ def score_agents(reviews: Sequence[Mapping[str, Any]], returns: Returns, horizon
                 concerns={concern: _stats(values) for concern, values in sorted(concerns.items())},
             )
         agents.append(AgentScore(name, f"{better} - {worse}", by_horizon))
-    return RunScores(agents, returns.dropped)
+    return RunScores(agents, returns.dropped, returns.immature)
 
 
 def newey_west_t(values: Sequence[float], *, lags: int) -> float | None:
@@ -206,7 +213,8 @@ def newey_west_t(values: Sequence[float], *, lags: int) -> float | None:
         weight = 1 - lag / (lags + 1)
         variance += 2 * weight * sum(demeaned[i] * demeaned[i - lag] for i in range(lag, n)) / n
     variance *= n / (n - 1)
-    if variance <= 0:
+    scale = max(abs(value) for value in values)
+    if variance <= (1e-9 * scale) ** 2:  # no variance, or only float noise (identical values computed from prices that differ by rounding)
         return None
     return mean / math.sqrt(variance / n)
 
