@@ -11,7 +11,6 @@
 * ~~Add cash available during backtesting~~
 * ~~Update pyproject.toml to make dashboard an "extra" dependency~~
 * ~~Add a gloabl factory/builder for strategy in main.py~~
-* Log P&L every day in a sqllite database for the dashboard to display it: for backtest, paper and live
 * Add a skill to review, challenge and validate the design of a strategy
 
 ## BUGS
