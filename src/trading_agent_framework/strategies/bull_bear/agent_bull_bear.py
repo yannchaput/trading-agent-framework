@@ -54,7 +54,7 @@ class BullBearStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # 300 completed sessions before the first review: the 12-1 month return needs 274 (as cross_momentum)
         "warmup_trading_days": 300,
-        "slippage": Decimal("0.0005"),
+        "slippage": Decimal("0"),
         "budget": 10000,
     }
 
@@ -125,10 +125,7 @@ class BullBearStrategy(Strategy):
             momentum=CONFIG,
         )
         news_state = "on" if self.settings.research_news else "off"
-        self.log_info(
-            f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} "
-            f"at {self.iteration_start_time}, research news {news_state}"
-        )
+        self.log_info(f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}, research news {news_state}")
 
     def _require_news_provider(self) -> None:
         """Refuse to start without a news source: the researcher's `search_news` would only ever return `{"error": ...}`.
