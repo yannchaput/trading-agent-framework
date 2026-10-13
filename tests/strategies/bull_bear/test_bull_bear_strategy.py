@@ -231,3 +231,13 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
     assert captured["data_source"] is YahooBacktestData and captured["timestep"] == "day"
     assert {asset.symbol for asset in captured["preload_assets"]} == {"AAA", "BBB", "CCC", "SHV", "SPY"}
     assert captured["budget"] == Decimal(10000) and captured["warmup_trading_days"] == 300
+
+
+def test_run_backtesting_charges_no_slippage_so_runs_compare_with_the_picker_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
+    strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+
+    strategy.run_backtesting()
+
+    assert captured["slippage"] == BullBearStrategy.parameters["slippage"] == Decimal(0)  # the picker run 2026-10-10_085928 had none
