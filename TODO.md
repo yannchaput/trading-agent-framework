@@ -38,6 +38,8 @@
 
 * ~~Add a column for the broker~~
 * ~~REplace VIX, ADX etc with a "regime" indicator: 1 =bullish, neutral =0, bearish = -1~~
+* ~~Add a column with slippage and fees in dashboard~~
+* ~~Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)~~
 * Review  Agent table pivot format to be consistent with all strategies
 
 ### Cross sectional momentum
@@ -58,12 +60,10 @@
 ### Bull Bear
 
 * Retest a 1Y backtest with news 'off'
-* Add a column with slippage and fees in dashboard
 * Bump up research_tool_budget to 4 with news on
 * Enable compaction of the state in langchain with middleware
 * ~~Enrich logging, specifically the research agent~~
 * ~~Show P&L in the log when a stock is sold~~
-* Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)
 
 ### LLM benchmark
 
