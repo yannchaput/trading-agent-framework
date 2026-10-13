@@ -30,6 +30,7 @@ dashboard = ["streamlit>=1.40", "pandas>=2.0"]
 [project.scripts]
 agent = "trading_agent_framework.main:main"
 batch-universe = "trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe:main"
+bull-bear-scores = "trading_agent_framework.strategies.bull_bear.batch.scores_cli:main"
 dashboard = "trading_agent_framework.dashboard.cli:main"
 
 [build-system]
