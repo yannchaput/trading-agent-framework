@@ -201,13 +201,16 @@ def test_run_detail_header_shows_the_agents_model(run_dir: Path) -> None:
 # --- Top navigation --------------------------------------------------------------------------------
 
 
-def test_the_tabs_are_backtesting_then_models() -> None:
+def test_the_tabs_are_live_paper_backtesting_then_models_with_backtesting_the_default() -> None:
     from trading_agent_framework.dashboard import app
 
     assert [(title, url_path) for title, url_path, _ in app.NAV_PAGES] == [
+        ("Live", "live"),
+        ("Paper", "paper"),
         ("Backtesting", "backtesting"),
         ("Models", "models"),
     ]
+    assert app.DEFAULT_PAGE == "Backtesting"
 
 
 def test_the_logo_files_exist_and_carry_the_name() -> None:
