@@ -61,6 +61,8 @@ class Settings(BaseModel):
     agents: dict[str, dict[str, Any]] = Field(default_factory=dict)
     # Fee totals from backtesting.runner._fee_totals; "broker" is None, or the key absent in older runs, when no fee model applied.
     fees: dict[str, Any] = Field(default_factory=dict)
+    # The backtest's `slippage` parameter (a fraction per side, e.g. 0.0005 = 5 bps); None in runs that did not record it.
+    slippage: float | None = None
     # Dashboard-only leaf field: "", "discarded", "study", or "validated"; see reader.save_decision.
     dashboard_decision: str = ""
     # Dashboard-only leaf field: any subset of "Bearish", "Neutral", "Bullish", "All-Weather"; see

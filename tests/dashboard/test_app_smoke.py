@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -99,6 +100,22 @@ def test_app_boots_and_scorecard_lists_the_run(run_dir: Path) -> None:
     at.run()
 
     assert not at.exception
+
+
+def test_scorecard_shows_the_runs_slippage_right_of_the_broker_column(run_dir: Path) -> None:
+    settings_path = run_dir / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    settings["slippage"] = 0.0005
+    settings_path.write_text(json.dumps(settings))
+
+    at = AppTest.from_file(str(APP_PATH), default_timeout=30)
+    at.run()
+
+    assert not at.exception
+    table = at.dataframe[0].value
+    columns = list(table.columns)
+    assert columns[columns.index("Broker") + 1] == "Slippage fee"
+    assert table["Slippage fee"].tolist() == [pytest.approx(5.0)]  # 0.0005 as a fraction, shown in bps
 
 
 def test_run_detail_renders_without_exception(run_dir: Path) -> None:

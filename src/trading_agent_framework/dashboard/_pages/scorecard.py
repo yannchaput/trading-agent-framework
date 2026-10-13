@@ -86,6 +86,7 @@ def page_scorecard():
             model = ", ".join(dict.fromkeys(models))
 
         broker = (settings.fees.get("broker") or "") if settings else ""
+        slippage_bps = settings.slippage * 10_000 if settings and settings.slippage is not None else None
 
         backtest_time = ""
         if settings and settings.backtest_time_seconds:
@@ -107,6 +108,7 @@ def page_scorecard():
                 "Volatility%": (metrics.volatility_strategy * 100) if metrics else 0,
                 "Model": model,
                 "Broker": broker,
+                "Slippage fee": slippage_bps,
                 "Decision": settings.dashboard_decision if settings else "",
                 "Regime": settings.dashboard_regime if settings else [],
                 "Time": backtest_time,

@@ -60,3 +60,11 @@ def test_settings_fees_default_to_empty_for_runs_written_before_fee_totals() -> 
 def test_settings_parses_the_fee_totals_broker() -> None:
     settings = Settings.model_validate({"fees": {"broker": "alpaca", "buy_orders": 3}})
     assert settings.fees["broker"] == "alpaca"
+
+
+def test_settings_slippage_defaults_to_none_for_runs_that_did_not_record_it() -> None:
+    assert Settings.model_validate({}).slippage is None
+
+
+def test_settings_parses_the_backtest_slippage_parameter() -> None:
+    assert Settings.model_validate({"slippage": 0.0005}).slippage == 0.0005
