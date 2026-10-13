@@ -13,6 +13,7 @@ import pandas as pd
 from trading_agent_framework.agents.stats_store import llm_stats_db_path
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
+from trading_agent_framework.dashboard.pnl import AverageCostBook, Fill
 from trading_agent_framework.utils.clock import MARKET_TZ
 
 
@@ -584,8 +585,9 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
 def load_session_pnl(ref: RunRef) -> list[dict[str, Any]] | None:
     """Per trading session, the realized P&L of the positions sold, rebuilt from the fills.
 
-    A sale is priced against the position's average cost (the convention of `load_intraday_exposure`), with
-    every buy fee in that cost and the sell fee deducted from the proceeds, so the figures are net of fees.
+    A sale is priced against the position's average cost (`pnl.AverageCostBook`, the convention of
+    `load_intraday_exposure`), with every buy fee in that cost and the sell fee deducted from the proceeds, so the
+    figures are net of fees.
     The sales of one symbol in a session are merged into one position. Each row is
     ``{date, pnl, positions: [{symbol, qty, avg_cost, sell_price, pnl, pnl_pct}]}``; a session without a sale has
     no row, and neither has a sale with no position to cost it against. None when there are no fills.
@@ -605,29 +607,28 @@ def load_session_pnl(ref: RunRef) -> list[dict[str, Any]] | None:
     fills["time"] = cast(pd.Series, pd.to_datetime(fills["time"], utc=True)).dt.tz_convert(MARKET_TZ)
     fills = fills.sort_values("time", kind="stable")
 
-    holdings: dict[str, list[float]] = {}  # symbol -> [shares, remaining cost, buy fees included]
+    book = AverageCostBook()
     rows: list[dict[str, Any]] = []
     for day, day_fills in cast(Any, fills.groupby(fills["time"].dt.date, sort=True)):
         sold: dict[str, dict[str, float]] = {}  # symbol -> shares sold, gross proceeds, fees, cost basis
         for _, fill in day_fills.iterrows():
-            symbol, qty, price, fee = str(fill["symbol"]), float(fill["filled_quantity"]), float(fill["price"]), float(fill["trade_cost"])
-            shares, cost = holdings.get(symbol, [0.0, 0.0])
-            if str(fill["side"]).lower() == "buy":
-                shares, cost = shares + qty, cost + qty * price + fee
-            elif shares > 1e-9:
-                closed = min(qty, shares)
-                basis = cost * closed / shares  # the sold shares leave at their average cost
-                entry = sold.setdefault(symbol, {"qty": 0.0, "gross": 0.0, "fees": 0.0, "basis": 0.0})
-                entry["qty"] += closed
-                entry["gross"] += closed * price
-                entry["fees"] += fee * closed / qty
-                entry["basis"] += basis
-                cost -= basis
-                shares -= closed
-            if shares > 1e-9:
-                holdings[symbol] = [shares, cost]
-            else:
-                holdings.pop(symbol, None)
+            sale = book.apply(
+                Fill(
+                    time=fill["time"],
+                    symbol=str(fill["symbol"]),
+                    side=str(fill["side"]),
+                    qty=float(fill["filled_quantity"]),
+                    price=float(fill["price"]),
+                    fee=float(fill["trade_cost"]),
+                )
+            )
+            if sale is None:
+                continue
+            entry = sold.setdefault(sale.symbol, {"qty": 0.0, "gross": 0.0, "fees": 0.0, "basis": 0.0})
+            entry["qty"] += sale.qty
+            entry["gross"] += sale.gross
+            entry["fees"] += sale.fees
+            entry["basis"] += sale.basis
         if not sold:
             continue
         positions = []
