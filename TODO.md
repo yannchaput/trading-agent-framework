@@ -58,6 +58,7 @@
 ### Bull Bear
 
 * Retest a 1Y backtest with news 'off'
+* Add a column with slippage and fees in dashboard
 * Bump up research_tool_budget to 4 with news on
 * Enable compaction of the state in langchain with middleware
 * ~~Enrich logging, specifically the research agent~~
