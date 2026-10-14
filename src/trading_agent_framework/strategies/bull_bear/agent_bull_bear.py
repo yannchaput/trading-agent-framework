@@ -101,13 +101,27 @@ class BullBearStrategy(Strategy):
             temperature = self.settings.agent_temperature
             sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
-            self.agents.create(name="researcher", system_prompt=researcher_system(news), tools=[*research, submit["submit_note"]], temperature=temperature, exempt_tools=["submit_note"])
+            self.agents.create(
+                name="researcher",
+                system_prompt=researcher_system(news),
+                tools=[*research, submit["submit_note"]],
+                temperature=temperature,
+                exempt_tools=["submit_note"],
+                final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
+            )
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
-            self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature)
-            self.agents.create(name="bear", system_prompt=BEAR_SYSTEM, tools=[submit["submit_bear_case"]], temperature=temperature)
+            self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature, final_tools=["submit_bull_case"])
+            self.agents.create(name="bear", system_prompt=BEAR_SYSTEM, tools=[submit["submit_bear_case"]], temperature=temperature, final_tools=["submit_bear_case"])
             # The judge also keeps lessons between reviews (`strategy.memory`, wiped at the start of every backtest).
             lessons = only(memory_tools(self.memory), _JUDGE_MEMORY_TOOLS)
-            self.agents.create(name="judge", system_prompt=JUDGE_SYSTEM, tools=[*lessons, submit["submit_verdicts"]], temperature=temperature, exempt_tools=["submit_verdicts"])
+            self.agents.create(
+                name="judge",
+                system_prompt=JUDGE_SYSTEM,
+                tools=[*lessons, submit["submit_verdicts"]],
+                temperature=temperature,
+                exempt_tools=["submit_verdicts"],
+                final_tools=["submit_verdicts"],
+            )
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc

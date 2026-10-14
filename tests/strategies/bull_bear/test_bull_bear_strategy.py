@@ -97,6 +97,15 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
     }
 
 
+def test_every_agent_ends_its_run_on_its_own_recorded_submission(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))  # explicit: independent of the default
+
+    strategy.initialize()
+
+    final = {created["name"]: list(created["final_tools"]) for created in agents.created}
+    assert final == {"researcher": ["submit_note"], "bull": ["submit_bull_case"], "bear": ["submit_bear_case"], "judge": ["submit_verdicts"]}
+
+
 def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_source_is_needed(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))
     strategy.broker.news = None  # type: ignore[attr-defined]

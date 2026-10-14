@@ -97,6 +97,17 @@ def _parse_glm_tool_call(content: Any, valid_names: set[str]) -> tuple[str, dict
     return name_match.group(1), arguments
 
 
+def _tool_succeeded(message: Any) -> bool:
+    """A tool result that is not a failed call and not the `{"error": ...}` shape tools use to refuse."""
+    if getattr(message, "status", "success") == "error":
+        return False
+    try:
+        content = json.loads(message.content) if isinstance(message.content, str) else message.content
+    except ValueError:
+        return True
+    return not (isinstance(content, dict) and "error" in content)
+
+
 class _ToolBudget:
     """One agent's tool-call budget for the current run: set by `AgentHandle.run`, enforced by `_tool_budget_middleware`."""
 
@@ -279,6 +290,31 @@ class AgentManager:
 
         return enforce_tool_budget
 
+    def _final_tools_middleware(self, final_tools: Sequence[str]) -> Any:
+        """Middleware for an agent with `final_tools`: once one of them succeeded this run, end it without another model call.
+
+        A reasoning model asked for a closing turn after its submit tool answered sometimes thinks until the
+        context window is full (no text, no tool call): tens of thousands of tokens and minutes of generation
+        for nothing. The run ends instead with an empty assistant message. A final tool whose result is an
+        `{"error": ...}` (or a failed tool call) does not end the run: the model still gets its turn to correct it.
+        Registered ahead of the telemetry middleware, so the skipped turn is not recorded as a model call.
+        """
+        from langchain.agents.middleware import ModelResponse, wrap_model_call
+        from langchain_core.messages import AIMessage
+
+        final = frozenset(final_tools)
+
+        @wrap_model_call
+        def end_after_final_tool(request: Any, handler: Callable[[Any], Any]) -> Any:
+            for message in reversed(request.messages):  # the tool results since the model's last turn
+                if getattr(message, "type", None) != "tool":
+                    break
+                if getattr(message, "name", None) in final and _tool_succeeded(message):
+                    return ModelResponse(result=[AIMessage(content="")])
+            return handler(request)
+
+        return end_after_final_tool
+
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
 
@@ -324,6 +360,7 @@ class AgentManager:
         timeout_seconds: float | None = None,
         temperature: float | None = None,
         exempt_tools: Sequence[str] | None = None,
+        final_tools: Sequence[str] | None = None,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
 
@@ -340,6 +377,10 @@ class AgentManager:
 
         `exempt_tools` names the tools a per-run `tool_budget` (see `AgentHandle.run`) never refuses,
         typically the tool the agent must end with; without a budget it changes nothing.
+
+        `final_tools` names the tools whose successful call ends the run: the model is not asked for another
+        turn (see `_final_tools_middleware`). For an agent whose job is to hand one result over, not for a
+        tool the agent may call several times. Default: none, the model always gets its closing turn.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
@@ -355,6 +396,8 @@ class AgentManager:
                 self._forced_tool_choice_middleware(),
                 self._tool_budget_middleware(budget, exempt_tools or ()),
             ]
+            if final_tools:
+                middleware.append(self._final_tools_middleware(final_tools))
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
