@@ -30,6 +30,8 @@ class LLMCredentials:
     base_url: str
     api_key: str = field(repr=False)
     default_model: str | None = None
+    # The server's context window (vLLM `max_model_len`), for history compaction; `None` when unknown.
+    max_input_tokens: int | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> LLMCredentials:
@@ -47,4 +49,18 @@ class LLMCredentials:
         if default_model is not None and not default_model.strip():
             default_model = None
 
-        return cls(base_url=normalize_base_url(base_url), api_key=api_key, default_model=default_model)
+        return cls(base_url=normalize_base_url(base_url), api_key=api_key, default_model=default_model, max_input_tokens=_max_input_tokens(source))
+
+
+def _max_input_tokens(source: Mapping[str, str]) -> int | None:
+    """`LLM_MAX_INPUT_TOKENS` as a positive integer; blank or missing is `None`."""
+    raw = (source.get("LLM_MAX_INPUT_TOKENS") or "").strip()
+    if not raw:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        value = 0
+    if value <= 0:
+        raise ConfigurationError(f"LLM_MAX_INPUT_TOKENS must be a positive integer (the server's context window), got {raw!r}")
+    return value

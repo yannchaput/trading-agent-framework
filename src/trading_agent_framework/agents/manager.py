@@ -17,6 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from trading_agent_framework.agents.compaction import compaction_middleware
 from trading_agent_framework.agents.config import LLMCredentials
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
@@ -361,6 +362,7 @@ class AgentManager:
         temperature: float | None = None,
         exempt_tools: Sequence[str] | None = None,
         final_tools: Sequence[str] | None = None,
+        compact_history: bool = False,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
 
@@ -381,6 +383,10 @@ class AgentManager:
         `final_tools` names the tools whose successful call ends the run: the model is not asked for another
         turn (see `_final_tools_middleware`). For an agent whose job is to hand one result over, not for a
         tool the agent may call several times. Default: none, the model always gets its closing turn.
+
+        `compact_history` summarizes the run's older messages once its history reaches 80% of the model's
+        input window (`agents/compaction.py`); the window is `LLM_MAX_INPUT_TOKENS` for a model built here,
+        the model's own profile otherwise, and a `ConfigurationError` when neither gives one.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
@@ -398,9 +404,13 @@ class AgentManager:
             ]
             if final_tools:
                 middleware.append(self._final_tools_middleware(final_tools))
+            if compact_history:
+                middleware.append(compaction_middleware(chat_model))
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
             agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
+        except ConfigurationError:
+            raise  # a missing setting, not a broken agent: the caller refuses to start on it
         except Exception as exc:
             raise AgentError(f"failed to create agent {name!r}: {exc}") from exc
 
@@ -414,6 +424,7 @@ class AgentManager:
             return model  # already a chat-model instance -- used as-is, LLMCredentials and timeout_seconds untouched
 
         try:
+            from langchain_core.language_models import ModelProfile
             from langchain_openai import ChatOpenAI
             from pydantic import SecretStr
         except Exception as exc:
@@ -423,6 +434,9 @@ class AgentManager:
         model_id = model if model is not None else credentials.default_model
         if not model_id:
             raise ConfigurationError("No model id given and LLM_MODEL is not set; pass model=... explicitly or set LLM_MODEL in the strategy's env file")
+        profile: ModelProfile | None = None
+        if credentials.max_input_tokens is not None:
+            profile = {"max_input_tokens": credentials.max_input_tokens}
         try:
             return ChatOpenAI(
                 model=model_id,
@@ -430,6 +444,7 @@ class AgentManager:
                 api_key=SecretStr(credentials.api_key),
                 timeout=timeout_seconds,
                 temperature=temperature,
+                profile=profile,
             )
         except Exception as exc:
             raise AgentError(f"could not build chat model {model_id!r}: {exc}") from exc

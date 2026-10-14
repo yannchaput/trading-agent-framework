@@ -98,3 +98,22 @@ def test_repr_does_not_leak_the_api_key() -> None:
 
     assert "supersecretkey" not in text
     assert "LLMCredentials" in text
+
+
+def test_from_env_max_input_tokens_is_optional() -> None:
+    credentials = LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1"})
+
+    assert credentials.max_input_tokens is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("32768", 32768), (" 8192 ", 8192), ("", None), ("   ", None)])
+def test_from_env_reads_max_input_tokens(value: str, expected: int | None) -> None:
+    credentials = LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_MAX_INPUT_TOKENS": value})
+
+    assert credentials.max_input_tokens == expected
+
+
+@pytest.mark.parametrize("value", ["32k", "1.5", "0", "-1"])
+def test_from_env_refuses_a_max_input_tokens_that_is_not_a_positive_integer(value: str) -> None:
+    with pytest.raises(ConfigurationError, match="LLM_MAX_INPUT_TOKENS"):
+        LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_MAX_INPUT_TOKENS": value})

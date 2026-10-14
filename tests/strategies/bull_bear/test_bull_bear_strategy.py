@@ -106,6 +106,15 @@ def test_every_agent_ends_its_run_on_its_own_recorded_submission(tmp_path: Path)
     assert final == {"researcher": ["submit_note"], "bull": ["submit_bull_case"], "bear": ["submit_bear_case"], "judge": ["submit_verdicts"]}
 
 
+def test_the_researcher_and_the_judge_compact_their_history_and_the_single_shot_bull_and_bear_do_not(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))
+
+    strategy.initialize()
+
+    compacting = {created["name"]: created.get("compact_history", False) for created in agents.created}
+    assert compacting == {"researcher": True, "bull": False, "bear": False, "judge": True}
+
+
 def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_source_is_needed(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))
     strategy.broker.news = None  # type: ignore[attr-defined]

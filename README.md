@@ -291,7 +291,7 @@ A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ack
 | Field | Value |
 | --- | --- |
 | **File** | `strategies/bull_bear/agent_bull_bear.py` (`BullBearStrategy`) |
-| **Model** | from `LLM_MODEL` in the env file (one model for the four agents) |
+| **Model** | from `LLM_MODEL` in the env file (one model for the four agents); `LLM_MAX_INPUT_TOKENS` (the server's context window) is required: the researcher's and the judge's history is summarized at 80% of it |
 | **Agents** | `researcher` (one run per stock), `bull`, `bear`, `judge` |
 | **Tools** | researcher: news (while `research_news` is on) + SEC income statement and balance sheet; bull and bear: none; judge: `search_memory` and `remember_lesson`. Each agent ends with one submit tool (`submit_note`, `submit_bull_case`, `submit_bear_case`, `submit_verdicts`); none can place an order |
 | **Asset universe** | the `cross_momentum` universe file, cut to the top 15 by cross_momentum's momentum score (plus holdings still ranked 16-35), plus SHV |

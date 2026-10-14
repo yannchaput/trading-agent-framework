@@ -108,6 +108,7 @@ class BullBearStrategy(Strategy):
                 temperature=temperature,
                 exempt_tools=["submit_note"],
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
+                compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
             )
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             self.agents.create(name="bull", system_prompt=BULL_SYSTEM, tools=[submit["submit_bull_case"]], temperature=temperature, final_tools=["submit_bull_case"])
@@ -121,6 +122,7 @@ class BullBearStrategy(Strategy):
                 temperature=temperature,
                 exempt_tools=["submit_verdicts"],
                 final_tools=["submit_verdicts"],
+                compact_history=True,
             )
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
