@@ -10,7 +10,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -109,13 +108,9 @@ def _tool_succeeded(message: Any) -> bool:
     return not (isinstance(content, dict) and "error" in content)
 
 
-class _ToolBudget:
-    """One agent's tool-call budget for the current run: set by `AgentHandle.run`, enforced by `_tool_budget_middleware`."""
-
-    def __init__(self) -> None:
-        self.limit: int | None = None
-        self.used = 0
-        self.lock = threading.Lock()  # LangGraph runs one turn's tool calls on pool threads
+def _tool_name(tool: Any) -> str:
+    """The name a tool is registered under: a `BaseTool`'s `name`, a plain function's `__name__`."""
+    return getattr(tool, "name", None) or tool.__name__
 
 
 def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[str]) -> str:
@@ -129,10 +124,11 @@ def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[
 class AgentHandle:
     """A single named agent, built once by `AgentManager.create` and run repeatedly."""
 
-    def __init__(self, name: str, agent: Any, budget: _ToolBudget | None = None) -> None:
+    def __init__(self, name: str, agent: Any, limiter: Any | None = None) -> None:
+        """`limiter` is the agent's `ToolCallLimitMiddleware` (see `AgentManager._tool_budget_middleware`): `run` sets its `run_limit`."""
         self.name = name
         self._agent = agent
-        self._budget = budget or _ToolBudget()
+        self._limiter = limiter
 
     def run(
         self,
@@ -164,7 +160,8 @@ class AgentHandle:
             raise ValueError(f"tool_budget must be at least 0, got {tool_budget}")
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         run_id = run_id or uuid.uuid4().hex
-        self._budget.limit, self._budget.used = tool_budget, 0
+        if self._limiter is not None:
+            self._limiter.run_limit = tool_budget
         try:
             with agent_call_context(run_id=run_id, force_tool=force_tool):
                 raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
@@ -173,7 +170,8 @@ class AgentHandle:
         except Exception as exc:
             raise AgentError(f"agent {self.name!r} failed: {exc}") from exc
         finally:
-            self._budget.limit = None
+            if self._limiter is not None:
+                self._limiter.run_limit = None
 
 
 class AgentManager:
@@ -262,34 +260,42 @@ class AgentManager:
 
         return force_tool_choice
 
-    def _tool_budget_middleware(self, budget: _ToolBudget, exempt_tools: Sequence[str]) -> Any:
-        """Middleware for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
+    def _tool_budget_middleware(self, tool_names: Sequence[str], exempt_tools: Sequence[str]) -> Any:
+        """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
 
-        A no-op when the run has no budget (the default). A refused call never runs: its result is an
-        `{"error": ...}` the model can act on, the same feedback shape as a tool's own refusal. Exempt
-        calls are neither counted nor refused.
+        `AgentHandle.run` sets `run_limit` for the run (`None` between runs: nothing is refused). The base class
+        counts in `after_model`, on the one graph thread, and injects an error `ToolMessage` for each call past
+        the limit, so a refused call never runs. Two things differ from stock: only the agent's own non-exempt
+        tools are counted (an unknown name is rejected by ToolNode, uncounted; an exempt call is neither counted
+        nor refused), and the refusal reads `{"error": "tool budget of N calls spent; ..."}`, the shape a tool's
+        own refusal has and the one the callers look for, naming the tools the model must finish with.
         """
-        from langchain.agents.middleware import wrap_tool_call
+        from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
         from langchain_core.messages import ToolMessage
 
         exempt = tuple(exempt_tools)
+        counted = frozenset(tool_names) - frozenset(exempt)
 
-        @wrap_tool_call
-        def enforce_tool_budget(request: Any, handler: Callable[[Any], Any]) -> Any:
-            name = request.tool_call["name"]
-            if budget.limit is None or name in exempt or request.tool is None:  # an unknown tool name: ToolNode rejects it, uncounted
-                return handler(request)
-            with budget.lock:  # check-and-increment is atomic; the tool itself runs outside the lock
-                refused = budget.used >= budget.limit
-                if not refused:
-                    budget.used += 1
-            if refused:
-                logger.log_warning(f"tool budget of {budget.limit} calls spent: {name} was refused")
-                error = {"error": _tool_budget_message(budget.limit, name, exempt)}
-                return ToolMessage(content=json.dumps(error), tool_call_id=request.tool_call["id"], name=name)
-            return handler(request)
+        class ToolBudgetLimit(ToolCallLimitMiddleware):
+            def __init__(self) -> None:
+                super().__init__(run_limit=0)  # the base class wants a limit; `AgentHandle.run` sets the real one per run
+                self.run_limit = None
 
-        return enforce_tool_budget
+            def _matches_tool_filter(self, tool_call: Any) -> bool:
+                return tool_call["name"] in counted
+
+            def after_model(self, state: Any, runtime: Any) -> Any:
+                update = super().after_model(state, runtime)
+                if not update or not update.get("messages") or self.run_limit is None:
+                    return update
+                refusals = []
+                for message in update["messages"]:
+                    logger.log_warning(f"tool budget of {self.run_limit} calls spent: {message.name} was refused")
+                    error = {"error": _tool_budget_message(self.run_limit, message.name, exempt)}
+                    refusals.append(ToolMessage(content=json.dumps(error), tool_call_id=message.tool_call_id, name=message.name, status="error"))
+                return {**update, "messages": refusals}
+
+        return ToolBudgetLimit()
 
     def _final_tools_middleware(self, final_tools: Sequence[str]) -> Any:
         """Middleware for an agent with `final_tools`: once one of them succeeded this run, end it without another model call.
@@ -392,15 +398,16 @@ class AgentManager:
             raise ValueError(f"Agent with name {name!r} already exists.")
 
         chat_model = self._resolve_model(model, timeout_seconds, temperature)
-        budget = _ToolBudget()
         try:
             from langchain.agents import create_agent
 
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
+            tool_list = list(tools or [])
+            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or ())
             middleware = [
                 self._tool_call_repair_middleware(glm_format=glm_format),
                 self._forced_tool_choice_middleware(),
-                self._tool_budget_middleware(budget, exempt_tools or ()),
+                limiter,
             ]
             if final_tools:
                 middleware.append(self._final_tools_middleware(final_tools))
@@ -408,13 +415,13 @@ class AgentManager:
                 middleware.append(compaction_middleware(chat_model))
             if self._telemetry_now is not None:
                 middleware.append(self._telemetry_middleware(name))
-            agent = create_agent(model=chat_model, tools=list(tools or []), system_prompt=system_prompt, middleware=middleware)
+            agent = create_agent(model=chat_model, tools=tool_list, system_prompt=system_prompt, middleware=middleware)
         except ConfigurationError:
             raise  # a missing setting, not a broken agent: the caller refuses to start on it
         except Exception as exc:
             raise AgentError(f"failed to create agent {name!r}: {exc}") from exc
 
-        handle = AgentHandle(name, agent, budget)
+        handle = AgentHandle(name, agent, limiter)
         self._agents[name] = handle
         self._temperatures[name] = getattr(chat_model, "temperature", None)
         return handle

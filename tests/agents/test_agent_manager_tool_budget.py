@@ -1,15 +1,14 @@
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 import pytest
-from langchain_core.messages import AIMessage, ToolCall
+from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessage
 from tests.fakes import FakeToolCallingChatModel
 
 from trading_agent_framework.agents.config import LLMCredentials
-from trading_agent_framework.agents.manager import AgentHandle, AgentManager, _tool_budget_message, _ToolBudget
+from trading_agent_framework.agents.manager import AgentHandle, AgentManager, _tool_budget_message
 
 
 def _manager() -> AgentManager:
@@ -64,27 +63,53 @@ def test_an_unknown_tool_name_does_not_use_up_the_budget() -> None:
     assert not any("tool budget" in call.result for call in result.tool_calls)
 
 
-def test_several_calls_in_one_turn_count_one_by_one(monkeypatch: pytest.MonkeyPatch) -> None:
-    # LangGraph runs one turn's tool calls on pool threads, so which two of A/B/C get the budget is
-    # thread-order dependent: assert the count, not the names. Reading `used` is slowed down so that,
-    # without the lock around check-and-increment, all three calls read 0 before any increments it.
-    def slow_read(self: _ToolBudget) -> int:
-        value = self._used
-        time.sleep(0.05)
-        return value
-
-    def write(self: _ToolBudget, value: int) -> None:
-        self._used = value
-
-    monkeypatch.setattr(_ToolBudget, "used", property(slow_read, write), raising=False)
+def test_several_calls_in_one_turn_count_in_the_order_they_were_requested() -> None:
     seen: list[str] = []
     handle = _agent(seen, _calls(("lookup", {"symbol": "A"}), ("lookup", {"symbol": "B"}), ("lookup", {"symbol": "C"})), AIMessage(content="done"))
 
     result = handle.run("go", tool_budget=2)
 
-    assert len(seen) == 2
-    assert set(seen) <= {"A", "B", "C"}
-    assert sum("tool budget of 2 calls spent" in call.result for call in result.tool_calls) == 1
+    assert sorted(seen) == ["A", "B"]  # C, the third request, is the one refused
+    refused = [call for call in result.tool_calls if "tool budget" in call.result]
+    assert [call.args for call in refused] == [{"symbol": "C"}]
+
+
+def test_an_exempt_call_in_a_turn_that_overruns_the_budget_still_runs() -> None:
+    seen: list[str] = []
+    handle = _agent(
+        seen,
+        _calls(("lookup", {"symbol": "A"}), ("lookup", {"symbol": "B"}), ("submit", {"answer": "x"}), ("lookup", {"symbol": "C"})),
+        AIMessage(content="done"),
+        exempt_tools=["submit"],
+    )
+
+    result = handle.run("go", tool_budget=2)
+
+    assert sorted(seen) == ["A", "B", "submit:x"]
+    assert [call.name for call in result.tool_calls if "tool budget" in call.result] == ["lookup"]
+
+
+def test_a_refused_call_reaches_the_model_marked_as_an_error() -> None:
+    # `_tool_succeeded` (the final-tools gate) and the provider both read `status`, so a refusal must not look like a success.
+    class RecordingModel(FakeToolCallingChatModel):
+        seen_inputs: list[list[BaseMessage]] = []
+
+        def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
+            self.seen_inputs.append(list(messages))
+            return super()._generate(messages, *args, **kwargs)
+
+    def lookup(symbol: str) -> str:
+        """Look up a symbol."""
+        return f"{symbol} ok"
+
+    model = RecordingModel(messages=iter([_calls(("lookup", {"symbol": "A"})), _calls(("lookup", {"symbol": "B"})), AIMessage(content="done")]))
+    model.seen_inputs = []
+    handle = _manager().create(name="seller", system_prompt="x", model=model, tools=[lookup])
+
+    handle.run("go", tool_budget=1)
+
+    last_turn_tool_messages = [m for m in model.seen_inputs[-1] if isinstance(m, ToolMessage)]
+    assert [m.status for m in last_turn_tool_messages] == ["success", "error"]
 
 
 def test_without_a_budget_nothing_is_refused() -> None:
