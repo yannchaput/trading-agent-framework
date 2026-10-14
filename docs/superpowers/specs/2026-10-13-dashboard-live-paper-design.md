@@ -5,7 +5,7 @@ Date: 2026-10-13 · Branch `main` (shared checkout, no feature branch).
 ## Goal
 
 Two new dashboard tabs, **Live** and **Paper**, placed before **Backtesting**. Each shows, for one strategy picked in the
-sidebar, its realized and unrealized P&L per trading day in a bar chart, rebuilt from the strategy's Alpaca account and
+sidebar, its realized and unrealized P&L per trading day in a line chart, rebuilt from the strategy's Alpaca account and
 fetched on demand.
 
 ## Why
@@ -97,10 +97,10 @@ account between strategies; auto-refresh; writing anything anywhere; changing wh
 
 1. Title `Live` / `Paper` and the selected strategy as a caption.
 2. Metric cards: cumulative realized, current unrealized, total (realized + unrealized).
-3. `components/charts.account_pnl_chart(days)`: grouped bars per day, realized and unrealized as two traces,
-   green/red per sign, dotted zero line, `CHART_TEMPLATE`; empty days -> the "No trade data available" annotation like
+3. `components/charts.account_pnl_chart(days)`: one scatter line per day of realized + unrealized (hover gives both
+   parts), markers green/red per sign, dotted zero line, `CHART_TEMPLATE`; empty days -> the "No trade data available" annotation like
    `session_pnl_chart`.
-4. Caption explaining the two bars (realized = sales that day, net of fees; unrealized = open positions at that day's
+4. Caption explaining the points (realized = sales that day, net of fees; unrealized = open positions at that day's
    close, today at the current price).
 5. `st.warning` listing `mismatches`, `unmatched_sales` and the `unpriced` symbols when not empty. The caption names the
    account the keys really hit (`BROKER_API_IS_PAPER`), with a warning when that is not the tab's mode.
@@ -129,7 +129,7 @@ Caching: the page calls `load_account_pnl` through an `st.cache_data` wrapper ke
   `Position` via `tests/fakes.make_alpaca_position`, `BarSet` via `make_alpaca_barset`); activity pagination; the bars
   request is IEX/RAW/1Day; credentials read from a `tmp_path` env file without changing `os.environ`;
   `ConfigurationError` on blank keys; `strategies_for_mode` lists per mode and drops `BROKER=ibkr`.
-- `account_pnl_chart`: two bar traces, dark template, empty-data annotation.
+- `account_pnl_chart`: one lines+markers trace of the daily total, dark template, empty-data annotation.
 - Pages: `NAV_PAGES` titles in order `Live, Paper, Backtesting, Models` and Backtesting the default;
   `AppTest.from_function` with a monkeypatched loader for the metric cards, the chart, the warning and the error path.
 - Manual: one read-only fetch against a paper account, with the user's go-ahead.

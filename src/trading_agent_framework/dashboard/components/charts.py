@@ -888,44 +888,35 @@ def _sign_colors(values: Sequence[float]) -> list[str]:
 
 
 def account_pnl_chart(days: list[dict[str, Any]], title: str = "P&L per day") -> go.Figure:
-    """Two bars per trading day (`pnl.daily_account_pnl`): the P&L realized by that day's sales, and the unrealized
-    P&L of the positions open at its close (hatched). Green for a gain, red for a loss."""
+    """One point per trading day (`pnl.daily_account_pnl`) joined by a line: the P&L realized by that day's sales plus
+    the unrealized P&L of the positions open at its close. Markers are green for a gain, red for a loss; the hover
+    gives the two parts."""
     if not days:
         fig = go.Figure()
         fig.add_annotation(text="No trade data available", showarrow=False)
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    dates = [day["date"] for day in days]
-    realized = [day["realized"] for day in days]
-    unrealized = [day["unrealized"] for day in days]
+    totals = [day["realized"] + day["unrealized"] for day in days]
     fig = go.Figure(
-        [
-            go.Bar(
-                x=dates,
-                y=realized,
-                name="Realized",
-                marker=dict(color=_sign_colors(realized)),
-                hovertemplate="%{x}<br>Realized: %{y:$,.2f}<extra></extra>",
-            ),
-            go.Bar(
-                x=dates,
-                y=unrealized,
-                name="Unrealized",
-                marker=dict(color=_sign_colors(unrealized), opacity=0.55, pattern=dict(shape="/")),
-                hovertemplate="%{x}<br>Unrealized: %{y:$,.2f}<extra></extra>",
-            ),
-        ]
+        go.Scatter(
+            x=[day["date"] for day in days],
+            y=totals,
+            name="Total",
+            mode="lines+markers",
+            line=dict(color="#9ca3af", width=2),
+            marker=dict(color=_sign_colors(totals), size=9),
+            customdata=[[day["realized"], day["unrealized"]] for day in days],
+            hovertemplate="%{x}<br>Total: %{y:$,.2f}<br>Realized: %{customdata[0]:$,.2f}<br>Unrealized: %{customdata[1]:$,.2f}<extra></extra>",
+        )
     )
     fig.add_hline(y=0, line_dash="dot", line_color="#6b7280")
     fig.update_layout(
         title=title,
-        barmode="group",
         xaxis_title="Date",
         yaxis_title="P&L ($)",
         template=CHART_TEMPLATE,
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0),
+        showlegend=False,
         margin=dict(l=40, r=20, t=60, b=40),
     )
     fig.update_xaxes(type="category")  # trading days only: no empty weekend gaps

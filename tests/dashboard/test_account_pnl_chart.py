@@ -8,21 +8,26 @@ DAYS = [
 ]
 
 
-def test_two_grouped_bar_series_realized_then_unrealized() -> None:
+def test_one_line_with_markers_of_the_realized_plus_unrealized_total_per_day() -> None:
     fig = account_pnl_chart(DAYS)
 
-    realized, unrealized = fig.data
-    assert (realized.type, realized.name, list(realized.x), list(realized.y)) == ("bar", "Realized", ["2026-10-05", "2026-10-06"], [0.0, -12.5])
-    assert (unrealized.type, unrealized.name, list(unrealized.y)) == ("bar", "Unrealized", [49.0, -3.0])
-    assert fig.layout.barmode == "group"
+    (total,) = fig.data
+    assert (total.type, total.name, total.mode) == ("scatter", "Total", "lines+markers")
+    assert list(total.x) == ["2026-10-05", "2026-10-06"]
+    assert list(total.y) == [49.0, -15.5]
 
 
-def test_bars_are_green_for_a_gain_and_red_for_a_loss_unrealized_hatched() -> None:
-    realized, unrealized = account_pnl_chart(DAYS).data
+def test_markers_are_green_for_a_gain_and_red_for_a_loss() -> None:
+    (total,) = account_pnl_chart(DAYS).data
 
-    assert list(realized.marker.color) == ["#16a34a", "#dc2626"]
-    assert list(unrealized.marker.color) == ["#16a34a", "#dc2626"]
-    assert unrealized.marker.pattern.shape == "/"
+    assert list(total.marker.color) == ["#16a34a", "#dc2626"]
+
+
+def test_hover_gives_the_realized_and_unrealized_parts_of_each_total() -> None:
+    (total,) = account_pnl_chart(DAYS).data
+
+    assert [list(row) for row in total.customdata] == [[0.0, 49.0], [-12.5, -3.0]]
+    assert "Realized" in total.hovertemplate and "Unrealized" in total.hovertemplate
 
 
 def test_the_chart_uses_the_dark_template() -> None:
