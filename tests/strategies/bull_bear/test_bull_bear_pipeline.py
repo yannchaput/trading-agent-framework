@@ -1024,3 +1024,17 @@ def test_a_judge_that_used_no_memory_tool_logs_an_empty_record(tmp_path: Path) -
     assert h.run().completed
 
     assert h.log_lines()[0]["memory"] == {"calls": 0, "lessons": []}
+
+
+def test_a_rejected_submission_warning_says_how_the_run_ended(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    judge = h.agents["judge"]
+    judge.overrides = [verdicts(UNIVERSE[:11])]  # 11 in against a cap of 10: rejected, then the forced retry puts the first 10 in
+    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    rejected = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING and "submission rejected" in r.getMessage()]
+    assert len(rejected) == 1
+    assert "finish_reason=length" in rejected[0] and "32768 tokens" in rejected[0] and "22699 reasoning" in rejected[0]

@@ -347,7 +347,7 @@ class ReviewPipeline:
                     self._strategy.log_info(line)
                 return
             if self._recorder.last_error:
-                self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}")
+                self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}{stop}")
             elif not error:  # a failed run was already logged as an error above
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
