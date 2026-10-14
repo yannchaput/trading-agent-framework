@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class CongressParams:
-    politician: str = "Warren Davidson"  # "Nancy Pelosi"  # whose disclosures are followed: the exact first and last name as the Clerk lists them
+    politician: str = "Josh Gottheimer"  # "Warren Davidson", "Nancy Pelosi"  # whose disclosures are followed: the exact first and last name as the Clerk lists them
     max_holdings: int = 20  # holdings the research agent may submit
     max_positions: int = 15  # stocks in the target portfolio
     max_total_weight: float = 0.95  # largest sum of stock weights, as a fraction of portfolio value; the rest stays cash
