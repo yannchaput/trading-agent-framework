@@ -11,7 +11,7 @@ from trading_agent_framework.strategies.congress_trades.parameters import Congre
 def test_the_defaults_are_the_spec_values() -> None:
     params = CongressParams()
 
-    assert params.politician == "Nancy Pelosi"
+    assert params.politician == "Josh Gottheimer"
     assert (params.max_holdings, params.max_positions) == (20, 15)
     assert (params.max_total_weight, params.max_position_weight, params.min_weight) == (0.95, 0.15, 0.01)
     assert params.tier_weight_base == 1.5
