@@ -113,6 +113,11 @@ def market_day(moment: datetime) -> date:
     return moment.astimezone(MARKET_TZ).date()
 
 
+def days_between(days: list[dict[str, Any]], start: date, end: date) -> list[dict[str, Any]]:
+    """The `AccountPnl.days` rows dated from `start` to `end`, both included (empty when `start` is after `end`)."""
+    return [day for day in days if start <= date.fromisoformat(day["date"]) <= end]
+
+
 def _close_on_or_before(closes: Mapping[date, float], day: date) -> float | None:
     earlier = [d for d in closes if d <= day]
     return closes[max(earlier)] if earlier else None

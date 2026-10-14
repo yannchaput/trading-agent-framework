@@ -208,3 +208,76 @@ def test_keys_that_match_their_tab_raise_no_account_warning(env_dir: Path, monke
     live, _ = _run(_live_script, monkeypatch, PNL)
 
     assert not paper.warning and not live.warning
+
+
+def _plotted_days(at: AppTest) -> list[str]:
+    import json
+
+    (chart,) = at.get("plotly_chart")
+    figure = json.loads(chart.proto.spec)
+    return list(figure["data"][0]["x"]) if figure["data"] else []
+
+
+def _cards(at: AppTest) -> str:
+    return " ".join(md.value for md in at.markdown)
+
+
+def test_the_window_defaults_to_the_whole_history(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+
+    start, end = at.sidebar.date_input
+    assert (start.label, end.label) == ("Start date", "End date")
+    assert (start.value, end.value) == (date(2026, 10, 12), date(2026, 10, 13))
+    assert _plotted_days(at) == ["2026-10-12", "2026-10-13"]
+
+
+def test_a_later_start_date_fits_the_plot_and_the_realized_card_to_the_window(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    two_sales = dataclasses.replace(
+        PNL,
+        days=[{"date": "2026-10-12", "realized": 100.0, "unrealized": 20.0}, {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0}],
+        realized_total=105.0,
+    )
+    at, _ = _run(_paper_script, monkeypatch, two_sales)
+    assert "+$105.00" in _cards(at)
+
+    at.sidebar.date_input[0].set_value(date(2026, 10, 13)).run()
+
+    assert not at.exception
+    assert _plotted_days(at) == ["2026-10-13"]
+    cards = _cards(at)
+    assert "+$5.00" in cards and "+$105.00" not in cards and "+$35.00" in cards  # realized in window, unrealized now, total
+    assert any("2026-10-13" in c.value and "unrealized" in c.value.lower() for c in at.caption)
+
+
+def test_an_earlier_end_date_drops_the_later_days(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+
+    at.sidebar.date_input[1].set_value(date(2026, 10, 12)).run()
+
+    assert _plotted_days(at) == ["2026-10-12"]
+
+
+def test_a_start_after_the_end_is_reported_not_raised(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+    at.sidebar.date_input[1].set_value(date(2026, 10, 12)).run()
+
+    at.sidebar.date_input[0].set_value(date(2026, 10, 13)).run()
+
+    assert not at.exception
+    assert any("after" in e.value.lower() for e in at.sidebar.error)
+    assert _plotted_days(at) == []
+
+
+def test_each_tab_remembers_its_window_across_tab_switches(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_switching_script, monkeypatch, PNL)
+    at.sidebar.date_input[0].set_value(date(2026, 10, 13)).run()
+
+    at.session_state["tab"] = "live"
+    at.run()
+    assert at.sidebar.date_input[0].value == date(2026, 10, 12)  # the Live tab has its own window
+
+    at.session_state["tab"] = "paper"
+    at.run()
+    assert at.sidebar.date_input[0].value == date(2026, 10, 13)

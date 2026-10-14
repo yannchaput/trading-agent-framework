@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import date, datetime
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -13,7 +14,7 @@ from requests import RequestException
 from trading_agent_framework.dashboard import account_reader
 from trading_agent_framework.dashboard.components.charts import account_pnl_chart, signed_usd
 from trading_agent_framework.dashboard.components.metric_cards import render_metric_card
-from trading_agent_framework.dashboard.pnl import AccountPnl
+from trading_agent_framework.dashboard.pnl import AccountPnl, days_between
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError
 
@@ -31,9 +32,25 @@ def _problems(pnl: AccountPnl) -> list[str]:
     return problems
 
 
-def _render_metrics(pnl: AccountPnl) -> None:
-    total = pnl.realized_total + pnl.unrealized_now
-    cards = [("Realized", pnl.realized_total), ("Unrealized now", pnl.unrealized_now), ("Total", total)]
+def _select_window(mode: str, days: list[dict[str, Any]]) -> tuple[date, date]:
+    """The sidebar's Start/End date inputs, bounded by the first and last day of the history and defaulting to all of it.
+    The choice is kept under a plain session key, like the strategy: another tab's run does not draw these widgets."""
+    first, last = date.fromisoformat(days[0]["date"]), date.fromisoformat(days[-1]["date"])
+    remembered = st.session_state.get(f"account_window_{mode}", (first, last))
+    start, end = (min(max(day, first), last) for day in remembered)
+    # The bounds are in the key: a history that grew or another strategy gets a fresh widget, never a stale out-of-range value.
+    scope = f"{mode}_{first}_{last}"
+    start = st.sidebar.date_input("Start date", value=start, min_value=first, max_value=last, key=f"account_start_{scope}")
+    end = st.sidebar.date_input("End date", value=end, min_value=first, max_value=last, key=f"account_end_{scope}")
+    st.session_state[f"account_window_{mode}"] = (start, end)
+    if start > end:
+        st.sidebar.error("The start date is after the end date.")
+    return start, end
+
+
+def _render_metrics(pnl: AccountPnl, realized: float) -> None:
+    total = realized + pnl.unrealized_now
+    cards = [("Realized", realized), ("Unrealized now", pnl.unrealized_now), ("Total", total)]
     for column, (label, value) in zip(st.columns(len(cards)), cards, strict=True):
         with column:
             render_metric_card(label, signed_usd(value), tone="positive" if value >= 0 else "negative")
@@ -102,14 +119,21 @@ def page_account(mode: str) -> None:
         st.info("No trades yet.")
         return
 
-    _render_metrics(pnl)
+    days, realized = pnl.days, pnl.realized_total
+    if pnl.days:
+        start, end = _select_window(mode, pnl.days)
+        days = days_between(pnl.days, start, end)
+        realized = round(sum(day["realized"] for day in days), 2)
+    _render_metrics(pnl, realized)
+    if len(days) != len(pnl.days):
+        st.caption(f"Realized covers {start} to {end}; unrealized is the open positions now, whatever the window.")
     if abs(pnl.unrealized_now - pnl.broker_unrealized) > 0.005:
         st.caption(
             f"Alpaca's own unrealized figure is {signed_usd(pnl.broker_unrealized)}: it keeps a FIFO cost basis for positions "
             "held overnight, while this page keeps the average cost the realized P&L uses."
         )
     if pnl.days:
-        st.plotly_chart(account_pnl_chart(pnl.days), width="stretch")
+        st.plotly_chart(account_pnl_chart(days), width="stretch")
         st.caption(
             "Each point is that day's realized plus unrealized P&L. Realized: the day's sales, net of fees, against the "
             "average cost. Unrealized: the open positions at the day's close; today, at the current price."

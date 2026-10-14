@@ -165,3 +165,15 @@ def test_today_unrealized_falls_back_to_the_brokers_when_the_fills_do_not_explai
 
     assert result.unrealized_now == 99.0
     assert result.broker_unrealized == 99.0
+
+
+def test_days_between_keeps_the_days_inside_the_window_ends_included() -> None:
+    from trading_agent_framework.dashboard.pnl import days_between
+
+    days = [{"date": f"2026-10-{d:02d}", "realized": float(d), "unrealized": 0.0} for d in (5, 6, 7, 8)]
+
+    kept = days_between(days, date(2026, 10, 6), date(2026, 10, 7))
+
+    assert [d["date"] for d in kept] == ["2026-10-06", "2026-10-07"]
+    assert days_between(days, date(2026, 10, 9), date(2026, 10, 20)) == []
+    assert days_between(days, date(2026, 10, 7), date(2026, 10, 6)) == []

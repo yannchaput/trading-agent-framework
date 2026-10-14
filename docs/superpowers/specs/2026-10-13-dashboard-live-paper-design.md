@@ -104,7 +104,11 @@ account between strategies; auto-refresh; writing anything anywhere; changing wh
    close, today at the current price).
 5. `st.warning` listing `mismatches`, `unmatched_sales` and the `unpriced` symbols when not empty. The caption names the
    account the keys really hit (`BROKER_API_IS_PAPER`), with a warning when that is not the tab's mode.
-6. Current positions table (`st.dataframe`, USD and % column formats).
+6. Time window (added 2026-10-14): sidebar **Start date** / **End date** inputs bounded by the first and last day of the
+   history, default all of it, remembered per tab. The plot and the Realized card (sum of realized P&L inside the
+   window) follow it; Unrealized now stays the current figure and Total is their sum. A start after the end is a
+   sidebar error and an empty plot. A caption states the window when it is narrower than the history.
+7. Current positions table (`st.dataframe`, USD and % column formats).
 
 Caching: the page calls `load_account_pnl` through an `st.cache_data` wrapper keyed by `(strategy, mode, today)`
 (credentials are re-read inside, never part of the cache key or the page). Refresh clears it. No background polling.
