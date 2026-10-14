@@ -194,7 +194,7 @@ def test_no_agent_is_told_what_is_held_or_at_what_weight(tmp_path: Path) -> None
 
 
 def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: Path) -> None:
-    h = _harness(tmp_path)
+    h = _harness(tmp_path, params=BullBearParams(research_tool_budget=3))
 
     outcome = h.run()
 
