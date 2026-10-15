@@ -69,6 +69,10 @@
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
 
+### NAS_KELT
+
+* To study
+
 ---
 
 ## Archives
