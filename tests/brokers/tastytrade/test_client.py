@@ -7,7 +7,7 @@ import pytest
 
 from trading_agent_framework.brokers.tastytrade.client import TastytradeHTTPError, TastytradeSession
 from trading_agent_framework.config.env import TastytradeSettings
-from trading_agent_framework.utils.errors import BrokerUncertainError
+from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError
 
 SETTINGS = TastytradeSettings(client_secret="secret", refresh_token="refresh", account_number="5WT00001", is_paper=True)
 ORDERS = "/accounts/5WT00001/orders"
@@ -230,3 +230,50 @@ def test_an_empty_delete_returns_an_empty_dict() -> None:
     api.add("DELETE", f"{ORDERS}/1001", httpx.Response(204))
 
     assert _session(api).delete(f"{ORDERS}/1001") == {}
+
+
+def test_a_post_decoding_error_is_uncertain_not_raw_httpx() -> None:
+    api = Api()
+    api.add("POST", ORDERS, httpx.DecodingError("bad gzip"))
+
+    with pytest.raises(BrokerUncertainError):
+        _session(api).post(ORDERS, json={})
+
+    assert len(api.calls("POST", ORDERS)) == 1
+
+
+def test_get_retries_a_decoding_error_then_raises_a_broker_error() -> None:
+    api = Api()
+    api.add("GET", "/customers/me", httpx.DecodingError("bad gzip"))
+
+    with pytest.raises(BrokerError) as excinfo:
+        _session(api).get("/customers/me")
+
+    assert not isinstance(excinfo.value, httpx.HTTPError)
+    assert len(api.calls("GET", "/customers/me")) == 3
+
+
+def test_a_post_200_with_an_html_body_is_uncertain() -> None:
+    api = Api()
+    api.add("POST", ORDERS, httpx.Response(200, text="<html>gateway</html>"))
+
+    with pytest.raises(BrokerUncertainError, match="succeeded"):
+        _session(api).post(ORDERS, json={})
+
+
+def test_a_post_200_with_a_json_list_body_is_uncertain() -> None:
+    api = Api()
+    api.add("POST", ORDERS, httpx.Response(200, json=[1, 2]))
+
+    with pytest.raises(BrokerUncertainError):
+        _session(api).post(ORDERS, json={})
+
+
+def test_a_get_200_with_an_html_body_is_a_plain_broker_error() -> None:
+    api = Api()
+    api.add("GET", "/customers/me", httpx.Response(200, text="<html>gateway</html>"))
+
+    with pytest.raises(BrokerError) as excinfo:
+        _session(api).get("/customers/me")
+
+    assert not isinstance(excinfo.value, BrokerUncertainError)

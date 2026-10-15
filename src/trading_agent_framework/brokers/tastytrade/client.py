@@ -93,13 +93,13 @@ class TastytradeSession:
         return _data(self._send("GET", path, params=params))
 
     def post(self, path: str, *, json: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return _data(self._send("POST", path, json=json))
+        return _write_data(self._send("POST", path, json=json))
 
     def put(self, path: str, *, json: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return _data(self._send("PUT", path, json=json))
+        return _write_data(self._send("PUT", path, json=json))
 
     def delete(self, path: str) -> dict[str, Any]:
-        return _data(self._send("DELETE", path))
+        return _write_data(self._send("DELETE", path))
 
     def get_all(self, path: str, *, params: Mapping[str, Any] | None = None, max_items: int | None = None) -> list[dict[str, Any]]:
         """Every `data.items` across pages, or only the first `max_items`."""
@@ -128,7 +128,7 @@ class TastytradeSession:
             headers = {"Authorization": f"Bearer {self.access_token()}"}
             try:
                 response = self._client.request(method, path, json=json, params=params, headers=headers)
-            except httpx.TransportError as exc:
+            except httpx.RequestError as exc:  # transport, decoding, redirect loops: never a raw httpx error
                 if attempt < attempts:
                     self._sleep(_backoff(attempt, None))
                     continue
@@ -173,6 +173,14 @@ def _data(response: httpx.Response) -> dict[str, Any]:
         return {}
     data = _json(response).get("data")
     return data if isinstance(data, dict) else {}
+
+
+def _write_data(response: httpx.Response) -> dict[str, Any]:
+    """`_data` for a write that succeeded: an unreadable body means the outcome is unknown, not rejected."""
+    try:
+        return _data(response)
+    except BrokerError as exc:
+        raise BrokerUncertainError(f"Tastytrade write succeeded ({response.status_code}) but its response was unreadable: {exc}") from exc
 
 
 def _describe(response: httpx.Response) -> str:
