@@ -10,7 +10,7 @@ from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 
 D = Decimal
-BALANCES = {"account-number": "5WT00001", "cash-balance": "1000.50", "net-liquidating-value": "2500.25", "equity-buying-power": "1000.50", "margin-equity": "2500.25"}
+BALANCES = {"account-number": "5WT00001", "cash-balance": "1000.50", "net-liquidating-value": "2500.25", "equity-buying-power": "900.75", "margin-equity": "2600.00"}
 
 
 def _item(number: str = "5WT00001", kind: str = "Cash", closed: bool = False) -> dict[str, object]:
@@ -40,7 +40,7 @@ def test_optional_decimal_passes_none_through() -> None:
 
 
 def test_balances_map_cash_net_liquidating_value_and_equity_buying_power() -> None:
-    assert account.parse_balances(BALANCES) == AccountBalances(cash=D("1000.50"), portfolio_value=D("2500.25"), buying_power=D("1000.50"))
+    assert account.parse_balances(BALANCES) == AccountBalances(cash=D("1000.50"), portfolio_value=D("2500.25"), buying_power=D("900.75"))
 
 
 def test_negative_cash_is_kept() -> None:
