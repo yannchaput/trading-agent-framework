@@ -121,9 +121,11 @@ alpaca-py). `httpx` is already direct.
   - GET only: retry on 429, 5xx and `httpx.TransportError`, up to 3 attempts, exponential backoff
     with jitter, honouring `Retry-After`.
   - POST/PUT/DELETE are never retried on 429/5xx/transport errors (no idempotency).
-  - Every failure raises `BrokerError("<status> <error.code>: <error.message>")`; a transport
-    failure raises `BrokerUncertainError` (a `BrokerError` subclass in `utils/errors.py`) so the
-    broker can tell "rejected" from "outcome unknown". Raw `httpx` exceptions never escape.
+  - An error response raises `TastytradeHTTPError(status_code, "<method> <path>: <status>
+    <error.code>: <error.message>")` (a `BrokerError` defined in `client.py`; the broker reads
+    `status_code`, e.g. 404 on an unknown symbol). A transport failure, or a 5xx on a write, raises
+    `BrokerUncertainError` (a `BrokerError` subclass in `utils/errors.py`) so the broker can tell
+    "rejected" from "outcome unknown". Raw `httpx` exceptions never escape.
 - `get_all(path, *, params=None) -> list[dict]`: follows `pagination.page-offset` /
   `total-pages`, concatenating `data.items`.
 - `close()`.
@@ -161,6 +163,7 @@ alpaca-py). `httpx` is already direct.
 | prices | strings, `ROUND_HALF_UP` to $0.01 (to $0.0001 below $1) |
 | our id | `external-identifier = "{strategy}:{identifier}"`; `source = "trading-agent-framework"` |
 | leg | `instrument-type: Equity`, `symbol`, `quantity` as a string |
+| symbol | class shares `BRK.B` <-> `BRK/B` (Tastytrade's equity symbology; the probe confirms) |
 
 ### 5.2 Conform rules
 
@@ -207,8 +210,10 @@ lock, shared with `events.py`.
 
 - **`_submit_order`**: set `client_order_id` (= `external-identifier`) if missing; build the JSON;
   `tracker.track_unprocessed(order)`; `POST /accounts/{a}/orders`.
-  - Success: record the Tastytrade id, `order.update_raw(data)`, status `SUBMITTED` if still
-    `UNPROCESSED`; from here on `TastytradeOrderEvents` owns the status.
+  - Success: the response is `{"order": {...}, "buying-power-effect": ..., ...}`; record
+    `order.id`, `order.update_raw(...)`, status `SUBMITTED` if still `UNPROCESSED`, then pass the
+    returned snapshot through `events.apply` (a sandbox $2 limit is already `Filled` in it; fill ids
+    de-duplicate the stream's copy). From here on `TastytradeOrderEvents` owns the status.
   - `BrokerError` (4xx, e.g. 422 buying power): `order.set_error(msg)` **before** re-raising
     (lumibot contract), untrack.
   - `BrokerUncertainError` (timeout, transport, 5xx): search `GET /orders/live`, then today's
@@ -217,9 +222,14 @@ lock, shared with `events.py`.
     not resent")`. Never resubmits.
 - **`cancel_order`**: `DELETE /accounts/{a}/orders/{tt_id}`; unknown id -> `BrokerError`.
 - **`modify_order`** (limit/stop/stop-limit only; market and notional -> `OrderValidationError`):
-  `PUT /accounts/{a}/orders/{tt_id}` with the full order JSON (same `external-identifier`) and the
-  new prices. Returns **the same `Order`** (as IBKR) with prices updated, re-points `_tt_ids` to the
-  replacement's id when the response carries a new one, fires `OrderEvent.MODIFIED`.
+  `PUT /accounts/{a}/orders/{tt_id}` with the order JSON **without `legs`** (legs can't change on a
+  replace; the community SDK sends it that way), same `external-identifier`, new prices. Before the
+  PUT the current id is marked superseded (`events.begin_replace`), so a `Cancelled` for it that
+  arrives before the PUT returns is ignored; a certain failure restores it (`events.abort_replace`)
+  and the old prices. An uncertain failure looks for a live order with `replaces-order-id == tt_id`
+  and the same `external-identifier`; found -> success. Returns **the same `Order`** (as IBKR) with
+  prices updated, re-points the id map to the replacement's id (the PUT response is the new order
+  itself), fires `OrderEvent.MODIFIED`.
 - **`pull_order(identifier)`**: today's and live orders, matched on `external-identifier`.
 - **`pull_orders(limit)`**: `GET /orders` newest first, paginated up to `limit`, parsed.
 - **`pull_positions`**: `GET /accounts/{a}/positions`, parsed, non-equities dropped.
@@ -246,11 +256,13 @@ lock, shared with `events.py`.
   adopted after a restart. Unknown -> ignored (another strategy's or a manual order).
 - **Fills**: each `legs[0].fills[*]` with an unseen `fill-id` (per-order seen-set) ->
   `process_trade_event(order, PARTIALLY_FILLED | FILLED, price=fill-price,
-  filled_quantity=quantity)`; `FILLED` when the order's cumulative fills reach its quantity
-  (notional: when the status is `Filled`). Replaying a snapshot is harmless.
-- **Status**: a change to `Live` -> `NEW`; `Cancelled`/`Removed`/`Partially Removed` ->
-  `CANCELED`; `Rejected` -> `ERROR` with `reject-reason`; `Expired` -> `EXPIRED` (through
-  `process_trade_event` where an event exists, else setting `order.status`).
+  filled_quantity=quantity)`; `FILLED` when the order's cumulative fills reach its quantity.
+  A notional order has no quantity: its fills are held back until the snapshot says `Filled`, then
+  applied with the last one as `FILLED`. Replaying a snapshot is harmless.
+- **Status**: a change to `Live` -> `NEW` (from `UNPROCESSED`/`SUBMITTED` only);
+  `Cancelled`/`Removed`/`Partially Removed`/`Expired` -> `CANCELED` event (Alpaca maps `expired`
+  the same way); `Rejected` -> `ERROR` with `reject-reason`; `Cancel Requested` -> status
+  `CANCELLING` (no tracker event).
 - **Superseded ids** (replaced by `modify_order`): their fills still count (de-duplicated by
   `fill-id`); their status changes are ignored, so the original's `Cancelled` never cancels the
   modified order.
@@ -293,13 +305,14 @@ Manual (`scripts/tests/`, sandbox only, `SKIP:` and exit 0 without `TASTYTRADE_*
 `env/.env.alpaca.integration-tests`; always `TastytradeSettings.from_env(is_paper=True)`, whatever
 `BROKER_API_IS_PAPER` says):
 
-- `probe_tastytrade_orders.py` (Task 1, run once by the user; **dry-run only**, nothing placed;
-  named `probe_*` so `run_smoke_tests.sh` doesn't run it): reports whether a decimal `quantity` is
-  accepted on `Market` buys and sells of an eligible stock, whether `Notional Market` sells work,
-  the minimum notional, the `external-identifier` length limit, and the `fee-calculation` of a
-  stock order. The replace-id question (does `PUT` give a new id, does it keep
-  `external-identifier`) needs a real resting order: the probe places one $5 limit buy (never fills
-  in the sandbox), replaces it, reports, and cancels it.
+- `probe_tastytrade_orders.py` (Task 1, run once by the user; named `probe_*` so
+  `run_smoke_tests.sh` doesn't run it): mostly dry-runs. Reports the account record, fractional
+  eligibility, class-share symbology (`BRK.B` vs `BRK/B`), quantity decimal precisions, whether a
+  decimal `quantity` is accepted on `Market` buys, the minimum notional, the `external-identifier`
+  length limit, and the `fee-calculation` of a stock order. Two questions need real sandbox orders,
+  all cleaned up: decimal and notional *sells* need a fractional position (a 0.5-share market buy,
+  filled at $1, sold back), and the replace semantics need a resting order (a $5 limit buy,
+  replaced at $6, then cancelled).
 - `smoke_tastytrade_account.py` (read-only): auth, account check, balances, positions.
 - `smoke_tastytrade_orders.py`, built on the sandbox fill rules, stream running throughout:
   1. $5 limit buy (rests) -> stream reports `NEW`;
@@ -337,12 +350,17 @@ Manual (`scripts/tests/`, sandbox only, `SKIP:` and exit 0 without `TASTYTRADE_*
 
 Each task is followed by a review-fix commit.
 
-1. Sandbox probe script; the user runs it; findings recorded in this spec (section 5.2 / 5.4).
-2. Config (`BrokerKind`, `TastytradeSettings`), fees, `main.py` refusal, factory stub.
+1. Sandbox probe script; the user runs it; findings recorded in this spec (section 11).
+2. Config (`BrokerKind`, `TastytradeSettings`), `BrokerUncertainError`, fees, `main.py` refusal.
 3. `account.py` (pure).
-4. `orders.py` (pure), adjusted to the probe's findings.
-5. `client.py` (`TastytradeSession`, `BrokerUncertainError`).
-6. `events.py`.
-7. `stream.py`.
-8. `broker.py` and factory wiring, lazy import.
-9. Smoke scripts, `HOWTO.md`, docs.
+4. `orders.py` (pure), part 1: conform rules and order JSON, adjusted to the probe's findings.
+5. `orders.py` (pure), part 2: status map and order/position/fill parsing.
+6. `client.py` (`TastytradeSession`, `TastytradeHTTPError`).
+7. `events.py`.
+8. `stream.py`.
+9. `broker.py`, factory wiring, lazy import.
+10. Smoke scripts, `HOWTO.md`, docs.
+
+## 11. Probe findings
+
+Recorded by Task 1 from the probe's output.
