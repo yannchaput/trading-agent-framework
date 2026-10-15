@@ -100,3 +100,11 @@ def test_a_broker_without_a_fee_schedule_is_a_configuration_error(monkeypatch: p
     monkeypatch.delitem(fees.COMMISSIONS, BrokerKind.IBKR)
     with pytest.raises(ConfigurationError, match="BROKER=ibkr"):
         TradingFeeFactory(BrokerKind.IBKR)
+
+
+TASTYTRADE = TradingFeeFactory(BrokerKind.TASTYTRADE)
+
+
+def test_tastytrade_charges_no_commission_only_regulatory_fees() -> None:
+    assert _buy(TASTYTRADE, 100, 65000) == TradeFees(buy=D("0.01"), sell=D(0))  # CAT only
+    assert _sell(TASTYTRADE, 100, 65000) == TradeFees(buy=D(0), sell=D("1.36"))  # SEC + TAF + CAT, as Alpaca

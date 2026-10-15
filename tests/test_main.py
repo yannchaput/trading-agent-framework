@@ -50,3 +50,37 @@ def test_a_configuration_error_exits_cleanly_in_paper_mode(monkeypatch: pytest.M
         main_module._run_strategy(Console(), TradingMode.PAPER, Strategies.NEWS_BINARY)
 
     assert excinfo.value.code == 1
+
+
+@pytest.mark.parametrize("mode", [TradingMode.PAPER, TradingMode.LIVE])
+def test_a_strategy_never_runs_against_the_tastytrade_sandbox(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mode: TradingMode) -> None:
+    from rich.console import Console
+
+    monkeypatch.setattr(main_module, "find_project_root", lambda: None)
+    monkeypatch.setattr(main_module, "load_strategy_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_module, "build_broker", lambda *a, **k: pytest.fail("a sandbox broker was built for a strategy"))
+    monkeypatch.setenv("BROKER", "tastytrade")
+    monkeypatch.delenv("BROKER_API_IS_PAPER", raising=False)
+
+    with pytest.raises(SystemExit) as excinfo:
+        main_module._run_strategy(Console(width=500), mode, Strategies.NEWS_BINARY)
+
+    assert excinfo.value.code == 1
+    assert "Tastytrade sandbox" in capsys.readouterr().out
+
+
+def test_live_tastytrade_is_not_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    from rich.console import Console
+    from tests.fakes import FakeBroker, FakeClock, et
+
+    built: list[str] = []
+    monkeypatch.setattr(main_module, "find_project_root", lambda: None)
+    monkeypatch.setattr(main_module, "load_strategy_env", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main_module, "build_broker", lambda name: built.append(name) or FakeBroker(FakeClock(et(2026, 10, 15, 10)), strategy_name=name))
+    monkeypatch.setattr(main_module, "build_strategy", lambda strategy, broker, mode: None)
+    monkeypatch.setenv("BROKER", "tastytrade")
+    monkeypatch.setenv("BROKER_API_IS_PAPER", "false")
+
+    main_module._run_strategy(Console(width=500), TradingMode.LIVE, Strategies.NEWS_BINARY)
+
+    assert built == ["news_binary"]

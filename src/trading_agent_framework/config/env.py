@@ -32,6 +32,9 @@ _RENAMED_VARIABLES = {"ALPACA_IS_PAPER": "BROKER_API_IS_PAPER"}
 IBKR_PAPER_PORT = 4002  # IB Gateway's default paper-trading API port
 IBKR_LIVE_PORT = 4001  # IB Gateway's default live-trading API port
 
+TASTYTRADE_API_URLS = {True: "https://api.cert.tastyworks.com", False: "https://api.tastyworks.com"}  # keyed by is_paper (sandbox)
+TASTYTRADE_STREAMER_URLS = {True: "wss://streamer.cert.tastyworks.com", False: "wss://streamer.tastyworks.com"}
+
 
 def find_project_root(start: Path | None = None) -> Path:
     """Walk up from `start` (default cwd) to the first directory containing pyproject.toml."""
@@ -116,6 +119,7 @@ class BrokerKind(StrEnum):
 
     ALPACA = "alpaca"
     IBKR = "ibkr"
+    TASTYTRADE = "tastytrade"
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,6 +195,42 @@ class IbkrSettings:
         port = _int_setting(source, "IBKR_PORT", IBKR_PAPER_PORT if is_paper else IBKR_LIVE_PORT)
         client_id = _int_setting(source, "IBKR_CLIENT_ID", 1)
         return cls(host=host, port=port, client_id=client_id, is_paper=is_paper)
+
+
+@dataclass(frozen=True, slots=True)
+class TastytradeSettings:
+    """Tastytrade OAuth credentials and the account to trade. `is_paper` picks the sandbox hosts:
+    sandbox and production credentials are separate OAuth applications and never work against each other."""
+
+    client_secret: str = field(repr=False)
+    refresh_token: str = field(repr=False)
+    account_number: str
+    is_paper: bool
+
+    @property
+    def api_url(self) -> str:
+        return TASTYTRADE_API_URLS[self.is_paper]
+
+    @property
+    def streamer_url(self) -> str:
+        return TASTYTRADE_STREAMER_URLS[self.is_paper]
+
+    @classmethod
+    def from_env(cls, is_paper: bool, env: Mapping[str, str] | None = None) -> TastytradeSettings:
+        source = env if env is not None else os.environ
+        _reject_renamed(source)
+        values: dict[str, str] = {}
+        for name in ("TASTYTRADE_CLIENT_SECRET", "TASTYTRADE_REFRESH_TOKEN", "TASTYTRADE_ACCOUNT_NUMBER"):
+            value = (source.get(name) or "").strip()
+            if not value:
+                raise ConfigurationError(f"Missing or blank {name} environment variable")
+            values[name] = value
+        return cls(
+            client_secret=values["TASTYTRADE_CLIENT_SECRET"],
+            refresh_token=values["TASTYTRADE_REFRESH_TOKEN"],
+            account_number=values["TASTYTRADE_ACCOUNT_NUMBER"],
+            is_paper=is_paper,
+        )
 
 
 @dataclass(frozen=True, slots=True)

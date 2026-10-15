@@ -1,4 +1,4 @@
-"""Simulated broker fees for backtesting US stocks/ETFs, chosen by `BROKER` (`alpaca` default, `ibkr`).
+"""Simulated broker fees for backtesting US stocks/ETFs, chosen by `BROKER` (`alpaca` default, `ibkr`, `tastytrade`).
 
 Pure: no I/O. Rates as of 2026-09-28 (Alpaca Brokerage Fee Schedule rev. 2026-09-17, SEC Fee
 Rate Advisory 2026-2). They are constants, so a backtest of an earlier period pays today's
@@ -33,9 +33,14 @@ def _ibkr_commission(shares: Decimal) -> Decimal:
     return max(IBKR_FIXED_MIN_PER_ORDER, IBKR_FIXED_PER_SHARE * shares)
 
 
+def _tastytrade_commission(shares: Decimal) -> Decimal:
+    return Decimal(0)  # $0 to open and close stocks/ETFs
+
+
 COMMISSIONS: dict[BrokerKind, Callable[[Decimal], Decimal]] = {
     BrokerKind.ALPACA: _alpaca_commission,
     BrokerKind.IBKR: _ibkr_commission,
+    BrokerKind.TASTYTRADE: _tastytrade_commission,
 }
 
 

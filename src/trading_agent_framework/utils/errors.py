@@ -13,6 +13,10 @@ class BrokerError(TradingFrameworkError):
     """Raised when a broker integration fails."""
 
 
+class BrokerUncertainError(BrokerError):
+    """A broker write whose outcome is unknown (timeout, transport failure, 5xx): it may or may not have happened."""
+
+
 class OrderValidationError(BrokerError, ValueError):
     """Raised when an order fails validation before submission."""
 

@@ -11,9 +11,20 @@ from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.config.env import BrokerKind, BrokerSettings, TradingMode
 from trading_agent_framework.utils.errors import BrokerError, ConfigurationError
 from trading_agent_framework.utils.strategy_factory import Strategies, build_strategy
+
+
+def _refuse_tastytrade_sandbox() -> None:
+    """Strategies never run against the Tastytrade sandbox: its fills are synthetic (market orders at $1)."""
+    settings = BrokerSettings.from_env()
+    if settings.kind is BrokerKind.TASTYTRADE and settings.is_paper:
+        raise ConfigurationError(
+            "BROKER=tastytrade with BROKER_API_IS_PAPER=true is the Tastytrade sandbox, which fills every market order at $1 "
+            "and resets daily: forward-test on Alpaca paper (BROKER=alpaca) and use BROKER=tastytrade with "
+            "BROKER_API_IS_PAPER=false for live trading only"
+        )
 
 
 def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strategies) -> None:
@@ -38,6 +49,7 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strateg
         broker: Broker = PlaceholderBroker(strategy_name)
     else:
         try:
+            _refuse_tastytrade_sandbox()
             broker = build_broker(strategy_name)
         except (ConfigurationError, BrokerError) as exc:
             console.print(str(exc), style="bold red")

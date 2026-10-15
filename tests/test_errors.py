@@ -23,3 +23,9 @@ def test_macro_data_error_is_a_trading_framework_error() -> None:
 
 def test_fundamentals_error_is_a_trading_framework_error() -> None:
     assert issubclass(FundamentalsError, TradingFrameworkError)
+
+
+def test_an_uncertain_broker_error_is_a_broker_error() -> None:
+    from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError
+
+    assert issubclass(BrokerUncertainError, BrokerError)

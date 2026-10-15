@@ -13,6 +13,7 @@ from trading_agent_framework.config.env import (
     BrokerSettings,
     FredCredentials,
     IbkrSettings,
+    TastytradeSettings,
     TradingMode,
     load_strategy_env,
 )
@@ -240,3 +241,39 @@ def test_ibkr_settings_read_host_port_and_client_id() -> None:
 def test_ibkr_settings_reject_non_integer_numbers(variable: str) -> None:
     with pytest.raises(ConfigurationError, match=f"{variable} must be an integer"):
         IbkrSettings.from_env(True, {variable: "abc"})
+
+
+# --- Tastytrade ----------------------------------------------------------------------
+
+_TT_ENV = {"TASTYTRADE_CLIENT_SECRET": "secret", "TASTYTRADE_REFRESH_TOKEN": "refresh", "TASTYTRADE_ACCOUNT_NUMBER": "5WT00001"}
+
+
+def test_broker_settings_accept_tastytrade() -> None:
+    assert BrokerSettings.from_env({"BROKER": " Tastytrade "}).kind is BrokerKind.TASTYTRADE
+
+
+def test_tastytrade_settings_read_the_three_required_variables() -> None:
+    assert TastytradeSettings.from_env(True, _TT_ENV) == TastytradeSettings(client_secret="secret", refresh_token="refresh", account_number="5WT00001", is_paper=True)
+
+
+def test_tastytrade_sandbox_and_production_hosts() -> None:
+    sandbox = TastytradeSettings.from_env(True, _TT_ENV)
+    production = TastytradeSettings.from_env(False, _TT_ENV)
+
+    assert (sandbox.api_url, sandbox.streamer_url) == ("https://api.cert.tastyworks.com", "wss://streamer.cert.tastyworks.com")
+    assert (production.api_url, production.streamer_url) == ("https://api.tastyworks.com", "wss://streamer.tastyworks.com")
+
+
+@pytest.mark.parametrize("variable", sorted(_TT_ENV))
+def test_tastytrade_settings_reject_a_missing_or_blank_variable(variable: str) -> None:
+    for broken in ({k: v for k, v in _TT_ENV.items() if k != variable}, {**_TT_ENV, variable: "  "}):
+        with pytest.raises(ConfigurationError, match=variable):
+            TastytradeSettings.from_env(True, broken)
+
+
+def test_tastytrade_secrets_stay_out_of_repr() -> None:
+    text = repr(TastytradeSettings.from_env(True, _TT_ENV))
+
+    assert "secret" not in text
+    assert "refresh" not in text
+    assert "5WT00001" in text

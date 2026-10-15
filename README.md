@@ -65,6 +65,7 @@ pattern, so a plain `git add` will not pick it up.
 | `BROKER`, `BROKER_API_IS_PAPER` | broker factory | optional (`alpaca`, `true`) |
 | `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Alpaca trading | `BROKER=alpaca`, paper/live |
 | `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID` | IBKR trading | `BROKER=ibkr` (all have defaults) |
+| `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`, `TASTYTRADE_ACCOUNT_NUMBER` | Tastytrade trading | `BROKER=tastytrade`, live |
 | `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (both brokers); `AlpacaBacktestData` backtests for historical market data |
 | `ALPACA_NEWS_API_KEY`, `ALPACA_NEWS_API_SECRET` | news tool | a strategy uses the news tool |
 
@@ -136,9 +137,9 @@ keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
 `data_source`, `timestep` (`"day"` by default), `fees`, `slippage` and
 `risk_free_rate` keyword arguments.
 
-Fees default to the broker named by `BROKER` in the backtest env file (`alpaca` or `ibkr`;
+Fees default to the broker named by `BROKER` in the backtest env file (`alpaca`, `ibkr` or `tastytrade`;
 `alpaca` when unset): `brokers/fees.py`'s `TradingFeeFactory` charges each order the broker's
-commission (Alpaca $0, IBKR Pro Fixed max($1, $0.005/share)) plus the regulatory fees every broker
+commission (Alpaca and Tastytrade $0, IBKR Pro Fixed max($1, $0.005/share)) plus the regulatory fees every broker
 passes on (SEC and FINRA TAF on sells, CAT on both sides). The run's totals are in
 `settings.json["fees"]`. Calling the lower-level `run_backtest` directly with no `fees=` charges nothing.
 

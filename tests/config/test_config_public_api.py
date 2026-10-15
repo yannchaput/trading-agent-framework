@@ -12,3 +12,4 @@ def test_config_reexports_match_source_module() -> None:
     assert config.BrokerKind is env_module.BrokerKind
     assert config.BrokerSettings is env_module.BrokerSettings
     assert config.IbkrSettings is env_module.IbkrSettings
+    assert config.TastytradeSettings is env_module.TastytradeSettings
