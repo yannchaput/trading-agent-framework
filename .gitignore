@@ -209,6 +209,9 @@ tempCodeRunnerFile.py
 # Ruff stuff:
 .ruff_cache/
 
+# VscodeCounter
+.VSCodeCounter/
+
 # PyPI configuration file
 .pypirc
 
