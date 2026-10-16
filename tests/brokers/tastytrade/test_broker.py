@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from decimal import Decimal
 from typing import Any
 
@@ -704,6 +705,11 @@ def test_reconcile_does_not_fail_an_unknown_submission_the_stream_adopted_meanwh
 # --- review 3: unknown writes are decided later, never inside the failing call -------------------------------
 
 
+def _later(broker: TastytradeBroker, seconds: float = 31) -> None:
+    """Move the broker's FakeClock on, past the grace period before a miss counts."""
+    broker.clock.advance(seconds)  # ty: ignore[unresolved-attribute]
+
+
 def _unknown_submit(broker: TastytradeBroker, session: FakeTastytradeSession, *, lookups: str = "fail", post: object = None) -> Order:
     session.responses[("POST", ORDERS)] = post if post is not None else BrokerUncertainError("read timeout")
     (_lookups_fail if lookups == "fail" else _lookups_empty)(session)
@@ -741,9 +747,11 @@ def test_a_2xx_without_an_id_and_a_clean_miss_keeps_the_order(broker: Tastytrade
 def test_the_first_conclusive_miss_keeps_the_order_and_the_second_fails_it_with_an_error_event(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
     order = _unknown_submit(broker, session, lookups="empty")
 
+    _later(broker)
     broker.reconcile()
     assert order.is_active()
     assert seen == []
+    _later(broker)
     broker.reconcile()
 
     assert order.status is OrderStatus.ERROR
@@ -757,6 +765,7 @@ def test_the_first_conclusive_miss_keeps_the_order_and_the_second_fails_it_with_
 
 def test_inconclusive_attempts_never_advance_the_miss_counter(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
     order = _unknown_submit(broker, session, lookups="empty")
+    _later(broker)
     broker.reconcile()  # one conclusive miss
     _lookups_fail(session)
     broker.reconcile()
@@ -765,6 +774,7 @@ def test_inconclusive_attempts_never_advance_the_miss_counter(broker: Tastytrade
     assert order.is_active()
 
     _lookups_empty(session)
+    _later(broker)
     broker.reconcile()  # the second conclusive miss, however many failures came between
 
     assert order.status is OrderStatus.ERROR
@@ -810,6 +820,7 @@ def test_the_stream_adopting_during_the_submit_lookup_wins(broker: TastytradeBro
 
 def test_the_stream_adopting_between_a_resolve_lookup_and_its_decision_wins(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
     order = _unknown_submit(broker, session, lookups="empty")
+    _later(broker)
     broker.reconcile()  # first conclusive miss
 
     lookups: list[int] = []
@@ -823,6 +834,7 @@ def test_the_stream_adopting_between_a_resolve_lookup_and_its_decision_wins(brok
     session.responses[("GET", f"{ORDERS}/live")] = live
     session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Live", external=order.client_order_id)
 
+    _later(broker)
     broker.reconcile()  # would be the second miss, but the stream got there first
 
     assert order.is_active()
@@ -863,9 +875,11 @@ def test_the_second_conclusive_miss_restores_an_unknown_modify(broker: Tastytrad
     order = _unknown_modify(broker, session, lookups="empty")
     session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Cancelled", external=order.client_order_id)
 
+    _later(broker)
     broker.reconcile()
     assert order.limit_price == D(151)
     assert order.is_active()
+    _later(broker)
     broker.reconcile()
 
     assert order.limit_price == D(150)
@@ -876,7 +890,9 @@ def test_a_restored_modify_leaves_the_original_cancellable(broker: TastytradeBro
     order = _unknown_modify(broker, session, lookups="empty")
     session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Live", external=order.client_order_id)
     session.responses[("DELETE", f"{ORDERS}/1001")] = {}
+    _later(broker)
     broker.reconcile()
+    _later(broker)
     broker.reconcile()  # restored: the original is the live order again
 
     broker.cancel_order(order)
@@ -952,3 +968,158 @@ def test_pull_calls_resolve_unknown_writes(broker: TastytradeBroker, session: Fa
     pull(broker)
 
     assert broker._events.tt_id_of(order) == "1001"
+
+
+# --- review 4: misses are spaced in time; resolution is atomic against the stream ------------------------------
+
+
+def test_back_to_back_cancels_after_a_timeout_do_not_rule_the_order_out(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")
+
+    for _ in range(3):
+        with pytest.raises(BrokerUncertainError):
+            broker.cancel_order(order)
+
+    assert order.is_active()
+    assert order.error_message is None
+    assert seen == []
+    # the order existed after all (listing lag): the stream reports it and it fills
+    broker._events.apply(make_tt_order(order_id=1001, status="Live", external=order.client_order_id))
+    broker._events.apply(make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")]))
+    assert (order.status, order.filled_quantity) == (OrderStatus.FILL, D(10))
+
+
+def test_two_spaced_misses_rule_a_submit_out_through_cancel_calls(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")
+
+    _later(broker)
+    with pytest.raises(BrokerUncertainError):
+        broker.cancel_order(order)  # the first counted miss
+    _later(broker)
+    with pytest.raises(BrokerError):
+        broker.cancel_order(order)  # the second one fails the order; there is nothing left to cancel
+
+    assert order.status is OrderStatus.ERROR
+    assert seen == [OrderEvent.ERROR]
+    assert not [c for c in session.calls if c[0] == "DELETE"]
+
+
+def test_a_miss_counts_only_after_the_grace_period_since_the_record_and_since_the_previous_miss(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")
+
+    _later(broker, 10)
+    broker.reconcile()  # 10 s after the record: ignored
+    _later(broker, 10)
+    broker.reconcile()  # 20 s: still ignored
+    _later(broker, 11)
+    broker.reconcile()  # 31 s: the first counted miss
+    _later(broker, 9)
+    broker.reconcile()  # 9 s after it: ignored
+    assert order.is_active()
+    _later(broker, 21)
+    broker.reconcile()  # 30 s after the first counted miss: the second
+
+    assert order.status is OrderStatus.ERROR
+
+
+def test_back_to_back_cancels_after_an_uncertain_modify_do_not_restore_it(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_modify(broker, session, lookups="empty")
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Cancelled", external=order.client_order_id)
+
+    for _ in range(3):
+        with pytest.raises(BrokerUncertainError):
+            broker.cancel_order(order)
+
+    assert order.is_active()
+    assert order.limit_price == D(151)
+    # the replace happened after all: the replacement fills
+    broker._events.apply(make_tt_order(order_id=1002, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "151")], **{"replaces-order-id": 1001}))
+    assert (order.status, order.filled_quantity) == (OrderStatus.FILL, D(10))
+
+
+def test_two_spaced_misses_restore_a_modify_through_modify_calls(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_modify(broker, session, lookups="empty")
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Live", external=order.client_order_id)
+    session.responses[("PUT", f"{ORDERS}/1001")] = make_tt_order(order_id=1002, status="Contingent", external=order.client_order_id, **{"replaces-order-id": 1001})
+
+    _later(broker)
+    with pytest.raises(BrokerUncertainError):
+        broker.modify_order(order, limit_price=D(152))
+    _later(broker)
+    broker.modify_order(order, limit_price=D(152))  # the second miss restored the original; this modify goes through
+
+    assert broker._events.tt_id_of(order) == "1002"
+    assert order.limit_price == D(152)
+
+
+def test_the_resolver_fails_a_submit_atomically_against_the_stream(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")
+    _later(broker)
+    broker.reconcile()
+    _later(broker)
+    blocked: list[bool] = []
+    threads: list[threading.Thread] = []
+
+    def stream_adopts() -> None:
+        broker._events.apply(make_tt_order(order_id=1001, status="Live", external=order.client_order_id))
+
+    def during_the_decision(o: Order, event: OrderEvent) -> None:
+        if event is OrderEvent.ERROR:
+            thread = threading.Thread(target=stream_adopts)
+            thread.start()
+            thread.join(0.3)
+            blocked.append(thread.is_alive())  # the stream thread must wait for the decision to finish
+            threads.append(thread)
+
+    broker.tracker.listeners.append(during_the_decision)
+
+    broker.reconcile()
+    threads[0].join(5)
+
+    assert blocked == [True]
+    assert order.status is OrderStatus.ERROR  # the decision was whole: the late adoption changes nothing
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+
+
+def test_the_resolver_restores_a_modify_atomically_against_the_stream(broker: TastytradeBroker, session: FakeTastytradeSession, monkeypatch: pytest.MonkeyPatch) -> None:
+    order = _unknown_modify(broker, session, lookups="empty")
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Live", external=order.client_order_id)
+    _later(broker)
+    broker.reconcile()
+    _later(broker)
+    blocked: list[bool] = []
+    threads: list[threading.Thread] = []
+    real_abort = broker._events.abort_replace
+
+    def stream_adopts() -> None:
+        broker._events.apply(make_tt_order(order_id=1002, status="Live", external=order.client_order_id, **{"replaces-order-id": 1001}))
+
+    def abort_while_the_stream_tries(tt_id: str) -> None:
+        thread = threading.Thread(target=stream_adopts)
+        thread.start()
+        thread.join(0.3)
+        blocked.append(thread.is_alive())
+        threads.append(thread)
+        real_abort(tt_id)
+
+    monkeypatch.setattr(broker._events, "abort_replace", abort_while_the_stream_tries)
+
+    broker.reconcile()
+    threads[0].join(5)
+
+    assert blocked == [True]
+    assert order.limit_price == D(150)
+
+
+def test_an_unknown_modify_whose_original_ended_is_cleaned_up(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_modify(broker, session, lookups="empty")
+    # the original filled completely while superseded: its fills count, so the replace cannot have happened
+    broker._events.apply(make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")]))
+    assert order.status is OrderStatus.FILL
+    assert order.limit_price == D(151)
+
+    broker.reconcile()
+
+    assert order.limit_price == D(150)
+    assert "1001" not in broker._events._superseded
+    assert not broker._unknown

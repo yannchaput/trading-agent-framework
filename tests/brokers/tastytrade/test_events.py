@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from decimal import Decimal
 
 import pytest
@@ -284,3 +285,22 @@ def test_a_late_fill_updates_avg_fill_price(tracker: OrderTracker, events: Tasty
 
     events.apply(make_tt_order(status="Cancelled", fills=[make_tt_fill("f1", "4", "150"), make_tt_fill("f2", "4", "152")]))
     assert order.avg_fill_price == D(151)
+
+
+def test_a_snapshot_of_this_strategys_untracked_order_is_logged_as_an_error(tracker: OrderTracker, caplog: pytest.LogCaptureFixture) -> None:
+    events = TastytradeOrderEvents(tracker, strategy_name="s")
+
+    with caplog.at_level(logging.ERROR):
+        assert not events.apply(make_tt_order(order_id=77, external="s:ghost"))
+
+    assert [r for r in caplog.records if r.levelno == logging.ERROR and "s:ghost" in r.getMessage()]
+
+
+def test_a_snapshot_of_another_strategys_order_is_not_an_error(tracker: OrderTracker, caplog: pytest.LogCaptureFixture) -> None:
+    events = TastytradeOrderEvents(tracker, strategy_name="s")
+
+    with caplog.at_level(logging.ERROR):
+        assert not events.apply(make_tt_order(order_id=77, external="other:ghost"))
+        assert not events.apply(make_tt_order(order_id=78, external=None))
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]

@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any
 
@@ -26,8 +27,9 @@ _NEW_FROM = frozenset({OrderStatus.UNPROCESSED, OrderStatus.SUBMITTED})
 
 
 class TastytradeOrderEvents:
-    def __init__(self, tracker: OrderTracker) -> None:
+    def __init__(self, tracker: OrderTracker, strategy_name: str | None = None) -> None:
         self._tracker = tracker
+        self._strategy_name = strategy_name  # only to recognise our own orders that we do not track
         # Reentrant, held across a whole apply(): the stream thread and the strategy thread
         # (submit, reconcile) may apply the same snapshot concurrently.
         self._lock = threading.RLock()
@@ -35,6 +37,15 @@ class TastytradeOrderEvents:
         self._orders: dict[str, Order] = {}  # every registered Tastytrade id -> our order
         self._superseded: set[str] = set()
         self._seen_fills: set[tuple[str, str]] = set()  # (Tastytrade order id, fill id)
+
+    @contextmanager
+    def locked(self) -> Iterator[None]:
+        """Hold the lock `apply` runs under, to make a decision atomic against the stream thread.
+
+        Lock order: the broker's resolve lock, then this one, then the tracker's.
+        """
+        with self._lock:
+            yield
 
     def register(self, order: Order, tt_id: str, *, snapshot: Mapping[str, Any] | None = None) -> None:
         """Map `order` to its Tastytrade id; `snapshot` marks its fills as already counted (an adopted order)."""
@@ -83,6 +94,8 @@ class TastytradeOrderEvents:
                 external = data.get("external-identifier")
                 order = self._tracker.get_tracked_order_by_client_order_id(str(external)) if external else None
                 if order is None:
+                    if self._strategy_name is not None and orders.identifier_from_external(str(external) if external else None, self._strategy_name) is not None:
+                        logger.error("Tastytrade order %s (%s, status %s) carries this strategy's external-identifier but is not tracked: check the account", tt_id, external, status)
                     return False
                 self._adopt(order, tt_id, data)
             changed = self._apply_fills(order, tt_id, data, status)
