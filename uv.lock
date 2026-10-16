@@ -2596,6 +2596,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "vectorbt" },
+    { name = "websockets" },
     { name = "yfinance" },
 ]
 
@@ -2630,6 +2631,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13.9" },
     { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.40" },
     { name = "vectorbt", specifier = ">=1.1.0,<2.0" },
+    { name = "websockets", specifier = ">=16.1,<17" },
     { name = "yfinance", specifier = ">=0.2.61" },
 ]
 provides-extras = ["dashboard"]
