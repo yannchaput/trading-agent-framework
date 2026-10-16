@@ -7,12 +7,17 @@ eligibility, a last price). Money stays `Decimal`, sent and parsed as strings.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from typing import Any
 
-from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
+from trading_agent_framework.brokers.tastytrade.values import decimal_of, optional_decimal
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide, TimeInForce
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.utils.errors import OrderValidationError
+from trading_agent_framework.entities.position import Position
+from trading_agent_framework.utils.errors import BrokerError, OrderValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -174,3 +179,134 @@ def build_replace_json(order: Order) -> dict[str, Any]:
     body = build_order_json(order)
     del body["legs"]
     return body
+
+
+# --- statuses ------------------------------------------------------------------------------
+
+TERMINAL_STATUSES: frozenset[str] = frozenset({"Filled", "Cancelled", "Rejected", "Expired", "Removed", "Partially Removed"})
+# Statuses that end an order without (more) fills; Alpaca's `expired` maps to a cancel the same way.
+CANCELED_STATUSES: frozenset[str] = frozenset({"Cancelled", "Removed", "Partially Removed", "Expired"})
+
+_SUBMITTED = frozenset({"Received", "Routed", "In Flight", "Contingent"})
+_WORKING = frozenset({"Live", "Replace Requested"})
+_STATUSES: dict[str, OrderStatus] = {
+    "Cancel Requested": OrderStatus.CANCELLING,
+    "Filled": OrderStatus.FILL,
+    "Cancelled": OrderStatus.CANCELED,
+    "Removed": OrderStatus.CANCELED,
+    "Partially Removed": OrderStatus.CANCELED,
+    "Expired": OrderStatus.EXPIRED,
+    "Rejected": OrderStatus.ERROR,
+}
+
+
+def map_status(status: str, *, has_fills: bool) -> OrderStatus:
+    if status in _SUBMITTED:
+        return OrderStatus.SUBMITTED
+    if status in _WORKING:
+        return OrderStatus.PARTIAL_FILL if has_fills else OrderStatus.NEW
+    mapped = _STATUSES.get(status)
+    if mapped is None:
+        logger.warning("Unknown Tastytrade order status %r", status)
+        return OrderStatus.UNKNOWN
+    return mapped
+
+
+# --- parsing -------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Fill:
+    fill_id: str
+    quantity: Decimal
+    price: Decimal
+
+
+def parse_fills(data: Mapping[str, Any]) -> list[Fill]:
+    fills: list[Fill] = []
+    for leg in data.get("legs") or []:
+        for fill in leg.get("fills") or []:
+            fill_id = fill.get("fill-id")
+            if fill_id is None:
+                raise BrokerError(f"Tastytrade order {data.get('id')} has a fill without a fill-id")
+            fills.append(Fill(str(fill_id), abs(decimal_of(fill.get("quantity"), "fill quantity")), abs(decimal_of(fill.get("fill-price"), "fill price"))))
+    return fills
+
+
+_ORDER_TYPES: dict[str, OrderType] = {
+    "Market": OrderType.MARKET,
+    "Notional Market": OrderType.MARKET,
+    "Limit": OrderType.LIMIT,
+    "Stop": OrderType.STOP,
+    "Stop Limit": OrderType.STOP_LIMIT,
+}
+_TIME_IN_FORCE_BACK: dict[str, tuple[TimeInForce, bool]] = {
+    "Day": (TimeInForce.DAY, False),
+    "Ext": (TimeInForce.DAY, True),
+    "GTC": (TimeInForce.GTC, False),
+    "GTC Ext": (TimeInForce.GTC, True),
+    "IOC": (TimeInForce.IOC, False),
+}
+
+
+def is_parsable_order(data: Mapping[str, Any]) -> bool:
+    """A single-leg equity order of a type we model (manual option or `Marketable Limit` orders are not)."""
+    legs = data.get("legs") or []
+    return len(legs) == 1 and legs[0].get("instrument-type") == "Equity" and data.get("order-type") in _ORDER_TYPES
+
+
+def parse_order(data: Mapping[str, Any], strategy_name: str) -> Order:
+    """An `Order` from a Tastytrade order snapshot (REST or account streamer)."""
+    raw_type = str(data.get("order-type"))
+    order_type = _ORDER_TYPES.get(raw_type)
+    legs = data.get("legs") or []
+    if order_type is None or not legs:
+        raise BrokerError(f"Tastytrade order {data.get('id')} ({raw_type}, {len(legs)} legs) is not a single-leg order this framework models")
+    leg = legs[0]
+    time_in_force, extended = _TIME_IN_FORCE_BACK.get(str(data.get("time-in-force")), (TimeInForce.DAY, False))
+    side = OrderSide.BUY if str(leg.get("action", "")).startswith("Buy") else OrderSide.SELL
+    asset = Asset(from_tastytrade_symbol(str(leg.get("symbol") or data.get("underlying-symbol"))))
+    if raw_type == "Notional Market":
+        order = Order(strategy_name, asset, side, order_type, notional=abs(decimal_of(data.get("value"), "order value")), time_in_force=time_in_force, extended_hours=extended)
+    else:
+        quantity = abs(decimal_of(leg.get("quantity", data.get("size")), "order quantity"))
+        order = Order(strategy_name, asset, side, order_type, quantity=quantity, time_in_force=time_in_force, extended_hours=extended)
+    price = optional_decimal(data.get("price"), "order price")
+    trigger = optional_decimal(data.get("stop-trigger"), "order stop-trigger")
+    if order_type is OrderType.LIMIT:
+        order.limit_price = abs(price) if price is not None else None
+    elif order_type is OrderType.STOP:
+        order.stop_price = abs(trigger) if trigger is not None else None
+    elif order_type is OrderType.STOP_LIMIT:
+        order.stop_price = abs(trigger) if trigger is not None else None
+        order.stop_limit_price = abs(price) if price is not None else None
+    external = data.get("external-identifier")
+    order.identifier = identifier_from_external(external, strategy_name) or str(data.get("id"))
+    order.client_order_id = str(external) if external else None
+    fills = parse_fills(data)
+    if fills:
+        order.filled_quantity = sum((f.quantity for f in fills), Decimal(0))
+        order.avg_fill_price = sum((f.quantity * f.price for f in fills), Decimal(0)) / order.filled_quantity
+    order.status = map_status(str(data.get("status", "")), has_fills=bool(fills))
+    if order.status is OrderStatus.ERROR:
+        order.error_message = str(data.get("reject-reason") or "rejected by Tastytrade")
+    order.update_raw(dict(data))
+    return order
+
+
+def parse_position(data: Mapping[str, Any], strategy_name: str) -> Position | None:
+    """An equity `Position` (shorts have a positive quantity and `side=SHORT`); None for closed or non-equity ones."""
+    if data.get("instrument-type") != "Equity":
+        return None
+    quantity = abs(decimal_of(data.get("quantity"), "position quantity"))
+    direction = data.get("quantity-direction")
+    if direction == "Zero" or quantity == 0:
+        return None
+    return Position(
+        strategy_name,
+        Asset(from_tastytrade_symbol(str(data.get("symbol")))),
+        quantity,
+        PositionSide.SHORT if direction == "Short" else PositionSide.LONG,
+        avg_fill_price=optional_decimal(data.get("average-open-price"), "position average-open-price"),
+        raw=dict(data),
+    )

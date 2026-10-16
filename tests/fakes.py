@@ -957,3 +957,62 @@ class FakeNewsProvider:
         if sort is not None:
             in_window = sorted(in_window, key=lambda a: datetime.fromisoformat(str(a["created_at"])), reverse=sort == "desc")
         return in_window[:limit]
+
+
+# --- Tastytrade JSON (dasherized, as the REST API and the account streamer send it) --------
+
+
+def make_tt_fill(fill_id: str = "f1", quantity: str = "10", price: str = "150.0") -> dict[str, Any]:
+    return {"fill-id": fill_id, "quantity": quantity, "fill-price": price, "filled-at": "2026-10-15T14:00:00.000+00:00", "destination-venue": "TEST"}
+
+
+def make_tt_order(
+    *,
+    order_id: int = 1001,
+    status: str = "Live",
+    action: str = "Buy to Open",
+    symbol: str = "AAPL",
+    quantity: str | None = "10",
+    fills: Sequence[dict[str, Any]] = (),
+    external: str | None = "s:abc",
+    **overrides: Any,
+) -> dict[str, Any]:
+    """A Tastytrade order snapshot; `overrides` use the API's dasherized keys (pass them with `**{"order-type": ...}`)."""
+    leg: dict[str, Any] = {"instrument-type": "Equity", "symbol": symbol, "action": action, "fills": list(fills)}
+    order: dict[str, Any] = {
+        "id": order_id,
+        "account-number": "5WT00001",
+        "time-in-force": "Day",
+        "order-type": "Limit",
+        "price": "150.0",
+        "price-effect": "Debit" if action.startswith("Buy") else "Credit",
+        "status": status,
+        "underlying-symbol": symbol,
+        "underlying-instrument-type": "Equity",
+        "cancellable": True,
+        "editable": True,
+        "edited": False,
+        "source": "trading-agent-framework",
+        "legs": [leg],
+    }
+    if quantity is not None:
+        leg["quantity"] = leg["remaining-quantity"] = quantity
+        order["size"] = quantity
+    if external is not None:
+        order["external-identifier"] = external
+    order.update(overrides)
+    return order
+
+
+def make_tt_position(*, symbol: str = "AAPL", quantity: str = "10", direction: str = "Long", average_open_price: str = "150.0", instrument_type: str = "Equity") -> dict[str, Any]:
+    return {
+        "account-number": "5WT00001",
+        "symbol": symbol,
+        "instrument-type": instrument_type,
+        "underlying-symbol": symbol,
+        "quantity": quantity,
+        "quantity-direction": direction,
+        "average-open-price": average_open_price,
+        "close-price": "151.0",
+        "multiplier": 1,
+    }
