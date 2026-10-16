@@ -141,3 +141,25 @@ def test_ibkr_broker_is_a_lazy_export() -> None:
 
     assert brokers.IbkrBroker is IbkrBroker
     assert "IbkrBroker" in dir(brokers)
+
+
+def test_importing_brokers_and_the_factory_does_not_import_tastytrade_or_websockets() -> None:
+    code = (
+        "import trading_agent_framework.brokers\n"
+        "import trading_agent_framework.brokers.factory\n"
+        "import sys\n"
+        "assert 'websockets' not in sys.modules\n"
+        "assert not [m for m in sys.modules if m.startswith('trading_agent_framework.brokers.tastytrade')]\n"
+        "print('OK')\n"
+    )
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
+    assert "OK" in result.stdout
+
+
+def test_tastytrade_broker_is_a_lazy_export() -> None:
+    import trading_agent_framework.brokers as brokers
+    from trading_agent_framework.brokers.tastytrade.broker import TastytradeBroker
+
+    assert brokers.TastytradeBroker is TastytradeBroker
+    assert "TastytradeBroker" in dir(brokers)

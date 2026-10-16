@@ -1016,3 +1016,54 @@ def make_tt_position(*, symbol: str = "AAPL", quantity: str = "10", direction: s
         "close-price": "151.0",
         "multiplier": 1,
     }
+
+
+class FakeTastytradeSession:
+    """Hand-written stand-in for `TastytradeSession`: canned answers per (method, path), every call recorded.
+
+    An answer is a dict (returned), a callable `(json, params) -> dict` (called), or an exception (raised).
+    `get_all` reads the answer's `items`. A missing route is a 404 `TastytradeHTTPError`, like the real API.
+    """
+
+    def __init__(self) -> None:
+        self.responses: dict[tuple[str, str], Any] = {}
+        self.calls: list[tuple[str, str, Any, Any]] = []
+        self.closed = False
+
+    def _answer(self, method: str, path: str, json: Any = None, params: Any = None) -> Any:
+        from trading_agent_framework.brokers.tastytrade.client import TastytradeHTTPError
+
+        self.calls.append((method, path, json, params))
+        if (method, path) not in self.responses:
+            raise TastytradeHTTPError(404, f"Tastytrade {method} {path}: 404 not_found: no route")
+        answer = self.responses[(method, path)]
+        if callable(answer):
+            answer = answer(json, params)
+        if isinstance(answer, BaseException):
+            raise answer
+        return answer
+
+    def posted(self, path: str) -> list[Any]:
+        return [json for method, p, json, _ in self.calls if method == "POST" and p == path]
+
+    def access_token(self, *, force: bool = False) -> str:
+        return "token"
+
+    def get(self, path: str, *, params: Any = None) -> dict[str, Any]:
+        return self._answer("GET", path, None, params)
+
+    def post(self, path: str, *, json: Any = None) -> dict[str, Any]:
+        return self._answer("POST", path, json)
+
+    def put(self, path: str, *, json: Any = None) -> dict[str, Any]:
+        return self._answer("PUT", path, json)
+
+    def delete(self, path: str) -> dict[str, Any]:
+        return self._answer("DELETE", path) or {}
+
+    def get_all(self, path: str, *, params: Any = None, max_items: int | None = None) -> list[dict[str, Any]]:
+        items = list(self._answer("GET", path, None, params).get("items") or [])
+        return items[:max_items] if max_items is not None else items
+
+    def close(self) -> None:
+        self.closed = True

@@ -7,6 +7,7 @@ two names are wired through a module-level `__getattr__` lazy-import map so
 that `import trading_agent_framework.brokers` alone stays import-light.
 `IbkrBroker` lives in `brokers.ibkr` and imports `ib_async`; it is lazy for
 the same reason.
+`TastytradeBroker` lives in `brokers.tastytrade` (httpx, websockets); lazy for the same reason.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
     from trading_agent_framework.brokers.alpaca.clock import AlpacaMarketClock
     from trading_agent_framework.brokers.alpaca.stream import AlpacaTradeStream
     from trading_agent_framework.brokers.ibkr.broker import IbkrBroker
+    from trading_agent_framework.brokers.tastytrade.broker import TastytradeBroker
 
 from trading_agent_framework.utils import get_version
 
@@ -34,6 +36,7 @@ __all__ = [
     "Broker",
     "IbkrBroker",
     "OrderTracker",
+    "TastytradeBroker",
 ]
 
 _LAZY = {
@@ -41,6 +44,7 @@ _LAZY = {
     "AlpacaTradeStream": (".alpaca.stream", "AlpacaTradeStream"),
     "AlpacaMarketClock": (".alpaca.clock", "AlpacaMarketClock"),
     "IbkrBroker": (".ibkr.broker", "IbkrBroker"),
+    "TastytradeBroker": (".tastytrade.broker", "TastytradeBroker"),
 }
 
 

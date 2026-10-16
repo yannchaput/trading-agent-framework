@@ -81,3 +81,30 @@ def test_the_ibkr_builder_does_not_need_alpaca_trading_keys(monkeypatch: pytest.
     broker = factory.build_broker("s", env={"BROKER": "ibkr", "ALPACA_DATA_API_KEY": "dk", "ALPACA_DATA_API_SECRET": "ds"})
 
     assert broker.strategy_name == "s"
+
+
+def test_the_tastytrade_builder_passes_settings_and_alpaca_data_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.brokers.tastytrade.broker import TastytradeBroker
+
+    captured: dict[str, object] = {}
+
+    def fake_from_settings(cls, strategy_name, settings, *, data, news, session=None, market_data=None):
+        captured.update(settings=settings, data=data, news=news)
+        return _fake_broker(strategy_name)
+
+    monkeypatch.setattr(TastytradeBroker, "from_settings", classmethod(fake_from_settings))
+    env = {
+        "BROKER": "tastytrade",
+        "BROKER_API_IS_PAPER": "false",
+        "TASTYTRADE_CLIENT_SECRET": "secret",
+        "TASTYTRADE_REFRESH_TOKEN": "refresh",
+        "TASTYTRADE_ACCOUNT_NUMBER": "5WT00001",
+        "ALPACA_DATA_API_KEY": "dk",
+        "ALPACA_DATA_API_SECRET": "ds",
+    }
+
+    factory.build_broker("s", env=env)
+
+    settings = captured["settings"]
+    assert (settings.account_number, settings.is_paper) == ("5WT00001", False)
+    assert captured["data"].api_key == "dk"

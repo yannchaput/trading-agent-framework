@@ -1,4 +1,4 @@
-"""Paper/live broker selection from the strategy env file (`BROKER=alpaca|ibkr`).
+"""Paper/live broker selection from the strategy env file (`BROKER=alpaca|ibkr|tastytrade`).
 
 Backtests never come here (`main.py` gives them a `PlaceholderBroker`); they read `BROKER` only
 for fees, via `brokers/fees.py`. Broker classes are imported inside the builders, so importing
@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 
 from trading_agent_framework.brokers.base import Broker
-from trading_agent_framework.config.env import AlpacaCredentials, BrokerKind, BrokerSettings, IbkrSettings
+from trading_agent_framework.config.env import AlpacaCredentials, BrokerKind, BrokerSettings, IbkrSettings, TastytradeSettings
 from trading_agent_framework.utils.errors import ConfigurationError
 
 BrokerBuilder = Callable[[str, BrokerSettings, Mapping[str, str] | None], Broker]
@@ -38,9 +38,21 @@ def _build_ibkr(strategy_name: str, settings: BrokerSettings, env: Mapping[str, 
     )
 
 
+def _build_tastytrade(strategy_name: str, settings: BrokerSettings, env: Mapping[str, str] | None) -> Broker:
+    from trading_agent_framework.brokers.tastytrade.broker import TastytradeBroker
+
+    return TastytradeBroker.from_settings(
+        strategy_name,
+        TastytradeSettings.from_env(settings.is_paper, env),
+        data=AlpacaCredentials.for_data(env),
+        news=lambda: AlpacaCredentials.for_news(env),
+    )
+
+
 BUILDERS: dict[BrokerKind, BrokerBuilder] = {
     BrokerKind.ALPACA: _build_alpaca,
     BrokerKind.IBKR: _build_ibkr,
+    BrokerKind.TASTYTRADE: _build_tastytrade,
 }
 
 
