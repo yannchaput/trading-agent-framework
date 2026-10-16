@@ -164,7 +164,7 @@ alpaca-py). `httpx` is already direct.
 | prices | strings, `ROUND_HALF_UP` to $0.01 (to $0.0001 below $1) |
 | our id | `external-identifier = "{strategy}:{identifier}"`; `source = "trading-agent-framework"` |
 | leg | `instrument-type: Equity`, `symbol`, `quantity` as a string |
-| symbol | class shares `BRK.B` <-> `BRK/B` (Tastytrade's equity symbology; the probe confirms) |
+| symbol | class shares `BRK.B` <-> `BRK/B` (Tastytrade's equity symbology; confirmed by the probe, section 11) |
 
 ### 5.2 Conform rules
 
@@ -213,7 +213,7 @@ lock, shared with `events.py`.
   `tracker.track_unprocessed(order)`; `POST /accounts/{a}/orders`.
   - Success: the response is `{"order": {...}, "buying-power-effect": ..., ...}`; record
     `order.id`, `order.update_raw(...)`, status `SUBMITTED` if still `UNPROCESSED`, then pass the
-    returned snapshot through `events.apply` (a sandbox $2 limit is already `Filled` in it; fill ids
+    returned snapshot through `events.apply` (a sandbox $2 limit may already be `Filled` in it during market hours -- outside them the sandbox answers `Received`, section 11; fill ids
     de-duplicate the stream's copy). From here on `TastytradeOrderEvents` owns the status.
   - `BrokerError` (4xx, e.g. 422 buying power): `order.set_error(msg)` **before** re-raising
     (lumibot contract), untrack.
@@ -372,4 +372,23 @@ Each task is followed by a review-fix commit.
 
 ## 11. Probe findings
 
-Recorded by Task 1 from the probe's output.
+Recorded from the output of `scripts/tests/probe_tastytrade_orders.py`, run by hand against the sandbox on
+2026-10-16 (US market closed). Account number elided.
+
+| Question | Finding | Consequence for the code |
+|---|---|---|
+| Sandbox account type | Individual, `margin-or-cash` = `"Cash"` | The margin check stays (live refuses Margin, an unknown type fails closed); the sandbox "margin" exception is only a fallback. The earlier assumption "sandbox accounts are margin" was wrong. |
+| `GET /instruments/equities/AAPL` | 200; keys: id, active, bypass-manual-review, cusip, description, instrument-type, is-closing-only, is-etf, is-fraud-risk, is-illiquid, is-index, is-options-closing-only, lendability, listed-market, market-time-instrument-collection, overnight-trading-permitted, short-description, streamer-symbol, symbol, option-tick-sizes, tick-sizes. **No `is-fractional-quantity-eligible` key.** `tick-sizes` = `[{threshold: "1.0", value: "0.0001"}, {value: "0.01"}]` | A missing flag reads as "not eligible" (`bool(None)`): the fail-safe path floors fractional quantities to whole shares. The flag name stays UNVERIFIED. Tick sizes match `round_price`. |
+| Class-share symbol | `BRK.B` -> 404; `BRK%2FB` -> 200 with symbol `BRK/B` | `to_tastytrade_symbol` confirmed; paths must be URL-encoded (`quote(safe="")`, already done). |
+| Quantity precision | Equity `quantity-decimal-precision` = 5 | `FRACTIONAL_QUANTUM = 0.00001` confirmed. |
+| Fractional / notional orders | Every request for AAPL (market buy 0.5, notional buy, fractional market sell, notional sell) -> 422 `preflight_check_failure` with `errors[0]` = `fractional_trading_invalid_symbol` "Fractional trading of AAPL is currently not allowed". A real (non-dry-run) POST failing preflight returns the same error plus `data: {id}` of an order that then shows as `Rejected` with a `reject-reason`. | **Could NOT be validated**: the sandbox refuses AAPL. The Task 1 STOP condition fired and was overruled (ruling 22): the design's non-eligible fallback (whole shares) is fail-safe and strategies trade whole shares. Fractional/notional behaviour on an eligible symbol is UNVERIFIED. `client.py` already puts `error.errors[].message` in the exception text, and the broker fails the order on any 4xx, so the 422's `data.id` is never read as a placed order. |
+| Fees | Dry-run limit buy: commission `"0.0"`, clearing-fees `"0.008"` | $0 commission (as modelled). The clearing fee (~$0.001/share) is not modelled in backtests. |
+| Market closed | Dry run warns `tif.next_valid_session`; a resting $5 limit buy stays `Received` | The sandbox rests orders in `Received` outside US market hours (maps to `SUBMITTED`). `Live`, fills and the `Live`/`Routed`/`In Flight`/`Contingent` strings need a run during market hours; the order smoke test skips its fill steps when the market is closed. |
+| `external-identifier` length | 32, 64, 128 and 256 characters all accepted | No length guard needed (`{strategy}:{uuid hex}` is ~50 characters). |
+| POST response | 201, `data.order` (id, status `Received`, `external-identifier`, price `"5.0"`, `size` 1 (int), `legs[0].quantity` 1 (int), `remaining-quantity` 1, `fills` []) | `_submit_order` reads `data.order`; ints parse as Decimals. |
+| Replace | `PUT /accounts/{a}/orders/{id}` without `legs` -> 200 with `data` = the NEW order directly (not wrapped in `order`): new id, `replaces-order-id` (int), the SAME `external-identifier`, status `Received`. The original then shows `Cancelled` with `replacing-order-id`, `cancellable` false, `edited` true. | `modify_order` accepts the order directly (and a wrapped one); `events` ignores the original's statuses (superseded) and registers the replacement; field names and flow confirmed. |
+| `size` / `quantity` types | JSON ints for whole shares, strings (`"0.5"`) for fractional | `decimal_of` accepts both. |
+| Cancel a `Rejected` order | 422 | `cancel_order` surfaces it as `TastytradeHTTPError`; the broker never cancels terminal orders itself. |
+
+Still unverified after the probe: the streamer `auth-token` format (`Bearer <token>` vs the bare token), the
+fractional/notional path on an eligible symbol, and the `Live`/`Routed`/`In Flight`/`Contingent` status strings.

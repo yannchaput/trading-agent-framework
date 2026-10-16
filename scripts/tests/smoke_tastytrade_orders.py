@@ -6,11 +6,15 @@ fills (they ignore the market): limit orders at $3 or more rest forever, limit o
 once, market orders fill at $1. The sandbox clears trades and positions every 24 hours. Same credentials
 as smoke_tastytrade_account.py; always the sandbox.
 
-  1. $5 limit buy of 1 AAPL           -> rests (NEW)
+  1. $5 limit buy of 1 AAPL           -> rests (NEW, or SUBMITTED: the sandbox keeps a resting order in "Received"
+                                         while the US market is closed)
   2. modify it to $6                   -> still working at $6; the original id's Cancelled must not cancel it
   3. cancel it                         -> CANCELED
-  4. $2 limit buy of 1 AAPL           -> FILL; the position appears
-  5. close the AAPL position (market) -> FILL; the position is gone
+  4. $2 limit buy of 1 AAPL           -> FILL; the position appears         (US market hours only, else SKIP)
+  5. close the AAPL position (market) -> FILL; the position is gone         (US market hours only, else SKIP)
+
+Run it during US market hours to exercise the fill steps and the Live status; outside them steps 4-5 are
+skipped. Fractional and notional orders are not tested: the sandbox refuses them for AAPL.
 
 It refuses to start if the strategy already has open orders or the account already holds AAPL (leftovers
 of an earlier run would make the checks spurious). Whatever happens, it then cancels the orders it left
@@ -49,6 +53,12 @@ def _wait_for(order: Order, statuses: set[OrderStatus], seconds: float = 20.0) -
     return order.status in statuses
 
 
+def _market_open(broker: TastytradeBroker) -> bool:
+    """Whether the regular US session is open now (the sandbox only works and fills orders then)."""
+    session = broker.clock.next_session()
+    return session is not None and session.open <= broker.clock.now() < session.close
+
+
 def _aapl_quantity(broker: TastytradeBroker) -> Decimal:
     return sum((p.quantity for p in broker.pull_positions() if p.asset == AAPL), Decimal(0))
 
@@ -81,6 +91,16 @@ def _cleanup(broker: TastytradeBroker, *, bought_aapl: bool, uncertain: bool) ->
         print(f"  CLEANUP: could not close the AAPL position: {exc!r}")
 
 
+def _report(results: list[tuple[str, bool]]) -> int:
+    failed = [name for name, ok in results if not ok]
+    print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
+    if failed:
+        print("FAIL: " + "; ".join(failed))
+        return 1
+    print("OK")
+    return 0
+
+
 def main() -> int:
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
@@ -93,6 +113,7 @@ def main() -> int:
     results: list[tuple[str, bool]] = []
     events: list[tuple[str, OrderEvent]] = []
     state = {"bought_aapl": False, "uncertain": False}
+    market_open = _market_open(broker)
 
     def check(name: str, ok: bool) -> None:
         results.append((name, ok))
@@ -129,12 +150,15 @@ def main() -> int:
         print("1) limit buy 1 AAPL @ $5 (rests in the sandbox)")
         resting = Order(STRATEGY_NAME, AAPL, OrderSide.BUY, OrderType.LIMIT, quantity=Decimal(1), limit_price=Decimal(5))
         if write("submit the $5 limit", lambda: broker.submit_order(resting)):
-            check("a $5 limit rests (NEW)", _wait_for(resting, {OrderStatus.NEW}))
+            check("a $5 limit rests (NEW or SUBMITTED)", _wait_for(resting, {OrderStatus.NEW, OrderStatus.SUBMITTED}))
+            if resting.status is OrderStatus.SUBMITTED:
+                suffix = "the US market is closed, so the sandbox keeps it in Received" if not market_open else "check that the account stream is delivering Live"
+                print(f"  NOTE: the resting order is SUBMITTED, not NEW: {suffix}")
 
             print("2) modify to $6")
             if write("modify to $6", lambda: broker.modify_order(resting, limit_price=Decimal(6))):
                 time.sleep(3)  # the original's Cancelled arrives on the stream meanwhile
-                check("the modified order is still working at $6", resting.status is OrderStatus.NEW and resting.limit_price == Decimal(6))
+                check("the modified order is still working at $6", resting.status in {OrderStatus.NEW, OrderStatus.SUBMITTED} and resting.limit_price == Decimal(6))
                 check("no cancel event reached the modified order", (resting.identifier, OrderEvent.CANCELED) not in events)
 
             print("3) cancel")
@@ -145,6 +169,10 @@ def main() -> int:
             print("an earlier write had an unknown outcome: stopping before the fill steps")
             return 1
 
+        if not market_open:
+            print("4) SKIP: the US market is closed, the sandbox does not fill orders now (run during market hours)")
+            print("5) SKIP: nothing to close")
+            return _report(results)
         print("4) limit buy 1 AAPL @ $2 (fills at once in the sandbox)")
         filled = Order(STRATEGY_NAME, AAPL, OrderSide.BUY, OrderType.LIMIT, quantity=Decimal(1), limit_price=Decimal(2))
         state["bought_aapl"] = True  # from the submit on: the buy may fill even if the call fails
@@ -163,13 +191,7 @@ def main() -> int:
     finally:
         _cleanup(broker, bought_aapl=state["bought_aapl"], uncertain=state["uncertain"])
         broker.stop_stream()
-    failed = [name for name, ok in results if not ok]
-    print(f"\n{len(results) - len(failed)}/{len(results)} checks passed")
-    if failed:
-        print("FAIL: " + "; ".join(failed))
-        return 1
-    print("OK")
-    return 0
+    return _report(results)
 
 
 if __name__ == "__main__":

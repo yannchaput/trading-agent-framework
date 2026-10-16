@@ -22,8 +22,7 @@ from trading_agent_framework.utils.errors import BrokerError, OrderValidationErr
 logger = logging.getLogger(__name__)
 
 SOURCE = "trading-agent-framework"
-# Smallest fractional step of an eligible equity (probe: GET /instruments/quantity-decimal-precisions).
-# PROVISIONAL (brief default): the sandbox probe output was not available; confirm against spec section 11.
+# Smallest fractional step of an equity: CONFIRMED by the sandbox probe (quantity-decimal-precision 5; spec section 11).
 FRACTIONAL_QUANTUM = Decimal("0.00001")
 
 _PENNY = Decimal("0.01")
@@ -52,10 +51,8 @@ def identifier_from_external(external: str | None, strategy_name: str) -> str | 
 
 
 def to_tastytrade_symbol(symbol: str) -> str:
-    """Class shares: our (Alpaca's) `BRK.B` is Tastytrade's `BRK/B`.
-
-    PROVISIONAL (brief default): confirm against the probe findings (spec section 11).
-    """
+    """Class shares: our (Alpaca's) `BRK.B` is Tastytrade's `BRK/B` (confirmed by the sandbox probe: `BRK.B` is
+    a 404, `BRK%2FB` resolves to `BRK/B`; the slash must be URL-encoded in a path, as `broker.py` does)."""
     return symbol.replace(".", "/")
 
 

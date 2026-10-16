@@ -164,6 +164,8 @@ class TastytradeBroker(Broker):
                 if exc.status_code == 404:
                     raise OrderValidationError(f"Tastytrade does not know the US stock {symbol}") from exc
                 raise
+            # PROVISIONAL field name: the sandbox's AAPL payload has no such key (and refuses fractional AAPL orders),
+            # so a missing flag means "not eligible" and fractional quantities are floored to whole shares.
             self._eligible[symbol] = bool(data.get("is-fractional-quantity-eligible"))
         return self._eligible[symbol]
 

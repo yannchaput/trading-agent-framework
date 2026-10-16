@@ -1224,3 +1224,164 @@ def test_an_unknown_modify_reported_by_the_stream_without_replaces_order_id_is_a
     assert order.is_active()
     assert order.limit_price == D(151)
     assert OrderEvent.CANCELED not in seen
+
+
+# --- real payload shapes recorded by the sandbox probe (2026-10-16) -------------------------------------------
+
+# GET /instruments/equities/AAPL: no `is-fractional-quantity-eligible` key at all
+PROBE_AAPL_INSTRUMENT = {
+    "id": 815,
+    "active": True,
+    "cusip": "037833100",
+    "description": "APPLE INC",
+    "instrument-type": "Equity",
+    "is-closing-only": False,
+    "is-etf": False,
+    "is-fraud-risk": False,
+    "is-illiquid": False,
+    "is-index": False,
+    "is-options-closing-only": False,
+    "listed-market": "XNAS",
+    "overnight-trading-permitted": True,
+    "short-description": "AAPL",
+    "streamer-symbol": "AAPL",
+    "symbol": "AAPL",
+    "tick-sizes": [{"threshold": "1.0", "value": "0.0001"}, {"value": "0.01"}],
+}
+PROBE_PREFLIGHT_422 = {
+    "data": {"id": 1940879},
+    "error": {
+        "code": "preflight_check_failure",
+        "message": "One or more preflight checks failed",
+        "errors": [{"code": "fractional_trading_invalid_symbol", "message": "Fractional trading of AAPL is currently not allowed"}],
+    },
+}
+
+
+def _probe_order(order_id: int, external: str, **overrides: Any) -> dict[str, Any]:
+    """A resting $5 limit buy as Tastytrade's sandbox returned it: ints for whole-share size and quantity."""
+    order: dict[str, Any] = {
+        "id": order_id,
+        "account-number": ACCOUNT,
+        "time-in-force": "Day",
+        "order-type": "Limit",
+        "size": 1,
+        "price": "5.0",
+        "price-effect": "Debit",
+        "status": "Received",
+        "underlying-symbol": "AAPL",
+        "underlying-instrument-type": "Equity",
+        "external-identifier": external,
+        "cancellable": True,
+        "editable": True,
+        "edited": False,
+        "legs": [{"instrument-type": "Equity", "symbol": "AAPL", "action": "Buy to Open", "quantity": 1, "remaining-quantity": 1, "fills": []}],
+    }
+    order.update(overrides)
+    return order
+
+
+def _real_session_broker(handler: Any) -> tuple[TastytradeBroker, list[Any]]:
+    import httpx
+
+    from trading_agent_framework.brokers.tastytrade.client import TastytradeSession
+
+    requests: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 900})
+        requests.append(request)
+        return handler(request)
+
+    real = TastytradeSession(SETTINGS, transport=httpx.MockTransport(api), sleep=lambda _: None)
+    broker = TastytradeBroker("s", real, account_number=ACCOUNT, streamer_url="wss://x", market_data=_market_data(), clock=FakeClock(et(2026, 10, 15, 10)))
+    return broker, requests
+
+
+def test_a_resting_limit_buy_in_the_real_post_shape_is_submitted(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("GET", "/instruments/equities/AAPL")] = PROBE_AAPL_INSTRUMENT
+    session.responses[("POST", ORDERS)] = lambda json, params: {"order": _probe_order(1940881, json["external-identifier"]), "buying-power-effect": {}}
+
+    order = broker.submit_order(_buy("1", order_type=OrderType.LIMIT, limit_price=D(5)))
+
+    assert order.status is OrderStatus.SUBMITTED  # "Received" outside market hours
+    assert broker._events.tt_id_of(order) == "1940881"
+    assert (order.quantity, order.limit_price) == (D(1), D(5))
+
+
+def test_the_real_put_shape_is_the_new_order_directly_and_the_replace_chain_works(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    session.responses[("GET", "/instruments/equities/AAPL")] = PROBE_AAPL_INSTRUMENT
+    session.responses[("POST", ORDERS)] = lambda json, params: {"order": _probe_order(1940881, json["external-identifier"]), "buying-power-effect": {}}
+    order = broker.submit_order(_buy("1", order_type=OrderType.LIMIT, limit_price=D(5)))
+    external = order.client_order_id
+    # PUT answers with data = the NEW order, not wrapped in `order`
+    session.responses[("PUT", f"{ORDERS}/1940881")] = _probe_order(1940882, external, price="6.0", **{"replaces-order-id": 1940881})
+
+    result = broker.modify_order(order, limit_price=D(6))
+
+    assert result is order
+    assert broker._events.tt_id_of(order) == "1940882"
+    assert order.limit_price == D(6)
+    # the original then shows Cancelled with replacing-order-id: it must not cancel the logical order
+    broker._events.apply(_probe_order(1940881, external, status="Cancelled", cancellable=False, edited=True, **{"replacing-order-id": 1940882}))
+    assert order.is_active()
+    assert OrderEvent.CANCELED not in seen
+    # the replacement's own statuses count
+    broker._events.apply(_probe_order(1940882, external, status="Live", price="6.0", **{"replaces-order-id": 1940881}))
+    assert order.status is OrderStatus.NEW
+    session.responses[("DELETE", f"{ORDERS}/1940882")] = {}
+    broker.cancel_order(order)
+    assert session.calls[-1][:2] == ("DELETE", f"{ORDERS}/1940882")
+    broker._events.apply(_probe_order(1940882, external, status="Cancelled", **{"replaces-order-id": 1940881}))
+    assert order.status is OrderStatus.CANCELED
+
+
+def test_a_restart_during_the_real_replace_chain_adopts_only_the_replacement(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    original = _probe_order(1940881, "s:abc", status="Replace Requested", **{"replacing-order-id": 1940882})
+    replacement = _probe_order(1940882, "s:abc", price="6.0", **{"replaces-order-id": 1940881})
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [original, replacement]}
+
+    [adopted] = broker.sync_open_orders()
+    broker._events.apply(_probe_order(1940881, "s:abc", status="Cancelled", cancellable=False, **{"replacing-order-id": 1940882}))
+
+    assert broker._events.tt_id_of(adopted) == "1940882"
+    assert adopted.limit_price == D(6)
+    assert adopted.is_active()
+    assert OrderEvent.CANCELED not in seen
+
+
+def test_the_real_aapl_instrument_has_no_fractional_flag_so_a_fractional_quantity_is_floored(broker: TastytradeBroker, session: FakeTastytradeSession, caplog: pytest.LogCaptureFixture) -> None:
+    session.responses[("GET", "/instruments/equities/AAPL")] = PROBE_AAPL_INSTRUMENT
+    session.responses[("POST", ORDERS)] = lambda json, params: {"order": _probe_order(1940881, json["external-identifier"]), "buying-power-effect": {}}
+
+    with caplog.at_level("WARNING"):
+        broker.submit_order(_buy("2.7"))
+
+    [body] = session.posted(ORDERS)
+    assert body["legs"][0]["quantity"] == "2"
+    assert "whole shares" in caplog.text
+
+
+def test_the_sandbox_refusing_a_fractional_order_fails_it_with_the_reason_and_is_not_a_success() -> None:
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": PROBE_AAPL_INSTRUMENT})
+        return httpx.Response(422, json=PROBE_PREFLIGHT_422)  # carries data.id of a Rejected order
+
+    broker, requests = _real_session_broker(handler)
+    # an eligible-looking symbol is needed to even send a fractional quantity: force the flag as a real eligible one would
+    broker._eligible["AAPL"] = True
+    order = _buy("0.5")
+
+    with pytest.raises(BrokerError, match="Fractional trading of AAPL is currently not allowed"):
+        broker.submit_order(order)
+
+    assert order.status is OrderStatus.ERROR
+    assert "Fractional trading of AAPL is currently not allowed" in (order.error_message or "")
+    assert "preflight_check_failure" in (order.error_message or "")
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+    assert broker._events.tt_id_of(order) is None  # the 422's data.id is not mistaken for a placed order
+    assert len([r for r in requests if r.method == "POST"]) == 1

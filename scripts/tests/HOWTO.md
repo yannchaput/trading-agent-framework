@@ -105,8 +105,13 @@ The sandbox's fills are synthetic (market orders fill at $1, limits under $3 fil
 more never fill) and it clears trades and positions every 24 hours, which is why strategies refuse to run
 against it (`uv run agent ... paper` with `BROKER=tastytrade` exits): forward-test on Alpaca paper.
 
+Run the order smoke test during US market hours for the fill steps: outside them the sandbox keeps a resting
+order in `Received` (the script accepts SUBMITTED as "rests" and prints a NOTE) and does not fill, so steps 4-5
+are skipped. Fractional and notional orders are not testable on AAPL in the sandbox (it refuses them with a
+`fractional_trading_invalid_symbol` preflight error).
+
     uv run python scripts/tests/smoke_tastytrade_account.py   # read-only: auth, account check, balances, positions
-    uv run python scripts/tests/smoke_tastytrade_orders.py    # rest, modify, cancel, fill, close; PASS/FAIL per step
+    uv run python scripts/tests/smoke_tastytrade_orders.py    # rest, modify, cancel, fill, close; PASS/FAIL per step (fill steps SKIP outside market hours)
     uv run python scripts/tests/probe_tastytrade_orders.py    # one-off API probe (Task 1 of the Tastytrade plan); not run by run_smoke_tests.sh
 
 ## Tools
