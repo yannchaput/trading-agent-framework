@@ -1123,3 +1123,88 @@ def test_an_unknown_modify_whose_original_ended_is_cleaned_up(broker: Tastytrade
     assert order.limit_price == D(150)
     assert "1001" not in broker._events._superseded
     assert not broker._unknown
+
+
+# --- final review ------------------------------------------------------------------------------------
+
+
+def test_after_a_restart_during_a_replace_the_originals_cancel_does_not_cancel_the_adopted_replacement(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    original = make_tt_order(order_id=1001, status="Replace Requested", external="s:abc", **{"replacing-order-id": 2002})
+    replacement = make_tt_order(order_id=2002, status="Contingent", external="s:abc", **{"replaces-order-id": 1001, "price": "151.0"})
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [original, replacement]}
+
+    [adopted] = broker.sync_open_orders()
+    broker._events.apply(make_tt_order(order_id=1001, status="Cancelled", external="s:abc", **{"replacing-order-id": 2002}))
+
+    assert adopted.is_active()
+    assert OrderEvent.CANCELED not in seen
+    assert broker._events.tt_id_of(adopted) == "2002"
+    broker._events.apply(make_tt_order(order_id=2002, status="Filled", external="s:abc", fills=[make_tt_fill("g1", "10", "151")], **{"replaces-order-id": 1001}))
+    assert (adopted.status, adopted.filled_quantity) == (OrderStatus.FILL, D(10))
+
+
+def test_the_original_listed_after_its_replacement_is_superseded_too(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    original = make_tt_order(order_id=1001, status="Replace Requested", external="s:abc", **{"replacing-order-id": 2002})
+    replacement = make_tt_order(order_id=2002, status="Contingent", external="s:abc", **{"replaces-order-id": 1001})
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [replacement, original]}
+
+    [adopted] = broker.sync_open_orders()
+    broker._events.apply(make_tt_order(order_id=1001, status="Cancelled", external="s:abc"))
+
+    assert adopted.is_active()
+
+
+def test_a_get_failure_while_conforming_a_submit_is_a_plain_broker_error() -> None:
+    import httpx
+
+    from trading_agent_framework.brokers.tastytrade.client import TastytradeSession
+
+    posts: list[httpx.Request] = []
+
+    def api(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/oauth/token":
+            return httpx.Response(200, json={"access_token": "t", "expires_in": 900})
+        if request.method == "POST":
+            posts.append(request)
+        raise httpx.ConnectTimeout("down")
+
+    real = TastytradeSession(SETTINGS, transport=httpx.MockTransport(api), sleep=lambda _: None)
+    broker = TastytradeBroker("s", real, account_number=ACCOUNT, streamer_url="wss://x", market_data=_market_data(), clock=FakeClock(et(2026, 10, 15, 10)))
+
+    with pytest.raises(BrokerError) as excinfo:
+        broker.submit_order(_buy())
+
+    assert not isinstance(excinfo.value, BrokerUncertainError)
+    assert posts == []
+
+
+def test_unknown_writes_are_looked_up_in_the_window_of_their_own_day(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")  # recorded on 2026-10-15
+    _later(broker, 15 * 3600)  # now 2026-10-16
+    session.calls.clear()
+
+    broker.reconcile()
+
+    [(_, _, _, params)] = [c for c in session.calls if c[:2] == ("GET", ORDERS)]
+    assert params["start-date"] == "2026-10-15"
+    assert order.is_active()
+
+
+def test_a_short_position_is_not_closed_with_a_buy(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"/accounts/{ACCOUNT}/positions")] = {"items": [make_tt_position(direction="Short", quantity="5")]}
+
+    with pytest.raises(BrokerError, match="short"):
+        broker.close_position(AAPL)
+
+    assert session.posted(ORDERS) == []
+
+
+def test_close_all_positions_reports_a_short_and_still_closes_the_rest(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": []}
+    session.responses[("GET", f"/accounts/{ACCOUNT}/positions")] = {"items": [make_tt_position(symbol="MSFT", direction="Short", quantity="5"), make_tt_position(quantity="3")]}
+
+    with pytest.raises(BrokerError, match="MSFT"):
+        broker.close_all_positions()
+
+    [body] = session.posted(ORDERS)
+    assert body["legs"][0]["symbol"] == "AAPL"

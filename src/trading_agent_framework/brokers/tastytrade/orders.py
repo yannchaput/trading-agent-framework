@@ -132,6 +132,11 @@ def _price(price: Decimal) -> str:
     return format(round_price(price), "f")
 
 
+def _quantity(quantity: Decimal) -> str:
+    """A plain decimal string without padding zeros: `Decimal("10.000000")` -> `"10"`, `Decimal("4.570")` -> `"4.57"`."""
+    return format(quantity.normalize(), "f")
+
+
 def _require(value: Decimal | None, name: str, order: Order) -> Decimal:
     if value is None:
         raise OrderValidationError(f"{order.order_type.value} order {order.identifier} needs {name}")
@@ -168,7 +173,7 @@ def build_order_json(order: Order) -> dict[str, Any]:
     if order.notional is not None:
         body.update({"order-type": "Notional Market", "value": format(order.notional.quantize(_PENNY, rounding=ROUND_FLOOR), "f"), "value-effect": effect})
     else:
-        leg["quantity"] = format(_require(order.quantity, "quantity", order), "f")
+        leg["quantity"] = _quantity(_require(order.quantity, "quantity", order))
         body.update(_pricing(order, effect))
     body["legs"] = [leg]
     return body

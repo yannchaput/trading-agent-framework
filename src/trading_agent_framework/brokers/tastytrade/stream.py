@@ -31,6 +31,14 @@ class StreamSocket(Protocol):
     def close(self) -> None: ...
 
 
+def auth_token_value(token: str) -> str:
+    """The streamer's `auth-token` field. PROVISIONAL: sent as `Bearer <token>`; the design spec says the bare token.
+
+    Confirm against the sandbox probe; this is the one line to flip (`return token`).
+    """
+    return f"Bearer {token}"
+
+
 class StreamError(Exception):
     """The streamer refused a request or reported an error: reconnect."""
 
@@ -132,7 +140,7 @@ class TastytradeAccountStream:
         message: dict[str, Any] = {"action": action}
         if value is not None:
             message["value"] = value
-        message["auth-token"] = f"Bearer {self._token()}"
+        message["auth-token"] = auth_token_value(self._token())
         message["request-id"] = request_id
         socket.send(json.dumps(message))
         return request_id

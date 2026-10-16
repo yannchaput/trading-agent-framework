@@ -55,6 +55,17 @@ class TastytradeOrderEvents:
             if snapshot is not None:
                 self._seen_fills.update((tt_id, f.fill_id) for f in orders.parse_fills(snapshot))
 
+    def register_superseded(self, order: Order, tt_id: str, *, snapshot: Mapping[str, Any] | None = None) -> None:
+        """Map `tt_id` to `order` as a superseded id (an original being replaced): its fills count, its statuses don't.
+
+        `snapshot` marks the fills it already carries as counted; the order's current id is untouched.
+        """
+        with self._lock:
+            self._orders[tt_id] = order
+            self._superseded.add(tt_id)
+            if snapshot is not None:
+                self._seen_fills.update((tt_id, f.fill_id) for f in orders.parse_fills(snapshot))
+
     def tt_id_of(self, order: Order) -> str | None:
         with self._lock:
             return self._current.get(order.identifier)
@@ -104,9 +115,28 @@ class TastytradeOrderEvents:
             return self._apply_status(order, data, status) or changed
 
     def _adopt(self, order: Order, tt_id: str, data: Mapping[str, Any]) -> None:
-        """Register an order found by external identifier; fills already in its `filled_quantity` count as seen."""
-        self._current[order.identifier] = tt_id
+        """Register an order found by external identifier.
+
+        A replace gives the original and its replacement the same external-identifier, so which one this is
+        decides everything:
+        - the replacement of the order's current id: it becomes current, the old id is superseded, and none of
+          its fills are marked counted (the order's `filled_quantity` belongs to the original);
+        - an original being replaced (`replacing-order-id`) or any other id than the current one: registered
+          superseded (its fills count, its statuses are ignored), never current;
+        - otherwise the first sight of the order: it becomes current and the fills already in its
+          `filled_quantity` count as seen.
+        """
+        current = self._current.get(order.identifier)
         self._orders[tt_id] = order
+        replaces = data.get("replaces-order-id")
+        if current is not None and current != tt_id and replaces is not None and str(replaces) == current:
+            self._superseded.add(current)
+            self._current[order.identifier] = tt_id
+            return
+        if data.get("replacing-order-id") is not None or (current is not None and current != tt_id):
+            self._superseded.add(tt_id)
+            return
+        self._current[order.identifier] = tt_id
         reflected = Decimal(0)
         for fill in orders.parse_fills(data):
             if reflected + fill.quantity > order.filled_quantity:

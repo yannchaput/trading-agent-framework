@@ -83,3 +83,24 @@ def test_a_margin_account_only_warns_in_the_sandbox() -> None:
 
 def test_unwrapped_account_items_are_accepted_too() -> None:
     assert account.check_account([{"account-number": "5WT00001", "margin-or-cash": "Cash", "is-closed": False}], "5WT00001", is_paper=False) == []
+
+
+@pytest.mark.parametrize("kind", [None, "", "  "])
+def test_an_unknown_account_type_is_refused_live(kind: str | None) -> None:
+    item = _item()
+    if kind is None:
+        del item["account"]["margin-or-cash"]
+    else:
+        item["account"]["margin-or-cash"] = kind
+
+    with pytest.raises(ConfigurationError, match="margin-or-cash"):
+        account.check_account([item], "5WT00001", is_paper=False)
+
+
+def test_an_unknown_account_type_only_warns_in_the_sandbox() -> None:
+    item = _item()
+    del item["account"]["margin-or-cash"]
+
+    [warning] = account.check_account([item], "5WT00001", is_paper=True)
+
+    assert "margin-or-cash" in warning

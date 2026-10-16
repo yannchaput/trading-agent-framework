@@ -304,3 +304,76 @@ def test_a_snapshot_of_another_strategys_order_is_not_an_error(tracker: OrderTra
         assert not events.apply(make_tt_order(order_id=78, external=None))
 
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def _fill_snapshot(order_id: int, status: str, fills: list[dict[str, object]], **extra: object) -> dict[str, object]:
+    return make_tt_order(order_id=order_id, status=status, external="s:abc", fills=fills, **extra)
+
+
+def test_a_replaced_originals_cancel_never_cancels_the_order_that_adopted_its_replacement(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events, register=False)
+    events.register(order, "2002")  # a restart adopted the live replacement
+
+    events.apply(make_tt_order(order_id=1001, status="Cancelled", external="s:abc", **{"replacing-order-id": 2002}))
+
+    assert order.is_active()
+    assert events.tt_id_of(order) == "2002"
+    assert OrderEvent.CANCELED not in seen
+
+
+def test_a_stale_snapshot_with_an_unrelated_id_is_superseded_not_current(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events)  # current 1001
+
+    events.apply(make_tt_order(order_id=900, status="Cancelled", external="s:abc"))
+
+    assert order.is_active()
+    assert events.tt_id_of(order) == "1001"
+
+
+def test_a_replacement_first_seen_with_a_fill_adds_it_to_the_originals(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events)
+    events.apply(_fill_snapshot(1001, "Live", [make_tt_fill("f1", "4", "150")]))
+    assert order.filled_quantity == D(4)
+    events.begin_replace(order)
+
+    events.apply(_fill_snapshot(2002, "Live", [make_tt_fill("g1", "3", "151")], **{"replaces-order-id": 1001}))
+
+    assert order.filled_quantity == D(7)
+    assert events.tt_id_of(order) == "2002"
+
+
+def test_a_replacement_seen_before_the_replace_returns_becomes_current_and_the_original_is_ignored(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events)  # no begin_replace: the stream is ahead of the PUT's answer
+
+    events.apply(make_tt_order(order_id=2002, status="Live", external="s:abc", **{"replaces-order-id": 1001}))
+    events.apply(make_tt_order(order_id=1001, status="Cancelled", external="s:abc"))
+
+    assert events.tt_id_of(order) == "2002"
+    assert order.is_active()
+    assert OrderEvent.CANCELED not in seen
+
+
+def test_the_normal_modify_flow_still_works(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events)
+    events.begin_replace(order)
+    events.finish_replace(order, "2002")
+
+    events.apply(make_tt_order(order_id=1001, status="Cancelled", external="s:abc"))
+    assert order.is_active()
+    events.apply(make_tt_order(order_id=2002, status="Live", external="s:abc", **{"replaces-order-id": 1001}))
+    events.apply(_fill_snapshot(2002, "Filled", [make_tt_fill("g1", "10", "151")], **{"replaces-order-id": 1001}))
+
+    assert (order.status, order.filled_quantity) == (OrderStatus.FILL, D(10))
+    assert seen.count(OrderEvent.FILLED) == 1
+
+
+def test_register_superseded_counts_fills_but_ignores_statuses(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events, register=False)
+    events.register(order, "2002")
+    events.register_superseded(order, "1001", snapshot=make_tt_order(order_id=1001, fills=[make_tt_fill("f1", "4", "150")]))
+
+    events.apply(_fill_snapshot(1001, "Cancelled", [make_tt_fill("f1", "4", "150")]))  # already counted, status ignored
+
+    assert order.is_active()
+    assert order.filled_quantity == D(0)
+    assert events.tt_id_of(order) == "2002"

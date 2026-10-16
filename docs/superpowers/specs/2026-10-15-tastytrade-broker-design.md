@@ -119,13 +119,14 @@ alpaca-py). `httpx` is already direct.
   returns the response's `data` object (empty dict for 204).
   - 401: force one token refresh and retry once (any method).
   - GET only: retry on 429, 5xx and `httpx.TransportError`, up to 3 attempts, exponential backoff
-    with jitter, honouring `Retry-After`.
+    with jitter, honouring `Retry-After` (capped at 60 s; a negative or non-finite value is ignored).
   - POST/PUT/DELETE are never retried on 429/5xx/transport errors (no idempotency).
   - An error response raises `TastytradeHTTPError(status_code, "<method> <path>: <status>
     <error.code>: <error.message>")` (a `BrokerError` defined in `client.py`; the broker reads
-    `status_code`, e.g. 404 on an unknown symbol). A transport failure, a 5xx on a write, or a 2xx
-    write response that cannot be parsed, raises `BrokerUncertainError` (a `BrokerError` subclass in `utils/errors.py`) so the broker can tell
-    "rejected" from "outcome unknown". Raw `httpx` exceptions never escape.
+    `status_code`, e.g. 404 on an unknown symbol). A transport failure, a 5xx or a 2xx
+    response that cannot be parsed, on a write (POST/PUT/DELETE), raises `BrokerUncertainError` (a `BrokerError` subclass in `utils/errors.py`) so the broker can tell
+    "rejected" from "outcome unknown". A GET whose retries are exhausted raises a plain `BrokerError`
+    (a failed read changed nothing). Raw `httpx` exceptions never escape.
 - `get_all(path, *, params=None) -> list[dict]`: follows `pagination.page-offset` /
   `total-pages`, concatenating `data.items`.
 - `close()`.

@@ -11,7 +11,7 @@ import logging
 import threading
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from decimal import ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 from urllib.parse import quote
@@ -227,12 +227,12 @@ class TastytradeBroker(Broker):
         self.tracker.untrack(order)
         raise BrokerError(f"Tastytrade order {order.identifier} failed: {message}") from cause
 
-    def _find_order(self, matches: Callable[[Mapping[str, Any]], bool]) -> tuple[dict[str, Any] | None, bool]:
-        """`(order, conclusive)`: the first live, then today's, order matching `matches`.
+    def _find_order(self, matches: Callable[[Mapping[str, Any]], bool], since: date | None = None) -> tuple[dict[str, Any] | None, bool]:
+        """`(order, conclusive)`: the first live, then `since`'s (default today's) order matching `matches`.
 
         `conclusive` is False when a lookup failed: a None order then means "unknown", not "absent".
         """
-        today = self.clock.now().date().isoformat()
+        today = (since if since is not None else self.clock.now().date()).isoformat()
         conclusive = True
         for path, params in ((self._path("/orders/live"), None), (self._path("/orders"), {"start-date": today, "sort": "Desc"})):
             try:
@@ -438,6 +438,8 @@ class TastytradeBroker(Broker):
 
     def _close(self, position: Position, fraction: Decimal) -> Order | None:
         asset = position.asset
+        if position.side is PositionSide.SHORT:
+            raise BrokerError(f"cannot close the short position in {asset.symbol}: shorts cannot exist on a cash account, check the account")
         quantity = position.quantity * fraction
         if not self._fractional_eligible(asset) and quantity.to_integral_value(rounding=ROUND_FLOOR) < 1:
             logger.warning("close_position(%s, %s): below one whole share, nothing sent", asset.symbol, fraction)
@@ -470,9 +472,13 @@ class TastytradeBroker(Broker):
 
     def sync_open_orders(self) -> list[Order]:
         adopted: list[Order] = []
+        being_replaced: list[tuple[str, dict[str, Any]]] = []  # originals whose replacement is the live order
         for item in self._session.get_all(self._path("/orders/live")):
             identifier = orders.identifier_from_external(item.get("external-identifier"), self.strategy_name)
-            if identifier is None or item.get("status") in orders.TERMINAL_STATUSES or item.get("replacing-order-id") is not None or not orders.is_parsable_order(item):
+            if identifier is None or item.get("status") in orders.TERMINAL_STATUSES or not orders.is_parsable_order(item):
+                continue
+            if item.get("replacing-order-id") is not None:
+                being_replaced.append((identifier, item))
                 continue
             external = str(item["external-identifier"])
             if (
@@ -489,6 +495,11 @@ class TastytradeBroker(Broker):
             self.tracker.track_unprocessed(order)
             self._events.register(order, str(item["id"]), snapshot=item)  # its existing fills must not count twice
             adopted.append(order)
+        for identifier, item in being_replaced:  # same external-identifier as its replacement: its Cancelled must be ignored
+            order = self.tracker.get_tracked_order(identifier)
+            tt_id = str(item["id"])
+            if order is not None and not self._events.knows(tt_id) and self._events.tt_id_of(order) != tt_id:
+                self._events.register_superseded(order, tt_id, snapshot=item)
         return adopted
 
     def reconcile(self) -> None:
@@ -544,7 +555,7 @@ class TastytradeBroker(Broker):
             self._unknown.pop(order.identifier, None)
             return
         external = order.client_order_id
-        found, conclusive = self._find_order(lambda item: item.get("external-identifier") == external)
+        found, conclusive = self._find_order(lambda item: item.get("external-identifier") == external, entry.recorded_at.date())
         snapshot = self._with_id(found)
         if snapshot is not None:
             self._unknown.pop(order.identifier, None)
@@ -578,7 +589,7 @@ class TastytradeBroker(Broker):
             self._unsupersede(order, tt_id, previous)
             return
         external = order.client_order_id
-        found, conclusive = self._find_order(lambda item: str(item.get("replaces-order-id")) == tt_id and item.get("external-identifier") == external)
+        found, conclusive = self._find_order(lambda item: str(item.get("replaces-order-id")) == tt_id and item.get("external-identifier") == external, entry.recorded_at.date())
         replacement = self._with_id(found)
         if replacement is not None:
             self._unknown.pop(order.identifier, None)

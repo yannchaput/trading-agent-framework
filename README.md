@@ -66,7 +66,7 @@ pattern, so a plain `git add` will not pick it up.
 | `ALPACA_API_KEY`, `ALPACA_API_SECRET` | Alpaca trading | `BROKER=alpaca`, paper/live |
 | `IBKR_HOST`, `IBKR_PORT`, `IBKR_CLIENT_ID` | IBKR trading | `BROKER=ibkr` (all have defaults) |
 | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`, `TASTYTRADE_ACCOUNT_NUMBER` | Tastytrade trading | `BROKER=tastytrade`, live |
-| `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (both brokers); `AlpacaBacktestData` backtests for historical market data |
+| `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (every broker: Alpaca, IBKR, Tastytrade); `AlpacaBacktestData` backtests for historical market data |
 | `ALPACA_NEWS_API_KEY`, `ALPACA_NEWS_API_SECRET` | news tool | a strategy uses the news tool |
 
 Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.

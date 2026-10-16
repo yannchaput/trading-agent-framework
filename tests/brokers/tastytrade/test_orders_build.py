@@ -208,3 +208,8 @@ def test_a_replace_body_drops_the_legs_and_keeps_prices_and_identifier() -> None
 
     assert "legs" not in body
     assert (body["price"], body["external-identifier"]) == ("151.00", "s:abc")
+
+
+@pytest.mark.parametrize(("quantity", "expected"), [("10.000000", "10"), ("4.570", "4.57"), ("100", "100"), ("0.00001", "0.00001"), ("2.5E+1", "25")])
+def test_a_quantity_is_sent_without_padding_zeros(quantity: str, expected: str) -> None:
+    assert orders.build_order_json(_order(quantity))["legs"][0]["quantity"] == expected

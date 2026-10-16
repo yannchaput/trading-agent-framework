@@ -277,3 +277,46 @@ def test_a_get_200_with_an_html_body_is_a_plain_broker_error() -> None:
         _session(api).get("/customers/me")
 
     assert not isinstance(excinfo.value, BrokerUncertainError)
+
+
+def test_a_get_transport_failure_is_a_plain_broker_error_not_uncertain() -> None:
+    api = Api()
+    api.add("GET", "/customers/me", httpx.ReadTimeout("timed out"))
+
+    with pytest.raises(BrokerError) as excinfo:
+        _session(api).get("/customers/me")
+
+    assert not isinstance(excinfo.value, BrokerUncertainError)
+    assert len(api.calls("GET", "/customers/me")) == 3
+
+
+@pytest.mark.parametrize("method", ["put", "delete"])
+def test_a_put_or_delete_transport_failure_is_uncertain(method: str) -> None:
+    api = Api()
+    api.add(method.upper(), f"{ORDERS}/1001", httpx.ReadTimeout("timed out"))
+    session = _session(api)
+
+    with pytest.raises(BrokerUncertainError):
+        session.put(f"{ORDERS}/1001", json={}) if method == "put" else session.delete(f"{ORDERS}/1001")
+
+
+def test_retry_after_is_capped() -> None:
+    api = Api()
+    api.add("GET", "/customers/me", httpx.Response(429, headers={"Retry-After": "3600"}, json={"error": {"code": "rate_limited", "message": "slow"}}), _ok({"id": "me"}))
+    sleeps: list[float] = []
+
+    _session(api, sleeps=sleeps).get("/customers/me")
+
+    assert sleeps == [60.0]
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-5", "soon"])
+def test_a_nonsense_retry_after_falls_back_to_the_default_backoff(value: str) -> None:
+    api = Api()
+    api.add("GET", "/customers/me", httpx.Response(429, headers={"Retry-After": value}, json={"error": {"code": "rate_limited", "message": "slow"}}), _ok({"id": "me"}))
+    sleeps: list[float] = []
+
+    _session(api, sleeps=sleeps).get("/customers/me")
+
+    [slept] = sleeps
+    assert 0.5 <= slept <= 0.75

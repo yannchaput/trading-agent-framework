@@ -10,6 +10,7 @@ is unknown.
 from __future__ import annotations
 
 import logging
+import math
 import random
 import threading
 import time
@@ -30,6 +31,7 @@ USER_AGENT = f"trading-agent-framework/{get_version('trading_agent_framework')}"
 TOKEN_REFRESH_MARGIN = 60.0  # seconds before expiry
 GET_ATTEMPTS = 3
 PAGE_SIZE = 200
+MAX_RETRY_AFTER = 60.0  # seconds: a server asking for more must not stall the strategy thread
 _RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 
 
@@ -132,7 +134,10 @@ class TastytradeSession:
                 if attempt < attempts:
                     self._sleep(_backoff(attempt, None))
                     continue
-                raise BrokerUncertainError(f"Tastytrade {method} {path} failed: {exc!r}") from exc
+                message = f"Tastytrade {method} {path} failed: {exc!r}"
+                if method == "GET":  # a failed read changed nothing: only a write can have an unknown outcome
+                    raise BrokerError(message) from exc
+                raise BrokerUncertainError(message) from exc
             if response.status_code == 401 and not reauthorized:
                 reauthorized = True  # a 401 was not processed: safe to retry any method once
                 attempt -= 1
@@ -152,9 +157,11 @@ class TastytradeSession:
 def _backoff(attempt: int, retry_after: str | None) -> float:
     if retry_after is not None:
         try:
-            return max(0.0, float(retry_after))
+            seconds = float(retry_after)
         except ValueError:
-            pass
+            seconds = math.nan
+        if math.isfinite(seconds) and seconds >= 0:
+            return min(seconds, MAX_RETRY_AFTER)
     return min(8.0, 0.5 * 2 ** (attempt - 1)) + random.uniform(0, 0.25)
 
 

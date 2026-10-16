@@ -34,8 +34,13 @@ def check_account(items: Sequence[Mapping[str, Any]], account_number: str, *, is
     if found.get("is-closed"):
         raise ConfigurationError(f"Tastytrade account {account_number} is closed")
     warnings: list[str] = []
-    if found.get("margin-or-cash") == "Margin":
+    kind = found.get("margin-or-cash")
+    if kind == "Margin":
         if not is_paper:
             raise ConfigurationError(f"Tastytrade account {account_number} is a margin account; this framework expects a cash account (no margin, no shorting)")
         warnings.append(f"Tastytrade sandbox account {account_number} is a margin account (accepted in the sandbox only)")
+    elif kind != "Cash":  # fail closed: a live account whose type is unknown is not assumed to be cash
+        if not is_paper:
+            raise ConfigurationError(f"Tastytrade account {account_number} has no recognised margin-or-cash type ({kind!r}); refusing to trade it live")
+        warnings.append(f"Tastytrade sandbox account {account_number} has no recognised margin-or-cash type ({kind!r})")
     return warnings

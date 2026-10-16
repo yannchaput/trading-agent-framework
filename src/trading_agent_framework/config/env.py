@@ -161,7 +161,7 @@ class AlpacaCredentials:
 
     @classmethod
     def for_data(cls, env: Mapping[str, str] | None = None) -> AlpacaCredentials:
-        """`ALPACA_DATA_API_*`: prices, bars and the calendar (paper/live, both brokers) and
+        """`ALPACA_DATA_API_*`: prices, bars and the calendar (paper/live, every broker) and
         `AlpacaBacktestData`. `ALPACA_DATA_IS_PAPER` picks the endpoint the calendar call uses."""
         return cls._read(env, "ALPACA_DATA_API", paper_variable="ALPACA_DATA_IS_PAPER")
 
