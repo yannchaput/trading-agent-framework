@@ -182,3 +182,53 @@ def test_registering_with_a_snapshot_marks_its_fills_as_counted(tracker: OrderTr
     events.apply(snapshot)
 
     assert order.filled_quantity == D(4)
+
+
+def test_a_fill_arriving_after_the_order_ended_is_counted_without_reviving_it(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events)
+    events.apply(make_tt_order(status="Live"))
+    events.apply(make_tt_order(status="Cancelled"))
+
+    assert events.apply(make_tt_order(status="Cancelled", fills=[make_tt_fill("f1", "4", "150")]))
+
+    assert (order.status, order.filled_quantity, len(order.transactions)) == (OrderStatus.CANCELED, D(4), 1)
+    assert seen == [OrderEvent.NEW, OrderEvent.CANCELED]
+    assert tracker.canceled.snapshot() == [order]
+    assert tracker.partially_filled.snapshot() == []
+    assert not events.apply(make_tt_order(status="Cancelled", fills=[make_tt_fill("f1", "4", "150")]))  # replayed
+    assert order.filled_quantity == D(4)
+
+
+def test_a_fallback_adoption_registers_the_id_and_counts_only_new_fills(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events, register=False)
+    order.filled_quantity = D(4)  # already reflected, as parse_order sets it for an adopted order
+    f1 = make_tt_fill("f1", "4", "150")
+
+    events.apply(make_tt_order(status="Live", fills=[f1]))
+
+    assert events.tt_id_of(order) == "1001"
+    assert (order.filled_quantity, len(order.transactions)) == (D(4), 0)
+
+    events.apply(make_tt_order(status="Live", fills=[f1, make_tt_fill("f2", "2", "151")]))
+    assert (order.filled_quantity, len(order.transactions)) == (D(6), 1)
+
+
+def test_a_fallback_adoption_of_an_order_without_fills_counts_the_first_ones(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events, register=False)
+
+    events.apply(make_tt_order(status="Live", fills=[make_tt_fill("f1", "4", "150")]))
+
+    assert (order.filled_quantity, len(order.transactions)) == (D(4), 1)
+
+
+def test_two_orders_may_share_a_fill_id(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    first = _tracked(tracker, events)
+    second = Order("s", Asset("MSFT"), OrderSide.BUY, OrderType.LIMIT, quantity=D(5), limit_price=D(300), identifier="def", client_order_id="s:def")
+    second.status = OrderStatus.SUBMITTED
+    tracker.track_unprocessed(second)
+    events.register(second, "1002")
+
+    events.apply(make_tt_order(order_id=1001, status="Live", fills=[make_tt_fill("f1", "4", "150")]))
+    events.apply(make_tt_order(order_id=1002, status="Live", symbol="MSFT", external="s:def", fills=[make_tt_fill("f1", "3", "300")]))
+
+    assert (first.filled_quantity, second.filled_quantity) == (D(4), D(3))
