@@ -89,11 +89,9 @@ class TastytradeOrderEvents:
 
     def finish_replace(self, order: Order, new_tt_id: str) -> None:
         with self._lock:
-            old = self._current.get(order.identifier)
             self._current[order.identifier] = new_tt_id
             self._orders[new_tt_id] = order
-            if new_tt_id == old:  # replaced in place: still the live id
-                self._superseded.discard(new_tt_id)
+            self._superseded.discard(new_tt_id)  # the new id is the live one, however it was first seen
 
     def apply(self, data: Mapping[str, Any]) -> bool:
         """Apply one order snapshot; True when it changed one of our orders."""
@@ -119,7 +117,8 @@ class TastytradeOrderEvents:
 
         A replace gives the original and its replacement the same external-identifier, so which one this is
         decides everything:
-        - the replacement of the order's current id: it becomes current, the old id is superseded, and none of
+        - the replacement of the order's current id (`replaces-order-id`, or an unnamed new id while a replace
+          is in flight): it becomes current, the old id is superseded, and none of
           its fills are marked counted (the order's `filled_quantity` belongs to the original);
         - an original being replaced (`replacing-order-id`) or any other id than the current one: registered
           superseded (its fills count, its statuses are ignored), never current;
@@ -129,7 +128,10 @@ class TastytradeOrderEvents:
         current = self._current.get(order.identifier)
         self._orders[tt_id] = order
         replaces = data.get("replaces-order-id")
-        if current is not None and current != tt_id and replaces is not None and str(replaces) == current:
+        # While a replace is in flight (the current id is superseded) an unknown id is its replacement even if
+        # the snapshot does not say so (field names unverified); with no replace in flight it is a stale id.
+        in_flight = replaces is None and data.get("replacing-order-id") is None and current in self._superseded
+        if current is not None and current != tt_id and ((replaces is not None and str(replaces) == current) or in_flight):
             self._superseded.add(current)
             self._current[order.identifier] = tt_id
             return

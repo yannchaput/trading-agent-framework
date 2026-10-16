@@ -1208,3 +1208,19 @@ def test_close_all_positions_reports_a_short_and_still_closes_the_rest(broker: T
 
     [body] = session.posted(ORDERS)
     assert body["legs"][0]["symbol"] == "AAPL"
+
+
+def test_an_unknown_modify_reported_by_the_stream_without_replaces_order_id_is_adopted_not_rolled_back(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    order = _unknown_modify(broker, session, lookups="empty")  # lookups match on replaces-order-id and find nothing
+    broker._events.apply(make_tt_order(order_id=2002, status="Live", external=order.client_order_id))  # no replaces-order-id
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Cancelled", external=order.client_order_id)
+    session.responses[("GET", f"{ORDERS}/2002")] = make_tt_order(order_id=2002, status="Live", external=order.client_order_id)
+
+    for _ in range(3):
+        _later(broker)
+        broker.reconcile()
+
+    assert broker._events.tt_id_of(order) == "2002"
+    assert order.is_active()
+    assert order.limit_price == D(151)
+    assert OrderEvent.CANCELED not in seen

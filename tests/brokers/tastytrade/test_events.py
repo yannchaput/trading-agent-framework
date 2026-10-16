@@ -377,3 +377,36 @@ def test_register_superseded_counts_fills_but_ignores_statuses(tracker: OrderTra
     assert order.is_active()
     assert order.filled_quantity == D(0)
     assert events.tt_id_of(order) == "2002"
+
+
+def test_a_replacement_without_replaces_order_id_seen_during_a_replace_is_still_adopted(tracker: OrderTracker, events: TastytradeOrderEvents, seen: list[OrderEvent]) -> None:
+    order = _tracked(tracker, events)
+    events.begin_replace(order)  # the PUT is in flight: the stream is ahead of its answer
+
+    events.apply(make_tt_order(order_id=2002, status="Live", external="s:abc"))  # no replaces-order-id
+    events.finish_replace(order, "2002")
+    events.apply(make_tt_order(order_id=2002, status="Cancelled", external="s:abc"))
+
+    assert events.tt_id_of(order) == "2002"
+    assert order.status is OrderStatus.CANCELED  # the replacement's own statuses are not ignored
+    assert seen.count(OrderEvent.CANCELED) == 1
+
+
+def test_finish_replace_always_makes_the_new_id_live(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events)
+    events.begin_replace(order)
+    events.register_superseded(order, "2002")  # wrongly superseded earlier
+
+    events.finish_replace(order, "2002")
+    events.apply(make_tt_order(order_id=2002, status="Rejected", external="s:abc"))
+
+    assert order.status is OrderStatus.ERROR
+
+
+def test_an_unknown_id_with_no_replace_in_flight_stays_superseded(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events)  # nothing superseded
+
+    events.apply(make_tt_order(order_id=900, status="Cancelled", external="s:abc"))
+
+    assert events.tt_id_of(order) == "1001"
+    assert order.is_active()
