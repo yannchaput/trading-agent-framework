@@ -99,12 +99,15 @@ class TastytradeOrderEvents:
     def _apply_fills(self, order: Order, tt_id: str, data: Mapping[str, Any], status: str) -> bool:
         if order.notional is not None and status != "Filled":
             return False  # a notional order has no quantity to compare fills against: wait for Filled
-        new = [f for f in orders.parse_fills(data) if (tt_id, f.fill_id) not in self._seen_fills]
+        every = orders.parse_fills(data)
+        new = [f for f in every if (tt_id, f.fill_id) not in self._seen_fills]
+        counted = [f for f in every if f not in new]  # reflected in the order before this snapshot
         self._seen_fills.update((tt_id, f.fill_id) for f in new)
         for index, fill in enumerate(new):
             if not order.is_active():
                 # The order already ended: a tracker fill event would move it out of its terminal bucket.
                 logger.warning("Fill %s of %s arrived after order %s ended (%s); counted without changing its status", fill.fill_id, fill.quantity, order.identifier, order.status)
+                self._update_average(order, fill, counted)
                 order.add_transaction(fill.price, fill.quantity)
                 continue
             if order.notional is not None:
@@ -112,10 +115,29 @@ class TastytradeOrderEvents:
             else:
                 complete = order.quantity is not None and order.filled_quantity + fill.quantity >= order.quantity
             event = OrderEvent.FILLED if complete else OrderEvent.PARTIALLY_FILLED
+            self._update_average(order, fill, counted)
             self._tracker.process_trade_event(order, event, price=fill.price, filled_quantity=fill.quantity)
         if new:
             order.update_raw(dict(data))
         return bool(new)
+
+    @staticmethod
+    def _update_average(order: Order, fill: orders.Fill, counted: list[orders.Fill]) -> None:
+        """Fold `fill` into `order.avg_fill_price` (call before it is added to `filled_quantity`).
+
+        An adopted order may already carry an average (parse_order) or only a quantity; in the
+        latter case it is rebuilt from the snapshot fills already reflected in that quantity.
+        """
+        before = order.filled_quantity
+        average = order.avg_fill_price
+        if before > 0 and average is None:
+            basis = sum((f.quantity for f in counted), Decimal(0))
+            if basis > 0:
+                average = sum((f.quantity * f.price for f in counted), Decimal(0)) / basis
+        if before <= 0 or average is None:
+            order.avg_fill_price = fill.price
+        else:
+            order.avg_fill_price = (average * before + fill.price * fill.quantity) / (before + fill.quantity)
 
     def _apply_status(self, order: Order, data: Mapping[str, Any], status: str) -> bool:
         if status == "Live" and order.status in _NEW_FROM:

@@ -232,3 +232,55 @@ def test_two_orders_may_share_a_fill_id(tracker: OrderTracker, events: Tastytrad
     events.apply(make_tt_order(order_id=1002, status="Live", symbol="MSFT", external="s:def", fills=[make_tt_fill("f1", "3", "300")]))
 
     assert (first.filled_quantity, second.filled_quantity) == (D(4), D(3))
+
+
+def test_avg_fill_price_is_the_weighted_average_of_the_fills(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events)
+    assert order.avg_fill_price is None
+    first = make_tt_fill("f1", "4", "150")
+
+    events.apply(make_tt_order(status="Live", fills=[first]))
+    assert order.avg_fill_price == D(150)
+
+    final = make_tt_order(status="Filled", fills=[first, make_tt_fill("f2", "6", "151")])
+    events.apply(final)
+    assert order.avg_fill_price == D("150.6")
+
+    events.apply(final)  # replayed
+    assert order.avg_fill_price == D("150.6")
+
+
+def test_avg_fill_price_includes_fills_already_reflected_on_an_adopted_order(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events, register=False)
+    order.filled_quantity = D(4)
+    order.avg_fill_price = D(150)  # as parse_order sets it
+    f1 = make_tt_fill("f1", "4", "150")
+
+    events.apply(make_tt_order(status="Live", fills=[f1]))
+    assert order.avg_fill_price == D(150)
+
+    events.apply(make_tt_order(status="Filled", fills=[f1, make_tt_fill("f2", "6", "151")]))
+    assert order.avg_fill_price == D("150.6")
+
+
+def test_avg_fill_price_when_an_adopted_order_has_none_yet(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events, register=False)
+    order.filled_quantity = D(4)
+    f1 = make_tt_fill("f1", "4", "150")
+
+    events.apply(make_tt_order(status="Filled", fills=[f1, make_tt_fill("f2", "6", "151")]))
+
+    assert order.avg_fill_price == D("150.6")
+
+
+def test_a_late_fill_updates_avg_fill_price(tracker: OrderTracker, events: TastytradeOrderEvents) -> None:
+    order = _tracked(tracker, events)
+    events.apply(make_tt_order(status="Live"))
+    events.apply(make_tt_order(status="Cancelled"))
+    assert order.avg_fill_price is None
+
+    events.apply(make_tt_order(status="Cancelled", fills=[make_tt_fill("f1", "4", "150")]))
+    assert order.avg_fill_price == D(150)
+
+    events.apply(make_tt_order(status="Cancelled", fills=[make_tt_fill("f1", "4", "150"), make_tt_fill("f2", "4", "152")]))
+    assert order.avg_fill_price == D(151)
