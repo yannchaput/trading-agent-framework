@@ -8,7 +8,7 @@ from tests.fakes import make_tt_fill, make_tt_order, make_tt_position
 
 from trading_agent_framework.brokers.tastytrade import orders
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderStatus, OrderType, PositionSide, TimeInForce
+from trading_agent_framework.entities.enums import ACTIVE_ORDER_STATUSES, OrderSide, OrderStatus, OrderType, PositionSide, TimeInForce
 from trading_agent_framework.utils.errors import BrokerError
 
 D = Decimal
@@ -128,3 +128,92 @@ def test_a_short_position_has_a_positive_quantity() -> None:
 def test_closed_and_non_equity_positions_are_dropped() -> None:
     assert orders.parse_position(make_tt_position(quantity="0", direction="Zero"), "s") is None
     assert orders.parse_position(make_tt_position(instrument_type="Equity Option"), "s") is None
+
+
+# --- strict parsing (Task 5 review) ---------------------------------------------------------
+
+
+def test_every_terminal_status_maps_to_a_terminal_order_status() -> None:
+    for status in orders.TERMINAL_STATUSES:
+        assert orders.map_status(status, has_fills=True) not in ACTIVE_ORDER_STATUSES, status
+    assert orders.CANCELED_STATUSES <= orders.TERMINAL_STATUSES
+
+
+def test_an_option_leg_never_parses_into_a_stock_order() -> None:
+    option = make_tt_order(order_id=77)
+    option["legs"][0]["instrument-type"] = "Equity Option"
+    with pytest.raises(BrokerError, match="77"):
+        orders.parse_order(option, "s")
+
+
+def test_a_two_leg_order_never_parses() -> None:
+    spread = make_tt_order(order_id=78)
+    spread["legs"].append(dict(spread["legs"][0]))
+    assert not orders.is_parsable_order(spread)
+    with pytest.raises(BrokerError, match="78"):
+        orders.parse_order(spread, "s")
+
+
+@pytest.mark.parametrize(
+    ("action", "side"),
+    [("Buy to Open", OrderSide.BUY), ("Buy to Close", OrderSide.BUY), ("Sell to Open", OrderSide.SELL), ("Sell to Close", OrderSide.SELL)],
+)
+def test_the_four_actions_map_to_a_side(action: str, side: OrderSide) -> None:
+    assert orders.parse_order(make_tt_order(action=action), "s").side is side
+
+
+@pytest.mark.parametrize("action", [None, "", "Hold", "buy to open", 3])
+def test_an_unknown_action_raises_instead_of_failing_open_to_sell(action: object) -> None:
+    order = make_tt_order()
+    order["legs"][0]["action"] = action
+    with pytest.raises(BrokerError, match="action"):
+        orders.parse_order(order, "s")
+
+
+@pytest.mark.parametrize("direction", [None, "", "Sideways", "long"])
+def test_an_unknown_quantity_direction_raises_instead_of_failing_open_to_long(direction: object) -> None:
+    position = make_tt_position()
+    position["quantity-direction"] = direction
+    with pytest.raises(BrokerError, match="quantity-direction"):
+        orders.parse_position(position, "s")
+
+
+def test_a_position_without_a_direction_key_raises() -> None:
+    position = make_tt_position()
+    del position["quantity-direction"]
+    with pytest.raises(BrokerError, match="quantity-direction"):
+        orders.parse_position(position, "s")
+
+
+def test_an_unknown_time_in_force_falls_back_to_day_with_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        order = orders.parse_order(make_tt_order(**{"time-in-force": "Moon"}), "s")
+    assert (order.time_in_force, order.extended_hours) == (TimeInForce.DAY, False)
+    assert "Moon" in caplog.text
+
+
+def test_a_filled_snapshot_with_only_zero_quantity_fills_has_no_average_price() -> None:
+    order = orders.parse_order(make_tt_order(status="Filled", fills=[make_tt_fill("f1", "0", "150")]), "s")
+
+    assert (order.filled_quantity, order.avg_fill_price) == (D(0), None)
+
+
+def test_a_null_fill_entry_raises_a_broker_error() -> None:
+    with pytest.raises(BrokerError, match="1001"):
+        orders.parse_fills(make_tt_order(fills=[None]))  # type: ignore[list-item]
+
+
+def test_a_non_dict_leg_is_not_parsable_and_raises_a_broker_error() -> None:
+    broken = make_tt_order()
+    broken["legs"] = ["nonsense"]
+    assert not orders.is_parsable_order(broken)
+    with pytest.raises(BrokerError, match="1001"):
+        orders.parse_order(broken, "s")
+    with pytest.raises(BrokerError, match="1001"):
+        orders.parse_fills(broken)
+
+
+def test_a_non_string_external_identifier_is_treated_as_absent() -> None:
+    order = orders.parse_order(make_tt_order(external=None, **{"external-identifier": 12345}), "s")
+
+    assert (order.identifier, order.client_order_id) == ("1001", None)

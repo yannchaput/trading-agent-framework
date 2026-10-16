@@ -184,7 +184,9 @@ def build_replace_json(order: Order) -> dict[str, Any]:
 # --- statuses ------------------------------------------------------------------------------
 
 TERMINAL_STATUSES: frozenset[str] = frozenset({"Filled", "Cancelled", "Rejected", "Expired", "Removed", "Partially Removed"})
-# Statuses that end an order without (more) fills; Alpaca's `expired` maps to a cancel the same way.
+# Statuses that end an order without (more) fills. `Expired` is in it, but `map_status` returns
+# `OrderStatus.EXPIRED` for it (not CANCELED): callers treating this set as "cancelled" must not
+# compare against `OrderStatus.CANCELED` alone.
 CANCELED_STATUSES: frozenset[str] = frozenset({"Cancelled", "Removed", "Partially Removed", "Expired"})
 
 _SUBMITTED = frozenset({"Received", "Routed", "In Flight", "Contingent"})
@@ -225,7 +227,11 @@ class Fill:
 def parse_fills(data: Mapping[str, Any]) -> list[Fill]:
     fills: list[Fill] = []
     for leg in data.get("legs") or []:
+        if not isinstance(leg, Mapping):
+            raise BrokerError(f"Tastytrade order {data.get('id')} has a leg that is not an object: {leg!r}")
         for fill in leg.get("fills") or []:
+            if not isinstance(fill, Mapping):
+                raise BrokerError(f"Tastytrade order {data.get('id')} has a fill that is not an object: {fill!r}")
             fill_id = fill.get("fill-id")
             if fill_id is None:
                 raise BrokerError(f"Tastytrade order {data.get('id')} has a fill without a fill-id")
@@ -249,22 +255,45 @@ _TIME_IN_FORCE_BACK: dict[str, tuple[TimeInForce, bool]] = {
 }
 
 
+_SIDES: dict[str, OrderSide] = {
+    "Buy to Open": OrderSide.BUY,
+    "Buy to Close": OrderSide.BUY,
+    "Sell to Open": OrderSide.SELL,
+    "Sell to Close": OrderSide.SELL,
+}
+_DIRECTIONS = frozenset({"Long", "Short", "Zero"})
+
+
 def is_parsable_order(data: Mapping[str, Any]) -> bool:
     """A single-leg equity order of a type we model (manual option or `Marketable Limit` orders are not)."""
-    legs = data.get("legs") or []
-    return len(legs) == 1 and legs[0].get("instrument-type") == "Equity" and data.get("order-type") in _ORDER_TYPES
+    legs = data.get("legs")
+    return (
+        isinstance(legs, list)
+        and len(legs) == 1
+        and isinstance(legs[0], Mapping)
+        and legs[0].get("instrument-type") == "Equity"
+        and isinstance(data.get("order-type"), str)
+        and data["order-type"] in _ORDER_TYPES
+    )
 
 
 def parse_order(data: Mapping[str, Any], strategy_name: str) -> Order:
     """An `Order` from a Tastytrade order snapshot (REST or account streamer)."""
-    raw_type = str(data.get("order-type"))
-    order_type = _ORDER_TYPES.get(raw_type)
-    legs = data.get("legs") or []
-    if order_type is None or not legs:
-        raise BrokerError(f"Tastytrade order {data.get('id')} ({raw_type}, {len(legs)} legs) is not a single-leg order this framework models")
-    leg = legs[0]
-    time_in_force, extended = _TIME_IN_FORCE_BACK.get(str(data.get("time-in-force")), (TimeInForce.DAY, False))
-    side = OrderSide.BUY if str(leg.get("action", "")).startswith("Buy") else OrderSide.SELL
+    if not is_parsable_order(data):
+        raise BrokerError(f"Tastytrade order {data.get('id')} ({data.get('order-type')!r}) is not a single-leg equity order of a type this framework models")
+    raw_type = str(data["order-type"])
+    order_type = _ORDER_TYPES[raw_type]
+    leg = data["legs"][0]
+    raw_tif = str(data.get("time-in-force"))
+    tif = _TIME_IN_FORCE_BACK.get(raw_tif)
+    if tif is None:
+        logger.warning("Unknown Tastytrade time-in-force %r on order %s; treating it as Day", raw_tif, data.get("id"))
+        tif = (TimeInForce.DAY, False)
+    time_in_force, extended = tif
+    action = leg.get("action")
+    side = _SIDES.get(action) if isinstance(action, str) else None
+    if side is None:
+        raise BrokerError(f"Tastytrade order {data.get('id')} has an unknown action: {action!r}")
     asset = Asset(from_tastytrade_symbol(str(leg.get("symbol") or data.get("underlying-symbol"))))
     if raw_type == "Notional Market":
         order = Order(strategy_name, asset, side, order_type, notional=abs(decimal_of(data.get("value"), "order value")), time_in_force=time_in_force, extended_hours=extended)
@@ -280,13 +309,15 @@ def parse_order(data: Mapping[str, Any], strategy_name: str) -> Order:
     elif order_type is OrderType.STOP_LIMIT:
         order.stop_price = abs(trigger) if trigger is not None else None
         order.stop_limit_price = abs(price) if price is not None else None
-    external = data.get("external-identifier")
+    raw_external = data.get("external-identifier")
+    external = raw_external if isinstance(raw_external, str) else None
     order.identifier = identifier_from_external(external, strategy_name) or str(data.get("id"))
-    order.client_order_id = str(external) if external else None
+    order.client_order_id = external or None
     fills = parse_fills(data)
     if fills:
         order.filled_quantity = sum((f.quantity for f in fills), Decimal(0))
-        order.avg_fill_price = sum((f.quantity * f.price for f in fills), Decimal(0)) / order.filled_quantity
+        if order.filled_quantity > 0:
+            order.avg_fill_price = sum((f.quantity * f.price for f in fills), Decimal(0)) / order.filled_quantity
     order.status = map_status(str(data.get("status", "")), has_fills=bool(fills))
     if order.status is OrderStatus.ERROR:
         order.error_message = str(data.get("reject-reason") or "rejected by Tastytrade")
@@ -298,8 +329,10 @@ def parse_position(data: Mapping[str, Any], strategy_name: str) -> Position | No
     """An equity `Position` (shorts have a positive quantity and `side=SHORT`); None for closed or non-equity ones."""
     if data.get("instrument-type") != "Equity":
         return None
-    quantity = abs(decimal_of(data.get("quantity"), "position quantity"))
     direction = data.get("quantity-direction")
+    if not isinstance(direction, str) or direction not in _DIRECTIONS:
+        raise BrokerError(f"Tastytrade position {data.get('symbol')} has an unknown quantity-direction: {direction!r}")
+    quantity = abs(decimal_of(data.get("quantity"), "position quantity"))
     if direction == "Zero" or quantity == 0:
         return None
     return Position(
