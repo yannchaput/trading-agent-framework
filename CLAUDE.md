@@ -36,7 +36,7 @@ Requires Python 3.14 (`.python-version`). Package manager is `uv`, not pip/poetr
 Layered, broker-agnostic by design:
 
 - `entities/` -- pure data: `Order`, `Position`, `Asset`, `Quote`, `Bars`, enums. No I/O, no broker knowledge (`Bars` imports pandas only for type checking).
-- `config/env.py` -- strategy/mode env file resolution, `BrokerSettings` (`BROKER`, `BROKER_API_IS_PAPER`), `IbkrSettings`, and `AlpacaCredentials.for_trading/for_news/for_data`.
+- `config/env.py` -- strategy/mode env file resolution, `BrokerSettings` (`BROKER`, `BROKER_API_IS_PAPER`), `IbkrSettings`, `TastytradeSettings`, and `AlpacaCredentials.for_trading/for_news/for_data`.
 - `clock.py` -- `MarketClock` ABC + `MarketSession`: the executor's only source of time and waiting (the seam a future backtest clock plugs into).
 - `log.py` -- `ColorLogger` (`log_info`/`log_warning`/... with ANSI colours) and `setup_strategy_logging` (lumibot-style `logs/<strategy>/<mode>/<ts>_<mode>/<mode>.log`).
 
@@ -64,7 +64,7 @@ Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under t
 - `tests/conftest.py` resets package logging after every test; `setup_strategy_logging` disables propagation, which would otherwise starve other tests' `caplog`.
 - Env file resolution and naming conventions (`env/.env.{strategy}.{mode}`) are documented in `README.md` -- read that before adding new env-dependent config rather than re-deriving it here.
 - **No data tool may use wall-clock time.** A backtest's no-look-ahead guarantee (`backtesting/data/base.py`) holds only as far as the chokepoint it controls -- `BacktestDataSource.bars()`. Any other source of "now" inside a data-fetching tool (news, SEC fundamentals, a future screener) must take its cutoff from `strategy.clock.now()`, exactly as `MemoryStore` already takes `now=self.clock.now`, or it silently leaks future information into a backtest.
-- **Credential groups never fall back.** `ALPACA_API_*` (Alpaca trading), `ALPACA_DATA_*` (market data and calendar for both brokers, and `AlpacaBacktestData`), `ALPACA_NEWS_*` (the news tool). `ALPACA_IS_PAPER` is rejected (renamed `BROKER_API_IS_PAPER`).
+- **Credential groups never fall back.** `ALPACA_API_*` (Alpaca trading), `ALPACA_DATA_*` (market data and calendar for both brokers, and `AlpacaBacktestData`), `ALPACA_NEWS_*` (the news tool), `TASTYTRADE_*` (Tastytrade trading). `ALPACA_IS_PAPER` is rejected (renamed `BROKER_API_IS_PAPER`).
 - **Every strategy gets a market regime by default, and nothing trades on it.** The executor refreshes it once per session (`strategy.regime`: 1 bullish / 0 neutral / -1 bearish, `None` without enough history). Using it to size or gate a strategy is a new design decision. Details and the warmup rule: `core/CLAUDE.md`.
 - **Research agent tools (news/macro/fundamentals) gate on `strategy.clock.now()`**, the same rule as the data tools above, never the price-bar chokepoint. Details: `agents/CLAUDE.md`.
 

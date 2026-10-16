@@ -342,8 +342,16 @@ Manual (`scripts/tests/`, sandbox only, `SKIP:` and exit 0 without `TASTYTRADE_*
   against it; forward-test on Alpaca paper, trade live on Tastytrade.
 - **Market data is Alpaca IEX** in live trading, as for IBKR.
 - **No dashboard tab** for Tastytrade accounts.
-- **No idempotency**: an uncertain submission not found at Tastytrade is reported as an error, not
-  resent; the strategy decides on its next tick.
+- **No idempotency**: Tastytrade does not deduplicate orders, so a write is never retried or resent.
+  A submit or modify whose outcome is unknown (timeout, 5xx on a write, a 2xx without an order id)
+  raises `BrokerUncertainError`; the order stays tracked (`SUBMITTED`, a modify's original stays
+  superseded) and is resolved later by lookup on `external-identifier`: on stream reconnect
+  (`reconcile`) and at `pull_order`/`pull_orders`/`cancel_order`/`modify_order`. A found order is
+  adopted; a miss counts only when conclusive and at least 30 s (broker `MarketClock`) after the write
+  and after the previous counted miss, and only the second one fails the submit (error event) or
+  restores the modify. While a write is unresolved, `cancel_order`/`modify_order` of that order raise
+  `BrokerUncertainError` instead of sending. The strategy desks do not handle this error yet (see
+  `brokers/CLAUDE.md`).
 - **Fractional positions can't be protected by stops**: fractional quantities are market-only.
 
 ## 10. Implementation order

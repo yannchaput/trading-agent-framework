@@ -118,7 +118,9 @@ backtest env file only picks the $0-commission fee schedule).
    so strategies refuse to run against it. Forward-test on Alpaca paper; the sandbox is for the manual
    checks in `scripts/tests/HOWTO.md`.
 4. No trailing stops (`earnings_drift` can't run on Tastytrade). Fractional quantities work on market orders
-   of eligible stocks; other fractions and dollar amounts are rounded down to whole shares.
+   of eligible stocks only: a fractional limit or stop is rejected, and a fraction on a non-eligible stock is
+   rounded down to whole shares. A dollar amount on an eligible stock goes as a notional market order;
+   otherwise it is rounded down to whole shares (with a warning).
 5. Known limitation: the strategy desks (`vwap_pullback`, `congress_trades`, ...) do not yet handle
    `BrokerUncertainError` (an order whose outcome is unknown after a timeout); read
    `src/trading_agent_framework/brokers/CLAUDE.md` before trading them live on Tastytrade.
