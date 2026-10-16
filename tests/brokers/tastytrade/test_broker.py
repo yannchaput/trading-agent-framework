@@ -540,3 +540,252 @@ def test_sync_open_orders_skips_a_malformed_order_and_adopts_the_rest(broker: Ta
 
     assert adopted.identifier == "good"
     assert broker.tracker.get_tracked_order("bad") is None
+
+
+# --- review 2: an unknown outcome keeps the order; preset client ids are not re-adopted ------------------------
+
+
+def _lookups_fail(session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"{ORDERS}/live")] = TastytradeHTTPError(503, "down")
+    session.responses[("GET", ORDERS)] = TastytradeHTTPError(503, "down")
+
+
+def _lookups_empty(session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": []}
+    session.responses[("GET", ORDERS)] = {"items": []}
+
+
+def test_an_uncertain_submission_the_stream_already_confirmed_is_kept(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    def post(json: dict[str, Any], params: Any) -> Any:
+        broker._events.apply(make_tt_order(order_id=1001, status="Live", external=json["external-identifier"]))
+        return BrokerUncertainError("read timeout")
+
+    session.responses[("POST", ORDERS)] = post
+    _lookups_fail(session)
+    order = _limit()
+
+    result = broker.submit_order(order)
+
+    assert result is order
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+    assert broker._events.tt_id_of(order) == "1001"
+    assert order.error_message is None
+    broker._events.apply(make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")]))
+    assert order.status is OrderStatus.FILL
+    assert seen.count(OrderEvent.FILLED) == 1
+    assert len(session.posted(ORDERS)) == 1
+
+
+def test_an_uncertain_submission_whose_lookups_all_fail_keeps_the_order_tracked(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    order = _limit()
+
+    with pytest.raises(BrokerUncertainError, match="check the account"):
+        broker.submit_order(order)
+
+    assert order.status is OrderStatus.SUBMITTED
+    assert order.error_message is None
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+    assert len(session.posted(ORDERS)) == 1
+    # the stream's external-identifier fallback can still adopt it
+    broker._events.apply(make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")]))
+    assert order.status is OrderStatus.FILL
+    assert seen.count(OrderEvent.FILLED) == 1
+
+
+def test_reconcile_resolves_an_unknown_submission_that_exists(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    order = _limit()
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+    snapshot = make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")])
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": []}
+    session.responses[("GET", ORDERS)] = {"items": [snapshot]}
+
+    broker.reconcile()
+
+    assert broker._events.tt_id_of(order) == "1001"
+    assert (order.status, order.filled_quantity) == (OrderStatus.FILL, D(10))
+    assert len(session.posted(ORDERS)) == 1
+
+
+def test_reconcile_fails_an_unknown_submission_confirmed_absent(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    order = _limit()
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+    _lookups_empty(session)
+
+    broker.reconcile()
+
+    assert order.status is OrderStatus.ERROR
+    assert "not found" in (order.error_message or "") or "not resent" in (order.error_message or "")
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+    broker.reconcile()  # resolved once: nothing left to look up
+    assert len(session.posted(ORDERS)) == 1
+
+
+def test_reconcile_leaves_an_unknown_submission_while_lookups_still_fail(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    order = _limit()
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+
+    broker.reconcile()
+
+    assert order.status is OrderStatus.SUBMITTED
+    assert order.error_message is None
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+
+
+def test_a_2xx_without_an_id_whose_lookups_fail_is_also_kept(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = {}
+    _lookups_fail(session)
+    order = _limit()
+
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+    assert order.error_message is None
+
+
+def test_a_live_lookup_failure_alone_is_not_proof_of_absence(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    session.responses[("GET", f"{ORDERS}/live")] = TastytradeHTTPError(503, "down")
+    session.responses[("GET", ORDERS)] = {"items": []}
+    order = _limit()
+
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+
+    assert broker.tracker.get_tracked_order(order.identifier) is order
+    assert order.error_message is None
+
+
+def test_an_uncertain_modify_with_failing_lookups_leaves_the_original_superseded(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+    broker._events.apply(make_tt_order(status="Live", external=order.client_order_id))
+    session.responses[("PUT", f"{ORDERS}/1001")] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+
+    with pytest.raises(BrokerUncertainError):
+        broker.modify_order(order, limit_price=D(151))
+
+    # the replace may have happened: the original's Cancelled must not cancel the logical order
+    broker._events.apply(make_tt_order(order_id=1001, status="Cancelled", external=order.client_order_id))
+    assert order.is_active()
+    # and the replacement, if it exists, is adopted through the external identifier
+    broker._events.apply(make_tt_order(order_id=1002, status="Live", external=order.client_order_id, **{"replaces-order-id": 1001}))
+    assert broker._events.tt_id_of(order) == "1002"
+
+
+def test_reconcile_resolves_an_unknown_modify_whose_replacement_exists(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("PUT", f"{ORDERS}/1001")] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    with pytest.raises(BrokerUncertainError):
+        broker.modify_order(order, limit_price=D(151))
+    replacement = make_tt_order(order_id=1002, status="Live", external=order.client_order_id, **{"replaces-order-id": 1001})
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [replacement]}
+    session.responses[("GET", f"{ORDERS}/1002")] = replacement
+
+    broker.reconcile()
+
+    assert broker._events.tt_id_of(order) == "1002"
+    assert order.limit_price == D(151)
+
+
+def test_reconcile_restores_an_unknown_modify_confirmed_absent(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("PUT", f"{ORDERS}/1001")] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    with pytest.raises(BrokerUncertainError):
+        broker.modify_order(order, limit_price=D(151))
+    _lookups_empty(session)
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(order_id=1001, status="Cancelled", external=order.client_order_id)
+
+    broker.reconcile()
+
+    assert order.limit_price == D(150)
+    assert order.status is OrderStatus.CANCELED  # the original's real state is no longer hidden
+
+
+def test_an_uncertain_modify_the_stream_already_confirmed_succeeds(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+
+    def put(json: dict[str, Any], params: Any) -> Any:
+        broker._events.apply(make_tt_order(order_id=1002, status="Live", external=order.client_order_id, **{"replaces-order-id": 1001}))
+        return BrokerUncertainError("read timeout")
+
+    session.responses[("PUT", f"{ORDERS}/1001")] = put
+    _lookups_fail(session)
+
+    broker.modify_order(order, limit_price=D(151))
+
+    assert broker._events.tt_id_of(order) == "1002"
+    assert order.limit_price == D(151)
+
+
+def test_reconcile_does_not_re_adopt_an_order_with_a_preset_client_order_id(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    order = broker.submit_order(_buy(order_type=OrderType.LIMIT, limit_price=D(150), client_order_id="s:fixed"))
+    live = make_tt_order(order_id=1001, status="Live", external="s:fixed")
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [live]}
+    session.responses[("GET", f"{ORDERS}/1001")] = live
+
+    broker.reconcile()
+
+    assert broker.tracker.get_all_tracked_orders() == [order]
+    broker._events.apply(make_tt_order(order_id=1001, status="Filled", external="s:fixed", fills=[make_tt_fill("f1", "10", "150")]))
+    assert order.status is OrderStatus.FILL
+    assert seen.count(OrderEvent.FILLED) == 1
+
+
+def test_sync_open_orders_skips_an_id_the_events_layer_already_knows(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": [make_tt_order(order_id=1, external="s:mine")]}
+    [adopted] = broker.sync_open_orders()
+    broker.tracker.untrack(adopted)  # even if the tracker forgot it, the id is registered
+
+    assert broker.sync_open_orders() == []
+
+
+def test_close_all_positions_continues_past_a_failing_position_and_raises_at_the_end(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": []}
+    session.responses[("GET", f"/accounts/{ACCOUNT}/positions")] = {"items": [make_tt_position(symbol="MSFT", quantity="3"), make_tt_position(symbol="AAPL", quantity="3")]}
+    session.responses[("GET", "/instruments/equities/MSFT")] = TastytradeHTTPError(500, "boom")
+
+    with pytest.raises(BrokerError, match="MSFT"):
+        broker.close_all_positions()
+
+    [body] = session.posted(ORDERS)  # AAPL was still closed
+    assert body["legs"][0]["symbol"] == "AAPL"
+    assert len([c for c in session.calls if c[1] == f"/accounts/{ACCOUNT}/positions"]) == 1  # pulled once
+
+
+def test_cancel_without_a_tastytrade_id_is_a_broker_error(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    with pytest.raises(BrokerError, match="no Tastytrade order id"):
+        broker.cancel_order(_limit())
+
+    assert not [c for c in session.calls if c[0] == "DELETE"]
+
+
+def test_reconcile_does_not_fail_an_unknown_submission_the_stream_adopted_meanwhile(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    session.responses[("POST", ORDERS)] = BrokerUncertainError("read timeout")
+    _lookups_fail(session)
+    order = _limit()
+    with pytest.raises(BrokerUncertainError):
+        broker.submit_order(order)
+    live = make_tt_order(order_id=1001, status="Live", external=order.client_order_id)
+    broker._events.apply(live)
+    _lookups_empty(session)  # e.g. a lagging listing
+    session.responses[("GET", f"{ORDERS}/1001")] = live
+
+    broker.reconcile()
+
+    assert order.status is OrderStatus.NEW
+    assert order.error_message is None
+    assert broker.tracker.get_tracked_order(order.identifier) is order

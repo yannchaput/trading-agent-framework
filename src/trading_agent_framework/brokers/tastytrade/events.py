@@ -48,6 +48,11 @@ class TastytradeOrderEvents:
         with self._lock:
             return self._current.get(order.identifier)
 
+    def knows(self, tt_id: str) -> bool:
+        """True when `tt_id` is a registered Tastytrade order id (current or superseded)."""
+        with self._lock:
+            return tt_id in self._orders
+
     def begin_replace(self, order: Order) -> str | None:
         """Supersede the current id before a replace is sent; returns it (None when unknown)."""
         with self._lock:

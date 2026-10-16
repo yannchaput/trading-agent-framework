@@ -143,12 +143,13 @@ def test_ibkr_broker_is_a_lazy_export() -> None:
     assert "IbkrBroker" in dir(brokers)
 
 
-def test_importing_brokers_and_the_factory_does_not_import_tastytrade_or_websockets() -> None:
+def test_importing_brokers_and_the_factory_does_not_import_tastytrade_websockets_or_httpx() -> None:
     code = (
         "import trading_agent_framework.brokers\n"
         "import trading_agent_framework.brokers.factory\n"
         "import sys\n"
         "assert 'websockets' not in sys.modules\n"
+        "assert 'httpx' not in sys.modules\n"
         "assert not [m for m in sys.modules if m.startswith('trading_agent_framework.brokers.tastytrade')]\n"
         "print('OK')\n"
     )

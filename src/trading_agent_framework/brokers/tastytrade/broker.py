@@ -8,7 +8,9 @@ the websocket in `TastytradeAccountStream`, and event handling in `TastytradeOrd
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from decimal import ROUND_FLOOR, Decimal
 from typing import TYPE_CHECKING, Any, ClassVar, NoReturn
 from urllib.parse import quote
@@ -38,7 +40,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_Prices = tuple[Decimal | None, Decimal | None, Decimal | None]  # limit, stop, stop-limit
 _MODIFIABLE = frozenset({OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT})
+
+
+@dataclass(frozen=True, slots=True)
+class _PendingModify:
+    """A replace whose outcome is unknown: the original stays superseded until reconcile() resolves it."""
+
+    order: Order
+    tt_id: str
+    previous: _Prices
 
 
 class TastytradeBroker(Broker):
@@ -71,6 +83,10 @@ class TastytradeBroker(Broker):
         self._news_provider_factory = news_provider_factory
         self._events = TastytradeOrderEvents(self.tracker)
         self._eligible: dict[str, bool] = {}
+        # Writes whose outcome is unknown and could not be looked up: reconcile() resolves them. Never resent.
+        self._unresolved_lock = threading.Lock()
+        self._unresolved_submits: dict[str, Order] = {}
+        self._unresolved_modifies: dict[str, _PendingModify] = {}
         connect: dict[str, Any] = {"connect": stream_connect} if stream_connect is not None else {}
         self._stream = TastytradeAccountStream(streamer_url, account_number, session.access_token, self._events.apply, self.reconcile, **connect)
 
@@ -184,11 +200,7 @@ class TastytradeBroker(Broker):
             if placed is None:  # a 2xx that names no order: it may well have been accepted
                 unknown = "Tastytrade answered without an order id"
         if placed is None:
-            found = self._find_order(lambda item: item.get("external-identifier") == external)
-            placed = self._with_id(found)
-            if placed is None:
-                self._fail(order, f"submission outcome unknown ({unknown}); Tastytrade does not show it, so it was not resent -- check the account before resubmitting")
-            logger.warning("Order %s: the submission outcome was unknown, but Tastytrade has it (id %s)", order.identifier, placed.get("id"))
+            placed = self._confirm_submission(order, external, unknown or "")
         self._events.register(order, str(placed["id"]))
         order.update_raw(dict(placed))
         if order.status is OrderStatus.UNPROCESSED:
@@ -199,21 +211,59 @@ class TastytradeBroker(Broker):
     def _fail(self, order: Order, message: str, *, cause: BaseException | None = None) -> NoReturn:
         order.set_error(message)  # BEFORE raising -- lumibot's contract
         self.tracker.untrack(order)
+        with self._unresolved_lock:
+            self._unresolved_submits.pop(order.identifier, None)
         raise BrokerError(f"Tastytrade order {order.identifier} failed: {message}") from cause
 
-    def _find_order(self, matches: Callable[[Mapping[str, Any]], bool]) -> dict[str, Any] | None:
-        """The first live, then today's, order matching `matches`; None when absent or every lookup failed."""
+    def _find_order(self, matches: Callable[[Mapping[str, Any]], bool]) -> tuple[dict[str, Any] | None, bool]:
+        """`(order, conclusive)`: the first live, then today's, order matching `matches`.
+
+        `conclusive` is False when a lookup failed: a None order then means "unknown", not "absent".
+        """
         today = self.clock.now().date().isoformat()
+        conclusive = True
         for path, params in ((self._path("/orders/live"), None), (self._path("/orders"), {"start-date": today, "sort": "Desc"})):
             try:
                 items = self._session.get_all(path, params=params)
             except BrokerError:
                 logger.exception("Looking up Tastytrade orders at %s failed", path)
+                conclusive = False
                 continue
             found = next((item for item in items if matches(item)), None)
             if found is not None:
-                return found
-        return None
+                return found, True
+        return None, conclusive
+
+    def _confirm_submission(self, order: Order, external: str, why: str) -> Mapping[str, Any]:
+        """A snapshot (with an id) of an order whose POST outcome is unknown, or an exception.
+
+        The stream may already have registered it; else Tastytrade is asked by `external-identifier`.
+        Only a lookup that succeeded and found nothing fails the order; if Tastytrade cannot be asked, the
+        order stays tracked (the stream can still adopt it, `reconcile` retries) and the caller is told.
+        """
+        tt_id = self._events.tt_id_of(order)
+        if tt_id is not None:
+            try:
+                snapshot = self._with_id(self._session.get(self._path(f"/orders/{tt_id}")))
+            except BrokerError:
+                logger.exception("Re-reading Tastytrade order %s failed", tt_id)
+                snapshot = None
+            logger.warning("Order %s: the submission outcome was unknown, but the account stream already reported it (id %s)", order.identifier, tt_id)
+            return snapshot if snapshot is not None else {"id": tt_id}
+        found, conclusive = self._find_order(lambda item: item.get("external-identifier") == external)
+        placed = self._with_id(found)
+        if placed is not None:
+            logger.warning("Order %s: the submission outcome was unknown, but Tastytrade has it (id %s)", order.identifier, placed.get("id"))
+            return placed
+        if conclusive:
+            self._fail(order, f"submission outcome unknown ({why}); Tastytrade does not show it, so it was not resent -- check the account before resubmitting")
+        if order.status is OrderStatus.UNPROCESSED:
+            order.status = OrderStatus.SUBMITTED
+        with self._unresolved_lock:
+            self._unresolved_submits[order.identifier] = order
+        message = f"submission of order {order.identifier} has an unknown outcome ({why}) and Tastytrade could not be asked; it stays tracked and was not resent -- check the account"
+        logger.warning(message)
+        raise BrokerUncertainError(message)
 
     def _tt_id(self, order: Order) -> str:
         tt_id = self._events.tt_id_of(order)
@@ -259,17 +309,42 @@ class TastytradeBroker(Broker):
             if replacement is None:
                 unknown = "Tastytrade answered without an order id"
         if replacement is None:
-            external = order.client_order_id
-            replacement = self._with_id(self._find_order(lambda item: str(item.get("replaces-order-id")) == tt_id and item.get("external-identifier") == external))
-            if replacement is None:
-                self._restore(order, tt_id, previous)
-                raise BrokerUncertainError(f"modify of Tastytrade order {tt_id} has an unknown outcome ({unknown}) and no replacement was found")
+            replacement = self._confirm_replacement(order, tt_id, previous, unknown or "")
         self._events.finish_replace(order, str(replacement["id"]))
         self._apply(replacement)
         self.tracker.process_trade_event(order, OrderEvent.MODIFIED)
         return order
 
-    def _restore(self, order: Order, tt_id: str, previous: tuple[Decimal | None, Decimal | None, Decimal | None]) -> None:
+    def _confirm_replacement(self, order: Order, tt_id: str, previous: _Prices, why: str) -> Mapping[str, Any]:
+        """The replacement of `tt_id` after a PUT with an unknown outcome, or an exception.
+
+        Absent (a lookup succeeded and found nothing): the replace did not happen, restore. Unknown (Tastytrade
+        could not be asked): leave the original superseded so its Cancelled cannot cancel the logical order;
+        the stream's external-identifier fallback adopts the replacement, `reconcile` resolves the rest.
+        """
+        current = self._events.tt_id_of(order)
+        if current is not None and current != tt_id:  # the stream already adopted the replacement
+            try:
+                snapshot = self._with_id(self._session.get(self._path(f"/orders/{current}")))
+            except BrokerError:
+                logger.exception("Re-reading Tastytrade order %s failed", current)
+                snapshot = None
+            return snapshot if snapshot is not None else {"id": current}
+        external = order.client_order_id
+        found, conclusive = self._find_order(lambda item: str(item.get("replaces-order-id")) == tt_id and item.get("external-identifier") == external)
+        replacement = self._with_id(found)
+        if replacement is not None:
+            return replacement
+        if conclusive:
+            self._restore(order, tt_id, previous)
+            raise BrokerUncertainError(f"modify of Tastytrade order {tt_id} has an unknown outcome ({why}) and no replacement was found")
+        with self._unresolved_lock:
+            self._unresolved_modifies[order.identifier] = _PendingModify(order, tt_id, previous)
+        message = f"modify of Tastytrade order {tt_id} has an unknown outcome ({why}) and Tastytrade could not be asked; the order stays tracked -- check the account"
+        logger.warning(message)
+        raise BrokerUncertainError(message)
+
+    def _restore(self, order: Order, tt_id: str, previous: _Prices) -> None:
         """A replace that did not happen: restore the prices and the original id, then re-read the original.
 
         While it was superseded its statuses were dropped, so it may have been cancelled or filled meanwhile.
@@ -307,8 +382,10 @@ class TastytradeBroker(Broker):
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         position = next((p for p in self.pull_positions() if p.asset == asset), None)
-        if position is None:
-            return None
+        return self._close(position, fraction) if position is not None else None
+
+    def _close(self, position: Position, fraction: Decimal) -> Order | None:
+        asset = position.asset
         quantity = position.quantity * fraction
         if not self._fractional_eligible(asset) and quantity.to_integral_value(rounding=ROUND_FLOOR) < 1:
             logger.warning("close_position(%s, %s): below one whole share, nothing sent", asset.symbol, fraction)
@@ -324,8 +401,20 @@ class TastytradeBroker(Broker):
                         self._session.delete(self._path(f"/orders/{item['id']}"))
                     except BrokerError:
                         logger.exception("Cancelling Tastytrade order %s failed", item.get("id"))
-        closed = (self.close_position(p.asset) for p in self.pull_positions())
-        return [o for o in closed if o is not None]
+        closed: list[Order] = []
+        failed: list[str] = []
+        for position in self.pull_positions():
+            try:
+                order = self._close(position, Decimal(1))
+            except BrokerError as exc:
+                logger.exception("Closing the Tastytrade position in %s failed", position.asset.symbol)
+                failed.append(f"{position.asset.symbol} ({exc})")
+                continue
+            if order is not None:
+                closed.append(order)
+        if failed:
+            raise BrokerError(f"closing {len(failed)} Tastytrade position(s) failed after closing {len(closed)}: {'; '.join(failed)}")
+        return closed
 
     def sync_open_orders(self) -> list[Order]:
         adopted: list[Order] = []
@@ -333,15 +422,20 @@ class TastytradeBroker(Broker):
             identifier = orders.identifier_from_external(item.get("external-identifier"), self.strategy_name)
             if identifier is None or item.get("status") in orders.TERMINAL_STATUSES or item.get("replacing-order-id") is not None or not orders.is_parsable_order(item):
                 continue
-            if self.tracker.get_tracked_order(identifier) is not None:
+            external = str(item["external-identifier"])
+            if (
+                self.tracker.get_tracked_order(identifier) is not None
+                or self.tracker.get_tracked_order_by_client_order_id(external) is not None  # a preset client_order_id
+                or self._events.knows(str(item["id"]))
+            ):
                 continue
             try:
                 order = orders.parse_order(item, self.strategy_name)
             except BrokerError:
                 logger.exception("Not adopting the malformed Tastytrade order %s", item.get("id"))
                 continue
-            self._events.register(order, str(item["id"]), snapshot=item)  # its existing fills must not count twice
             self.tracker.track_unprocessed(order)
+            self._events.register(order, str(item["id"]), snapshot=item)  # its existing fills must not count twice
             adopted.append(order)
         return adopted
 
@@ -355,6 +449,7 @@ class TastytradeBroker(Broker):
             self.sync_open_orders()
         except BrokerError:
             logger.exception("Adopting Tastytrade open orders after a reconnect failed")
+        self._resolve_unknown_writes()
         for order in self.tracker.get_active_orders():
             tt_id = self._events.tt_id_of(order)
             if tt_id is None:
@@ -363,6 +458,52 @@ class TastytradeBroker(Broker):
                 self._apply(self._session.get(self._path(f"/orders/{tt_id}")))
             except BrokerError:
                 logger.exception("Re-reading Tastytrade order %s failed", tt_id)
+
+    def _resolve_unknown_writes(self) -> None:
+        """Retry the lookups of submits and modifies whose outcome was unknown (nothing is ever resent)."""
+        with self._unresolved_lock:
+            submits = list(self._unresolved_submits.values())
+            modifies = list(self._unresolved_modifies.values())
+        for order in submits:
+            if self._events.tt_id_of(order) is not None or not order.is_active():  # the stream adopted it meanwhile
+                with self._unresolved_lock:
+                    self._unresolved_submits.pop(order.identifier, None)
+                continue
+            external = order.client_order_id
+            found, conclusive = self._find_order(lambda item, external=external: item.get("external-identifier") == external)
+            snapshot = self._with_id(found)
+            if snapshot is not None:
+                with self._unresolved_lock:
+                    self._unresolved_submits.pop(order.identifier, None)
+                if self._events.tt_id_of(order) is None:
+                    self._events.register(order, str(snapshot["id"]))
+                order.update_raw(dict(snapshot))
+                self._apply(snapshot)
+            elif conclusive:
+                try:
+                    self._fail(order, "submission outcome unknown; Tastytrade does not show it (checked after a reconnect), so it was not resent -- check the account before resubmitting")
+                except BrokerError:
+                    logger.warning("Order %s was not found at Tastytrade and is now failed", order.identifier)
+        for pending in modifies:
+            order, tt_id = pending.order, pending.tt_id
+            current = self._events.tt_id_of(order)
+            if current is not None and current != tt_id:  # the stream adopted the replacement
+                with self._unresolved_lock:
+                    self._unresolved_modifies.pop(order.identifier, None)
+                continue
+            external = order.client_order_id
+            found, conclusive = self._find_order(lambda item, tt_id=tt_id, external=external: str(item.get("replaces-order-id")) == tt_id and item.get("external-identifier") == external)
+            replacement = self._with_id(found)
+            if replacement is not None:
+                with self._unresolved_lock:
+                    self._unresolved_modifies.pop(order.identifier, None)
+                self._events.finish_replace(order, str(replacement["id"]))
+                self._apply(replacement)
+                self.tracker.process_trade_event(order, OrderEvent.MODIFIED)
+            elif conclusive:
+                with self._unresolved_lock:
+                    self._unresolved_modifies.pop(order.identifier, None)
+                self._restore(order, tt_id, pending.previous)
 
     # --- market data, clock, news (Alpaca) ---------------------------------------------
 
