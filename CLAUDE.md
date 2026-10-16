@@ -25,6 +25,8 @@ uv run python scripts/tests/smoke_earnings_events.py    # manual smoke test: ear
 uv run python scripts/tests/smoke_congress_trades.py    # manual smoke test: congress_trades against the real House Clerk (yearly report + PTRs -> holdings, tiers, baseline weights; read-only; needs CONGRESS_USER_AGENT)
 uv run python scripts/tests/smoke_ibkr_account.py      # manual paper IB Gateway smoke test: account (read-only)
 uv run python scripts/tests/smoke_ibkr_orders.py       # manual paper IB Gateway smoke test: orders
+uv run python scripts/tests/smoke_tastytrade_account.py  # manual Tastytrade sandbox smoke test: account (read-only)
+uv run python scripts/tests/smoke_tastytrade_orders.py   # manual Tastytrade sandbox smoke test: orders and the account streamer
 ```
 
 Requires Python 3.14 (`.python-version`). Package manager is `uv`, not pip/poetry.
@@ -40,7 +42,7 @@ Layered, broker-agnostic by design:
 
 Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under that directory (paths relative to `src/trading_agent_framework/`):
 
-- `brokers/CLAUDE.md` -- `Broker` template, `OrderTracker`, fees, Alpaca and IBKR brokers, market-data and IBKR gotchas.
+- `brokers/CLAUDE.md` -- `Broker` template, `OrderTracker`, fees, Alpaca, IBKR and Tastytrade brokers, market-data, IBKR and Tastytrade gotchas.
 - `backtesting/CLAUDE.md` -- `BacktestBroker`, data sources, fills, ledger, report, and every backtest-fidelity rule.
 - `core/CLAUDE.md` -- `Strategy`, `StrategyExecutor`, timing, the market regime.
 - `agents/CLAUDE.md` -- `AgentManager`, telemetry, tool-call repair, and the research-tool clock gate (`agents/tools/`).

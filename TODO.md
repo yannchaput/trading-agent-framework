@@ -40,6 +40,7 @@
 * ~~Add a column with slippage and fees in dashboard~~
 * ~~Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)~~
 * Review  Agent table pivot format to be consistent with all strategies
+* Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
 
 ### Cross sectional momentum
 

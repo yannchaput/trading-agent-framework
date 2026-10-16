@@ -104,6 +104,25 @@ uv run python scripts/tests/smoke_ibkr_account.py   # read-only
 uv run python scripts/tests/smoke_ibkr_orders.py    # places paper orders
 ```
 
+## 📈 Tastytrade
+
+Set `BROKER=tastytrade` and `BROKER_API_IS_PAPER=false` in the strategy's **live** env file, with
+`TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN` and `TASTYTRADE_ACCOUNT_NUMBER`. Tastytrade handles
+orders, account and positions; prices, bars, the market calendar and news still come from Alpaca
+(`ALPACA_DATA_*`, `ALPACA_NEWS_*`). Backtests are unaffected (Yahoo or Alpaca data; `BROKER=tastytrade` in a
+backtest env file only picks the $0-commission fee schedule).
+
+1. Create an OAuth application and a grant at my.tastytrade.com; the grant's refresh token never expires.
+2. Use a **cash** account: the broker refuses to trade live on a margin account.
+3. There is no Tastytrade paper trading here: the sandbox's fills are synthetic (market orders fill at $1),
+   so strategies refuse to run against it. Forward-test on Alpaca paper; the sandbox is for the manual
+   checks in `scripts/tests/HOWTO.md`.
+4. No trailing stops (`earnings_drift` can't run on Tastytrade). Fractional quantities work on market orders
+   of eligible stocks; other fractions and dollar amounts are rounded down to whole shares.
+5. Known limitation: the strategy desks (`vwap_pullback`, `congress_trades`, ...) do not yet handle
+   `BrokerUncertainError` (an order whose outcome is unknown after a timeout); read
+   `src/trading_agent_framework/brokers/CLAUDE.md` before trading them live on Tastytrade.
+
 ## Components
 
 ### 🚧 Backtesting

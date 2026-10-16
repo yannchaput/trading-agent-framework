@@ -89,6 +89,26 @@ reported debt figure, the utility NEE is never a candidate, and the equipment le
 a plausible operating margin. If it ever fails on the debt check, a debt tag is probably missing from
 `screen/annual_figures.py` (bump `annual_store.SCHEMA_VERSION` after fixing it).
 
+## Tastytrade sandbox
+Manual checks of `TastytradeBroker` against the Tastytrade sandbox (`api.cert.tastyworks.com`). NOT part
+of the automated suite. Credentials go in env/.env.alpaca.integration-tests: `TASTYTRADE_CLIENT_SECRET`,
+`TASTYTRADE_REFRESH_TOKEN`, `TASTYTRADE_ACCOUNT_NUMBER` (sandbox ones) plus the `ALPACA_DATA_*` keys. The
+scripts always use the sandbox, whatever `BROKER` and `BROKER_API_IS_PAPER` say, and print `SKIP:` without
+credentials.
+
+Getting sandbox credentials: open the sandbox account tool (developer.tastytrade.com, Sandbox page), create
+a sandbox user and its funded account, create an OAuth application (keep its client secret), then create a
+grant for it: the grant's refresh token never expires. Sandbox and production credentials never work
+against each other.
+
+The sandbox's fills are synthetic (market orders fill at $1, limits under $3 fill at once, limits at $3 or
+more never fill) and it clears trades and positions every 24 hours, which is why strategies refuse to run
+against it (`uv run agent ... paper` with `BROKER=tastytrade` exits): forward-test on Alpaca paper.
+
+    uv run python scripts/tests/smoke_tastytrade_account.py   # read-only: auth, account check, balances, positions
+    uv run python scripts/tests/smoke_tastytrade_orders.py    # rest, modify, cancel, fill, close; PASS/FAIL per step
+    uv run python scripts/tests/probe_tastytrade_orders.py    # one-off API probe (Task 1 of the Tastytrade plan); not run by run_smoke_tests.sh
+
 ## Tools
 
 ### Smoke Fundamentals
