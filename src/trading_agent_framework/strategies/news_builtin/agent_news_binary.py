@@ -182,7 +182,7 @@ class NewsBinaryStrategy(Strategy):
         "symbols": ("SPY", "QQQ"),
         "defensive_symbol": "SHV",
         "news_symbols": "SPY,QQQ,DIA,IWM",
-        "backtest_every_n_iterations": 1,  # Number of days between 2 effective iterations
+        "backtest_every_n_iterations": 1,  # Number of ticks between 2 effective iterations
     }
 
     def initialize(self) -> None:
