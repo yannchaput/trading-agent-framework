@@ -336,6 +336,8 @@ class ReviewPipeline:
                     calls_out.extend(result.tool_calls)
                 if result.output:  # empty when a final tool ended the run with no closing turn, or the model spent its window thinking
                     self._strategy.log_info(f"[{agent_name}] {result.output}")
+                else:
+                    self._strategy.log_warning(f"[{agent_name}] Model provided no output for reason:{stop}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentError as exc:
@@ -353,6 +355,7 @@ class ReviewPipeline:
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
+            self._strategy.log_debug(f"[{agent_name}] retry with prompt: {prompt}")
         raise ReviewAbandoned(agent_name, error)
 
 
