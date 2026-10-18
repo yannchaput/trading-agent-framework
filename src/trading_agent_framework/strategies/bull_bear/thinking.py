@@ -21,7 +21,7 @@ from typing import Any
 from trading_agent_framework.strategies.bull_bear.pipeline import tool_failed
 
 
-def thinking_guards(agent_name: str, submit_tool: str, log: Callable[[str], None]) -> list[Any]:
+def thinking_guards(agent_name: str, submit_tool: str, log: Callable[[str], object]) -> list[Any]:
     """Both middlewares, for `AgentManager.create(middleware=...)`, in the order they need.
 
     The rejection guard comes first (outermost): the length guard must see the request it turned thinking off in,
@@ -43,7 +43,7 @@ def _thinking_off(request: Any) -> bool:
     return extra_body.get("chat_template_kwargs", {}).get("enable_thinking") is False
 
 
-def length_recovery_middleware(agent_name: str, submit_tool: str, log: Callable[[str], None]) -> Any:
+def length_recovery_middleware(agent_name: str, submit_tool: str, log: Callable[[str], object]) -> Any:
     """A `wrap_model_call`: a turn stopped at the output cap with no tool call is asked again without thinking.
 
     The new answer replaces the stopped one (both calls are recorded by telemetry). A turn that already ran without
@@ -69,7 +69,7 @@ def length_recovery_middleware(agent_name: str, submit_tool: str, log: Callable[
 MAX_REJECTIONS = 3  # rejected submissions that end a run: the first try and two corrections
 
 
-def rejected_submission_middleware(agent_name: str, submit_tool: str, log: Callable[[str], None]) -> Any:
+def rejected_submission_middleware(agent_name: str, submit_tool: str, log: Callable[[str], object]) -> Any:
     """A `wrap_model_call`: the turn after a rejected `submit_tool` call runs without thinking, `submit_tool` forced.
 
     Rejected: the handoff's `{"error": ...}`, or a call the tool could not take (`status="error"`). Only the tool
