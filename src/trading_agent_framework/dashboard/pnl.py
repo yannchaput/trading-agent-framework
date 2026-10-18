@@ -9,6 +9,7 @@ from typing import Any
 
 from trading_agent_framework.utils.clock import MARKET_TZ
 
+# Earning Per Share threshold for floating-point comparisons: a share's cost or proceeds below this is treated as zero.
 _EPS = 1e-9
 
 
