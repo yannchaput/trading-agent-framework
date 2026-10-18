@@ -334,7 +334,8 @@ class ReviewPipeline:
                 stop = _stop_detail(result)
                 if calls_out is not None:
                     calls_out.extend(result.tool_calls)
-                self._strategy.log_info(f"[{agent_name}] {result.output}")
+                if result.output:  # empty when a final tool ended the run with no closing turn, or the model spent its window thinking
+                    self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentError as exc:
