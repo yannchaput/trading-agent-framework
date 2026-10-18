@@ -427,6 +427,18 @@ def test_a_corrected_submission_on_the_forced_retry_completes_the_review(tmp_pat
     assert retry["force_tool"] == "submit_bear_case" and "no case for S01" in retry["task"]
 
 
+def test_the_forced_retry_repeats_the_task_and_only_the_researcher_is_told_its_research_is_gone(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    h.agents["bear"].overrides = [lambda tools, ctx: tools["submit_bear_case"]([{"symbol": "S00", "risk": "high", "concern": "valuation", "argument": "too expensive"}])]
+    h.agents["researcher"].overrides = [lambda tools, ctx: None]  # the first run of the first stock submits nothing
+
+    h.run()
+
+    bear_retry, researcher_retry = h.agents["bear"].calls[1]["task"], h.agents["researcher"].calls[1]["task"]
+    assert "Your task was: Make the bear case" in bear_retry and "fact sheet alone" not in bear_retry
+    assert "Your task was: Research S00" in researcher_retry and "no news or filings were checked" in researcher_retry
+
+
 def test_unusable_data_abandons_the_review_before_any_agent_runs(tmp_path: Path) -> None:
     h = _harness(tmp_path)
     h.bars.error = DataUnavailable("Yahoo covers only 3/20 symbols")

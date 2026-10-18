@@ -352,7 +352,7 @@ class ReviewPipeline:
             elif not error:  # a failed run was already logged as an error above
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
-            prompt, force_tool = retry_prompt(tool, error), tool
+            prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
         raise ReviewAbandoned(agent_name, error)
 
 

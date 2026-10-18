@@ -131,6 +131,24 @@ def judge_task(max_chars: int) -> str:
     )
 
 
-def retry_prompt(tool: str, error: str) -> str:
-    """The corrective turn after a run that never made a valid submit call."""
-    return f"Your previous run ended without a valid {tool} call. The last problem was: {error}\nCall {tool} now, once, with a valid argument, then stop. Do not do any more research."
+# What an agent needs to hear on its forced retry beyond the task, by agent name. The retry is a fresh run: the researcher's
+# earlier research does not survive into it, so its note can rest on the fact sheet alone and must say so.
+_RETRY_GUIDANCE = {
+    "researcher": (
+        "Your earlier research is no longer available to you. Write the note from the fact sheet alone and say plainly that "
+        "no news or filings were checked; never write that nothing was found or that nothing changed."
+    ),
+}
+
+
+def retry_prompt(agent_name: str, tool: str, error: str, task: str) -> str:
+    """The corrective turn after a run that never made a valid submit call.
+
+    `task` is the stage's original task, repeated because the retry is a fresh run that has lost it: it carries the symbol
+    and the character cap a valid call must respect. `agent_name` picks the agent's own guidance, if it has any.
+    """
+    lines = [f"Your previous run ended without a valid {tool} call. The last problem was: {error}", f"Your task was: {task}"]
+    if agent_name in _RETRY_GUIDANCE:
+        lines.append(_RETRY_GUIDANCE[agent_name])
+    lines.append(f"Call {tool} now, once, with a valid argument, then stop. Do not do any more research.")
+    return "\n".join(lines)

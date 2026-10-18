@@ -59,9 +59,22 @@ def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None: 
 
 
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
-    text = prompts.retry_prompt("submit_verdicts", "11 stocks in: put at most 10 in and the others out")
+    text = prompts.retry_prompt("judge", "submit_verdicts", "11 stocks in: put at most 10 in and the others out", prompts.judge_task(300))
 
     assert "submit_verdicts" in text and "put at most 10 in" in text
+
+
+def test_the_retry_prompt_repeats_the_task_so_the_symbol_and_the_cap_survive() -> None:
+    text = prompts.retry_prompt("researcher", "submit_note", "the agent ended without calling submit_note", prompts.researcher_task("PLTR", 500))
+
+    assert "PLTR" in text and "500 characters" in text
+
+
+def test_the_retry_prompt_tells_a_researcher_that_its_research_is_gone_and_must_not_become_no_news() -> None:
+    text = prompts.retry_prompt("researcher", "submit_note", "x", "task")
+
+    assert "fact sheet alone" in text and "no news or filings were checked" in text
+    assert "fact sheet alone" not in prompts.retry_prompt("judge", "submit_verdicts", "x", "task")
 
 
 def test_the_judge_puts_each_stock_in_or_out_under_a_cap_and_a_trend_alone_is_no_reason_for_out() -> None:
