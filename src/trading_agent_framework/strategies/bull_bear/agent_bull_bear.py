@@ -9,6 +9,7 @@ and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 
 from __future__ import annotations
 
+import calendar
 from collections.abc import Callable, Sequence
 from datetime import date
 from decimal import Decimal
@@ -161,7 +162,10 @@ class BullBearStrategy(Strategy):
         if self.pipeline is None:
             raise FatalStrategyError("BullBearStrategy.on_trading_iteration ran before initialize() built the review pipeline")
         today = self._market_date()
+        rebalance_day = calendar.day_name[self.settings.rebalance_weekday]
+        self.log_info(f"Today is a {today.strftime('%A')} and the rebalance day is {rebalance_day}")
         if today.weekday() != self.settings.rebalance_weekday:
+            self.log_warning("Not a rebalance day — skipping.")
             return
         if self.pipeline.completed_today():
             self.log_info(f"[bull_bear] the review of {today} already completed: not run again")
