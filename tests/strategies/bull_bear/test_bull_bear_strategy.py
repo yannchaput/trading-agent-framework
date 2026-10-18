@@ -12,7 +12,7 @@ from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.strategies.bull_bear import BullBearStrategy
+from trading_agent_framework.strategies.bull_bear import BullBearStrategy, agent_bull_bear
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore, state_path
@@ -113,6 +113,32 @@ def test_the_researcher_and_the_judge_compact_their_history_and_the_single_shot_
 
     compacting = {created["name"]: created.get("compact_history", False) for created in agents.created}
     assert compacting == {"researcher": True, "bull": False, "bear": False, "judge": True}
+
+
+def test_every_agent_gets_the_output_cap_of_the_settings(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(max_output_tokens=9000))
+
+    strategy.initialize()
+
+    caps = {created["name"]: created["max_output_tokens"] for created in agents.created}
+    assert caps == {"researcher": 9000, "bull": 9000, "bear": 9000, "judge": 9000}
+    assert strategy.parameters["max_output_tokens"] == 9000  # recorded in settings.json: runs with another cap can be told apart
+
+
+def test_every_agent_gets_the_thinking_guards_of_its_own_submit_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    built: list[tuple[str, str]] = []
+
+    def recording_guards(agent: str, submit_tool: str, log: Any) -> list[str]:
+        built.append((agent, submit_tool))
+        return [f"guards of {agent}"]
+
+    monkeypatch.setattr(agent_bull_bear, "thinking_guards", recording_guards)
+    strategy, agents = _strategy(tmp_path)
+
+    strategy.initialize()
+
+    assert sorted(built) == [("bear", "submit_bear_case"), ("bull", "submit_bull_case"), ("judge", "submit_verdicts"), ("researcher", "submit_note")]
+    assert {created["name"]: created["middleware"] for created in agents.created} == {name: [f"guards of {name}"] for name in ("researcher", "bull", "bear", "judge")}
 
 
 def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_source_is_needed(tmp_path: Path) -> None:

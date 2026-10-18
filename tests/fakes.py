@@ -681,6 +681,23 @@ class FakeToolCallingChatModel(GenericFakeChatModel):
         return self
 
 
+class RecordingToolCallingChatModel(GenericFakeChatModel):
+    """`GenericFakeChatModel` that records the options of every call it answers, in order, in `calls`.
+
+    `create_agent` binds a request's `tool_choice` and `model_settings` (`max_tokens`, `extra_body`, ...) to the
+    model; this fake keeps them bound (`bind`, unlike `FakeToolCallingChatModel`), so they reach `_generate`.
+    """
+
+    calls: list[dict[str, Any]] = []  # pydantic copies the default: each instance has its own list
+
+    def bind_tools(self, tools: object, **kwargs: Any) -> Any:
+        return self.bind(**kwargs)
+
+    def _generate(self, messages: Any, stop: Any = None, run_manager: Any = None, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+
 # --- IBKR (ib_async) objects ------------------------------------------------------
 
 _IB_TIME = datetime(2026, 9, 22, 14, 0, tzinfo=UTC)

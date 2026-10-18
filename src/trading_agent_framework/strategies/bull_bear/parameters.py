@@ -36,6 +36,9 @@ class BullBearParams:
     feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
+    # Output tokens per model call, reasoning included (all four agents; None: no cap). The 10-17 run: every call that
+    # worked used at most 11k, every call that thought the 32k window full 19k or more.
+    max_output_tokens: int | None = 12288
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
     yahoo_retry_delays: tuple[float, ...] = (60.0, 180.0)  # seconds before each new attempt at an unusable Yahoo batch
@@ -67,6 +70,7 @@ class BullBearParams:
             "feedback_reviews must be at least 1": self.feedback_reviews < 1,
             "max_consecutive_abandoned must be at least 1": self.max_consecutive_abandoned < 1,
             "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
+            "max_output_tokens must be None or at least 1": self.max_output_tokens is not None and self.max_output_tokens < 1,
             f"rebalance_time: {time_problem}": bool(time_problem),
             "rebalance_weekday must be a weekday (0 = Monday ... 4 = Friday)": not 0 <= self.rebalance_weekday <= 4,
             "yahoo_retry_delays must be finite and at least 0": not all(math.isfinite(delay) and delay >= 0 for delay in self.yahoo_retry_delays),

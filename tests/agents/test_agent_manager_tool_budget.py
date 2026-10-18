@@ -112,6 +112,33 @@ def test_a_refused_call_reaches_the_model_marked_as_an_error() -> None:
     assert [m.status for m in last_turn_tool_messages] == ["success", "error"]
 
 
+def test_each_refusal_answers_the_call_it_refuses_with_the_budget_error() -> None:
+    # The refusal is rebuilt from the base class's messages, so its `tool_call_id` must still be the refused call's id.
+    class RecordingModel(FakeToolCallingChatModel):
+        seen_inputs: list[list[BaseMessage]] = []
+
+        def _generate(self, messages: list[BaseMessage], *args: Any, **kwargs: Any) -> Any:
+            self.seen_inputs.append(list(messages))
+            return super()._generate(messages, *args, **kwargs)
+
+    def lookup(symbol: str) -> str:
+        """Look up a symbol."""
+        return f"{symbol} ok"
+
+    refused_call = _calls(("lookup", {"symbol": "A"}), ("lookup", {"symbol": "B"}))
+    model = RecordingModel(messages=iter([refused_call, AIMessage(content="done")]))
+    model.seen_inputs = []
+    handle = _manager().create(name="seller", system_prompt="x", model=model, tools=[lookup])
+
+    handle.run("go", tool_budget=1)
+
+    last_turn_tool_messages = [m for m in model.seen_inputs[-1] if isinstance(m, ToolMessage)]
+    by_id = {m.tool_call_id: m for m in last_turn_tool_messages}
+    assert set(by_id) == {"call_0_lookup", "call_1_lookup"}  # the ids `_calls` assigns
+    assert by_id["call_0_lookup"].content == "A ok"
+    assert json.loads(str(by_id["call_1_lookup"].content)) == {"error": "tool budget of 1 calls spent; lookup was not run. Answer now without calling another tool."}
+
+
 def test_without_a_budget_nothing_is_refused() -> None:
     seen: list[str] = []
     handle = _agent(seen, _calls(("lookup", {"symbol": "A"})), _calls(("lookup", {"symbol": "B"})), _calls(("lookup", {"symbol": "C"})), AIMessage(content="done"))

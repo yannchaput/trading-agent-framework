@@ -379,14 +379,14 @@ _MEMORY_TOOLS = ("search_memory", "remember_lesson")
 def _memory_record(calls: Sequence[ToolCallRecord]) -> dict[str, Any]:
     """The judge's memory use in one review: how many memory calls it made (refused ones too), and the text of each lesson that was stored."""
     used = [call for call in calls if call.name in _MEMORY_TOOLS]
-    lessons = [call.args["text"] for call in used if call.name == "remember_lesson" and isinstance(call.args.get("text"), str) and not _failed(call.result)]
+    lessons = [call.args["text"] for call in used if call.name == "remember_lesson" and isinstance(call.args.get("text"), str) and not tool_failed(call.result)]
     return {"calls": len(used), "lessons": lessons}
 
 
 _ERROR_KEY = re.compile(r"""["']error["']\s*:""")
 
 
-def _failed(result: str) -> bool:
+def tool_failed(result: str) -> bool:
     """Whether a tool result says the call did nothing: an `{"error": ...}` (a tool's own refusal, or the tool-budget
     middleware's, as JSON or as a Python dict repr), an "Error invoking tool ..." message (the tool raised), or no
     result at all (the call was requested but never answered)."""

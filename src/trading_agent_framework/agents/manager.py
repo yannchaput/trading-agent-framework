@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.compaction import compaction_middleware
 from trading_agent_framework.agents.config import LLMCredentials
+from trading_agent_framework.agents.output_cap import output_cap_middleware
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
 from trading_agent_framework.memory.tools import agent_call_context, current_forced_tool
@@ -286,6 +287,9 @@ class AgentManager:
 
             def after_model(self, state: Any, runtime: Any) -> Any:
                 update = super().after_model(state, runtime)
+                # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs). 
+                # If it did call a tool, but the run limit was reached, the code below replace the base's generic refusal with one that names the agent's own tools and the ones it must finish with.
+                # "messages" is a list of ToolMessage objects : or each blocked call, a generic ToolMessage with status="error". If none, messages is empty.
                 if not update or not update.get("messages") or self.run_limit is None:
                     return update
                 refusals = []
@@ -293,6 +297,7 @@ class AgentManager:
                     logger.log_warning(f"tool budget of {self.run_limit} calls spent: {message.name} was refused")
                     error = {"error": _tool_budget_message(self.run_limit, message.name, exempt)}
                     refusals.append(ToolMessage(content=json.dumps(error), tool_call_id=message.tool_call_id, name=message.name, status="error"))
+                # The spread keeps the base's counter keys; the explicit "messages" replaces the base's generic refusals with ours.
                 return {**update, "messages": refusals}
 
         return ToolBudgetLimit()
@@ -369,6 +374,8 @@ class AgentManager:
         exempt_tools: Sequence[str] | None = None,
         final_tools: Sequence[str] | None = None,
         compact_history: bool = False,
+        max_output_tokens: int | None = None,
+        middleware: Sequence[Any] | None = None,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
 
@@ -393,9 +400,18 @@ class AgentManager:
         `compact_history` summarizes the run's older messages once its history reaches 80% of the model's
         input window (`agents/compaction.py`); the window is `LLM_MAX_INPUT_TOKENS` for a model built here,
         the model's own profile otherwise, and a `ConfigurationError` when neither gives one.
+
+        `max_output_tokens` caps every agent turn's output, reasoning included (`agents/output_cap.py`), so a
+        turn that would think until the window is full stops at `finish_reason="length"`; compaction's summary call
+        is not capped. Default: no cap.
+
+        `middleware` adds the caller's own LangChain middleware, inside every framework middleware but the output
+        cap, compaction and telemetry: a model call it makes (a retry, say) is capped and recorded like any other.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
+        if max_output_tokens is not None and max_output_tokens < 1:
+            raise ValueError(f"max_output_tokens must be at least 1, got {max_output_tokens}")
 
         chat_model = self._resolve_model(model, timeout_seconds, temperature)
         try:
@@ -404,18 +420,21 @@ class AgentManager:
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
             tool_list = list(tools or [])
             limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or ())
-            middleware = [
+            stack = [
                 self._tool_call_repair_middleware(glm_format=glm_format),
                 self._forced_tool_choice_middleware(),
                 limiter,
             ]
             if final_tools:
-                middleware.append(self._final_tools_middleware(final_tools))
+                stack.append(self._final_tools_middleware(final_tools))
+            stack.extend(middleware or ())
+            if max_output_tokens is not None:
+                stack.append(output_cap_middleware(max_output_tokens))
             if compact_history:
-                middleware.append(compaction_middleware(chat_model))
+                stack.append(compaction_middleware(chat_model))
             if self._telemetry_now is not None:
-                middleware.append(self._telemetry_middleware(name))
-            agent = create_agent(model=chat_model, tools=tool_list, system_prompt=system_prompt, middleware=middleware)
+                stack.append(self._telemetry_middleware(name))
+            agent = create_agent(model=chat_model, tools=tool_list, system_prompt=system_prompt, middleware=stack)
         except ConfigurationError:
             raise  # a missing setting, not a broken agent: the caller refuses to start on it
         except Exception as exc:
