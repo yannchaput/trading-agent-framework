@@ -156,6 +156,35 @@ def test_search_news_returns_an_error_on_naive_datetime_start() -> None:
     assert "error" in result
 
 
+def test_search_news_takes_date_only_bounds_as_whole_days_in_the_clock_timezone() -> None:
+    # The model writes `end: "2025-10-21"`: a day, not a moment. The start is its first instant, the end its last.
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+
+    result = tool(symbols="SPY", start="2026-09-01", end="2026-09-10")
+
+    assert "error" not in result
+    assert provider.calls[0]["start"] == datetime(2026, 9, 1, tzinfo=_now().tzinfo)
+    assert provider.calls[0]["end"] == datetime(2026, 9, 10, 23, 59, 59, 999999, tzinfo=_now().tzinfo)
+
+
+def test_search_news_clamps_a_date_only_end_that_is_today_to_the_clock() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+
+    tool(end="2026-09-14")  # today's last instant is after the clock's 10:00: no news from the future
+
+    assert provider.calls[0]["end"] == _now()
+
+
+def test_search_news_still_refuses_a_naive_datetime_with_a_time() -> None:
+    provider = _StubProvider()
+    tool = _tool(_provider_strategy(provider))
+
+    assert tool(end="2026-09-10T00:00:00") == {"error": "end date must include timezone information"}
+    assert provider.calls == []
+
+
 # --- per-run cache: the model re-sent the identical scan (31 times in one backtest) ----------------
 
 

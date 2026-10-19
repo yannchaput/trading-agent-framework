@@ -129,6 +129,33 @@ def test_a_run_whose_submissions_keep_being_rejected_ends_at_the_third_rejection
     assert "researcher" in agent.logged[-1] and "3" in agent.logged[-1]
 
 
+def test_the_rejection_warning_says_why_the_submission_was_rejected() -> None:
+    # The warning is logged while the run is going, before the pipeline logs the run: it must name the stock and the reason itself.
+    rejected = {"error": "the note for RKLB is 506 characters: keep it under 500"}
+    agent = _Agent([_calls(("submit", {"answer": "long"})), _calls(("submit", {"answer": "short"}))], submit_results=[rejected])
+
+    agent.handle.run("go")
+
+    assert "the note for RKLB is 506 characters: keep it under 500" in agent.logged[0]
+
+
+def test_the_warning_for_a_run_ended_by_rejections_says_why_the_last_one_was_rejected() -> None:
+    rejected = [{"error": "the note for CRDO is 504 characters: keep it under 500"}] * 6
+    agent = _Agent([_calls(("submit", {"answer": "long"})) for _ in range(6)], submit_results=rejected)
+
+    agent.handle.run("go")
+
+    assert "the note for CRDO is 504 characters: keep it under 500" in agent.logged[-1]
+
+
+def test_a_very_long_rejection_reason_is_cut_in_the_warning() -> None:
+    agent = _Agent([_calls(("submit", {"answer": "long"})), _calls(("submit", {"answer": "short"}))], submit_results=[{"error": "x" * 5000}])
+
+    agent.handle.run("go")
+
+    assert len(agent.logged[0]) < 600
+
+
 def test_turning_thinking_off_keeps_the_other_settings_of_the_call() -> None:
     @wrap_model_call
     def server_options(request: Any, handler: Callable[[Any], Any]) -> Any:

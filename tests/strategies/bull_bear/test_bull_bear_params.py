@@ -19,6 +19,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.feedback_reviews == 4
     assert params.judge_memory_budget == 6
     assert params.research_news is True
+    assert (params.note_max_chars, params.note_hard_max_chars) == (500, 600)  # the researcher is asked for 500, a note up to 600 is kept
     assert params.max_output_tokens == 12288  # above every call that worked in the 10-17 run (max 11k), below every runaway (19k+)
 
 
@@ -42,6 +43,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"feedback_reviews": 0}, "feedback_reviews must be at least 1"),
         ({"judge_memory_budget": -1}, "judge_memory_budget must be at least 0"),
         ({"max_output_tokens": 0}, "max_output_tokens must be None or at least 1"),
+        ({"note_hard_max_chars": 499}, "note_hard_max_chars must be at least note_max_chars"),
     ],
 )
 def test_an_invalid_value_is_refused_with_a_reason(overrides: dict, message: str) -> None:

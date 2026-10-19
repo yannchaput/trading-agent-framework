@@ -67,6 +67,7 @@ def length_recovery_middleware(agent_name: str, submit_tool: str, log: Callable[
 
 
 MAX_REJECTIONS = 3  # rejected submissions that end a run: the first try and two corrections
+_REASON_MAX_CHARS = 300  # of a rejection reason in a warning
 
 
 def rejected_submission_middleware(agent_name: str, submit_tool: str, log: Callable[[str], object]) -> Any:
@@ -86,17 +87,22 @@ def rejected_submission_middleware(agent_name: str, submit_tool: str, log: Calla
     def rejected(message: Any) -> bool:
         return getattr(message, "type", None) == "tool" and message.name == submit_tool and (message.status == "error" or tool_failed(str(message.content)))
 
+    def reason(message: Any) -> str:
+        """Why the call was rejected, as the tool said it (it names the stock): this warning is logged while the run is going, before the pipeline logs the run."""
+        text = str(message.content).strip()
+        return text if len(text) <= _REASON_MAX_CHARS else text[:_REASON_MAX_CHARS] + "..."
+
     @wrap_model_call
     def resubmit_without_thinking(request: Any, handler: Callable[[Any], Any]) -> Any:
-        rejections = sum(1 for message in request.messages if rejected(message))
-        if rejections >= MAX_REJECTIONS:
-            log(f"[{agent_name}] {submit_tool} rejected {rejections} times: the run ends without a submission")
+        rejections = [message for message in request.messages if rejected(message)]
+        if len(rejections) >= MAX_REJECTIONS:
+            log(f"[{agent_name}] {submit_tool} rejected {len(rejections)} times, the last: {reason(rejections[-1])}: the run ends without a submission")
             return ModelResponse(result=[AIMessage(content="")])
         for message in reversed(request.messages):  # the tool results since the model's last turn
             if getattr(message, "type", None) != "tool":
                 break
             if rejected(message):
-                log(f"[{agent_name}] {submit_tool} was rejected: the correction runs without thinking, {submit_tool} forced")
+                log(f"[{agent_name}] {submit_tool} was rejected ({reason(message)}): the correction runs without thinking, {submit_tool} forced")
                 return handler(_without_thinking(request, submit_tool))
         return handler(request)
 

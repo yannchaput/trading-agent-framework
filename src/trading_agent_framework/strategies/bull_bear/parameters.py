@@ -29,7 +29,8 @@ class BullBearParams:
     research_tool_budget: int = 5  # tool calls per researcher run; submit_note is exempt
     research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
-    note_max_chars: int = 500
+    note_max_chars: int = 500  # the length the researcher is asked for
+    note_hard_max_chars: int = 600  # the length the recorder refuses above: a model cannot count characters (10-19: 25 notes 1 to 20% over 500)
     argument_max_chars: int = 300
     reason_max_chars: int = 300
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates
@@ -66,6 +67,7 @@ class BullBearParams:
             "research_tool_budget must be at least 1": self.research_tool_budget < 1,
             "judge_memory_budget must be at least 0": self.judge_memory_budget < 0,
             "note_max_chars, argument_max_chars and reason_max_chars must be at least 1": min(self.note_max_chars, self.argument_max_chars, self.reason_max_chars) < 1,
+            "note_hard_max_chars must be at least note_max_chars": self.note_hard_max_chars < self.note_max_chars,
             "reentry_cooldown_reviews must be at least 0": self.reentry_cooldown_reviews < 0,
             "feedback_reviews must be at least 1": self.feedback_reviews < 1,
             "max_consecutive_abandoned must be at least 1": self.max_consecutive_abandoned < 1,

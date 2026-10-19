@@ -217,7 +217,7 @@ class HandoffRecorder:
         params, context = self._params, self._context
         try:
             if stage == NOTE:
-                value: Any = validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_max_chars)
+                value: Any = validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars)
             elif stage == BULL:
                 value = validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             elif stage == BEAR:

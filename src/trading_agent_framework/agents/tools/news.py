@@ -1,7 +1,7 @@
 """Plain typed news tool for a LangChain agent: news search through the broker's `NewsProvider`, gated on the strategy clock."""
 
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.memory.tools import RunMemo, current_run_id
@@ -14,6 +14,16 @@ MIN_LIMIT = 1
 MAX_LIMIT = 50
 MAX_CONTENT_LIMIT = 5  # full articles are large: cap how many one call may return
 _DEFAULT_LOOKBACK_DAYS = 7
+
+
+def _parse_bound(text: str, now: datetime, *, last_instant: bool) -> datetime:
+    """An ISO bound. A date alone (`2025-10-21`, what a model writes) is a whole day in the clock's timezone: its first
+    instant for a start, its last for an end. Any other string keeps its own offset, or none (the caller refuses it)."""
+    try:
+        day = date.fromisoformat(text.strip())
+    except ValueError:
+        return datetime.fromisoformat(text)
+    return datetime.combine(day, time.max if last_instant else time.min, tzinfo=now.tzinfo)
 
 
 def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037
@@ -41,14 +51,14 @@ def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # 
         try:
             now = strategy.clock.now()
             if end:
-                end_parsed = datetime.fromisoformat(end)
+                end_parsed = _parse_bound(end, now, last_instant=True)
                 if end_parsed.tzinfo is None:
                     return {"error": "end date must include timezone information"}
                 end_dt = min(end_parsed, now)
             else:
                 end_dt = now
             if start:
-                start_parsed = datetime.fromisoformat(start)
+                start_parsed = _parse_bound(start, now, last_instant=False)
                 if start_parsed.tzinfo is None:
                     return {"error": "start date must include timezone information"}
                 start_dt = min(start_parsed, end_dt)

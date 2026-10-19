@@ -226,6 +226,14 @@ def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_p
     assert "123 characters" in bull["task"] and "123 characters" in bear["task"] and "77 characters" in judge["task"]
 
 
+def test_the_researcher_is_asked_for_the_note_length_not_the_hard_limit(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+
+    assert h.run().completed
+
+    assert all("at most 500 characters" in call["task"] for call in h.agents["researcher"].calls)
+
+
 def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> None:
     h = _harness(tmp_path)
 

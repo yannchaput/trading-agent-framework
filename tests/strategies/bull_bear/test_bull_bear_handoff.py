@@ -30,6 +30,15 @@ def _verdicts(chosen: list[str], out: list[str] | None = None) -> list[dict[str,
 # --- note ---------------------------------------------------------------------------------------
 
 
+def test_a_note_up_to_the_hard_limit_is_recorded_though_the_researcher_is_asked_for_less() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    params = BullBearParams()
+
+    assert params.note_max_chars < params.note_hard_max_chars == 600
+    assert tools["submit_note"]("AAA", "x" * 600) == {"status": "recorded"}
+
+
 def test_a_note_for_the_armed_symbol_is_recorded_stripped() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
@@ -52,7 +61,7 @@ def test_an_empty_or_long_note_is_refused() -> None:
     recorder.expect_note("AAA")
 
     assert "empty" in tools["submit_note"]("AAA", "   ")["error"]
-    assert "under 500" in tools["submit_note"]("AAA", "x" * 501)["error"]
+    assert tools["submit_note"]("AAA", "x" * 601) == {"error": "the note for AAA is 601 characters: keep it under 600"}  # the hard limit, not the 500 the researcher is asked for
 
 
 # --- bull and bear ------------------------------------------------------------------------------
