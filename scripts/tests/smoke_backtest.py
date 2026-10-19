@@ -7,6 +7,9 @@ Excluded from `tests/` on purpose (see scripts/tests/smoke_alpaca_data.py and it
 siblings for the same convention) -- this hits the real network (Yahoo Finance) and is
 meant to be run by hand, not in CI.
 
+Its run directory is logs/smoke/backtesting/<timestamp>_backtesting/ (strategy name "smoke", like
+smoke_strategy_paper.py's logs/smoke/paper/).
+
 Run: uv run python scripts/tests/smoke_backtest.py
 """
 
@@ -51,7 +54,7 @@ def main() -> int:
 
         # Strategy.run_backtesting() rebinds the broker before the first bar
         # is touched, so any Broker instance works as a placeholder.
-        placeholder_broker = PlaceholderBroker("smoke_backtest")
+        placeholder_broker = PlaceholderBroker("smoke")
 
         strategy = BuyAndHold(placeholder_broker, mode=TradingMode.BACKTESTING, project_root=PROJECT_ROOT)
 
