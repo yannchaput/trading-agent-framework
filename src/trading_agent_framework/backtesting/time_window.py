@@ -31,7 +31,7 @@ def backtest_window(window: PredefinedWindow) -> tuple[datetime, datetime]:
         case PredefinedWindow.SEMI_DECADE:
             return (datetime(2021, 9, 20, tzinfo=MARKET_TZ), datetime(2026, 10, 16, tzinfo=MARKET_TZ))
         case PredefinedWindow.BI_YEAR:
-            return (datetime(2025, 9, 2, tzinfo=MARKET_TZ), datetime(2026, 10, 16, tzinfo=MARKET_TZ))
+            return (datetime(2024, 9, 2, tzinfo=MARKET_TZ), datetime(2026, 10, 16, tzinfo=MARKET_TZ))
         case PredefinedWindow.YEAR:
             return (datetime(2025, 9, 29, tzinfo=MARKET_TZ), datetime(2026, 10, 16, tzinfo=MARKET_TZ))
         case PredefinedWindow.HALF_YEAR:
