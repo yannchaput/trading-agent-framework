@@ -17,12 +17,12 @@ from trading_agent_framework.utils.strategy_factory import Strategies, build_str
 
 
 def _refuse_tastytrade_sandbox() -> None:
-    """Strategies never run against the Tastytrade sandbox: it clears trades and positions every 24 hours."""
+    """Strategies never run against the Tastytrade sandbox: its fills are synthetic (market orders at $1)."""
     settings = BrokerSettings.from_env()
     if settings.kind is BrokerKind.TASTYTRADE and settings.is_paper:
         raise ConfigurationError(
-            "BROKER=tastytrade with BROKER_API_IS_PAPER=true is the Tastytrade sandbox, which clears trades and positions "
-            "every 24 hours: forward-test on Alpaca paper (BROKER=alpaca) and use BROKER=tastytrade with "
+            "BROKER=tastytrade with BROKER_API_IS_PAPER=true is the Tastytrade sandbox, which fills every market order at $1 "
+            "and resets daily: forward-test on Alpaca paper (BROKER=alpaca) and use BROKER=tastytrade with "
             "BROKER_API_IS_PAPER=false for live trading only"
         )
 

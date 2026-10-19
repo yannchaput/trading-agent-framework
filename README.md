@@ -115,7 +115,7 @@ backtest env file only picks the $0-commission fee schedule).
 
 1. Create an OAuth application and a grant at my.tastytrade.com; the grant's refresh token never expires.
 2. Use a **cash** account: the broker refuses to trade live on a margin account.
-3. There is no Tastytrade paper trading here: the sandbox clears trades and positions every 24 hours,
+3. There is no Tastytrade paper trading here: the sandbox's fills are synthetic (market orders fill at $1),
    so strategies refuse to run against it. Forward-test on Alpaca paper; the sandbox is for the manual
    checks in `scripts/tests/HOWTO.md`.
 4. No trailing stops (`earnings_drift` can't run on Tastytrade). Fractional quantities work on market orders

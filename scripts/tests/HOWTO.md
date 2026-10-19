@@ -101,20 +101,13 @@ a sandbox user and its funded account, create an OAuth application (keep its cli
 grant for it: the grant's refresh token never expires. Sandbox and production credentials never work
 against each other.
 
-The sandbox clears trades and positions every 24 hours, which is why strategies refuse to run against it
-(`uv run agent ... paper` with `BROKER=tastytrade` exits): forward-test on Alpaca paper. Its fills are not the
-documented synthetic ones ($1 market fills, limits under $3 filling at once): during US market hours market
-orders fill at the real price and a limit buy far under the market rests `Live`.
+The sandbox's fills are synthetic (market orders fill at $1, limits under $3 fill at once, limits at $3 or
+more never fill) and it clears trades and positions every 24 hours, which is why strategies refuse to run
+against it (`uv run agent ... paper` with `BROKER=tastytrade` exits): forward-test on Alpaca paper.
 
 Run the order smoke test during US market hours for the fill steps: outside them the sandbox keeps a resting
-order in `Received` (the script then accepts SUBMITTED as "rests") and does not fill, so steps 4-5 are
-skipped. The fill step is a market buy of 1 AAPL (about one share's worth of sandbox cash), sold again in
-step 5.
-
-The sandbox account streamer has refused every subscription with `queue-declare-failed` since about
-2026-09 (a Tastytrade-side outage, https://github.com/joaquinbejar/tastytrade/issues/160): the order smoke
-test does not check the stream (it would always FAIL); it prints a NOTE with the streamer's reason and runs
-every step reading order statuses over REST. Restore the check once the sandbox streamer works again. Fractional and notional orders are not testable on AAPL in the sandbox (it refuses them with a
+order in `Received` (the script accepts SUBMITTED as "rests" and prints a NOTE) and does not fill, so steps 4-5
+are skipped. Fractional and notional orders are not testable on AAPL in the sandbox (it refuses them with a
 `fractional_trading_invalid_symbol` preflight error).
 
     uv run python scripts/tests/smoke_tastytrade_account.py   # read-only: auth, account check, balances, positions

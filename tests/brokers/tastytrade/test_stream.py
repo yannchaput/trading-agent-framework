@@ -123,48 +123,6 @@ def test_a_refused_subscription_reconnects_without_forwarding_anything(caplog: p
     assert "invalid auth token" in caplog.text
 
 
-def test_the_stream_reports_its_subscription_until_the_socket_drops() -> None:
-    during: list[tuple[bool, bool]] = []
-
-    def observe(socket: FakeSocket) -> dict[str, Any]:
-        during.append((harness.stream.is_subscribed, harness.stream.wait_subscribed(0)))
-        return order_message()
-
-    harness = Harness([FakeSocket([ack, observe])])
-    assert not harness.stream.is_subscribed
-
-    harness.stream.run()
-
-    assert during == [(True, True)]
-    assert not harness.stream.is_subscribed
-    assert not harness.stream.wait_subscribed(0)
-
-
-def test_a_refused_subscription_is_kept_as_the_last_error_until_a_subscription_succeeds() -> None:
-    errors: list[str | None] = []
-
-    def observe(socket: FakeSocket) -> dict[str, Any]:
-        errors.append(harness.stream.last_error)
-        return order_message()
-
-    harness = Harness([FakeSocket([refuse]), FakeSocket([ack, observe])], stop_after_waits=2)
-
-    harness.stream.run()
-
-    assert errors == [None]
-    assert harness.stream.last_error is not None
-    assert "closed by the server" in harness.stream.last_error  # the second socket's drop
-
-
-def test_the_last_error_names_the_refusal() -> None:
-    harness = Harness([FakeSocket([refuse])])
-
-    harness.stream.run()
-
-    assert harness.stream.last_error is not None
-    assert "invalid auth token" in harness.stream.last_error
-
-
 def test_a_streamer_error_after_subscribing_reconnects(caplog: pytest.LogCaptureFixture) -> None:
     harness = Harness([FakeSocket([ack, {"status": "error", "message": "token expired"}, order_message()])])
 
