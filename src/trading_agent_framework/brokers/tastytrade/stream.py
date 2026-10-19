@@ -32,9 +32,9 @@ class StreamSocket(Protocol):
 
 
 def auth_token_value(token: str) -> str:
-    """The streamer's `auth-token` field. PROVISIONAL: sent as `Bearer <token>`; the design spec says the bare token.
+    """The streamer's `auth-token` field: `Bearer <token>`, as in the REST `Authorization` header.
 
-    Confirm against the sandbox probe; this is the one line to flip (`return token`).
+    Confirmed against the sandbox (2026-10-19): a bare token is refused with "Unknown domain".
     """
     return f"Bearer {token}"
 
@@ -72,6 +72,8 @@ class TastytradeAccountStream:
         self._connect = connect
         self._clock = clock
         self._stopped = threading.Event()
+        self._subscribed = threading.Event()
+        self._last_error: str | None = None
         self._wait = wait if wait is not None else self._stopped.wait
         self._socket: StreamSocket | None = None
         self._thread: threading.Thread | None = None
@@ -80,6 +82,19 @@ class TastytradeAccountStream:
     @property
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
+
+    @property
+    def is_subscribed(self) -> bool:
+        """Whether the streamer accepted the subscription on the current socket."""
+        return self._subscribed.is_set()
+
+    @property
+    def last_error(self) -> str | None:
+        """Why the last connection failed or dropped (None until one does, and again after a subscription)."""
+        return self._last_error
+
+    def wait_subscribed(self, timeout: float) -> bool:
+        return self._subscribed.wait(timeout)
 
     def start(self) -> None:
         if self.is_running:
@@ -109,19 +124,23 @@ class TastytradeAccountStream:
                 self._socket = socket
                 try:
                     self._subscribe(socket)
+                    self._last_error = None
+                    self._subscribed.set()
                     failures = 0
                     if not first_attempt:
                         self._reconcile()
                     self._serve(socket)
                 finally:
+                    self._subscribed.clear()
                     self._socket = None
                     try:
                         socket.close()
                     except Exception:
                         logger.debug("closing the Tastytrade account-streamer socket failed", exc_info=True)
-            except Exception:
+            except Exception as exc:
                 if self._stopped.is_set():
                     break
+                self._last_error = str(exc) or repr(exc)
                 logger.warning("Tastytrade account stream disconnected; reconnecting", exc_info=True)
             first_attempt = False
             if self._stopped.is_set():

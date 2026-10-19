@@ -216,6 +216,15 @@ def map_status(status: str, *, has_fills: bool) -> OrderStatus:
     return mapped
 
 
+def is_still_arriving(data: Mapping[str, Any]) -> bool:
+    """Whether an order snapshot is still on its way to the exchange (`Routed`, `In Flight`, ...).
+
+    Such an order cannot be cancelled or replaced yet (the PUT/DELETE answers 422): a POST answers
+    `Routed` and the order turns `Live` about 0.2 s later (sandbox, 2026-10-19).
+    """
+    return data.get("status") in _SUBMITTED
+
+
 # --- parsing -------------------------------------------------------------------------------
 
 
