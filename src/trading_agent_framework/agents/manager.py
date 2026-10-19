@@ -158,9 +158,12 @@ class AgentHandle:
         `exempt_tools` (see `AgentManager.create`) returns an `{"error": ...}` without running, so the
         model finishes with what it has instead of overflowing its context. Each run starts a fresh count.
 
-        `max_steps`, when given, is LangGraph's `recursion_limit` for this run (its nodes executed: about 3 per model
-        turn, one for the model, one for the tools, one for a middleware hook): a run that reaches it raises `AgentLoopError`
-        instead of going on to LangGraph's own limit (9,999), e.g. a model resubmitting a rejected call for ever.
+        `max_steps`, when given, is LangGraph's `recursion_limit` for this run, which counts supersteps (rounds in which
+        the graph runs): a run that reaches it raises `AgentLoopError` instead of going on to LangGraph's own limit
+        (9,999), e.g. a model resubmitting a rejected call for ever. A tool call is a round trip of 3 supersteps (`model`,
+        the `ToolBudgetLimit.after_model` hook, `tools`), so a run whose model makes one call per turn takes 3 x calls + 5
+        steps (the submit round trip and the closing turn included) and passes with a limit of that + 1; calls requested
+        together in one turn run in one superstep. Measured on this stack, without compaction.
         """
         if tool_budget is not None and tool_budget < 0:
             raise ValueError(f"tool_budget must be at least 0, got {tool_budget}")

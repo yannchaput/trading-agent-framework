@@ -29,8 +29,8 @@ class BullBearParams:
     research_tool_budget: int = 5  # tool calls per researcher run; submit_note is exempt
     research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     # LangGraph steps one agent run may take before it counts as a loop and abandons the review: a model resubmitting a rejected
-    # call for ever. About 3 steps per model turn: a normal run needs at most ~25 (the judge using its 6 memory calls), a rejected
-    # resubmission adds ~3.
+    # call for ever. LangGraph supersteps: a tool call is a round trip of 3, a run takes 3 x calls + 5 at worst, so a normal run
+    # needs a limit of at most 24 (the judge using its 6 memory calls); a rejected resubmission adds 3.
     max_agent_steps: int = 60
     judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
     note_max_chars: int = 500  # the length the researcher is asked for

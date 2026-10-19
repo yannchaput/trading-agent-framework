@@ -19,7 +19,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.feedback_reviews == 4
     assert params.judge_memory_budget == 6
     assert params.research_news is True
-    assert params.max_agent_steps == 60  # a normal run needs at most ~25 steps (a judge using all 6 memory calls), each rejected resubmission adds ~3
+    assert params.max_agent_steps == 60  # a normal run needs a limit of at most 24 (a judge using all 6 memory calls), each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 600)  # the researcher is asked for 500, a note up to 600 is kept
     assert params.max_output_tokens == 12288  # above every call that worked in the 10-17 run (max 11k), below every runaway (19k+)
 
