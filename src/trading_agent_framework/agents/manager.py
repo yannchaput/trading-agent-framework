@@ -22,7 +22,7 @@ from trading_agent_framework.agents.output_cap import output_cap_middleware
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
 from trading_agent_framework.memory.tools import agent_call_context, current_forced_tool
-from trading_agent_framework.utils.errors import AgentError, ConfigurationError, LLMStatsError
+from trading_agent_framework.utils.errors import AgentError, AgentLoopError, ConfigurationError, LLMStatsError
 from trading_agent_framework.utils.log import ColorLogger
 
 if TYPE_CHECKING:
@@ -139,6 +139,7 @@ class AgentHandle:
         run_id: str | None = None,
         force_tool: str | None = None,
         tool_budget: int | None = None,
+        max_steps: int | None = None,
     ) -> AgentRunResult:
         """`run_id` defaults to a fresh id (one per run: memory tools dedupe repeats inside it).
 
@@ -156,19 +157,30 @@ class AgentHandle:
         `tool_budget`, when given, caps this run's tool calls: past it, every tool but the agent's
         `exempt_tools` (see `AgentManager.create`) returns an `{"error": ...}` without running, so the
         model finishes with what it has instead of overflowing its context. Each run starts a fresh count.
+
+        `max_steps`, when given, is LangGraph's `recursion_limit` for this run (its nodes executed: about 3 per model
+        turn, one for the model, one for the tools, one for a middleware hook): a run that reaches it raises `AgentLoopError`
+        instead of going on to LangGraph's own limit (9,999), e.g. a model resubmitting a rejected call for ever.
         """
         if tool_budget is not None and tool_budget < 0:
             raise ValueError(f"tool_budget must be at least 0, got {tool_budget}")
+        if max_steps is not None and max_steps < 1:
+            raise ValueError(f"max_steps must be at least 1, got {max_steps}")
         message = task_prompt if context is None else f"{task_prompt}\n\nContext:\n{context}"
         run_id = run_id or uuid.uuid4().hex
         if self._limiter is not None:
             self._limiter.run_limit = tool_budget
         try:
             with agent_call_context(run_id=run_id, force_tool=force_tool):
-                raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]})
+                config = {"recursion_limit": max_steps} if max_steps is not None else {}
+                raw_result = self._agent.invoke({"messages": [{"role": "user", "content": message}]}, config=config)
             logger.log_debug(f"Model returned this raw messages: {str(raw_result)}")
             return parse_agent_messages(raw_result["messages"])
         except Exception as exc:
+            from langgraph.errors import GraphRecursionError
+
+            if isinstance(exc, GraphRecursionError) and max_steps is not None:
+                raise AgentLoopError(f"agent {self.name!r} looped: stopped after {max_steps} steps") from exc
             raise AgentError(f"agent {self.name!r} failed: {exc}") from exc
         finally:
             if self._limiter is not None:

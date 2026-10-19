@@ -35,14 +35,23 @@ from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.scoring import MomentumRow, rank, score_stock
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError
+from trading_agent_framework.utils.errors import AgentError, AgentLoopError, BacktestError, BrokerError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
 
 
 class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
+    def run(
+        self,
+        task_prompt: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+        run_id: str | None = None,
+        force_tool: str | None = None,
+        tool_budget: int | None = None,
+        max_steps: int | None = None,
+    ) -> AgentRunResult: ...
 
 
 class AgentLookup(Protocol):
@@ -57,6 +66,10 @@ class ReviewAbandoned(Exception):
     def __init__(self, stage: str, message: str) -> None:
         super().__init__(message)
         self.stage = stage
+
+
+class AgentLooped(ReviewAbandoned):
+    """An agent run used up its step limit: raised at once, with no forced retry. The review is abandoned, except for the researcher, whose stock only loses its note."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +227,7 @@ class ReviewPipeline:
                     {"current_datetime": moment, "fact_sheet": sheets[symbol]},
                     tool_budget=params.research_tool_budget,
                 )
-            except ReviewAbandoned as exc:
+            except ReviewAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
                 strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
                 notes[symbol] = UNAVAILABLE_NOTE
                 continue
@@ -330,7 +343,7 @@ class ReviewPipeline:
             if attempt:
                 self._strategy.log_info(f"[{agent_name}] retrying with {tool} forced")
             try:
-                result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget)
+                result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget, max_steps=self._params.max_agent_steps)
                 stop = _stop_detail(result)
                 if calls_out is not None:
                     calls_out.extend(result.tool_calls)
@@ -338,6 +351,10 @@ class ReviewPipeline:
                     self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
+            except AgentLoopError as exc:
+                # Not retried: a fresh run of a model that just looped would only loop again, for as long.
+                self._strategy.log_error(f"[{agent_name}] run stopped as a loop: {exc}")
+                raise AgentLooped(agent_name, str(exc)) from exc
             except AgentError as exc:
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")

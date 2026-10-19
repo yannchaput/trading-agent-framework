@@ -42,7 +42,7 @@ class _Handle:
         self.tools, self.script, self.runs = tools, script, 0
         self.contexts: list[Any] = []  # the context of every run, in order
 
-    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
+    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None, max_steps: int | None = None) -> AgentRunResult:
         self.runs += 1
         self.contexts.append(context)
         self.script(self.tools, context)

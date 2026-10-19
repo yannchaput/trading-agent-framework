@@ -41,6 +41,10 @@ class AgentError(TradingFrameworkError):
     """Raised when building or running a LangChain agent fails (never a raw SDK exception)."""
 
 
+class AgentLoopError(AgentError):
+    """Raised when an agent run used up its step limit (`AgentHandle.run(max_steps=...)`): a loop, e.g. a submission rejected again and again."""
+
+
 class FatalStrategyError(TradingFrameworkError):
     """Raised from `on_trading_iteration` to abort the run; the executor otherwise logs an iteration failure and carries on."""
 

@@ -29,7 +29,7 @@ from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOT
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
-from trading_agent_framework.utils.errors import AgentError, BrokerError, ConfigurationError
+from trading_agent_framework.utils.errors import AgentError, AgentLoopError, BrokerError, ConfigurationError
 
 UNIVERSE = [f"S{i:02d}" for i in range(20)]  # S00 has the strongest momentum, S19 the weakest
 
@@ -75,8 +75,8 @@ class FakeAgent:
         self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason, total_tokens, reasoning_tokens
         self.output = "done"  # the run's closing text; "" is what a final tool's run reports (no closing turn)
 
-    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
-        self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
+    def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None, max_steps: int | None = None) -> AgentRunResult:
+        self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget, "max_steps": max_steps})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
         return AgentRunResult(output=self.output, tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls, **self.stop)
@@ -423,6 +423,53 @@ def test_a_debater_without_a_valid_submission_abandons_the_review_with_no_order(
     (line,) = h.log_lines()
     assert line["abandoned"] is True and line["stage"] == agent and tool in line["error"]
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}]  # what was known before the stage failed
+
+
+def _loops(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+    raise AgentLoopError("agent 'x' failed: stopped after 60 steps")
+
+
+@pytest.mark.parametrize("agent", ["bull", "bear", "judge"])
+def test_an_agent_that_loops_abandons_the_review_at_once_with_an_error_log_and_no_order(tmp_path: Path, caplog: pytest.LogCaptureFixture, agent: str) -> None:
+    h = _harness(tmp_path, held={"OLD": 20})
+    h.agents[agent].script = _loops
+
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert h.orders == []
+    assert len(h.agents[agent].calls) == 1  # no forced retry: a run that looped once would only loop again
+    errors = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.ERROR]
+    assert any(f"[{agent}]" in message and "60 steps" in message for message in errors)
+    (line,) = h.log_lines()
+    assert line["abandoned"] is True and line["stage"] == agent and "60 steps" in line["error"]
+    assert h.store.load().abandoned_streak == 1
+
+
+def test_a_researcher_that_loops_costs_that_stock_its_note_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    researcher = h.agents["researcher"]
+    researcher.overrides = [_loops]  # the first stock's run loops, the others work
+
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome.completed
+    assert len(researcher.calls) == len(h.agents["bull"].calls[0]["context"]["stocks"])  # one run per stock: the looping one was not retried
+    assert [stock["note"] for stock in h.agents["bull"].calls[0]["context"]["stocks"]][0] == UNAVAILABLE_NOTE
+    (line,) = h.log_lines()
+    assert line["abandoned"] is False and line["notes"]["failed"] == ["S00"]
+    messages = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records]
+    assert any("[researcher]" in message and "60 steps" in message for message in messages)
+
+
+def test_every_agent_run_gets_the_step_limit_of_the_settings(tmp_path: Path) -> None:
+    h = _harness(tmp_path, params=BullBearParams(max_agent_steps=45))
+
+    assert h.run().completed
+
+    assert {call["max_steps"] for agent in h.agents.values() for call in agent.calls} == {45}
 
 
 def test_a_corrected_submission_on_the_forced_retry_completes_the_review(tmp_path: Path) -> None:
