@@ -6,6 +6,7 @@ A trading agent harness managing runtime, the broker layer, agent layer, memory 
 
 | Goal | Commands |
 | --- | --- |
+| Sync dependencies | `uv sync` for core and `uv sync --extra dashboard` for dependencies like 'dashboard' |
 | Upgrade dependencies | `uv lock --upgrade` then `uv sync` to install them in .venv. |
 | Upgrade uv | `uv self update` |
 | To package and distribute | `uv build` |

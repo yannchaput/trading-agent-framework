@@ -2,7 +2,7 @@
 
 ## General
 
-* Migrate projects to the 2nd hard drive (with the models)
+* ~~ Migrate projects to the 2nd hard drive (with the models)~~
 * ~~Enable IBKR broker~~
 * Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
 * ~~Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)~~ => Too complex
