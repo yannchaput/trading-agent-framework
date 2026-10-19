@@ -113,8 +113,8 @@ step 5.
 
 The sandbox account streamer has refused every subscription with `queue-declare-failed` since about
 2026-09 (a Tastytrade-side outage, https://github.com/joaquinbejar/tastytrade/issues/160): the order smoke
-test then FAILs "the account stream subscribes", prints the streamer's reason, and still runs every step,
-reading order statuses over REST. Fractional and notional orders are not testable on AAPL in the sandbox (it refuses them with a
+test does not check the stream (it would always FAIL); it prints a NOTE with the streamer's reason and runs
+every step reading order statuses over REST. Restore the check once the sandbox streamer works again. Fractional and notional orders are not testable on AAPL in the sandbox (it refuses them with a
 `fractional_trading_invalid_symbol` preflight error).
 
     uv run python scripts/tests/smoke_tastytrade_account.py   # read-only: auth, account check, balances, positions
