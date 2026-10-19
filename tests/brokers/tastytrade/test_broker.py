@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from decimal import Decimal
 from typing import Any
@@ -52,8 +53,21 @@ def _market_data() -> AlpacaMarketData:
 
 
 @pytest.fixture
-def broker(session: FakeTastytradeSession) -> TastytradeBroker:
-    return TastytradeBroker("s", session, account_number=ACCOUNT, streamer_url="wss://streamer.cert.tastyworks.com", market_data=_market_data(), clock=FakeClock(et(2026, 10, 15, 10)))
+def naps() -> list[float]:
+    return []
+
+
+@pytest.fixture
+def broker(session: FakeTastytradeSession, naps: list[float]) -> TastytradeBroker:
+    return TastytradeBroker(
+        "s",
+        session,
+        account_number=ACCOUNT,
+        streamer_url="wss://streamer.cert.tastyworks.com",
+        market_data=_market_data(),
+        clock=FakeClock(et(2026, 10, 15, 10)),
+        sleep=naps.append,
+    )
 
 
 @pytest.fixture
@@ -228,6 +242,102 @@ def test_a_market_order_cannot_be_modified(broker: TastytradeBroker) -> None:
 
     with pytest.raises(OrderValidationError, match="can be modified"):
         broker.modify_order(order, limit_price=D(1))
+
+
+NOT_EDITABLE = TastytradeHTTPError(422, f"Tastytrade PUT {ORDERS}/1001: 422 cannot_update_order: The order could not be updated.")
+
+
+def _refused_then(answer: Any, refusals: int = 1) -> Any:
+    """A write answer refused with a 422 `refusals` times, then `answer` (the order was still on its way to the exchange)."""
+    calls = {"n": 0}
+
+    def write(json: Any, params: Any) -> Any:
+        calls["n"] += 1
+        return NOT_EDITABLE if calls["n"] <= refusals else answer
+
+    return write
+
+
+def test_a_cancel_refused_while_the_order_is_still_routing_is_resent(broker: TastytradeBroker, session: FakeTastytradeSession, naps: list[float]) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(status="Routed", external=order.client_order_id, cancellable=False, editable=False)
+    session.responses[("DELETE", f"{ORDERS}/1001")] = _refused_then({})
+
+    broker.cancel_order(order)
+
+    assert [c[:2] for c in session.calls if c[0] == "DELETE"] == [("DELETE", f"{ORDERS}/1001")] * 2
+    assert len(naps) == 1
+
+
+def test_a_modify_refused_while_the_order_is_still_routing_is_resent(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(status="In Flight", external=order.client_order_id, cancellable=False, editable=False)
+    replacement = make_tt_order(order_id=1002, status="Contingent", external=order.client_order_id, **{"replaces-order-id": 1001})
+    session.responses[("PUT", f"{ORDERS}/1001")] = _refused_then(replacement, refusals=2)
+
+    broker.modify_order(order, limit_price=D(151))
+
+    assert len([c for c in session.calls if c[0] == "PUT"]) == 3
+    assert (order.limit_price, broker._events.tt_id_of(order)) == (D(151), "1002")
+
+
+def test_a_422_on_a_working_order_is_not_resent(broker: TastytradeBroker, session: FakeTastytradeSession, naps: list[float]) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(status="Filled", external=order.client_order_id, cancellable=False, editable=False)
+    session.responses[("DELETE", f"{ORDERS}/1001")] = NOT_EDITABLE
+
+    with pytest.raises(BrokerError, match="cannot_update_order"):
+        broker.cancel_order(order)
+
+    assert len([c for c in session.calls if c[0] == "DELETE"]) == 1
+    assert naps == []
+
+
+def test_a_cancel_still_refused_once_the_wait_runs_out_raises(broker: TastytradeBroker, session: FakeTastytradeSession, naps: list[float]) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(status="Routed", external=order.client_order_id, cancellable=False, editable=False)
+    session.responses[("DELETE", f"{ORDERS}/1001")] = NOT_EDITABLE
+
+    with pytest.raises(BrokerError, match="cannot_update_order"):
+        broker.cancel_order(order)
+
+    deletes = len([c for c in session.calls if c[0] == "DELETE"])
+    assert deletes > 1
+    assert len(naps) == deletes - 1
+    assert sum(naps) <= 3.0
+
+
+def test_wait_for_stream_reports_a_refused_subscription(session: FakeTastytradeSession) -> None:
+    class Refusing:
+        def send(self, message: str) -> None:
+            self.request_id = json.loads(message)["request-id"]
+
+        def recv(self, timeout: float | None = None) -> str:
+            return json.dumps({"action": "connect", "status": "error", "message": "queue-declare-failed", "request-id": self.request_id})
+
+        def close(self) -> None:
+            pass
+
+    broker = TastytradeBroker("s", session, account_number=ACCOUNT, streamer_url="wss://x", market_data=_market_data(), clock=FakeClock(et(2026, 10, 15, 10)), stream_connect=lambda url: Refusing())
+    assert broker.stream_error is None
+
+    broker.start_stream()
+    try:
+        assert not broker.wait_for_stream(0.3)
+        assert "queue-declare-failed" in (broker.stream_error or "")
+    finally:
+        broker.stop_stream()
+
+
+def test_an_uncertain_cancel_is_never_resent(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = broker.submit_order(_limit())
+    session.responses[("GET", f"{ORDERS}/1001")] = make_tt_order(status="Routed", external=order.client_order_id, cancellable=False, editable=False)
+    session.responses[("DELETE", f"{ORDERS}/1001")] = BrokerUncertainError("read timeout")
+
+    with pytest.raises(BrokerUncertainError):
+        broker.cancel_order(order)
+
+    assert len([c for c in session.calls if c[0] == "DELETE"]) == 1
 
 
 # --- positions, account, orders -----------------------------------------------------------------
