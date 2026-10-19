@@ -30,6 +30,8 @@
 ## Tests
 
 * Test Typesafe.AI sur news binary.
+* [Deep Agents](https://reference.langchain.com/python/deepagents)
+* [Deep Agents tutorial](https://docs.langchain.com/oss/python/deepagents/data-analysis)
 
 ## Evolutions
 

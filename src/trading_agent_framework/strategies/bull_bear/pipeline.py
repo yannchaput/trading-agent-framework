@@ -352,10 +352,11 @@ class ReviewPipeline:
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentLoopError as exc:
-                # Not retried: a fresh run of a model that just looped would only loop again, for as long.
+                # The run reached the maximum number of steps: the model looped. The review is abandoned, no retry: a retry would only loop again.
                 self._strategy.log_error(f"[{agent_name}] run stopped as a loop: {exc}")
                 raise AgentLooped(agent_name, str(exc)) from exc
             except AgentError as exc:
+                # Any other failure than AgentLoopError: the run will trigger a retry with a force submission.
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
             if self._recorder.submitted:
