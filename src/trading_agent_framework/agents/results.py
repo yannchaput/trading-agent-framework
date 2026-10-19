@@ -28,10 +28,13 @@ class AgentRunResult:
     tool_calls: list[ToolCallRecord]
     # How the run's last model call ended, `None` where the provider reports nothing: `finish_reason` is "stop",
     # "tool_calls" or "length" (the output cap or context window was hit, so a reasoning model may have spent
-    # everything on thinking); the token counts are that call's (prompt + completion, and the reasoning share).
+    # everything on thinking); the token counts are that call's: prompt (`input_tokens`), completion (`output_tokens`,
+    # which the output cap bounds), its reasoning share, and prompt + completion (`total_tokens`).
     finish_reason: str | None = None
-    total_tokens: int | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     reasoning_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
@@ -71,7 +74,15 @@ def parse_agent_messages(messages: Sequence[Any]) -> AgentRunResult:
         return AgentRunResult(output=output, tool_calls=tool_calls)
     usage = usage_from_message(last_ai)
     finish_reason = (getattr(last_ai, "response_metadata", None) or {}).get("finish_reason")
-    return AgentRunResult(output=output, tool_calls=tool_calls, finish_reason=finish_reason, total_tokens=usage.total_tokens, reasoning_tokens=usage.reasoning_tokens)
+    return AgentRunResult(
+        output=output,
+        tool_calls=tool_calls,
+        finish_reason=finish_reason,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        reasoning_tokens=usage.reasoning_tokens,
+        total_tokens=usage.total_tokens,
+    )
 
 
 def _as_text(content: object) -> str:

@@ -158,13 +158,13 @@ def test_the_last_ai_message_gives_the_stop_reason_and_token_counts() -> None:
 
     result = parse_agent_messages(messages)
 
-    assert (result.finish_reason, result.total_tokens, result.reasoning_tokens) == ("length", 32768, 22699)
+    assert (result.finish_reason, result.input_tokens, result.output_tokens, result.reasoning_tokens, result.total_tokens) == ("length", 10069, 22699, 22699, 32768)
 
 
 def test_a_run_whose_messages_report_no_stop_reason_or_usage_leaves_them_none() -> None:
     result = parse_agent_messages([_human("hi"), _ai("hello")])
 
-    assert (result.finish_reason, result.total_tokens, result.reasoning_tokens) == (None, None, None)
+    assert (result.finish_reason, result.input_tokens, result.output_tokens, result.reasoning_tokens, result.total_tokens) == (None, None, None, None, None)
 
 
 def test_the_stop_reason_is_the_last_ai_messages_not_an_earlier_tool_call_turn() -> None:
