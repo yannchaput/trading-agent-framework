@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -43,6 +44,9 @@ logger = logging.getLogger(__name__)
 
 _Prices = tuple[Decimal | None, Decimal | None, Decimal | None]  # limit, stop, stop-limit
 _MODIFIABLE = frozenset({OrderType.LIMIT, OrderType.STOP, OrderType.STOP_LIMIT})
+# A cancel or replace refused (422) while the order is still arriving is resent this often, this far apart.
+_ARRIVING_ATTEMPTS = 8
+_ARRIVING_WAIT = 0.25  # seconds
 
 
 _CONFIRMED_MISSES = 2  # counted conclusive lookups that must miss an unknown write before it is ruled out
@@ -83,6 +87,7 @@ class TastytradeBroker(Broker):
         is_paper: bool = True,
         news_provider_factory: Callable[[], NewsProvider] | None = None,
         stream_connect: Callable[[str], StreamSocket] | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         super().__init__(
             strategy_name,
@@ -97,6 +102,7 @@ class TastytradeBroker(Broker):
         self._news_provider_factory = news_provider_factory
         self._events = TastytradeOrderEvents(self.tracker, strategy_name)
         self._eligible: dict[str, bool] = {}
+        self._sleep = sleep
         # Writes whose outcome is unknown: only _resolve_unknown_writes decides them (serialized by this lock).
         self._resolve_lock = threading.RLock()
         self._unknown: dict[str, _Unknown] = {}
@@ -304,9 +310,32 @@ class TastytradeBroker(Broker):
         if entry is not None:
             raise BrokerUncertainError(f"cannot {action} order {order.identifier}: an earlier {entry.kind} has an unresolved outcome at Tastytrade -- check the account")
 
+    def _write_once_arrived[T](self, tt_id: str, write: Callable[[], T]) -> T:
+        """`write` (a PUT or DELETE of order `tt_id`), resent while a 422 comes from the order still arriving.
+
+        Only a clean 422 is resent: nothing happened (the order stays as it was). An unknown outcome
+        (`BrokerUncertainError`) never is, and neither is a 422 on an order that is no longer arriving.
+        """
+        for attempt in range(1, _ARRIVING_ATTEMPTS + 1):
+            try:
+                return write()
+            except TastytradeHTTPError as exc:
+                if exc.status_code != 422 or attempt == _ARRIVING_ATTEMPTS or not self._still_arriving(tt_id):
+                    raise
+            self._sleep(_ARRIVING_WAIT)
+        raise AssertionError("unreachable")
+
+    def _still_arriving(self, tt_id: str) -> bool:
+        try:
+            return orders.is_still_arriving(self._session.get(self._path(f"/orders/{tt_id}")))
+        except BrokerError:
+            logger.exception("Re-reading Tastytrade order %s after a refused write failed", tt_id)
+            return False
+
     def cancel_order(self, order: Order) -> None:
         self._require_resolved(order, "cancel")
-        self._session.delete(self._path(f"/orders/{self._tt_id(order)}"))
+        tt_id = self._tt_id(order)
+        self._write_once_arrived(tt_id, lambda: self._session.delete(self._path(f"/orders/{tt_id}")))
 
     def modify_order(
         self,
@@ -333,7 +362,7 @@ class TastytradeBroker(Broker):
         unknown: str | None = None
         replacement: Mapping[str, Any] | None = None
         try:
-            response = self._session.put(self._path(f"/orders/{tt_id}"), json=body)
+            response = self._write_once_arrived(tt_id, lambda: self._session.put(self._path(f"/orders/{tt_id}"), json=body))
         except BrokerUncertainError as exc:
             unknown = str(exc)
         except Exception:
@@ -635,6 +664,15 @@ class TastytradeBroker(Broker):
 
     def start_stream(self) -> None:
         self._stream.start()
+
+    def wait_for_stream(self, timeout: float) -> bool:
+        """Whether the account stream is subscribed, waiting up to `timeout` seconds for it."""
+        return self._stream.wait_subscribed(timeout)
+
+    @property
+    def stream_error(self) -> str | None:
+        """Why the account stream last failed to connect or dropped, or None."""
+        return self._stream.last_error
 
     def stop_stream(self, timeout: float = 5.0) -> None:
         try:

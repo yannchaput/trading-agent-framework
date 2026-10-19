@@ -339,8 +339,8 @@ Manual (`scripts/tests/`, sandbox only, `SKIP:` and exit 0 without `TASTYTRADE_*
 
 - **No trailing stops**: `OrderType.TRAIL` is rejected, so `earnings_drift` cannot trade on
   Tastytrade. Client-side emulation would be its own project.
-- **No forward-testing on Tastytrade**: the sandbox's fills are synthetic, so strategies never run
-  against it; forward-test on Alpaca paper, trade live on Tastytrade.
+- **No forward-testing on Tastytrade**: the sandbox resets daily (and its fills are not the documented
+  synthetic ones, see section 11), so strategies never run against it; forward-test on Alpaca paper, trade live on Tastytrade.
 - **Market data is Alpaca IEX** in live trading, as for IBKR.
 - **No dashboard tab** for Tastytrade accounts.
 - **No idempotency**: Tastytrade does not deduplicate orders, so a write is never retried or resent.
@@ -391,4 +391,17 @@ Recorded from the output of `scripts/tests/probe_tastytrade_orders.py`, run by h
 | Cancel a `Rejected` order | 422 | `cancel_order` surfaces it as `TastytradeHTTPError`; the broker never cancels terminal orders itself. |
 
 Still unverified after the probe: the streamer `auth-token` format (`Bearer <token>` vs the bare token), the
-fractional/notional path on an eligible symbol, and the `Live`/`Routed`/`In Flight`/`Contingent` status strings.
+fractional/notional path on an eligible symbol, and the `Live`/`Routed`/`In Flight`/`Contingent` status strings
+(the auth-token format and the status strings were confirmed on 2026-10-19, section 11.1).
+
+### 11.1 Market-hours run (2026-10-19, ~14:00 ET)
+
+Probe orders sent by hand (REST and websocket, outside the broker) while troubleshooting the order smoke test.
+
+| Question | Finding | Consequence for the code |
+|---|---|---|
+| Streamer `auth-token` | `Bearer <token>` passes auth; a bare token, a lowercase `bearer` and garbage all get `Unknown domain` | `stream.auth_token_value` confirmed. |
+| Streamer `connect` | Every connect naming the sandbox account answers `status: error`, `queue-declare-failed` (5 tries 6 s apart; request-id int or string, value list or string, with or without `source`). A wrong account gets `failed`, an empty value `value missing or not valid`; a heartbeat gets `ok`. Same refusal reported since ~2026-09, portal tool included ([joaquinbejar/tastytrade#160](https://github.com/joaquinbejar/tastytrade/issues/160)) | A Tastytrade-side outage: no code fix. `wait_for_stream`/`stream_error` expose it; the order smoke test prints a NOTE (no check, it would always FAIL) and polls REST (`reconcile`). Order notifications stay untested. |
+| Fresh order statuses | POST answers `Routed` (`editable`/`cancellable` false); a GET 0.2 s later shows `Live` (`In Flight` seen briefly once). A replacement answers `Contingent`, then `Live` | The `Routed`/`In Flight`/`Live`/`Contingent` strings are confirmed. |
+| Replace/cancel while `Routed` | A PUT right after the POST: 422 `cannot_update_order`, the original stays `Live`, no replacement is created. The same PUT on the `Live` order succeeds | A 422 while the order is still arriving is resent (`_write_once_arrived`, 0.25 s apart, up to 8 attempts); safe because the refused write changed nothing. |
+| Fills | Market buy and sell of 1 AAPL filled at $342.56 / $342.57 (Alpaca IEX last trade $342.585); $1, $2 and $2.99 limit buys rested `Live` | The documented synthetic fills ($1 market, limits under $3 at once) do not happen during market hours. The order smoke test's fill step is a market buy. |
