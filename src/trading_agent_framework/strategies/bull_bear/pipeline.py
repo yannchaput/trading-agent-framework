@@ -334,10 +334,8 @@ class ReviewPipeline:
                 stop = _stop_detail(result)
                 if calls_out is not None:
                     calls_out.extend(result.tool_calls)
-                if result.output:  # empty when a final tool ended the run with no closing turn, or the model spent its window thinking
+                if result.output:  # empty when a final tool ended the run with no closing turn (the normal case), or the model spent its window thinking (warned about below, with `stop`)
                     self._strategy.log_info(f"[{agent_name}] {result.output}")
-                else:
-                    self._strategy.log_warning(f"[{agent_name}] Model provided no output for reason:{stop}")
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentError as exc:

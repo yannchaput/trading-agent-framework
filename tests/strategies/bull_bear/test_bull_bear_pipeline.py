@@ -73,12 +73,13 @@ class FakeAgent:
         self.tool_calls: list[ToolCallRecord] = []
         self.attempt_tool_calls: list[list[ToolCallRecord]] = []  # the next runs' tool calls, one list per run, before `tool_calls`
         self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason, total_tokens, reasoning_tokens
+        self.output = "done"  # the run's closing text; "" is what a final tool's run reports (no closing turn)
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
-        return AgentRunResult(output="done", tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls, **self.stop)
+        return AgentRunResult(output=self.output, tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls, **self.stop)
 
 
 def notes(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
@@ -641,6 +642,36 @@ def test_the_no_submit_warning_is_unchanged_when_the_run_reports_nothing(tmp_pat
 
     (message,) = _no_submit_warnings(caplog)
     assert message.endswith("[judge] the agent ended without calling submit_verdicts")
+
+
+def _empty_output_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [message for message in (re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.WARNING) if "provided no output" in message]
+
+
+def test_a_run_a_final_tool_ended_after_a_valid_submission_logs_no_empty_output_warning(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    for agent in h.agents.values():
+        agent.output = ""  # a final tool ends the run with no closing turn: no text, no finish_reason
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    assert _empty_output_warnings(caplog) == []
+
+
+def test_a_run_with_no_output_and_no_submission_is_warned_about_once_with_how_it_ended(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    judge = h.agents["judge"]
+    judge.overrides = [does_nothing]
+    judge.output = ""
+    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+
+    with caplog.at_level(logging.INFO):
+        assert h.run().completed
+
+    assert _empty_output_warnings(caplog) == []  # the one warning is the no-submit one, which already carries the detail
+    (message,) = _no_submit_warnings(caplog)  # the first run's: the retry submitted
+    assert "finish_reason=length" in message and "22699 reasoning" in message
 
 
 def _info_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
