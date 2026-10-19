@@ -28,7 +28,8 @@ def test_latency_is_plotted_in_seconds_against_call_time() -> None:
 
     latency = fig.data[0]
     assert list(latency.y) == [1.5, 0.25, 2.0]
-    assert [pd.Timestamp(x) for x in latency.x] == list(_calls()["ts"])
+    # plotly 7 hands UTC-aware timestamps back as naive UTC datetime64, plotly 5 as aware datetimes: compare instants.
+    assert list(pd.to_datetime(list(latency.x), utc=True)) == list(_calls()["ts"])
 
 
 def test_total_tokens_are_plotted_with_unreported_calls_left_as_gaps_not_zeros() -> None:
