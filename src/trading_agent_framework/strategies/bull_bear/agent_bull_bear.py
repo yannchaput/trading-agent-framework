@@ -29,7 +29,6 @@ from trading_agent_framework.strategies.bull_bear.parameters import BullBearPara
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateStore, state_path
-from trading_agent_framework.strategies.bull_bear.thinking import thinking_guards
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
@@ -103,9 +102,9 @@ class BullBearStrategy(Strategy):
 
             temperature = self.settings.agent_temperature
 
-            # Every agent: an output cap per model call, and thinking turned off where it ran away (`thinking.py`).
-            def guarded(agent: str, submit_tool: str) -> dict[str, Any]:
-                return {"max_output_tokens": self.settings.max_output_tokens, "middleware": thinking_guards(agent, submit_tool, self.log_warning)}
+            # Every agent: an output cap per model call. A run it stops, or whose submission is rejected, is not corrected in
+            # place: it ends and the pipeline's forced retry is a fresh run (corrective prompt, submit tool forced, thinking on).
+            cap = self.settings.max_output_tokens
 
             sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
@@ -117,11 +116,11 @@ class BullBearStrategy(Strategy):
                 exempt_tools=["submit_note"],
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
                 compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
-                **guarded("researcher", "submit_note"),
+                max_output_tokens=cap,
             )
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             for name, system_prompt, tool in (("bull", BULL_SYSTEM, "submit_bull_case"), ("bear", BEAR_SYSTEM, "submit_bear_case")):
-                self.agents.create(name=name, system_prompt=system_prompt, tools=[submit[tool]], temperature=temperature, final_tools=[tool], **guarded(name, tool))
+                self.agents.create(name=name, system_prompt=system_prompt, tools=[submit[tool]], temperature=temperature, final_tools=[tool], max_output_tokens=cap)
             # The judge also keeps lessons between reviews (`strategy.memory`, wiped at the start of every backtest).
             lessons = only(memory_tools(self.memory), _JUDGE_MEMORY_TOOLS)
             self.agents.create(
@@ -132,7 +131,7 @@ class BullBearStrategy(Strategy):
                 exempt_tools=["submit_verdicts"],
                 final_tools=["submit_verdicts"],
                 compact_history=True,
-                **guarded("judge", "submit_verdicts"),
+                max_output_tokens=cap,
             )
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).

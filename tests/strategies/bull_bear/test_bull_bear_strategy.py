@@ -12,7 +12,7 @@ from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.strategies.bull_bear import BullBearStrategy, agent_bull_bear
+from trading_agent_framework.strategies.bull_bear import BullBearStrategy
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore, state_path
@@ -125,20 +125,15 @@ def test_every_agent_gets_the_output_cap_of_the_settings(tmp_path: Path) -> None
     assert strategy.parameters["max_output_tokens"] == 9000  # recorded in settings.json: runs with another cap can be told apart
 
 
-def test_every_agent_gets_the_thinking_guards_of_its_own_submit_tool(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    built: list[tuple[str, str]] = []
-
-    def recording_guards(agent: str, submit_tool: str, log: Any) -> list[str]:
-        built.append((agent, submit_tool))
-        return [f"guards of {agent}"]
-
-    monkeypatch.setattr(agent_bull_bear, "thinking_guards", recording_guards)
+def test_no_agent_gets_a_middleware_that_corrects_a_run_in_place(tmp_path: Path) -> None:
+    # A run stopped at the output cap, or whose submission was rejected, ends and the pipeline starts a FRESH run with a
+    # corrective prompt, the submit tool forced and thinking on: an in-run correction (thinking off, tool forced) did not work.
     strategy, agents = _strategy(tmp_path)
 
     strategy.initialize()
 
-    assert sorted(built) == [("bear", "submit_bear_case"), ("bull", "submit_bull_case"), ("judge", "submit_verdicts"), ("researcher", "submit_note")]
-    assert {created["name"]: created["middleware"] for created in agents.created} == {name: [f"guards of {name}"] for name in ("researcher", "bull", "bear", "judge")}
+    assert [created["name"] for created in agents.created] == ["researcher", "bull", "bear", "judge"]
+    assert all("middleware" not in created for created in agents.created)
 
 
 def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_source_is_needed(tmp_path: Path) -> None:
