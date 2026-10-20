@@ -57,13 +57,26 @@ class StrategyExecutor:
         self._wake.set()
 
     def run(self) -> None:
+        """Run the strategy's whole lifecycle on the calling thread, until the calendar ends or `stop()` is called.
+
+        Setup: adopt open orders from before a restart, start the order stream, then `initialize`. Sessions follow.
+        Ctrl-C and SIGTERM (turned into KeyboardInterrupt for this run) call `on_abrupt_closing` instead of
+        propagating. Any other exception (a failed `initialize`, a `FatalStrategyError`) propagates after teardown.
+
+        Teardown always runs: `on_strategy_end` runs only if `initialize` succeeded, after pending order events are
+        dispatched. The stream is stopped, this run's event queue is detached and SIGTERM is restored, even if a
+        hook fails.
+        """
         strategy = self.strategy
         broker = strategy.broker
         self._stop.clear()
+        # Order events from the broker's stream thread are queued and dispatched here, on this thread.
         broker.tracker.listeners.append(self._events)
         restore_sigterm = self._install_sigterm_handler()
+        # Only a strategy whose `initialize` succeeded gets `on_strategy_end`.
         initialized = False
         try:
+            # Adopt orders left open by a previous run before the stream can report on them.
             broker.sync_open_orders()
             broker.start_stream()
             self._initialize()
@@ -76,9 +89,11 @@ class StrategyExecutor:
         finally:
             try:
                 if initialized:
+                    # Flush events still queued so the last fills reach the strategy before it ends.
                     self._dispatch_events()
                     self._call_hook(strategy.on_strategy_end)
             finally:
+                # Teardown must finish even if stopping the stream fails, so the error is logged, not raised.
                 try:
                     broker.stop_stream()
                 except Exception:
@@ -173,9 +188,16 @@ class StrategyExecutor:
         self._call_hook(strategy.after_market_closes)
 
     def _trade(self, session: MarketSession) -> None:
+        """Run the session's trading iterations, from its first iteration time until the trading cutoff.
+
+        The cutoff is `minutes_before_closing` before the close: no iteration starts at or after it. Iterations
+        start at the first iteration time (`_iteration_start`), then follow `strategy.sleeptime`: an interval
+        (e.g. "5m") ticks on a fixed grid, a session count (e.g. "1D") iterates once per due session.
+        """
         strategy = self.strategy
         stop_at = session.close - timedelta(minutes=strategy.minutes_before_closing)
         start = self._iteration_start(session)
+        # The first iteration time is already in the closing window (or after it): nothing to run this session.
         if start >= stop_at:
             logger.warning(
                 "No iteration for %s this session: iteration_start_time %s is not before %s",
@@ -185,20 +207,25 @@ class StrategyExecutor:
             )
             self.wait_until(stop_at)
             return
+        # A late start (e.g. a restart after the first iteration time) runs at once, not at the missed tick.
         tick = max(start, self._now())
         while not self._stop.is_set():
             self.wait_until(min(tick, stop_at))
             if self._stop.is_set() or self._now() >= stop_at:
                 return
+            # Re-read per tick: the strategy may change its sleeptime during an iteration.
             sleeptime = parse_sleeptime(strategy.sleeptime)
+            # Session-based sleeptime: skip this session unless enough sessions have passed since the last iteration.
             if sleeptime.sessions is not None and not self._iteration_due(sleeptime.sessions):
                 self.wait_until(stop_at)
                 return
             self._iterate()
-            sleeptime = parse_sleeptime(strategy.sleeptime)  # the iteration may change it
+            # Re-parse after the iteration, since it may have changed the sleeptime.
+            sleeptime = parse_sleeptime(strategy.sleeptime)
             if sleeptime.interval is None:
                 self.wait_until(stop_at)
                 return  # session-based sleeptime: one iteration per due session
+            # Next tick on the interval grid after now; ticks that already passed (an overrun) are skipped and logged.
             tick, skipped = next_tick(tick, sleeptime.interval, self._now())
             if skipped:
                 logger.warning(
@@ -221,6 +248,11 @@ class StrategyExecutor:
         return last is None or self._session_index - last >= sessions
 
     def _iterate(self) -> None:
+        """Run one `on_trading_iteration` and mark this session as iterated.
+
+        Any exception is reported through `on_bot_crash` and the run carries on, except `FatalStrategyError`, which
+        is reported the same way and then re-raised to end the run. `first_iteration` is cleared either way.
+        """
         strategy = self.strategy
         self._last_iteration_session = self._session_index
         logger.info("Trading iteration of %s at %s | portfolio value: %s", strategy.name, self._now().isoformat(), self._portfolio_value())
@@ -311,15 +343,22 @@ class StrategyExecutor:
 
     def _install_sigterm_handler(self) -> Callable[[], None]:
         """Turn SIGTERM into KeyboardInterrupt for this run; returns the undo function."""
+        # Python only allows signal handlers on the main thread. Off it, do nothing
+        # and return a no-op undo so callers can always call the result.
         if threading.current_thread() is not threading.main_thread():
             return lambda: None  # signal handlers can only be installed on the main thread
+        # Remember whatever handler was active (it may be None if it was set outside Python).
         previous = signal.getsignal(signal.SIGTERM)
 
+        # Raising KeyboardInterrupt lets a SIGTERM (sent by a process supervisor, for example)
+        # take the same shutdown path as Ctrl-C, so the run ends cleanly instead of being killed.
         def interrupt(signum: int, frame: FrameType | None) -> None:
             raise KeyboardInterrupt
 
         signal.signal(signal.SIGTERM, interrupt)
 
+        # Put the previous handler back once the run ends. If there was none (None),
+        # fall back to SIG_DFL, the OS default, since signal.signal() cannot accept None.
         def restore() -> None:
             signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
 
