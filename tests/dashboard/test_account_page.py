@@ -12,7 +12,7 @@ from tests.fakes import make_api_error
 from trading_agent_framework.dashboard import account_reader
 from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition
 
-KEYS = "ALPACA_API_KEY=k\nALPACA_API_SECRET=s\nALPACA_DATA_API_KEY=dk\nALPACA_DATA_API_SECRET=ds\n"
+KEYS = "DASHBOARD_DISPLAY=true\nALPACA_API_KEY=k\nALPACA_API_SECRET=s\nALPACA_DATA_API_KEY=dk\nALPACA_DATA_API_SECRET=ds\n"
 
 PNL = AccountPnl(
     days=[{"date": "2026-10-12", "realized": 0.0, "unrealized": 20.0}, {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0}],
@@ -135,7 +135,7 @@ def test_an_alpaca_error_is_shown_not_raised(env_dir: Path, monkeypatch: pytest.
 
 
 def test_blank_keys_name_the_variable_and_never_a_value(env_dir: Path) -> None:
-    (env_dir / ".env.alpha.paper").write_text("ALPACA_API_KEY=\nALPACA_API_SECRET=t0p-s3cret\n", encoding="utf-8")
+    (env_dir / ".env.alpha.paper").write_text("DASHBOARD_DISPLAY=true\nALPACA_API_KEY=\nALPACA_API_SECRET=t0p-s3cret\n", encoding="utf-8")
     at = AppTest.from_function(_paper_script, default_timeout=30)  # the real load_strategy_pnl: fails before any network
     at.run()
 
@@ -169,6 +169,17 @@ def test_a_mode_without_env_files_says_how_to_add_one(tmp_path: Path, monkeypatc
 
     assert not at.exception
     assert ".env.<strategy>.paper" in at.info[0].value
+    assert "DASHBOARD_DISPLAY=true" in at.info[0].value
+
+
+def test_env_files_without_dashboard_display_leave_the_tab_empty_and_say_why(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (env_dir / ".env.alpha.live").write_text("BROKER_API_IS_PAPER=false\nALPACA_API_KEY=k\nALPACA_API_SECRET=s\n", encoding="utf-8")
+    at, calls = _run(_live_script, monkeypatch, PNL)
+
+    assert not at.exception
+    assert not at.sidebar.selectbox
+    assert calls == []
+    assert "DASHBOARD_DISPLAY=true" in at.info[0].value
 
 
 def test_a_brokers_unrealized_figure_on_another_cost_basis_is_explained(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:

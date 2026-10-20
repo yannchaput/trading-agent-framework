@@ -84,7 +84,7 @@ def page_account(mode: str) -> None:
     st.title(mode.capitalize())
     strategies = account_reader.strategies_for_mode(mode, account_reader.default_env_dir())
     if not strategies:
-        st.info(f"No strategy trades {mode} on Alpaca: add an env/.env.<strategy>.{mode} file with BROKER=alpaca.")
+        st.info(f"No strategy to show for {mode} on Alpaca: add DASHBOARD_DISPLAY=true to an env/.env.<strategy>.{mode} file with BROKER=alpaca.")
         return
 
     # The choice is kept under a plain session key: Streamlit drops the widget's own state on a run that does not
