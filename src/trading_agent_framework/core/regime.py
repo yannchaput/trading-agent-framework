@@ -88,9 +88,12 @@ def classify_regime(closes: Sequence[float], params: RegimeParameters = RegimePa
 
 def _volatility(closes: Sequence[float], params: RegimeParameters) -> tuple[float, float]:
     """The latest annualized realized volatility, and its `vol_percentile` over the last `vol_lookback` values."""
+    # Daily log returns: r_t = ln(close_t / close_{t-1}) for every consecutive pair of closes.
     returns = [math.log(current / previous) for previous, current in pairwise(closes)]
     annualize = math.sqrt(_TRADING_DAYS_PER_YEAR)
+    # Rolling volatility: the sample stdev (n-1) of each full `vol_window`-return window, annualized by sqrt(trading days).
     vols = [statistics.stdev(returns[end - params.vol_window : end]) * annualize for end in range(params.vol_window, len(returns) + 1)]
+    # The threshold is the `vol_percentile` of the last `vol_lookback` rolling values (linear interpolation, numpy's default).
     return vols[-1], _percentile(vols[-params.vol_lookback :], params.vol_percentile)
 
 

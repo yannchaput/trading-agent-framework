@@ -376,14 +376,16 @@ class ReviewPipeline:
 
 
 def _stop_detail(result: AgentRunResult) -> str:
-    """` (finish_reason=length, 32768 tokens, 22699 reasoning)`: how the run's last model call ended, for a run that reports it; else empty.
+    """` (finish_reason=length, 10069 input, 22699 output, 22699 reasoning, 32768 total tokens)`: how the run's last model call ended, for a run that reports it; else empty.
 
-    A `length` stop with everything spent on reasoning is what a reasoning model that hit its token limit looks like: no text, no tool call.
+    A `length` stop with every output token spent on reasoning is what a reasoning model that hit its output cap (or the window) looks like: no text, no tool call.
     """
     parts = [
         f"finish_reason={result.finish_reason}" if result.finish_reason else "",
-        f"{result.total_tokens} tokens" if result.total_tokens is not None else "",
+        f"{result.input_tokens} input" if result.input_tokens is not None else "",
+        f"{result.output_tokens} output" if result.output_tokens is not None else "",
         f"{result.reasoning_tokens} reasoning" if result.reasoning_tokens is not None else "",
+        f"{result.total_tokens} total tokens" if result.total_tokens is not None else "",
     ]
     known = [part for part in parts if part]
     return f" ({', '.join(known)})" if known else ""

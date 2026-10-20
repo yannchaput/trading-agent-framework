@@ -72,7 +72,7 @@ class FakeAgent:
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
         self.tool_calls: list[ToolCallRecord] = []
         self.attempt_tool_calls: list[list[ToolCallRecord]] = []  # the next runs' tool calls, one list per run, before `tool_calls`
-        self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason, total_tokens, reasoning_tokens
+        self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason and its token counts
         self.output = "done"  # the run's closing text; "" is what a final tool's run reports (no closing turn)
 
     def run(self, task_prompt: str, *, context: Any = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None, max_steps: int | None = None) -> AgentRunResult:
@@ -678,14 +678,14 @@ def test_the_no_submit_warning_says_how_the_run_ended_and_what_it_cost(tmp_path:
     h = _harness(tmp_path)
     judge = h.agents["judge"]
     judge.overrides = [does_nothing]  # the first run ends with no verdicts, the retry submits
-    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+    judge.stop = {"finish_reason": "length", "input_tokens": 10069, "output_tokens": 22699, "reasoning_tokens": 22699, "total_tokens": 32768}
 
     with caplog.at_level(logging.INFO):
         assert h.run().completed
 
     (message,) = _no_submit_warnings(caplog)
     assert "[judge] the agent ended without calling submit_verdicts" in message
-    assert "finish_reason=length" in message and "32768 tokens" in message and "22699 reasoning" in message
+    assert message.endswith("[judge] the agent ended without calling submit_verdicts (finish_reason=length, 10069 input, 22699 output, 22699 reasoning, 32768 total tokens)")
 
 
 def test_the_no_submit_warning_is_unchanged_when_the_run_reports_nothing(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -719,14 +719,14 @@ def test_a_run_with_no_output_and_no_submission_is_warned_about_once_with_how_it
     judge = h.agents["judge"]
     judge.overrides = [does_nothing]
     judge.output = ""
-    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+    judge.stop = {"finish_reason": "length", "input_tokens": 10069, "output_tokens": 22699, "reasoning_tokens": 22699, "total_tokens": 32768}
 
     with caplog.at_level(logging.INFO):
         assert h.run().completed
 
     assert _empty_output_warnings(caplog) == []  # the one warning is the no-submit one, which already carries the detail
     (message,) = _no_submit_warnings(caplog)  # the first run's: the retry submitted
-    assert "finish_reason=length" in message and "22699 reasoning" in message
+    assert message.endswith("(finish_reason=length, 10069 input, 22699 output, 22699 reasoning, 32768 total tokens)")
 
 
 def _info_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
@@ -1128,11 +1128,11 @@ def test_a_rejected_submission_warning_says_how_the_run_ended(tmp_path: Path, ca
     h = _harness(tmp_path)
     judge = h.agents["judge"]
     judge.overrides = [verdicts(UNIVERSE[:11])]  # 11 in against a cap of 10: rejected, then the forced retry puts the first 10 in
-    judge.stop = {"finish_reason": "length", "total_tokens": 32768, "reasoning_tokens": 22699}
+    judge.stop = {"finish_reason": "length", "input_tokens": 10069, "output_tokens": 22699, "reasoning_tokens": 22699, "total_tokens": 32768}
 
     with caplog.at_level(logging.INFO):
         assert h.run().completed
 
     rejected = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING and "submission rejected" in r.getMessage()]
     assert len(rejected) == 1
-    assert "finish_reason=length" in rejected[0] and "32768 tokens" in rejected[0] and "22699 reasoning" in rejected[0]
+    assert rejected[0].endswith("(finish_reason=length, 10069 input, 22699 output, 22699 reasoning, 32768 total tokens)")

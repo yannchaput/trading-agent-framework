@@ -33,16 +33,17 @@ class BullBearParams:
     # needs a limit of at most 24 (the judge using its 6 memory calls); a rejected resubmission adds 3.
     max_agent_steps: int = 60
     judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
-    note_max_chars: int = 500  # the length the researcher is asked for
+    note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
     note_hard_max_chars: int = 600  # the length the recorder refuses above: a model cannot count characters (10-19: 25 notes 1 to 20% over 500)
-    argument_max_chars: int = 300
-    reason_max_chars: int = 300
+    argument_max_chars: int = 300  # the bull's and the bear's submitted argument
+    reason_max_chars: int = 300  # the judge's submitted reason per verdict
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates
     feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
     # Output tokens per model call, reasoning included (all four agents; None: no cap). The 10-17 run: every call that
     # worked used at most 11k, every call that thought the 32k window full 19k or more.
+    # The cap counts every output token: a call that spends it all on reasoning stops with finish_reason=length.
     max_output_tokens: int | None = 12288
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
