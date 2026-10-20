@@ -35,15 +35,21 @@ def _env_values(path: Path) -> dict[str, str]:
     return {key: value or "" for key, value in dotenv_values(path).items()}
 
 
+_DISPLAY_VALUES = frozenset({"true", "1", "yes"})
+
+
 def strategies_for_mode(mode: str, env_dir: Path) -> list[str]:
-    """The strategies with an `env_dir/.env.<strategy>.<mode>` file trading on Alpaca (no `BROKER` means alpaca)."""
+    """The strategies with an `env_dir/.env.<strategy>.<mode>` file trading on Alpaca (no `BROKER` means alpaca) and
+    opted in with `DASHBOARD_DISPLAY=true` (missing means hidden: a retired strategy keeps its file off the picker)."""
     if not env_dir.is_dir():
         return []
     prefix, suffix = ".env.", f".{mode}"
     names = []
     for path in env_dir.glob(f"{prefix}*{suffix}"):
-        broker = (_env_values(path).get("BROKER") or "alpaca").strip().lower()
-        if broker == "alpaca":
+        values = _env_values(path)
+        broker = (values.get("BROKER") or "alpaca").strip().lower()
+        displayed = values.get("DASHBOARD_DISPLAY", "").strip().lower() in _DISPLAY_VALUES
+        if broker == "alpaca" and displayed:
             names.append(path.name[len(prefix) : -len(suffix)])
     return sorted(names)
 

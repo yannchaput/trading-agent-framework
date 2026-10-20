@@ -14,6 +14,7 @@ from trading_agent_framework.dashboard.pnl import Fee
 from trading_agent_framework.utils.errors import ConfigurationError
 
 KEYS = "ALPACA_API_KEY=trade-key\nALPACA_API_SECRET=trade-secret\nALPACA_DATA_API_KEY=data-key\nALPACA_DATA_API_SECRET=data-secret\n"
+SHOWN = "DASHBOARD_DISPLAY=true\n"
 
 
 def _env(env_dir: Path, name: str, body: str) -> None:
@@ -22,15 +23,30 @@ def _env(env_dir: Path, name: str, body: str) -> None:
 
 
 def test_strategies_are_the_alpaca_env_files_of_the_mode(tmp_path: Path) -> None:
-    _env(tmp_path, ".env.alpha.paper", "BROKER=alpaca\n" + KEYS)
-    _env(tmp_path, ".env.beta.paper", KEYS)  # no BROKER: alpaca
-    _env(tmp_path, ".env.gamma.paper", "BROKER=ibkr\n")
-    _env(tmp_path, ".env.alpha.live", "BROKER=alpaca\n" + KEYS)
-    _env(tmp_path, ".env.alpha.backtesting", "BROKER=alpaca\n" + KEYS)
-    _env(tmp_path, ".env.example", KEYS)
+    _env(tmp_path, ".env.alpha.paper", "BROKER=alpaca\n" + SHOWN + KEYS)
+    _env(tmp_path, ".env.beta.paper", SHOWN + KEYS)  # no BROKER: alpaca
+    _env(tmp_path, ".env.gamma.paper", "BROKER=ibkr\n" + SHOWN)
+    _env(tmp_path, ".env.alpha.live", "BROKER=alpaca\n" + SHOWN + KEYS)
+    _env(tmp_path, ".env.alpha.backtesting", "BROKER=alpaca\n" + SHOWN + KEYS)
+    _env(tmp_path, ".env.example", SHOWN + KEYS)
 
     assert account_reader.strategies_for_mode("paper", tmp_path) == ["alpha", "beta"]
     assert account_reader.strategies_for_mode("live", tmp_path) == ["alpha"]
+
+
+def test_a_strategy_without_dashboard_display_is_hidden(tmp_path: Path) -> None:
+    _env(tmp_path, ".env.alpha.live", SHOWN + KEYS)
+    _env(tmp_path, ".env.beta.live", KEYS)  # no DASHBOARD_DISPLAY: hidden
+    _env(tmp_path, ".env.gamma.live", "DASHBOARD_DISPLAY=false\n" + KEYS)
+
+    assert account_reader.strategies_for_mode("live", tmp_path) == ["alpha"]
+
+
+@pytest.mark.parametrize(("value", "shown"), [("true", True), ("TRUE", True), ("1", True), ("Yes", True), (" yes ", True), ("no", False), ("0", False), ("", False), ("ture", False)])
+def test_dashboard_display_is_on_only_for_true_1_or_yes(tmp_path: Path, value: str, shown: bool) -> None:
+    _env(tmp_path, ".env.alpha.live", f"DASHBOARD_DISPLAY={value}\n" + KEYS)
+
+    assert account_reader.strategies_for_mode("live", tmp_path) == (["alpha"] if shown else [])
 
 
 def test_no_env_dir_lists_no_strategy(tmp_path: Path) -> None:
