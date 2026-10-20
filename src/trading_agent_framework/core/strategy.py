@@ -336,7 +336,7 @@ class Strategy:
         self.log_info(
             f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): {self.benchmark_symbol} close {reading.close:.2f}, "
             f"SMA{params.sma_fast} {reading.sma_fast:.2f}, SMA{params.sma_slow} {reading.sma_slow:.2f}, "
-            f"vol {reading.vol:.1%} vs cap {reading.vol_threshold:.1%}{' (stressed)' if reading.stressed else ''}"
+            f"vol {reading.vol:.1%} vs historical annualized vol {reading.vol_threshold:.1%}{' (stressed)' if reading.stressed else ''}"
         )
         self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
