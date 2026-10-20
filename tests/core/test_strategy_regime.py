@@ -39,6 +39,14 @@ def test_a_refresh_sets_logs_and_charts_the_regime(caplog: pytest.LogCaptureFixt
     assert "Market regime +1 (bullish)" in caplog.text
 
 
+def test_the_log_names_the_volatility_threshold_from_the_regime_parameters(caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, _ = _strategy(UPTREND)
+    strategy.regime_params = RegimeParameters(vol_lookback=200, vol_percentile=0.9)
+    with caplog.at_level(logging.INFO):
+        strategy._refresh_regime()
+    assert "vs 200-day p90 " in caplog.text
+
+
 def test_a_downtrend_is_logged_as_minus_one() -> None:
     strategy, _, lines = _strategy(DOWNTREND)
     strategy._refresh_regime()

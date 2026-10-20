@@ -343,8 +343,7 @@ class StrategyExecutor:
 
     def _install_sigterm_handler(self) -> Callable[[], None]:
         """Turn SIGTERM into KeyboardInterrupt for this run; returns the undo function."""
-        # Python only allows signal handlers on the main thread. Off it, do nothing
-        # and return a no-op undo so callers can always call the result.
+        # Off the main thread, return a no-op undo so callers can always call the result.
         if threading.current_thread() is not threading.main_thread():
             return lambda: None  # signal handlers can only be installed on the main thread
         # Remember whatever handler was active (it may be None if it was set outside Python).
