@@ -19,17 +19,13 @@
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Update tools comments with parameters + check if tool annotation is recommended
 
-## Strategies to test
-
-* [AI investment comitee](https://lumibot.lumiwealth.com/agents_investment_committee.html)
-
 ## PEA Manager
 
 * Trouver un skills ou MCP permettant de remplacer EODHD quand son credit est epuisé pour le scan des tickers
 
 ## Tests
 
-* Test Typesafe.AI sur news binary.
+* Test Typesafe.AI.
 * [Deep Agents](https://reference.langchain.com/python/deepagents)
 * [Deep Agents tutorial](https://docs.langchain.com/oss/python/deepagents/data-analysis)
 
@@ -50,22 +46,6 @@
 * ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~ => Poor results
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * ~~Compute the residual volatility compared to the market (cf chatgpt thread)~~
-
-### News sentiment analysis
-
-* ~~Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.~~
-* ~~Investigate "current_regime": None and defensive posture~~
-* ~~Add a log in executor to log the execution hour : usefull for intraday.~~
-* ~~Log the system prompt in 'initialize' method~~
-* ~~Fix prompt to avoid chineese character with GLM models~~
-
-### Bull Bear
-
-* ~~Retest a 1Y backtest with news 'off'~~
-* ~~Bump up research_tool_budget to 5 with news on~~
-* ~~Enable compaction of the state in langchain with middleware~~
-* ~~Enrich logging, specifically the research agent~~
-* ~~Show P&L in the log when a stock is sold~~
 
 ### LLM benchmark
 
@@ -106,3 +86,19 @@
 * ~~dashboard~~
 * ~~Fix `Bar.empty`, `bars.pandas_df`.~~
 * ~~Add warmup_trading_days to AlpacaBacktestDataSource~~
+
+### News sentiment analysis
+
+* ~~Find the root cause of having the same decision to remember called several times in the same iteration: help with log and the memory database.~~
+* ~~Investigate "current_regime": None and defensive posture~~
+* ~~Add a log in executor to log the execution hour : usefull for intraday.~~
+* ~~Log the system prompt in 'initialize' method~~
+* ~~Fix prompt to avoid chineese character with GLM models~~
+
+### Bull Bear
+
+* ~~Retest a 1Y backtest with news 'off'~~
+* ~~Bump up research_tool_budget to 5 with news on~~
+* ~~Enable compaction of the state in langchain with middleware~~
+* ~~Enrich logging, specifically the research agent~~
+* ~~Show P&L in the log when a stock is sold~~
