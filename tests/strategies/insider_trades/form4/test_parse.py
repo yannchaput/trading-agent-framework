@@ -122,6 +122,30 @@ def test_garbage_raises(text: str):
         parse_form4(text, accession="x", filed=date(2025, 1, 2), ticker="AAPL")
 
 
+def test_the_issuer_is_parsed_from_the_document():
+    f = _parse("sale_ceo.xml")
+    assert (f.issuer_cik, f.issuer_symbol) == ("0000320193", "AAPL")
+
+
+def test_a_missing_issuer_symbol_is_blank():
+    xml = (FIXTURES / "sale_ceo.xml").read_text().replace("<issuerTradingSymbol>AAPL</issuerTradingSymbol>", "")
+    assert parse_form4(xml, accession="x", filed=FILED, ticker="AAPL").issuer_symbol == ""
+
+
+@pytest.mark.parametrize("replacement", ["", "<issuerCik>  </issuerCik>"])
+def test_a_document_without_an_issuer_cik_raises(replacement: str):
+    xml = (FIXTURES / "sale_ceo.xml").read_text().replace("<issuerCik>0000320193</issuerCik>", replacement)
+    with pytest.raises(InsiderDataError, match="issuerCik"):
+        parse_form4(xml, accession="x", filed=FILED, ticker="AAPL")
+
+
+def test_another_issuers_filing_is_parsed_the_same_and_left_to_the_caller_to_filter():
+    xml = (FIXTURES / "sale_ceo.xml").read_text().replace("0000320193", "0000789019").replace("AAPL", "MSFT")
+    f = parse_form4(xml, accession="x", filed=FILED, ticker="AAPL")
+    assert (f.issuer_cik, f.issuer_symbol) == ("0000789019", "MSFT")
+    assert [t.ticker for t in f.trades] == ["AAPL"] and len(f.trades) == 1
+
+
 def test_raw_document_strips_the_xsl_folder():
     assert raw_form4_document("xslF345X05/wk-form4_1.xml") == "wk-form4_1.xml"
     assert raw_form4_document("form4.xml") == "form4.xml"

@@ -10,7 +10,8 @@ withholding, gifts, ...) and every derivative row is counted in `other_codes` an
 trade date or the holding after the trade cannot be measured and is counted in `unpriced`.
 
 Optional elements are tolerated: a missing `aff10b5One` is "no plan", a missing `footnotes` block is none. XML that does not
-parse, or whose root is not `ownershipDocument` (SEC answers a throttled request with an HTML page), raises `InsiderDataError`.
+parse, whose root is not `ownershipDocument` (SEC answers a throttled request with an HTML page) or that has no `issuer/issuerCik`,
+raises `InsiderDataError`. The issuer is reported, never checked: `ticker` only labels the trades, and the caller filters on `issuer_cik`.
 """
 
 from __future__ import annotations
@@ -83,6 +84,8 @@ class Form4Filing:
     accession: str
     filed: date
     ticker: str
+    issuer_cik: str  # the company whose shares the rows trade; a feed also lists filings where it is only a reporting owner
+    issuer_symbol: str  # as filed, "" when absent
     owners: tuple[Owner, ...]
     attributed_to: Owner | None
     co_filers: tuple[str, ...]
@@ -149,6 +152,9 @@ def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4F
     if root.tag != "ownershipDocument":
         raise InsiderDataError(f"Form 4 {accession} has no ownershipDocument root (got <{root.tag}>)")
 
+    issuer_cik = _text(root, "issuer/issuerCik")
+    if not issuer_cik:
+        raise InsiderDataError(f"Form 4 {accession} has no issuer/issuerCik")
     owners = tuple(_owner(node) for node in root.findall("reportingOwner"))
     attributed_to = next((owner for owner in owners if owner.is_insider), None)
     co_filers = tuple(owner.name for owner in owners if owner is not attributed_to)
@@ -194,6 +200,8 @@ def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4F
         accession=accession,
         filed=filed,
         ticker=ticker,
+        issuer_cik=issuer_cik,
+        issuer_symbol=_text(root, "issuer/issuerTradingSymbol"),
         owners=owners,
         attributed_to=attributed_to,
         co_filers=co_filers,
