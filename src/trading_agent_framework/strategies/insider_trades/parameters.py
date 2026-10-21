@@ -10,7 +10,7 @@ from dataclasses import dataclass
 class InsiderParams:
     watchlist: tuple[str, ...] = ("AAPL", "MSFT", "JPM", "BAC", "XOM", "CVX", "PFE", "INTC", "F", "KO")  # the stocks the strategy may hold: insiders' Form 4 trades are read for these only
     signal_window_days: int = 30  # how far back, in days, an insider trade still counts as a signal
-    history_years: int = 3  # how many years of Form 4 history the research tools may read
+    history_years: int = 3  # the labelling look-back in calendar years (it also decides how far back `load_window` loads the Form 4s)
     max_total_weight: float = 0.95  # largest sum of stock weights, as a fraction of portfolio value; the rest stays cash
     min_weight: float = 0.03  # smallest weight of one stock; must be at least `rebalance_band`
     max_position_weight: float = 0.20  # largest weight of one stock

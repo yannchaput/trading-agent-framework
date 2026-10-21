@@ -1,7 +1,7 @@
 """The hand-off between the insider_trades agents: submit tools, their validation and the recorder.
 
-The researcher ends its run (one per watchlist stock) with `submit_note`, the portfolio agent with `submit_target`, the trader
-with `submit_trade_report`. A tool validates its argument in code against what the pipeline armed the recorder with, records the
+The researcher ends its run (one per changed stock that has trades in its window) with `submit_note`; the trader submits the
+target (`submit_target`) and then its report (`submit_trade_report`). A tool validates its argument in code against what the pipeline armed the recorder with, records the
 first valid submission, and otherwise returns `{"error": ...}` so the model can correct itself in the same run. Free text from an
 agent is never trusted. Same pattern as `congress_trades/handoff.py`.
 
