@@ -348,6 +348,24 @@ Mirrors the stock holdings that Nancy Pelosi (the `politician` setting of `Congr
 
 A filing counts only when it was filed **strictly before today** (disclosures lag trades by up to 45 days, so using the trade date would look into the future). The bot checks every session, but when no new filing has appeared since the last completed run, no agent runs and no order is sent. Orders still working (a backtest fills on the next bar) are re-checked on the following days by the trading stage alone, up to 3 times. Options are ignored (long-only stocks), so a good part of her real exposure is not copied. Run `uv run agent congress_trades backtesting` (default window one year); each run writes `runs.jsonl` (one line per check) next to its report, and `uv run python scripts/tests/smoke_congress_trades.py` checks the Clerk parsing against the live site.
 
+### 📈 `insider_trades` — Follow the Form 4 insider trades of a fixed watchlist (researcher, trader)
+
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/insider_trades/agent_insider_trades.py` (`InsiderTradesStrategy`) |
+| **Model** | from `LLM_MODEL` in the env file (one model for the agents) |
+| **Agents** | `researcher` (one run per changed stock), `trader`, `trader_retry` (finishes an unfinished trade) |
+| **Tools** | researcher: `get_insider_trades`, `read_form4`, `submit_note`; trader: `get_positions`, `get_account_balance`, `get_last_price`, `submit_target`, `place_order`, `check_orders`, `submit_trade_report`; trader_retry: the same without `submit_target`. Only the two trading agents can place an order, and only through the order desk's guardrails |
+| **Asset universe** | the `watchlist` of `InsiderParams` (10 large caps by default; no universe file) |
+| **Agent frequency** | checked once per session at 10:00 ET, but the agents run only when a stock's insider filings changed (see below) |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.insider_trades.<mode>`: `LLM_*`, `SEC_EDGAR_USER_AGENT`, plus the broker keys in paper/live. Suggested `BROKER`: `tastytrade` in `.live` and `.backtesting` (the backtest fee schedule follows it), `alpaca` in `.paper`. No new variable: `SEC_EDGAR_USER_AGENT` is documented above |
+
+Reads the Form 4 filings (SEC EDGAR) of the officers and directors of each watchlist stock. Code labels every open-market trade as routine (the insider trades in the same month every year), opportunistic or unclassified, and classes each stock as `buying`, `selling` or `none` from its opportunistic trades of the last 30 days. A researcher verifies the labels of a changed stock and may override one with a reason (a 10b5-1 plan trade stays routine). The trader then sets one target weight for every watchlist stock (even weight by default, more for `buying`, less for `selling`, code enforces the order and the limits), places the orders (sells first, sized against the smaller of buying power and cash) and checks that they filled.
+
+A filing counts only when it was filed **strictly before today**. The bot checks every session, but when no stock's filings changed since the last completed run, no agent runs and no order is sent. Orders still working are re-checked on the following days by the trading stage alone, up to 3 times. Run `uv run agent insider_trades backtesting` (default window one year; the Form 4 history is read from SEC EDGAR once per run and cached under `cache/sec/`); each run writes `runs.jsonl` (one line per check) next to its report, and `uv run python scripts/tests/smoke_insider_trades.py` checks the Form 4 parsing against the live SEC.
+
 ### 📈 `vwap_pullback_continuation` — Intraday VWAP pullback continuation
 
 | Field | Value |

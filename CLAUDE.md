@@ -50,7 +50,7 @@ Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under t
 - `memory/CLAUDE.md` -- `MemoryStore` and the memory tools.
 - `fundamentals/CLAUDE.md` -- SEC EDGAR client.
 - `dashboard/CLAUDE.md` -- the Streamlit app.
-- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `news_builtin`, `vwap_pullback`).
+- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `insider_trades`, `news_builtin`, `vwap_pullback`).
 
 ## Key patterns / gotchas
 

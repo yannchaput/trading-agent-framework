@@ -16,6 +16,7 @@ from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrat
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
+from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 
@@ -31,6 +32,7 @@ class Strategies(StrEnum):
     CROSS_MOMENTUM = auto()
     EARNINGS_DRIFT = auto()
     EARNINGS_DRIFT_BASELINE = auto()
+    INSIDER_TRADES = auto()
     NEWS_BINARY = auto()
     VWAP_PULLBACK_CONTINUATION = auto()
 
@@ -68,6 +70,10 @@ def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None
     return CongressTradesStrategy(broker=broker, mode=mode)
 
 
+def _build_insider_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+    return InsiderTradesStrategy(broker=broker, mode=mode)
+
+
 def _build_earnings_drift(broker: Broker, mode: TradingMode) -> Strategy | None:
     return _build_with_universe(EarningsDriftStrategy, broker, mode)
 
@@ -92,6 +98,7 @@ _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
     Strategies.CROSS_MOMENTUM: _build_cross_momentum,
     Strategies.EARNINGS_DRIFT: _build_earnings_drift,
     Strategies.EARNINGS_DRIFT_BASELINE: _build_earnings_drift_baseline,
+    Strategies.INSIDER_TRADES: _build_insider_trades,
     Strategies.NEWS_BINARY: _build_news_binary,
     Strategies.VWAP_PULLBACK_CONTINUATION: _build_vwap_pullback,
 }

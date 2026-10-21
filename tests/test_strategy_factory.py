@@ -9,6 +9,7 @@ from trading_agent_framework.strategies.bull_bear import BullBearStrategy
 from trading_agent_framework.strategies.congress_trades import CongressTradesStrategy
 from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
+from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 from trading_agent_framework.utils import strategy_factory
@@ -36,6 +37,7 @@ def test_strategy_names_are_the_cli_names() -> None:
         "cross_momentum",
         "earnings_drift",
         "earnings_drift_baseline",
+        "insider_trades",
         "news_binary",
         "vwap_pullback_continuation",
     }
@@ -58,6 +60,15 @@ def test_congress_trades_returns_the_strategy_without_needing_a_universe_file(mo
     strategy = build_strategy(Strategies.CONGRESS_TRADES, _broker(Strategies.CONGRESS_TRADES), TradingMode.BACKTESTING)
 
     assert isinstance(strategy, CongressTradesStrategy)
+    assert strategy.is_backtesting
+
+
+def test_insider_trades_returns_the_strategy_without_needing_a_universe_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_universe(monkeypatch, [])
+
+    strategy = build_strategy(Strategies.INSIDER_TRADES, _broker(Strategies.INSIDER_TRADES), TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, InsiderTradesStrategy)
     assert strategy.is_backtesting
 
 
