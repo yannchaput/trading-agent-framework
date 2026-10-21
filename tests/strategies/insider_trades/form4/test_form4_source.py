@@ -190,3 +190,23 @@ def test_a_later_load_replaces_the_earlier_one():
     source.load(as_of=et(2025, 10, 15, 10), since=SINCE)
     known = source.known(et(2025, 10, 16, 10))
     assert known.filings == {} and known.failed == {"AAPL": "429"} and source.loaded_on == date(2025, 10, 15)
+
+
+def test_a_cache_io_error_fails_that_ticker_only():
+    client = FakeClient(
+        {"320193": _recent([("4", "2025-10-03", "a1", "f1.xml")]), "19617": _recent([])},
+        errors={"19617": PermissionError("cache/sec/submissions/CIK19617.json")},
+    )
+    report = Form4Source(client, ["JPM", "AAPL"]).load(as_of=AS_OF, since=SINCE)  # type: ignore[arg-type]
+    assert report.loaded == ("AAPL",) and list(report.failed) == ["JPM"] and "CIK19617" in report.failed["JPM"]
+
+
+def test_a_malformed_submissions_body_fails_that_ticker_only():
+    files = [{"name": "page-001.json", "filingFrom": "2015-01-01", "filingTo": "2024-12-31"}]
+    for bad_recent, pages in [
+        ({"filings": {"recent": {"form": 5, "filingDate": []}}}, {}),  # a column that is not a list
+        (_recent([], files), {"page-001.json": ["not", "a", "page"]}),  # an older page that is not an object
+    ]:
+        client = FakeClient({"320193": _recent([("4", "2025-10-03", "a1", "f1.xml")]), "19617": bad_recent}, pages=pages)
+        report = Form4Source(client, ["JPM", "AAPL"]).load(as_of=AS_OF, since=SINCE)  # type: ignore[arg-type]
+        assert report.loaded == ("AAPL",) and list(report.failed) == ["JPM"]

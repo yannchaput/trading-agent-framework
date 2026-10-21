@@ -98,7 +98,7 @@ class Form4Source:
         for ticker in self._watchlist:
             try:
                 read, ignored, other = self._ticker_filings(ticker, as_of=as_of, since=since)
-            except (FundamentalsError, InsiderDataError) as exc:
+            except (FundamentalsError, InsiderDataError, OSError, AttributeError, TypeError) as exc:  # a malformed 200 body or a cache I/O error fails one ticker
                 failed[ticker] = str(exc) or type(exc).__name__
                 continue
             filings[ticker] = read

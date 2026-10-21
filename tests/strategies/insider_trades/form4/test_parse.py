@@ -149,3 +149,37 @@ def test_another_issuers_filing_is_parsed_the_same_and_left_to_the_caller_to_fil
 def test_raw_document_strips_the_xsl_folder():
     assert raw_form4_document("xslF345X05/wk-form4_1.xml") == "wk-form4_1.xml"
     assert raw_form4_document("form4.xml") == "form4.xml"
+
+
+def test_a_real_aapl_filing_with_vesting_withholding_and_two_plan_sales():
+    # Real SEC filing 0000320193-23-000050 (Apple SVP Deirdre O'Brien, April 2023): an RSU settlement (M, price holds only a footnote id),
+    # tax withholding (F), then two 10b5-1 sales (S), and two derivative RSU rows.
+    xml = (FIXTURES / "real_aapl_plan_2023.xml").read_text()
+    f = parse_form4(xml, accession="0000320193-23-000050", filed=date(2023, 4, 4), ticker="AAPL")
+    assert (f.issuer_cik, f.issuer_symbol) == ("0000320193", "AAPL")
+    assert f.attributed_to is not None and f.attributed_to.cik == "0001767094" and f.attributed_to.role == "Senior Vice President"
+    assert f.co_filers == () and f.plan
+    assert f.other_codes == 4 and f.unpriced == 0  # M and F in the non-derivative table, two derivative M rows
+    assert [(t.code, t.trade_date, t.shares, t.price, t.owned_after, t.plan) for t in f.trades] == [
+        ("S", date(2023, 4, 3), Decimal(17664), Decimal("164.73"), Decimal(162402), True),
+        ("S", date(2023, 4, 3), Decimal(25958), Decimal("165.87"), Decimal(136444), True),
+    ]
+    assert all(t.owner_name == "O'BRIEN DEIRDRE" for t in f.trades)
+    first, second = f.trades
+    assert len(first.footnotes) == 2 and first.footnotes[0].startswith("This transaction was made pursuant to a Rule 10b5-1 trading plan")
+    assert "$164.355 to $165.35" in first.footnotes[1] and "$165.42 to $166.28" in second.footnotes[1]
+
+
+def test_a_real_joint_filing_by_a_bank_and_its_subsidiary_has_no_insider_and_no_trades():
+    # Real SEC filing 0001193125-26-078723: JPMorgan Chase and DNT Asset Trust, both 10% owners of a BlackRock fund (BFK); a single
+    # "J" row. The filer's own CIK (19617) is the reporting owner, not the issuer.
+    xml = (FIXTURES / "real_multi_owner_jpm.xml").read_text()
+    f = parse_form4(xml, accession="0001193125-26-078723", filed=date(2026, 2, 26), ticker="JPM")
+    assert (f.issuer_cik, f.issuer_symbol) == ("0001137393", "BFK")
+    assert [(o.cik, o.name, o.is_ten_percent_owner, o.is_insider, o.role) for o in f.owners] == [
+        ("0000019617", "JPMORGAN CHASE & CO", True, False, "10% owner"),
+        ("0002005954", "DNT Asset Trust", True, False, "10% owner"),
+    ]
+    assert f.attributed_to is None and f.trades == ()
+    assert f.co_filers == ("JPMORGAN CHASE & CO", "DNT Asset Trust")
+    assert not f.plan and f.other_codes == 1 and f.unpriced == 0
