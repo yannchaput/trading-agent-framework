@@ -126,10 +126,18 @@ def test_get_insider_trades_returns_code_labels_with_their_evidence() -> None:
 
 
 def test_a_filing_dated_today_is_invisible_even_if_the_source_leaks_it() -> None:
-    leaked = _filing("T1", (_trade("T1", filed=TODAY, code="P"),), filed=TODAY)
-    get_insider_trades, read_form4, _ = _tools(FakeSource({"AAPL": [*_history(), leaked]}))
+    recent = _filing("R1", (_trade("R1", filed=date(2025, 10, 6), traded=date(2025, 10, 2), code="P", shares=50, price="12.5", owned_after=550),), filed=date(2025, 10, 6))
+    # a late filing: filed today for a July trade. `window_trades` would drop it from the window anyway, but unguarded it would still
+    # reach the insider's months and the labelling history
+    leaked = _filing("T1", (_trade("T1", filed=TODAY, traded=date(2025, 7, 1), code="P"),), filed=TODAY)
+    get_insider_trades, read_form4, _ = _tools(FakeSource({"AAPL": [*_history(), recent, leaked]}))
 
-    assert get_insider_trades("AAPL")["insiders"] == []
+    cook = get_insider_trades("AAPL")["insiders"][0]
+
+    assert cook["months_by_year"] == {"2022": [3], "2023": [6], "2024": [9], "2025": [3, 10]}
+    assert [t["accession"] for t in cook["trades"]] == ["R1"]
+    assert cook["trades"][0]["label"] == "opportunistic"
+    assert cook["trades"][0]["rule"] == "opportunistic: traded in each of 2022, 2023, 2024, never in the same month every year"
     assert "error" in read_form4("T1")
 
 
