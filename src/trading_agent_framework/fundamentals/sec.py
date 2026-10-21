@@ -474,6 +474,11 @@ def filing_url(cik: str, accession_number: str, primary_document: str) -> str:
     return f"{SEC_ARCHIVES_BASE_URL}{cik_int}/{accession_clean}/{primary_document}"
 
 
+def raw_form4_document(primary_document: str) -> str:
+    """A Form 4's raw XML file name: the submissions feed's primary document sits in an `xslF345X05/` folder (the rendered HTML view)."""
+    return primary_document.rsplit("/", 1)[-1]
+
+
 def strip_html(raw: str) -> str:
     """Filing HTML/XBRL to readable text."""
     text = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", raw)
