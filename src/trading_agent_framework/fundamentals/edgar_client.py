@@ -173,6 +173,10 @@ class SecEdgarClient:
     def get_submissions_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
         return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
+    def get_submissions_page(self, name: str) -> dict[str, Any]:
+        """An older submissions page (`filings.files[].name`): it never changes, so it is cached for good."""
+        return self.get_json(f"{SEC_DATA_BASE_URL}/submissions/{name}", ("submissions", name))
+
     def fetch_submissions_payload(self, cik: str) -> dict[str, Any]:
         """Uncached, for a caller that needs one field of it."""
         return self.fetch_json(_submissions_url(cik))

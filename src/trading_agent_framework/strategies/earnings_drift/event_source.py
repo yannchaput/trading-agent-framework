@@ -14,8 +14,9 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Protocol
 
-from trading_agent_framework.fundamentals.edgar_client import SEC_DATA_BASE_URL, SecEdgarClient
-from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent, earnings_events, older_pages
+from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
+from trading_agent_framework.fundamentals.sec import older_pages
+from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent, earnings_events
 from trading_agent_framework.utils.errors import FundamentalsError
 
 
@@ -69,5 +70,5 @@ class EventSource:
     def _symbol_events(self, symbol: str, *, as_of: datetime, since: date) -> list[EarningsEvent]:
         cik = self._client.ticker_to_cik(symbol)
         recent = self._client.get_submissions_payload(cik, as_of=as_of, max_age_days=0)
-        pages = [self._client.get_json(f"{SEC_DATA_BASE_URL}/submissions/{name}", ("submissions", name)) for name in older_pages(recent, since)]
+        pages = [self._client.get_submissions_page(name) for name in older_pages(recent, since)]
         return earnings_events(symbol, [recent, *pages])

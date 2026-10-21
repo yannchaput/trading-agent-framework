@@ -64,27 +64,6 @@ def earnings_events(symbol: str, payloads: Iterable[Mapping[str, Any]]) -> list[
     return sorted(events, key=lambda event: event.accepted_at)
 
 
-def _iso_date(value: Any) -> date | None:
-    try:
-        return date.fromisoformat(str(value))
-    except ValueError:
-        return None
-
-
-def older_pages(payload: Mapping[str, Any], since: date) -> list[str]:
-    """Names of the older submission pages whose `filingTo` is on or after `since`."""
-    filings = payload.get("filings")
-    files = filings.get("files") if isinstance(filings, Mapping) else None
-    names: list[str] = []
-    for entry in files or []:
-        if not isinstance(entry, Mapping) or not entry.get("name"):
-            continue
-        filing_to = _iso_date(entry.get("filingTo"))
-        if filing_to is not None and filing_to >= since:
-            names.append(str(entry["name"]))
-    return names
-
-
 def session_close(day: date) -> datetime:
     return datetime.combine(day, SESSION_CLOSE, tzinfo=MARKET_TZ)
 

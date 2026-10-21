@@ -344,3 +344,19 @@ def test_the_submissions_payload_takes_the_same_freshness_arguments(tmp_path: Pa
 
     assert payload == {"filings": "new"}
     assert len(calls) == 1
+
+
+def test_get_submissions_page_hits_the_older_page_url_and_is_cached_for_good(tmp_path: Path) -> None:
+    seen_urls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_urls.append(str(request.url))
+        return httpx.Response(200, json={"form": ["4"]})
+
+    client = _client(tmp_path, handler)
+
+    first = client.get_submissions_page("CIK0000320193-submissions-001.json")
+    second = client.get_submissions_page("CIK0000320193-submissions-001.json")
+
+    assert first == second == {"form": ["4"]}
+    assert seen_urls == ["https://data.sec.gov/submissions/CIK0000320193-submissions-001.json"]

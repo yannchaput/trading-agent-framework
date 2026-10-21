@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import html
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -472,6 +472,27 @@ def filing_url(cik: str, accession_number: str, primary_document: str) -> str:
     cik_int = str(int(str(cik).lstrip("0") or "0"))
     accession_clean = accession_number.replace("-", "")
     return f"{SEC_ARCHIVES_BASE_URL}{cik_int}/{accession_clean}/{primary_document}"
+
+
+def _iso_date(value: Any) -> date | None:
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def older_pages(payload: Mapping[str, Any], since: date) -> list[str]:
+    """Names of the older submission pages (`filings.files`) whose `filingTo` is on or after `since`."""
+    filings = payload.get("filings")
+    files = filings.get("files") if isinstance(filings, Mapping) else None
+    names: list[str] = []
+    for entry in files or []:
+        if not isinstance(entry, Mapping) or not entry.get("name"):
+            continue
+        filing_to = _iso_date(entry.get("filingTo"))
+        if filing_to is not None and filing_to >= since:
+            names.append(str(entry["name"]))
+    return names
 
 
 def raw_form4_document(primary_document: str) -> str:

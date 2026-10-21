@@ -5,12 +5,12 @@ from datetime import UTC, date, datetime, timedelta
 
 from tests.fakes import et
 
+from trading_agent_framework.fundamentals.sec import older_pages
 from trading_agent_framework.strategies.earnings_drift.events import (
     EarningsEvent,
     earnings_events,
     events_reacting_on,
     news_window,
-    older_pages,
     reaction_date,
     release_timing,
 )
