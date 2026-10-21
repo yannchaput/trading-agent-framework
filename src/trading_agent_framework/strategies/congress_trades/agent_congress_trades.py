@@ -24,13 +24,14 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.trade_desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.congress import ClerkClient, CongressSource
-from trading_agent_framework.strategies.congress_trades.desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.pipeline import AGENT_PORTFOLIO, AGENT_RESEARCHER, AGENT_TRADER, CongressPipeline, SourceLike
 from trading_agent_framework.strategies.congress_trades.prompts import portfolio_system, researcher_system, trader_system
-from trading_agent_framework.strategies.congress_trades.state import RunLog, StateStore, state_path
+from trading_agent_framework.strategies.congress_trades.state import StateStore, state_path
 from trading_agent_framework.strategies.congress_trades.tools import congress_research_tools
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
 
@@ -74,7 +75,7 @@ class CongressTradesStrategy(Strategy):
         try:
             source = self._source if self._source is not None else self._build_source()
             recorder = HandoffRecorder(params)
-            desk = TradeDesk(self, params)
+            desk = TradeDesk(self, params, log_tag="congress_trades")
             submit = submit_tools(recorder)
             temperature = params.agent_temperature
             # The research agent reads filings; the portfolio agent only submits; only the trading agent can place orders (through the desk).

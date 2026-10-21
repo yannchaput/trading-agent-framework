@@ -4,8 +4,8 @@ import re
 
 import pytest
 
+from trading_agent_framework.strategies.common.trade_desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades import prompts
-from trading_agent_framework.strategies.congress_trades.desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 
@@ -37,7 +37,7 @@ def test_the_prompts_only_name_tools_that_really_exist() -> None:
     real |= {t.__name__ for t in account_tools(strategy)}
     real |= {t.__name__ for t in market_data_tools(strategy)}
     real |= {t.__name__ for t in congress_research_tools(strategy, object())}  # type: ignore[arg-type]
-    real |= {t.__name__ for t in TradeDesk(strategy, CongressParams()).tools()}
+    real |= {t.__name__ for t in TradeDesk(strategy, CongressParams(), log_tag="congress_trades").tools()}
 
     for text, _ in SYSTEMS.values():
         for tool in re.findall(r"\b(?:submit|list|read|get|place|check)_[a-z_]+", text):
@@ -109,6 +109,6 @@ def test_the_trading_agent_really_has_the_tools_its_prompt_names() -> None:
 
     from trading_agent_framework.core.strategy import Strategy
 
-    desk = TradeDesk(Strategy(FakeBroker(FakeClock(et(2026, 9, 14, 10)))), CongressParams())
+    desk = TradeDesk(Strategy(FakeBroker(FakeClock(et(2026, 9, 14, 10)))), CongressParams(), log_tag="congress_trades")
 
     assert [t.__name__ for t in desk.tools()] == ["place_order", "check_orders"]

@@ -6,16 +6,13 @@ from typing import Any
 
 import pytest
 
+from trading_agent_framework.strategies.common.handoff import HandoffError, OrderReport, OrderView, validate_report
 from trading_agent_framework.strategies.congress_trades.handoff import (
-    HandoffError,
     HandoffRecorder,
     HoldingSubmission,
-    OrderReport,
-    OrderView,
     TargetPosition,
     submit_tools,
     validate_holdings,
-    validate_report,
     validate_target,
 )
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams

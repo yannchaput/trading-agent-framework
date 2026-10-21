@@ -1,4 +1,4 @@
-"""The only code that places orders for congress_trades: the trading agent's `place_order` and `check_orders`, and the audit.
+"""The only code that places orders for the strategies that share it (congress_trades, insider_trades): the trading agent's `place_order` and `check_orders`, and the audit.
 
 The trading agent decides which orders to send, but this desk makes a bad order impossible rather than unlikely. Every
 refusal comes back as `{"error": ...}` (with the numbers the agent needs to correct it) and is logged as a warning:
@@ -16,6 +16,9 @@ refusal comes back as `{"error": ...}` (with the numbers the agent needs to corr
 fills a market order on the NEXT bar, so a daily backtest finds the orders still `working` at the tick that sent them: the
 report is then accepted with that status and `audit` flags the unfilled orders, which makes the pipeline re-check on later ticks.
 
+With no target (`begin_run(None, ...)`, until `set_target`) every order is refused before the account is read and the audit has nothing
+to compare against: a strategy whose trading agent starts before its target exists installs the target mid-run.
+
 Tools may run on parallel LangGraph worker threads: every public method that touches the desk's state holds one re-entrant lock
 (the wait for fills does not, so a slow wait never blocks another tool).
 
@@ -27,12 +30,11 @@ import math
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
-from trading_agent_framework.strategies.congress_trades.handoff import OrderView
-from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
+from trading_agent_framework.strategies.common.handoff import OrderView
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, TradingFrameworkError
 from trading_agent_framework.utils.helpers import fractional_qty
 
@@ -74,12 +76,27 @@ class Audit:
         return not self.unfilled and not self.shortfalls and not self.in_flight
 
 
+class DeskParams(Protocol):
+    """What the desk reads from a strategy's parameters (`CongressParams` and `InsiderParams` satisfy it structurally)."""
+
+    @property
+    def rebalance_band(self) -> float: ...
+
+    @property
+    def min_trade_pct(self) -> float: ...
+
+    @property
+    def order_wait_seconds(self) -> float: ...
+
+
 class TradeDesk:
-    def __init__(self, strategy: "Strategy", params: CongressParams) -> None:  # noqa: UP037
+    def __init__(self, strategy: "Strategy", params: DeskParams, *, log_tag: str) -> None:  # noqa: UP037
         self._strategy = strategy
         self._params = params
+        self._log_tag = log_tag
         self._lock = threading.RLock()
         self._target: dict[str, float] = {}
+        self._has_target = False
         self._traded: set[str] = set()
         self._orders: dict[str, Order] = {}
         self._checked: set[str] = set()
@@ -88,15 +105,31 @@ class TradeDesk:
 
     # --- the run -----------------------------------------------------------------------------------
 
-    def begin_run(self, target: Mapping[str, float], traded: Iterable[str]) -> None:
-        """Start a trading stage: the target weights (ticker -> fraction of portfolio value) and the tickers ordered in earlier runs."""
+    def begin_run(self, target: Mapping[str, float] | None, traded: Iterable[str]) -> None:
+        """Start a trading stage: the target weights (ticker -> fraction of portfolio value, `None` until `set_target`) and the tickers ordered in earlier runs."""
         with self._lock:
-            self._target = {symbol.upper(): weight for symbol, weight in target.items() if weight > 0}
+            self._target = {} if target is None else self._normalised(target)
+            self._has_target = target is not None
             self._traded = {symbol.upper() for symbol in traded}
             self._orders = {}
             self._checked = set()
             self._buys_placed = False
             self._prices = {}
+
+    def set_target(self, target: Mapping[str, float]) -> None:
+        """Install the target weights mid-run, keeping the orders already placed and the tickers traded."""
+        with self._lock:
+            self._target = self._normalised(target)
+            self._has_target = True
+
+    @property
+    def has_target(self) -> bool:
+        with self._lock:
+            return self._has_target
+
+    @staticmethod
+    def _normalised(target: Mapping[str, float]) -> dict[str, float]:
+        return {symbol.upper(): weight for symbol, weight in target.items() if weight > 0}
 
     @property
     def traded(self) -> list[str]:
@@ -172,7 +205,7 @@ class TradeDesk:
         return float(price) if price is not None and float(price) > 0 else None
 
     def _refuse(self, message: str) -> dict[str, Any]:
-        self._strategy.log_warning(f"[congress_trades] order refused: {message}")
+        self._strategy.log_warning(f"[{self._log_tag}] order refused: {message}")
         return {"error": message}
 
     # --- place_order -------------------------------------------------------------------------------
@@ -192,6 +225,8 @@ class TradeDesk:
         if quantity <= 0:
             return self._refuse(f"quantity must be above 0 shares, got {raw_quantity!r}")
         with self._lock:
+            if not self._has_target:
+                return self._refuse("no target yet: call submit_target first")
             try:
                 portfolio_value, cash, buying_power, held, incoming, outgoing = self._book()
                 price = self._price(symbol)
@@ -281,7 +316,7 @@ class TradeDesk:
         self._prices[order.identifier] = price
         if side == "buy":
             self._buys_placed = True
-        strategy.log_info(f"[congress_trades] {side} {quantity:g} {symbol} @ ~${price:,.2f}")
+        strategy.log_info(f"[{self._log_tag}] {side} {quantity:g} {symbol} @ ~${price:,.2f}")
         return {"order_id": order.identifier, "symbol": symbol, "side": side, "quantity": quantity, "status": order_status(order)}
 
     # --- check_orders ------------------------------------------------------------------------------
@@ -323,10 +358,12 @@ class TradeDesk:
         unfilled = [view for view in self.orders_view().values() if not view.filled]
         shortfalls: list[Shortfall] = []
         with self._lock:
+            if not self._has_target:
+                return Audit(unfilled, shortfalls)
             try:
                 portfolio_value, _cash, _bp, held, incoming, outgoing = self._book()
             except _DATA_ERRORS as exc:
-                self._strategy.log_warning(f"[congress_trades] audit: the account is unavailable, only unfilled orders are reported: {exc}")
+                self._strategy.log_warning(f"[{self._log_tag}] audit: the account is unavailable, only unfilled orders are reported: {exc}")
                 return Audit(unfilled, shortfalls)
             if portfolio_value <= 0:
                 return Audit(unfilled, shortfalls)
@@ -338,7 +375,7 @@ class TradeDesk:
                 try:
                     price = self._price(symbol)
                 except _DATA_ERRORS as exc:
-                    self._strategy.log_warning(f"[congress_trades] audit: no price for {symbol}: {exc}")
+                    self._strategy.log_warning(f"[{self._log_tag}] audit: no price for {symbol}: {exc}")
                     continue
                 if price is None:
                     continue

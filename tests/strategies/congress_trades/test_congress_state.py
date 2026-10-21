@@ -8,7 +8,8 @@ from pathlib import Path
 import pytest
 
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, RunLog, StateStore, state_path
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore, state_path
 
 
 def _state() -> CongressState:

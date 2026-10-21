@@ -19,16 +19,17 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.trade_desk import Audit, TradeDesk
 from trading_agent_framework.strategies.congress_trades.congress import holdings as holdings_module
 from trading_agent_framework.strategies.congress_trades.congress.annual import tier_of
 from trading_agent_framework.strategies.congress_trades.congress.holdings import Holding
 from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef
 from trading_agent_framework.strategies.congress_trades.congress.source import KnownFilings
-from trading_agent_framework.strategies.congress_trades.desk import Audit, TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, HoldingSubmission, TargetPosition
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.prompts import PORTFOLIO_TASK, RESEARCHER_TASK, TRADER_TASK, retry_prompt
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, RunLog, StateStore
+from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, CongressDataError
 

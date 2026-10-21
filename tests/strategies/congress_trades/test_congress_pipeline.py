@@ -18,14 +18,15 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, OrderSide, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.trade_desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, tier_of
 from trading_agent_framework.strategies.congress_trades.congress.ptr import FilingRef, Transaction
 from trading_agent_framework.strategies.congress_trades.congress.source import CongressSource, KnownFilings
-from trading_agent_framework.strategies.congress_trades.desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.pipeline import CongressPipeline
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, RunLog, StateStore
+from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore
 from trading_agent_framework.utils.errors import AgentError, BrokerError, CongressDataError
 
 NOW = et(2026, 9, 14, 10)
@@ -105,7 +106,7 @@ class Rig:
             self._set_position(symbol, quantity)
         self.strategy = Strategy(self.broker, mode=TradingMode.PAPER, project_root=tmp_path)
         self.recorder = HandoffRecorder(self.params)
-        self.desk = TradeDesk(self.strategy, self.params)
+        self.desk = TradeDesk(self.strategy, self.params, log_tag="congress_trades")
         self.source = FakeSource(known or known_filings())
         self.state = StateStore(tmp_path / "data" / "state.json")
         self.log_path = tmp_path / "logs" / "runs.jsonl"

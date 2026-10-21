@@ -22,7 +22,7 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.congress_trades.desk import TradeDesk, order_status
+from trading_agent_framework.strategies.common.trade_desk import TradeDesk, order_status
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.utils.errors import BrokerError, OrderValidationError
 
@@ -57,7 +57,7 @@ def _book(
     broker.last_prices = {s: Decimal(str(p)) for s, p in (prices or {"AAA": 50.0, "BBB": 25.0, "OLD": 10.0, "ZZZ": 10.0}).items()}
     broker.account = AccountBalances(cash=Decimal(str(cash)), portfolio_value=Decimal(str(portfolio_value)), buying_power=Decimal(str(buying_power)))
     strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
-    desk = TradeDesk(strategy, params)
+    desk = TradeDesk(strategy, params, log_tag="congress_trades")
     desk.begin_run({"AAA": 0.15, "BBB": 0.05} if target is None else target, traded)
     return _Book(strategy, broker, desk)
 
@@ -256,7 +256,7 @@ def test_a_broker_refusal_is_an_error_payload_and_the_stock_is_still_recorded_as
     broker = _Rejecting(book.broker.clock, strategy_name="congress_trades")
     broker.last_prices, broker.account = book.broker.last_prices, book.broker.account
     strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
-    desk = TradeDesk(strategy, PARAMS)
+    desk = TradeDesk(strategy, PARAMS, log_tag="congress_trades")
     desk.begin_run({"AAA": 0.15}, ())
     place = {t.__name__: t for t in desk.tools()}["place_order"]
 
@@ -478,7 +478,7 @@ def test_in_a_daily_backtest_the_orders_are_still_working_at_the_tick_and_filled
     broker = BacktestBroker("congress_trades", data_source=source, clock=clock, budget=Decimal(10000))
     clock.on_advance = broker.on_advance
     strategy = Strategy(broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
-    desk = TradeDesk(strategy, CongressParams(order_wait_seconds=60.0))
+    desk = TradeDesk(strategy, CongressParams(order_wait_seconds=60.0), log_tag="congress_trades")
     desk.begin_run({"AAPL": 0.15}, ())
     place, check = (t for t in desk.tools())
 

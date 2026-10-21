@@ -13,22 +13,19 @@ This module deliberately has NO `from __future__ import annotations`: the agent 
 the function's real annotations (as `memory/tools.py` does).
 """
 
-import math
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from trading_agent_framework.strategies.common import handoff as shared
+from trading_agent_framework.strategies.common.handoff import HandoffError, OrderView, validate_report
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 
 _EPS = 1e-9
 
 HOLDINGS, TARGET, REPORT = "holdings", "target", "report"
 _TOOL_NAMES = {HOLDINGS: "submit_holdings", TARGET: "submit_target", REPORT: "submit_trade_report"}
-
-
-class HandoffError(ValueError):
-    """A submission that breaks a rule; the message tells the model what is wrong and what is allowed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,75 +44,7 @@ class TargetPosition:
     reason: str
 
 
-@dataclass(frozen=True, slots=True)
-class OrderReport:
-    order_id: str
-    reason: str | None
-
-
-@dataclass(frozen=True, slots=True)
-class OrderView:
-    """What the trade desk knows about one order it placed this run (the report is validated against it)."""
-
-    order_id: str
-    symbol: str
-    side: str
-    quantity: float
-    status: str  # "filled" | "working" | "partially_filled" | "canceled" | "rejected" | ...
-    filled_quantity: float
-    checked: bool  # `check_orders` ran after this order was placed
-
-    @property
-    def filled(self) -> bool:
-        return self.status == "filled"
-
-
-# --- shared field readers (pure) -------------------------------------------------------------------
-
-
-def _items(raw: Any, what: str) -> list[Mapping[str, Any]]:
-    if not isinstance(raw, list | tuple):
-        raise HandoffError(f"{what} must be a list of objects")
-    items = []
-    for index, item in enumerate(raw, start=1):
-        if not isinstance(item, Mapping):
-            raise HandoffError(f"{what} item {index} must be an object, got {type(item).__name__}")
-        items.append(item)
-    return items
-
-
-def _key(item: Mapping[str, Any], field: str, index: int) -> str:
-    value = item.get(field)
-    if not isinstance(value, str) or not value.strip():
-        raise HandoffError(f"item {index} has no {field}")
-    return value.strip().upper() if field in ("ticker", "symbol") else value.strip()
-
-
-def _text(item: Mapping[str, Any], who: str, max_chars: int, *, required: bool) -> str | None:
-    value = item.get("reason")
-    if value is None or (isinstance(value, str) and not value.strip()):
-        if required:
-            raise HandoffError(f"{who} needs a reason: give one short sentence")
-        return None
-    if not isinstance(value, str):
-        raise HandoffError(f"the reason for {who} must be text")
-    text = value.strip()
-    if len(text) > max_chars:
-        raise HandoffError(f"the reason for {who} is {len(text)} characters: keep it under {max_chars}")
-    return text
-
-
-def _weight(item: Mapping[str, Any], ticker: str) -> float:
-    value = item.get("weight")
-    if isinstance(value, bool):
-        raise HandoffError(f"the weight for {ticker} must be a number")
-    try:
-        weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except TypeError, ValueError, OverflowError:
-        raise HandoffError(f"the weight for {ticker} must be a number, a fraction of portfolio value such as 0.08") from None
-    if not math.isfinite(weight):
-        raise HandoffError(f"the weight for {ticker} must be a finite number")
-    return weight
+# --- field readers (pure; the shared ones are in `common/handoff.py`) ---------------------------------
 
 
 def _money(item: Mapping[str, Any], field: str, ticker: str) -> Decimal:
@@ -148,12 +77,12 @@ def validate_holdings(
     `drop: true` and a reason. A kept holding that differs from the baseline, or is not in it, needs a reason. Every kept
     ticker must be one that appears in a known filing. At most `max_holdings` are kept.
     """
-    items = _items(raw, "holdings")
+    entries = shared.items(raw, "holdings")
     known = set(known_tickers)
     seen: set[str] = set()
     submissions = []
-    for index, item in enumerate(items, start=1):
-        ticker = _key(item, "ticker", index)
+    for index, item in enumerate(entries, start=1):
+        ticker = shared.key(item, "ticker", index)
         if ticker in seen:
             raise HandoffError(f"{ticker} appears twice")
         seen.add(ticker)
@@ -163,7 +92,7 @@ def validate_holdings(
         if drop:
             if ticker not in baseline:
                 raise HandoffError(f"{ticker} is not in the baseline holdings, so there is nothing to drop: leave it out")
-            reason = _text(item, f"dropping {ticker}", reason_max_chars, required=True)
+            reason = shared.text(item, f"dropping {ticker}", reason_max_chars, required=True)
             low, high = baseline[ticker]
             submissions.append(HoldingSubmission(ticker, low, high, reason, dropped=True))
             continue
@@ -173,7 +102,7 @@ def validate_holdings(
         if high <= 0 or low > high:
             raise HandoffError(f"{ticker}: value_low {low} and value_high {high} must satisfy 0 <= value_low <= value_high and value_high > 0")
         changed = baseline.get(ticker) != (low, high)
-        reason = _text(item, f"{ticker} (it differs from the baseline)" if changed else ticker, reason_max_chars, required=changed)
+        reason = shared.text(item, f"{ticker} (it differs from the baseline)" if changed else ticker, reason_max_chars, required=changed)
         submissions.append(HoldingSubmission(ticker, low, high, reason))
     missing = sorted(set(baseline) - seen)
     if missing:
@@ -199,20 +128,20 @@ def validate_target(
     The weights sum to at most `max_total_weight`, at most `max_positions` are held, and a holding in a higher tier never
     has a smaller weight than one in a lower tier.
     """
-    items = _items(raw, "positions")
+    entries = shared.items(raw, "positions")
     seen: set[str] = set()
     positions = []
-    for index, item in enumerate(items, start=1):
-        ticker = _key(item, "ticker", index)
+    for index, item in enumerate(entries, start=1):
+        ticker = shared.key(item, "ticker", index)
         if ticker not in holdings:
             raise HandoffError(f"{ticker} is not one of the holdings ({', '.join(sorted(holdings)) or 'there are none: submit an empty list'})")
         if ticker in seen:
             raise HandoffError(f"{ticker} appears twice")
         seen.add(ticker)
-        weight = _weight(item, ticker)
+        weight = shared.weight(item, ticker)
         if weight < -_EPS:
             raise HandoffError(f"the weight for {ticker} is {weight:.4f}: it cannot be negative")
-        reason = _text(item, ticker, reason_max_chars, required=True)
+        reason = shared.text(item, ticker, reason_max_chars, required=True)
         assert reason is not None
         if weight <= _EPS:
             weight = 0.0
@@ -247,30 +176,6 @@ def _check_tier_order(kept: list[TargetPosition], tiers: Mapping[str, int]) -> N
                     f"{smallest_high.ticker} (value tier {high_tier}) has weight {smallest_high.weight:.4f}, smaller than {biggest_low.ticker} (lower value tier {low_tier}) "
                     f"at {biggest_low.weight:.4f}: a holding in a higher tier must not get a smaller weight"
                 )
-
-
-def validate_report(raw: Any, *, orders: Mapping[str, OrderView], reason_max_chars: int) -> list[OrderReport]:
-    """One entry per order the desk placed (by order_id). Every order must have been checked; one not fully filled needs a reason."""
-    items = _items(raw, "orders")
-    seen: set[str] = set()
-    reports = []
-    for index, item in enumerate(items, start=1):
-        order_id = _key(item, "order_id", index)
-        view = orders.get(order_id)
-        if view is None:
-            raise HandoffError(f"{order_id} is not an order you placed in this run ({', '.join(sorted(orders)) or 'there are none: submit an empty list'})")
-        if order_id in seen:
-            raise HandoffError(f"{order_id} appears twice")
-        seen.add(order_id)
-        label = f"{view.side} {view.symbol} ({order_id})"
-        if not view.checked:
-            raise HandoffError(f"{label} has not been checked: call check_orders first")
-        reason = _text(item, f"{label}, which is {view.status}", reason_max_chars, required=not view.filled)
-        reports.append(OrderReport(order_id, reason))
-    missing = sorted(set(orders) - seen)
-    if missing:
-        raise HandoffError(f"no entry for {', '.join(missing)}: report every order you placed")
-    return reports
 
 
 # --- the recorder -----------------------------------------------------------------------------------

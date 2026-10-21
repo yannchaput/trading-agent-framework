@@ -1,10 +1,10 @@
-"""What the strategy remembers between daily checks, and the per-run log.
+"""What the strategy remembers between daily checks.
 
 `StateStore` keeps, in one small JSON file per mode written atomically: the DocIDs of the filings the last completed run was
 built from (`processed`, the "nothing new" test), that run's holdings and target, the tickers this strategy has ever ordered
 (`traded`: the only positions it may sell), a trade left unfilled (`pending_trade`) and the abandoned-run streak. A missing or
 corrupt file is an empty state: the next check then treats every known filing as new and builds the portfolio again.
-`RunLog` appends one line per run to the run directory. Neither ever raises on an I/O problem: bookkeeping must not stop a run.
+`StateStore` never raises on an I/O problem: bookkeeping must not stop a run (the per-run log, `RunLog`, is in `strategies/common/run_log.py`).
 """
 
 from __future__ import annotations
@@ -139,20 +139,3 @@ class StateStore:
             self._path.unlink(missing_ok=True)
         except OSError as exc:
             logger.log_warning(f"state file {self._path} could not be deleted: {exc}")
-
-
-class RunLog:
-    """`runs.jsonl`: one JSON line per run. With no path (a strategy run outside a runner) it does nothing."""
-
-    def __init__(self, path: Path | None) -> None:
-        self._path = path
-
-    def append(self, record: dict[str, Any]) -> None:
-        if self._path is None:
-            return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, default=str) + "\n")
-        except OSError as exc:
-            logger.log_warning(f"run log {self._path} could not be written: {exc}")
