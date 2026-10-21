@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Callable
 from dataclasses import replace
@@ -9,6 +10,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.results import AgentRunResult
@@ -47,7 +49,7 @@ def trade(accession: str, ticker: str, cik: str, *, filed: date, traded: date | 
 
 
 def filing(accession: str, ticker: str, trades: list[Form4Trade], *, filed: date) -> Form4Filing:
-    return Form4Filing(accession, filed, ticker, "0000000001", ticker, (), None, (), tuple(trades), False, 0, 0, {})
+    return Form4Filing(accession, filed, ticker, "0000000001", ticker, (), None, (), tuple(trades), False, 0, 0, 0, {})
 
 
 def history(ticker: str, cik: str, months: tuple[int, int, int]) -> list[Form4Filing]:
@@ -81,6 +83,7 @@ class FakeSource:
     def __init__(self, data: dict[str, list[Form4Filing]]) -> None:
         self.data = data
         self.failing: dict[str, str] = {}
+        self.ignored_forms = self.other_issuer = 0  # what the next `load` reports as set aside
         self.loads: list[tuple[datetime, date]] = []
         self.loaded_on: date | None = None
         self._rows: dict[str, list[Form4Filing]] = {}
@@ -91,7 +94,7 @@ class FakeSource:
         self._failed = dict(self.failing)
         self._rows = {t: list(rows) for t, rows in self.data.items() if t not in self._failed}
         self.loaded_on = as_of.astimezone(MARKET_TZ).date()
-        return LoadReport(loaded=tuple(self._rows), failed=dict(self._failed))
+        return LoadReport(loaded=tuple(self._rows), failed=dict(self._failed), ignored_forms=self.ignored_forms, other_issuer=self.other_issuer)
 
     def known(self, as_of: datetime) -> KnownInsiderData:
         today = as_of.astimezone(MARKET_TZ).date()
@@ -304,6 +307,19 @@ def test_a_first_run_with_no_filing_at_all_builds_an_even_book_with_no_researche
     assert {s["class"] for s in context["stocks"]} == {"none"}
     assert {s["current_weight"] for s in context["stocks"]} == {0.0} and {s["previous_weight"] for s in context["stocks"]} == {None}
     assert rig.state.load().target == dict.fromkeys(WATCHLIST, 0.19)
+
+
+def test_a_held_stock_with_no_price_has_no_current_weight_not_zero(tmp_path: Path) -> None:
+    rig = Rig(tmp_path, data={t: [] for t in WATCHLIST})
+    rig._set_position("AAA", 40)
+    rig._set_position("BBB", 20)
+    del rig.broker.last_prices["AAA"]
+    rig.handles["trader"].script = no_submission
+
+    rig.pipeline.run()
+
+    weights = {s["ticker"]: s["current_weight"] for s in rig.handles["trader"].calls[0][1]["stocks"]}
+    assert weights == {"AAA": None, "BBB": 0.05, "CCC": 0.0, "DDD": 0.0, "EEE": 0.0}
 
 
 # --- act only on change ----------------------------------------------------------------------------------------
@@ -664,6 +680,32 @@ def test_in_a_backtest_a_failed_ticker_abandons_the_run_and_the_next_tick_loads_
     rig.day()
     rig.pipeline.run()
     assert len(rig.source.loads) == 2  # a backtest loads once nothing is missing
+
+
+def test_a_load_logs_what_it_kept_and_what_it_set_aside(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    data = base_data()
+    data["AAA"][0] = replace(data["AAA"][0], non_insider=3, other_codes=2, unpriced=1)
+    data["DDD"] = [replace(filing("DDD-X", "DDD", [], filed=date(2025, 10, 2)), non_insider=4, other_codes=5)]
+    rig = Rig(tmp_path, data=data)
+    rig.source.ignored_forms, rig.source.other_issuer = 2, 3
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert (
+        "[insider_trades] loaded 5 tickers: 13 Form 4 filings, 12 trades kept; set aside: 2 4/A or Form 5, 3 filings of another issuer, "
+        "7 rows of non-officer/director owners, 7 other transaction codes, 1 unpriced rows"
+    ) in caplog.text
+
+
+def test_a_ticker_that_failed_to_load_is_logged_by_name(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.source.failing = {"BBB": "SEC throttled the request"}
+
+    with caplog.at_level(logging.WARNING):
+        rig.pipeline.run()
+
+    assert "[insider_trades] BBB: Form 4 data could not be loaded: SEC throttled the request" in caplog.text
 
 
 def test_in_paper_a_failed_ticker_keeps_its_note_and_the_others_run(tmp_path: Path) -> None:

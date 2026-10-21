@@ -80,6 +80,7 @@ def test_a_missing_10b5_1_box_and_footnotes_block_mean_no_plan_and_no_footnotes(
 def test_a_filing_by_a_ten_percent_owner_alone_has_no_trades():
     f = _parse("ten_percent_only.xml")
     assert f.attributed_to is None and f.trades == ()
+    assert f.non_insider == 1  # its one P row is set aside and counted
     assert f.co_filers == ("BIG FUND LP",) and [o.role for o in f.owners] == ["10% owner"]
 
 
@@ -182,4 +183,4 @@ def test_a_real_joint_filing_by_a_bank_and_its_subsidiary_has_no_insider_and_no_
     ]
     assert f.attributed_to is None and f.trades == ()
     assert f.co_filers == ("JPMORGAN CHASE & CO", "DNT Asset Trust")
-    assert not f.plan and f.other_codes == 1 and f.unpriced == 0
+    assert not f.plan and f.other_codes == 1 and f.unpriced == 0 and f.non_insider == 0  # its only row is a J, not a P/S

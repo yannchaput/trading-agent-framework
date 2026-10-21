@@ -195,7 +195,13 @@ class InsiderPipeline:
             raise RunAbandoned("filings", f"Form 4 data could not be loaded for {', '.join(report.failed)}: {next(iter(report.failed.values()))}")
         if not report.loaded:
             raise RunAbandoned("filings", f"Form 4 data could not be loaded for any ticker: {next(iter(report.failed.values()), 'the watchlist is empty')}")
-        strategy.log_info(f"[insider_trades] loaded the Form 4s of {len(report.loaded)} stock(s) since {since}")
+        filings = [f for read in self._source.known(strategy.clock.now()).filings.values() for f in read]
+        strategy.log_info(
+            f"[insider_trades] loaded {len(report.loaded)} tickers: {len(filings)} Form 4 filings, {sum(len(f.trades) for f in filings)} trades kept; "
+            f"set aside: {report.ignored_forms} 4/A or Form 5, {report.other_issuer} filings of another issuer, "
+            f"{sum(f.non_insider for f in filings)} rows of non-officer/director owners, {sum(f.other_codes for f in filings)} other transaction codes, "
+            f"{sum(f.unpriced for f in filings)} unpriced rows"
+        )
         return dict(report.failed)
 
     def _changed(self, ticker: str, current: set[str], state: InsiderState) -> bool:
@@ -428,7 +434,7 @@ class InsiderPipeline:
                 strategy.log_warning(f"[trader] no price for {ticker}: {exc}")
                 weights[ticker] = None
                 continue
-            weights[ticker] = round(float(quantity * price / value), 4) if price is not None else 0.0
+            weights[ticker] = round(float(quantity * price / value), 4) if price is not None else None
         return weights
 
     # --- helpers -------------------------------------------------------------------------------------------

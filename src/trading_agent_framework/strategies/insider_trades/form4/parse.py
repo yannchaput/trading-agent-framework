@@ -93,6 +93,7 @@ class Form4Filing:
     plan: bool
     other_codes: int
     unpriced: int
+    non_insider: int  # P/S rows set aside because no reporting owner is an officer or director
     footnotes: dict[str, str]
 
 
@@ -162,7 +163,7 @@ def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4F
     footnotes = {note.get("id", ""): "".join(note.itertext()).strip() for note in root.findall("footnotes/footnote")}
 
     trades: list[Form4Trade] = []
-    unpriced = 0
+    unpriced = non_insider = 0
     other_codes = len(root.findall("derivativeTable/derivativeTransaction"))
     for row in root.findall("nonDerivativeTable/nonDerivativeTransaction"):
         code = _text(row, "transactionCoding/transactionCode").upper()
@@ -177,6 +178,7 @@ def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4F
             unpriced += 1
             continue
         if attributed_to is None:
+            non_insider += 1
             continue
         trades.append(
             Form4Trade(
@@ -209,5 +211,6 @@ def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4F
         plan=plan,
         other_codes=other_codes,
         unpriced=unpriced,
+        non_insider=non_insider,
         footnotes=footnotes,
     )

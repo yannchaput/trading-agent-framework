@@ -48,6 +48,7 @@ def _filing(accession: str, trades: tuple[Form4Trade, ...], *, filed: date, foot
         plan=plan,
         other_codes=0,
         unpriced=0,
+        non_insider=0,
         footnotes=footnotes or {},
     )
 

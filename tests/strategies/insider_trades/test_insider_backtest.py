@@ -36,7 +36,7 @@ def _trade(accession: str, ticker: str, cik: str, *, filed: date, traded: date, 
 
 
 def _filing(trade: Form4Trade) -> Form4Filing:
-    return Form4Filing(trade.accession, trade.filed, trade.ticker, "0000000001", trade.ticker, (), None, (), (trade,), False, 0, 0, {})
+    return Form4Filing(trade.accession, trade.filed, trade.ticker, "0000000001", trade.ticker, (), None, (), (trade,), False, 0, 0, 0, {})
 
 
 def _history(ticker: str, cik: str) -> list[Form4Filing]:
