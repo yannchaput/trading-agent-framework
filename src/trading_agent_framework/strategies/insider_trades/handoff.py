@@ -128,7 +128,7 @@ def validate_target(raw: Any, *, classes: Mapping[str, SignalClass], params: Ins
 
 
 def _check_signal_order(rows: Mapping[str, tuple[float, Mapping[str, Any]]], classes: Mapping[str, SignalClass], tol: float) -> None:
-    """A buying stock must not get less than a stock with no signal, and a selling one not more."""
+    """A buying stock must not get less than a stock with no signal, a selling one not more, and a buying one not less than a selling one."""
     weights = {signal: {ticker: rows[ticker][0] for ticker in rows if classes[ticker] is signal} for signal in SignalClass}
     none = weights[SignalClass.NONE]
     if weights[SignalClass.BUYING] and none:
@@ -145,6 +145,12 @@ def _check_signal_order(rows: Mapping[str, tuple[float, Mapping[str, Any]]], cla
             raise HandoffError(
                 f"{high} (selling) has weight {weights[SignalClass.SELLING][high]:.4f}, larger than {low} (no signal) at {none[low]:.4f}: a selling stock must not get more than a stock with no signal"
             )
+    buying, selling = weights[SignalClass.BUYING], weights[SignalClass.SELLING]
+    if buying and selling:  # implied by the two checks above when a stock has no signal, but not when none does
+        low = min(buying, key=lambda t: buying[t])
+        high = max(selling, key=lambda t: selling[t])
+        if buying[low] < selling[high] - tol:
+            raise HandoffError(f"{low} (buying) has weight {buying[low]:.4f}, smaller than {high} (selling) at {selling[high]:.4f}: a buying stock must not get less than a selling stock")
 
 
 # --- the recorder -----------------------------------------------------------------------------------

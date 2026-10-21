@@ -195,6 +195,28 @@ def test_the_ordering_rule_is_skipped_when_a_class_is_empty() -> None:
     assert len(target_of(rows(weights, reasons), classes)) == 10
 
 
+def test_a_buying_stock_below_a_selling_stock_is_refused_even_with_no_none_stock() -> None:
+    classes = {**{t: SELLING for t in WATCHLIST}, "AAPL": BUYING}
+    reasons = {t: "r" for t in WATCHLIST}
+    weights = {**{t: 0.03 for t in WATCHLIST}, "AAPL": 0.03, "MSFT": 0.2}
+
+    with pytest.raises(HandoffError, match="AAPL.*buying.*0.0300.*MSFT.*selling.*0.2000"):
+        target_of(rows(weights, reasons), classes)
+
+
+def test_the_buying_vs_selling_check_has_the_weight_tolerance() -> None:
+    params = InsiderParams(watchlist=("AAPL", "MSFT"), max_position_weight=0.5, weight_tolerance=0.0625)  # powers of two: the boundary is exact
+    classes = {"AAPL": BUYING, "MSFT": SELLING}
+
+    def check(selling: float) -> Any:
+        raw = [{"ticker": "AAPL", "weight": 0.125, "reason": "r"}, {"ticker": "MSFT", "weight": selling, "reason": "r"}]
+        return validate_target(raw, classes=classes, params=params)
+
+    assert len(check(0.125 + 0.0625)) == 2  # exactly tol below
+    with pytest.raises(HandoffError, match="AAPL.*buying.*MSFT.*selling"):
+        check(0.125 + 0.0625 + 2**-20)
+
+
 def test_with_no_signal_anywhere_the_weights_must_be_even() -> None:
     weights = {**even(), "AAPL": 0.12, "MSFT": 0.07}
 
