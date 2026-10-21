@@ -180,21 +180,27 @@ class InsiderPipeline:
         out a failed ticker (it is skipped); only every ticker failing abandons the run.
         """
         strategy = self._strategy
+        # Backtest: load again only while a ticker is missing. Paper/live: load once per market date.
         if strategy.is_backtesting:
             # Read the source itself: `InsiderFacts` caches the first read of a market date, which must not happen before the load.
             needed = self._source.loaded_on is None or bool(self._source.known(strategy.clock.now()).failed)
         else:
             needed = self._source.loaded_on != today
+        # Nothing to load: the failed tickers of the last read stand for this tick too.
         if not needed:
             return dict(self._source.known(strategy.clock.now()).failed)
+        # Load the window this run needs (see `load_window()` in agent_insider_trades.py).
         as_of, since = self._load_window()
         report = self._source.load(as_of=as_of, since=since)
         for ticker, error in report.failed.items():
             strategy.log_warning(f"[insider_trades] {ticker}: Form 4 data could not be loaded: {error}")
+        # A backtest needs every ticker: a history with a gap would mislabel trades.
         if report.failed and strategy.is_backtesting:
             raise RunAbandoned("filings", f"Form 4 data could not be loaded for {', '.join(report.failed)}: {next(iter(report.failed.values()))}")
+        # Paper/live skip the failed tickers, but with none loaded there is nothing to trade on.
         if not report.loaded:
             raise RunAbandoned("filings", f"Form 4 data could not be loaded for any ticker: {next(iter(report.failed.values()), 'the watchlist is empty')}")
+        # Log what was kept and what the load set aside, so a run shows why a filing did not count.
         filings = [f for read in self._source.known(strategy.clock.now()).filings.values() for f in read]
         strategy.log_info(
             f"[insider_trades] loaded {len(report.loaded)} tickers: {len(filings)} Form 4 filings, {sum(len(f.trades) for f in filings)} trades kept; "
@@ -202,6 +208,7 @@ class InsiderPipeline:
             f"{sum(f.non_insider for f in filings)} rows of non-officer/director owners, {sum(f.other_codes for f in filings)} other transaction codes, "
             f"{sum(f.unpriced for f in filings)} unpriced rows"
         )
+        # The failed tickers are skipped by the caller (`_run` leaves them out of the change check).
         return dict(report.failed)
 
     def _changed(self, ticker: str, current: set[str], state: InsiderState) -> bool:

@@ -137,7 +137,16 @@ class InsiderTradesStrategy(Strategy):
         in early January was made the previous December (a filing lags its trade, and the window reaches back `signal_window_days`),
         and the labeller needs `history_years` full years before THAT trade's year, or its oldest year would sit empty and its
         trades be mislabelled unclassified.
+
+        Args:
+            None. The window comes from the strategy: `_backtest_start` and `_backtest_end` in a backtest, `clock.now()` in paper and
+            live, and `settings` for `signal_window_days` and `history_years`.
+
+        Returns:
+            `(as_of, since)`: `as_of` is the aware datetime the filings must be known by (the backtest end, or now) and `since` is
+            the first day of the history to read (January 1 of the year).
         """
+        # A backtest loads as of its end and takes its reference day from its start; paper and live use the clock for both.
         if self.is_backtesting:
             assert self._backtest_start is not None and self._backtest_end is not None, "run_backtesting has not set the run's window"
             as_of, reference = self._backtest_end, self._backtest_start.astimezone(MARKET_TZ).date()
@@ -145,7 +154,9 @@ class InsiderTradesStrategy(Strategy):
             as_of = self.clock.now()
             reference = as_of.astimezone(MARKET_TZ).date()
         params = self.settings
+        # The earliest trade the run can still see: the signal window, plus 10 days for the filing lag.
         earliest = reference - timedelta(days=params.signal_window_days + 10)
+        # Go back `history_years` full calendar years from that trade's year, so its oldest year is complete.
         return as_of, date(earliest.year - params.history_years, 1, 1)
 
     def on_trading_iteration(self) -> None:
@@ -164,7 +175,17 @@ class InsiderTradesStrategy(Strategy):
     # --- backtesting -------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any):
-        """Backtest over the class `parameters` window on Yahoo daily bars, the whole watchlist and the benchmark preloaded."""
+        """Backtest over the class `parameters` window on Yahoo daily bars, the whole watchlist and the benchmark preloaded.
+
+        Args:
+            **overrides: keyword arguments of `Strategy.run_backtesting` that replace the defaults for this run only
+                (`start`, `end`, `budget`, `data_source`, `preload_assets`, `benchmark`, `timestep`, `warmup_trading_days`,
+                `agent_telemetry`, ...). `start` and `end` should be datetimes; leaving them out uses the class
+                `backtesting_start` and `backtesting_end`.
+
+        Returns:
+            The `BacktestResult` from `Strategy.run_backtesting`: the run directory, the settings and the metrics.
+        """
         symbols = list(dict.fromkeys([*self.settings.watchlist, self.parameters["benchmark_symbol"]]))
         defaults: dict[str, Any] = dict(
             start=self.parameters["backtesting_start"],
@@ -177,15 +198,26 @@ class InsiderTradesStrategy(Strategy):
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
+        # An override replaces a default whole: `start=` or `end=` here wins over the class window, and the
+        # merged `arguments` is what the base class receives, so the simulated window and the cutoffs below agree.
         arguments = {**defaults, **overrides}
+        # `start` anchors the Form 4 history (`load_window`): filings are read back from the year that covers
+        # `signal_window_days` before it. A non-datetime start leaves this None, and `load_window` then asserts.
         start = arguments["start"]
         self._backtest_start = start if isinstance(start, datetime) else None
+        # `end` is the no-look-ahead cutoff for filings (`_run_end`). A bare-midnight end is a date, so the cutoff
+        # moves to the next midnight and the filings of the end day are kept.
         self._backtest_end = _run_end(arguments["end"])
         return super().run_backtesting(**arguments)
 
 
 def _run_end(end: Any) -> datetime | None:
     """The instant a backtest's filings must be known by: a bare-midnight `end` covers that whole day (backtesting/CLAUDE.md); None if naive."""
+    # Goal: the backtest's no-look-ahead cutoff for Form 4 filings. Filings are loaded and
+    # known only up to this instant, so a backtest never sees a filing made after its window.
+    # A bare-midnight end is a date, not an instant: it means the whole day, so the cutoff is
+    # the next midnight, which keeps the filings dated on the end day inside the run.
     if not isinstance(end, datetime) or end.tzinfo is None:
         return None  # run_backtest refuses a naive end itself
+    # if the end time is midnight, the cutoff is the next midnight; otherwise the cutoff is the end itself (the filings of that day are not known yet).
     return end + timedelta(days=1) if end.timetz().replace(tzinfo=None) == time() else end
