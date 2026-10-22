@@ -32,7 +32,7 @@ from trading_agent_framework.strategies.insider_trades.pipeline import InsiderPi
 from trading_agent_framework.strategies.insider_trades.state import PendingTrade, StateStore
 from trading_agent_framework.strategies.insider_trades.tools import insider_research_tools
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import AgentError, BrokerError
 
 NOW = et(2025, 10, 14, 10)
 WATCHLIST = ("AAA", "BBB", "CCC", "DDD", "EEE")
@@ -831,3 +831,221 @@ def test_state_is_not_saved_when_nothing_changed(tmp_path: Path) -> None:
     rig.pipeline.run()
 
     assert path.stat().st_mtime_ns == before
+
+
+# --- the log says why a stock changed and what is unfinished -------------------------------------------------------------
+
+
+def test_a_first_run_logs_that_every_stock_has_no_stored_note(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "5 stock(s) changed: AAA, BBB, CCC, DDD, EEE" in caplog.text
+    assert "[insider_trades]   AAA: first run, no stored note" in caplog.text
+    assert "[insider_trades]   EEE: first run, no stored note" in caplog.text
+
+
+def test_a_new_filing_is_logged_with_its_filing_date_and_trade_count(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    rig.day()
+    rig.source.data["EEE"].append(filing("EEE-S1", "EEE", [trade("EEE-S1", "EEE", "I5", filed=date(2025, 10, 14))], filed=date(2025, 10, 14)))
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "1 stock(s) changed: EEE" in caplog.text
+    assert "[insider_trades]   EEE: new Form 4 filed 2025-10-14 (1 open-market trade)" in caplog.text
+
+
+def test_several_new_filings_are_logged_with_every_filing_date_and_the_total_trade_count(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    rig.day()
+    rig.source.data["EEE"] += [
+        filing("EEE-S1", "EEE", [trade("EEE-S1", "EEE", "I5", filed=date(2025, 10, 13))], filed=date(2025, 10, 13)),
+        filing("EEE-S2", "EEE", [trade("EEE-S2", "EEE", "I5", filed=date(2025, 10, 14)), trade("EEE-S2", "EEE", "I6", filed=date(2025, 10, 14))], filed=date(2025, 10, 14)),
+    ]
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[insider_trades]   EEE: new Form 4s filed 2025-10-13, 2025-10-14 (3 open-market trades)" in caplog.text
+
+
+def test_a_filing_leaving_the_signal_window_is_logged_as_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    rig.day(31)  # the 30-day window no longer reaches the purchase and the sales
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[insider_trades]   AAA: a Form 4 filed 2025-10-02 left the 30-day signal window" in caplog.text
+    assert "[insider_trades]   BBB: a Form 4 filed 2025-10-03 left the 30-day signal window" in caplog.text
+
+
+def test_a_stock_with_two_causes_logs_both_in_one_line(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    rig.day(31)
+    rig.source.data["AAA"].append(filing("AAA-P2", "AAA", [trade("AAA-P2", "AAA", "I1", filed=date(2025, 11, 10), code="P")], filed=date(2025, 11, 10)))
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert (
+        "[insider_trades]   AAA: new Form 4 filed 2025-11-10 (1 open-market trade); a Form 4 filed 2025-10-02 left the 30-day signal window"
+    ) in caplog.text
+
+
+def test_a_stored_note_that_cannot_be_read_back_is_logged_as_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    state = rig.state.load()
+    bad = {**state.notes["AAA"], "overrides": [{"insider_id": "I1", "from_label": "nonsense", "to_label": "routine", "reason": "x"}]}
+    rig.state.save(replace(state, notes={**state.notes, "AAA": bad}))
+    rig.day()
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[insider_trades]   AAA: no stored note to reuse" in caplog.text
+
+
+def test_a_full_run_that_leaves_orders_working_names_them(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        _unfilled_first_run(rig)
+
+    assert (
+        "[trader] unfinished trade kept; it will be checked again on later days (up to 3): working: AAA, BBB, CCC, DDD, EEE; off target: none"
+    ) in caplog.text
+
+
+def test_a_check_names_the_working_stocks_and_says_it_is_still_unfinished(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    _unfilled_first_run(rig)
+    rig.day()
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[trader] checking the unfinished trade again (check 1 of 3): working: AAA, BBB, CCC, DDD, EEE; off target: none" in caplog.text
+    assert "[trader] still unfinished after check 1 of 3: working: AAA, BBB, CCC, DDD, EEE; off target: none" in caplog.text
+    assert "trader_retry triggered" not in caplog.text
+
+
+def test_a_check_that_finds_the_orders_filled_says_the_trade_is_settled(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    _unfilled_first_run(rig)
+    rig.fill_all_open()
+    rig.day()
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[trader] checking the unfinished trade again (check 1 of 3): working: none; off target: none" in caplog.text
+    assert "[trader] the unfinished trade is settled after check 1 of 3" in caplog.text
+    assert "still unfinished" not in caplog.text
+
+
+def test_the_retry_agent_says_why_it_was_triggered(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    _unfilled_first_run(rig)
+    rig.cancel_all_open()  # the day orders expired unfilled: every stock is short of its target
+    rig.day()
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[trader] checking the unfinished trade again (check 1 of 3): working: none; off target: AAA, BBB, CCC, DDD, EEE" in caplog.text
+    assert "[trader] trader_retry triggered: 5 stock(s) off target by more than the 1.0% rebalance band" in caplog.text
+    assert "[trader]   AAA buy $2,000.00: AAA is $0.00 against a target of $2,000.00" in caplog.text
+    assert "[trader] the unfinished trade is settled after check 1 of 3" in caplog.text
+
+
+def test_a_change_logs_that_it_replaces_the_unfinished_trade(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    _unfilled_first_run(rig)
+    rig.fill_all_open()
+    rig.day()
+    rig.source.data["EEE"].append(filing("EEE-S1", "EEE", [trade("EEE-S1", "EEE", "I5", filed=date(2025, 10, 14))], filed=date(2025, 10, 14)))
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert (
+        "[insider_trades] this change replaces the unfinished trade (after 0 earlier check(s)); orders still working count toward the new target"
+    ) in caplog.text
+
+
+def test_a_quiet_day_does_not_log_a_replaced_trade(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+    rig.pipeline.run()
+    rig.day()
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "replaces the unfinished trade" not in caplog.text
+
+
+def test_the_researchers_closing_message_and_failures_name_their_stock(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[researcher] AAA: ok" in caplog.text
+    assert "[researcher] BBB: ok" in caplog.text
+    assert "[trader] ok" in caplog.text  # one trader run per tick: nothing to tell apart
+
+
+def test_a_researcher_failure_names_its_stock(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    def failing(prompt: str, **kwargs: Any) -> AgentRunResult:
+        raise AgentError("model unreachable")
+
+    rig.handles["researcher"].run = failing  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.ERROR):
+        rig.pipeline.run()
+
+    assert "[researcher] AAA: run failed: model unreachable" in caplog.text
+
+
+def test_the_researcher_note_line_names_the_stock_the_signal_and_the_note(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[researcher] stock: AAA; signal: opportunistic buying; note: AAA: insider activity read" in caplog.text
+    assert "[researcher] stock: BBB; signal: opportunistic selling; note: BBB: insider activity read" in caplog.text
+    assert "[researcher] stock: CCC; signal: no signal; note: CCC: insider activity read" in caplog.text
+
+
+def test_the_trader_target_lines_name_the_stock_the_signal_the_weight_and_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path)
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[trader] stock: AAA; signal: opportunistic buying; weight: 20.0%; reason: tilt to the signal" in caplog.text
+    assert "[trader] stock: BBB; signal: opportunistic selling; weight: 5.0%; reason: tilt to the signal" in caplog.text
+    assert "[trader] stock: CCC; signal: no signal; weight: 15.0%; reason: tilt to the signal" in caplog.text
+
+
+def test_a_trader_target_line_without_a_reason_ends_at_the_weight(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = Rig(tmp_path, data={ticker: [] for ticker in WATCHLIST})  # no signal anywhere: the even book, no reason needed
+
+    with caplog.at_level(logging.INFO):
+        rig.pipeline.run()
+
+    assert "[trader] stock: AAA; signal: no signal; weight: 19.0%" in caplog.text
+    assert "weight: 19.0%; reason" not in caplog.text

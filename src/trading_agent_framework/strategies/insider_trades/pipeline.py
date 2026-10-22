@@ -26,6 +26,7 @@ from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.trade_desk import Audit, TradeDesk
 from trading_agent_framework.strategies.insider_trades.facts import InsiderFacts
 from trading_agent_framework.strategies.insider_trades.form4.classify import Label, Labelled
+from trading_agent_framework.strategies.insider_trades.form4.parse import Form4Filing
 from trading_agent_framework.strategies.insider_trades.form4.signal import InsiderSummary, Override, SignalClass, StockFacts, apply_overrides, signal_class, summarise
 from trading_agent_framework.strategies.insider_trades.form4.source import KnownInsiderData, LoadReport
 from trading_agent_framework.strategies.insider_trades.handoff import InsiderRecorder
@@ -40,6 +41,9 @@ if TYPE_CHECKING:
 AGENT_RESEARCHER = "researcher"
 AGENT_TRADER = "trader"
 AGENT_TRADER_RETRY = "trader_retry"
+
+# How a signal class reads in the log (only opportunistic trades move a class, see `signal_class`).
+_SIGNAL_TEXT = {SignalClass.BUYING: "opportunistic buying", SignalClass.SELLING: "opportunistic selling", SignalClass.NONE: "no signal"}
 
 
 class SourceLike(Protocol):
@@ -213,10 +217,34 @@ class InsiderPipeline:
 
     def _changed(self, ticker: str, current: set[str], state: InsiderState) -> bool:
         """A stock changed when a P/S filing is new to the last completed run, a filing it then had in its window has left it, or there is no note to reuse."""
-        if state.last_run is None or self._stored(ticker, state) is None:
-            return True
-        window = self._facts.facts(ticker).accessions
-        return bool(current - set(state.processed)) or bool(set(state.in_window.get(ticker, [])) - window)
+        return bool(self._change_reasons(ticker, current, state))
+
+    def _change_reasons(self, ticker: str, current: set[str], state: InsiderState) -> list[str]:
+        """Why `_changed` holds, one text per cause (empty when the stock did not change)."""
+        if state.last_run is None:
+            return ["first run, no stored note"]
+        if self._stored(ticker, state) is None:
+            return ["no stored note to reuse"]
+        reasons: list[str] = []
+        new = current - set(state.processed)
+        if new:
+            filings = self._known_filings(new)
+            trades = sum(len(f.trades) for f in filings)
+            noun = "Form 4" if len(new) == 1 else "Form 4s"
+            filed = f" filed {', '.join(sorted({f.filed.isoformat() for f in filings}))}" if filings else ""
+            reasons.append(f"new {noun}{filed} ({trades} open-market trade{'' if trades == 1 else 's'})")
+        left = set(state.in_window.get(ticker, [])) - self._facts.facts(ticker).accessions
+        if left:
+            dates = sorted({f.filed.isoformat() for f in self._known_filings(left)})
+            filed = f" filed {', '.join(dates)}" if dates else ""
+            noun = "a Form 4" if len(left) == 1 else "Form 4s"
+            reasons.append(f"{noun}{filed} left the {self._params.signal_window_days}-day signal window")
+        return reasons
+
+    def _known_filings(self, accessions: set[str]) -> list[Form4Filing]:
+        """The known filings among `accessions` (a filing the facts do not know is left out)."""
+        found = (self._facts.filing(accession) for accession in sorted(accessions))
+        return [f for f in found if f is not None]
 
     # --- a pending trade: only the trading stage ---------------------------------------------------------
 
@@ -227,19 +255,27 @@ class InsiderPipeline:
             self._state.save(replace(state, pending_trade=None))
             self._log.append({**record, "outcome": "pending_gave_up", "target": pending.target})
             return RunOutcome(completed=True, abandoned_streak=state.abandoned_streak)
-        strategy.log_info(f"[trader] checking the unfinished trade again (check {pending.days + 1} of {params.max_trade_retries})")
+        check = f"check {pending.days + 1} of {params.max_trade_retries}"
         self._phase, self._pending_retry = "trading", True
-        audit = self._retry_trade(pending.target, state, record)
+        audit = self._retry_trade(pending.target, state, record, check)
+        if audit.complete:
+            strategy.log_info(f"[trader] the unfinished trade is settled after {check}")
+        else:
+            strategy.log_info(f"[trader] still unfinished after {check}: {_unfinished(audit)}")
         remaining = None if audit.complete else PendingTrade(target=pending.target, days=pending.days + 1)
         self._state.save(replace(state, traded=self._desk.traded, pending_trade=remaining, abandoned_streak=0, last_run=now.date().isoformat()))
         self._log.append({**record, "outcome": "pending_complete" if audit.complete else "pending_retry", "target": pending.target})
         return RunOutcome(completed=True, abandoned_streak=0)
 
-    def _retry_trade(self, target: Mapping[str, float], state: InsiderState, record: dict[str, Any]) -> Audit:
-        """Run the retry agent against the stored `target`; returns the audit afterwards (complete = nothing unfilled, nothing off target)."""
+    def _retry_trade(self, target: Mapping[str, float], state: InsiderState, record: dict[str, Any], check: str) -> Audit:
+        """Run the retry agent against the stored `target`; returns the audit afterwards (complete = nothing unfilled, nothing off target).
+
+        `check` ("check 1 of 3") names this attempt in the log.
+        """
         strategy, desk = self._strategy, self._desk
         desk.begin_run(target, state.traded)
         before = desk.audit()
+        strategy.log_info(f"[trader] checking the unfinished trade again ({check}): {_unfinished(before)}")
         record["shortfalls_before"] = [asdict(s) for s in before.shortfalls]
         if not before.shortfalls:
             if before.in_flight:
@@ -247,6 +283,9 @@ class InsiderPipeline:
             else:
                 strategy.log_info("[trader] the account is already at the target: no order needed")
             return before
+        strategy.log_info(f"[trader] trader_retry triggered: {len(before.shortfalls)} stock(s) off target by more than the {self._params.rebalance_band:.1%} rebalance band")
+        for shortfall in before.shortfalls:
+            strategy.log_info(f"[trader]   {shortfall.symbol} {shortfall.kind} ${shortfall.value:,.2f}: {shortfall.detail}")
         self._recorder.expect_report(desk.orders_view)
         context = {
             "current_datetime": strategy.clock.now().astimezone(MARKET_TZ).isoformat(),
@@ -267,7 +306,11 @@ class InsiderPipeline:
     def _full_run(self, now: datetime, state: InsiderState, current: dict[str, set[str]], changed: list[str], failed: dict[str, str], record: dict[str, Any]) -> RunOutcome:
         strategy = self._strategy
         today = now.date()
+        if state.pending_trade is not None:
+            strategy.log_info(f"[insider_trades] this change replaces the unfinished trade (after {state.pending_trade.days} earlier check(s)); orders still working count toward the new target")
         strategy.log_info(f"[insider_trades] {len(changed)} stock(s) changed: {', '.join(changed)}")
+        for ticker in changed:
+            strategy.log_info(f"[insider_trades]   {ticker}: {'; '.join(self._change_reasons(ticker, current[ticker], state))}")
 
         # 1. Researcher: one run per changed stock that has insider trades in its window.
         self._phase = "researcher"
@@ -278,8 +321,10 @@ class InsiderPipeline:
         self._phase, self._pending_retry = "trading", False
         target = self._trade(now, state, stocks, failed, record)
         audit = self._audited(record)
+        if not audit.complete:
+            strategy.log_info(f"[trader] unfinished trade kept; it will be checked again on later days (up to {self._params.max_trade_retries}): {_unfinished(audit)}")
 
-        kept = {ticker: state.in_window[ticker] for ticker in failed if ticker in state.in_window}
+        kept ={ticker: state.in_window[ticker] for ticker in failed if ticker in state.in_window}
         self._state.save(
             InsiderState(
                 processed=sorted(set(state.processed).union(*current.values())),
@@ -312,11 +357,11 @@ class InsiderPipeline:
         self._recorder.expect_note(facts)
         previous = state.notes.get(ticker)
         context = {"current_datetime": now.isoformat(), "ticker": ticker, "window_days": self._params.signal_window_days, "previous_note": previous}
-        self._run_stage(AGENT_RESEARCHER, self._researcher_task, context)
+        self._run_stage(AGENT_RESEARCHER, self._researcher_task, context, label=ticker)
         note = self._recorder.note
         assert note is not None  # `submitted` is true only with a recorded note
         signal = self._signal(ticker, window, note.overrides, today)
-        self._strategy.log_info(f"[researcher] {ticker}: {signal.value}: {note.summary}")
+        self._strategy.log_info(f"[researcher] stock: {ticker}; signal: {_SIGNAL_TEXT[signal]}; note: {note.summary}")
         for override in note.overrides:
             self._strategy.log_info(f"[researcher]   override {override.insider_id}: {override.from_label.value} -> {override.to_label.value}: {override.reason}")
         return _Stock(ticker, signal, note.summary, note.overrides, today.isoformat(), changed=True)
@@ -373,8 +418,10 @@ class InsiderPipeline:
         target = {t.ticker: t.weight for t in recorder.target if t.weight > 0}
         record["target"] = [asdict(t) for t in recorder.target]
         strategy.log_info(f"[trader] target: {len(target)} positions, {sum(target.values()):.1%} invested")
+        signals = {s.ticker: s.signal for s in stocks}
         for position in recorder.target:
-            strategy.log_info(f"[trader]   {position.ticker} {position.weight:.1%}" + (f": {position.reason}" if position.reason else ""))
+            line = f"[trader] stock: {position.ticker}; signal: {_SIGNAL_TEXT[signals[position.ticker]]}; weight: {position.weight:.1%}"
+            strategy.log_info(line + (f"; reason: {position.reason}" if position.reason else ""))
         return target
 
     def _on_target(self, weights: dict[str, float]) -> dict[str, Any]:
@@ -446,9 +493,13 @@ class InsiderPipeline:
 
     # --- helpers -------------------------------------------------------------------------------------------
 
-    def _run_stage(self, agent_name: str, task: str, context: dict[str, Any], *, stage: str | None = None) -> None:
-        """Run an agent until the armed submission is complete: once, then once more forcing the tool still missing; else abandon."""
+    def _run_stage(self, agent_name: str, task: str, context: dict[str, Any], *, stage: str | None = None, label: str = "") -> None:
+        """Run an agent until the armed submission is complete: once, then once more forcing the tool still missing; else abandon.
+
+        `label` (the researcher's ticker) prefixes the agent's log lines, which would otherwise not say which stock they are about.
+        """
         recorder = self._recorder
+        tag = f"[{agent_name}] {label}: " if label else f"[{agent_name}] "
         agent = self._agents[agent_name]
         run_id = uuid.uuid4().hex
         prompt, force_tool, error = task, None, ""
@@ -456,12 +507,12 @@ class InsiderPipeline:
             recorder.last_error, error = None, ""  # an error from the first attempt must not be reported for the second
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool)
-                self._strategy.log_info(f"[{agent_name}] {result.output}")
+                self._strategy.log_info(f"{tag}{result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
-                    self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
+                    self._strategy.log_debug(f"{tag}tool_call_{i}: {tool_call}")
             except AgentError as exc:
                 error = str(exc)
-                self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
+                self._strategy.log_error(f"{tag}run failed: {exc}")
             if recorder.submitted:
                 return
             tool = recorder.missing_tool
@@ -475,6 +526,13 @@ class InsiderPipeline:
 
 def _shortfalls(audit: Audit) -> list[dict[str, Any]]:
     return [{"symbol": s.symbol, "kind": s.kind, "dollars": round(s.value), "detail": s.detail} for s in audit.shortfalls]
+
+
+def _unfinished(audit: Audit) -> str:
+    """What is left of a trade for the log: the stocks with an order still working, and the stocks off their target."""
+    working = ", ".join(audit.in_flight) or "none"
+    off_target = ", ".join(s.symbol for s in audit.shortfalls) or "none"
+    return f"working: {working}; off target: {off_target}"
 
 
 def _dollars(value: Decimal) -> int:
