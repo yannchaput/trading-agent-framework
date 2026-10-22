@@ -15,7 +15,10 @@ from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition
 KEYS = "DASHBOARD_DISPLAY=true\nALPACA_API_KEY=k\nALPACA_API_SECRET=s\nALPACA_DATA_API_KEY=dk\nALPACA_DATA_API_SECRET=ds\n"
 
 PNL = AccountPnl(
-    days=[{"date": "2026-10-12", "realized": 0.0, "unrealized": 20.0}, {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0}],
+    days=[
+        {"date": "2026-10-12", "realized": 0.0, "unrealized": 20.0, "change": 20.0},
+        {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0, "change": 15.0},
+    ],
     realized_total=5.0,
     unrealized_now=30.0,
     broker_unrealized=30.0,
@@ -247,7 +250,10 @@ def test_a_later_start_date_fits_the_plot_and_the_realized_card_to_the_window(en
 
     two_sales = dataclasses.replace(
         PNL,
-        days=[{"date": "2026-10-12", "realized": 100.0, "unrealized": 20.0}, {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0}],
+        days=[
+            {"date": "2026-10-12", "realized": 100.0, "unrealized": 20.0, "change": 120.0},
+            {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0, "change": 15.0},
+        ],
         realized_total=105.0,
     )
     at, _ = _run(_paper_script, monkeypatch, two_sales)

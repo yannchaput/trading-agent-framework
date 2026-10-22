@@ -10,7 +10,7 @@ from alpaca.data.timeframe import TimeFrame
 from tests.fakes import FakeStockHistoricalDataClient, bar_payload, make_alpaca_position
 
 from trading_agent_framework.dashboard import account_reader
-from trading_agent_framework.dashboard.pnl import Fee
+from trading_agent_framework.dashboard.pnl import Dividend, Fee
 from trading_agent_framework.utils.errors import ConfigurationError
 
 KEYS = "ALPACA_API_KEY=trade-key\nALPACA_API_SECRET=trade-secret\nALPACA_DATA_API_KEY=data-key\nALPACA_DATA_API_SECRET=data-secret\n"
@@ -126,6 +126,15 @@ def _fee_activity(n: int, day: str, amount: str, status: str = "executed") -> di
     return {"id": f"20261006000000000::{n:08d}", "activity_type": "FEE", "activity_sub_type": "TAF", "date": f"{day}T00:00:00Z", "net_amount": amount, "status": status, "symbol": "AAA"}
 
 
+def _dividend_activity(n: int, day: str, amount: str) -> dict[str, str]:
+    return {"id": f"20261006000000000::{n:08d}", "activity_type": "DIV", "date": day, "net_amount": amount, "description": "Cash DIV @ 0.22, Pos QTY: 10", "status": "executed", "symbol": "AAA"}
+
+
+def _withholding_activity(n: int, day: str, amount: str) -> dict[str, str]:
+    description = "DIV tax withholding on $0.43 at 15% for tax country FRA; w8w9: w8"
+    return {"id": f"20261006000000000::{n:08d}", "activity_type": "DIVNRA", "date": day, "net_amount": amount, "description": description, "status": "executed"}
+
+
 class FakeAccountClient:
     """Answers `GET /account/activities` from `activities` like Alpaca: `page_size` items after the `page_token` id."""
 
@@ -149,9 +158,9 @@ class FakeAccountClient:
 def test_activities_are_fills_and_fees_oldest_first() -> None:
     client = FakeAccountClient([_fill_activity(1), _fill_activity(2, side="sell", price="110"), _fee_activity(3, "2026-10-06", "-0.02")])
 
-    fills, fees = account_reader.fetch_activities(client)
+    fills, fees, _ = account_reader.fetch_activities(client)
 
-    assert client.requests == [("/account/activities", {"activity_types": "FILL,FEE", "direction": "asc", "page_size": 100})]
+    assert client.requests == [("/account/activities", {"activity_types": "FILL,FEE,DIV,DIVNRA", "direction": "asc", "page_size": 100})]
     assert [(f.symbol, f.side, f.qty, f.price) for f in fills] == [("AAA", "buy", 10.0, 100.0), ("AAA", "sell", 10.0, 110.0)]
     assert fills[0].time.isoformat() == "2026-10-05T15:00:00.123456+00:00"
     assert fees == [Fee(date(2026, 10, 6), -0.02)]
@@ -160,7 +169,7 @@ def test_activities_are_fills_and_fees_oldest_first() -> None:
 def test_activities_follow_the_page_token_through_a_full_page_to_an_empty_one() -> None:
     client = FakeAccountClient([_fill_activity(n) for n in range(100)])
 
-    fills, _ = account_reader.fetch_activities(client)
+    fills, _, _ = account_reader.fetch_activities(client)
 
     assert len(fills) == 100
     assert len(client.requests) == 2
@@ -170,7 +179,7 @@ def test_activities_follow_the_page_token_through_a_full_page_to_an_empty_one() 
 def test_activities_over_several_pages_are_all_read() -> None:
     client = FakeAccountClient([_fill_activity(n) for n in range(150)])
 
-    fills, _ = account_reader.fetch_activities(client)
+    fills, _, _ = account_reader.fetch_activities(client)
 
     assert len(fills) == 150
     assert len(client.requests) == 2
@@ -179,7 +188,15 @@ def test_activities_over_several_pages_are_all_read() -> None:
 def test_a_cancelled_fee_is_left_out() -> None:
     client = FakeAccountClient([_fee_activity(1, "2026-10-06", "-0.02", status="canceled")])
 
-    assert account_reader.fetch_activities(client) == ([], [])
+    assert account_reader.fetch_activities(client) == ([], [], [])
+
+
+def test_dividends_and_their_tax_withholding_are_read() -> None:
+    client = FakeAccountClient([_dividend_activity(1, "2026-10-06", "0.43"), _withholding_activity(2, "2026-10-06", "-0.06")])
+
+    _, _, dividends = account_reader.fetch_activities(client)
+
+    assert dividends == [Dividend(date(2026, 10, 6), 0.43), Dividend(date(2026, 10, 6), -0.06)]
 
 
 def test_daily_closes_are_raw_iex_day_bars_keyed_by_new_york_date() -> None:
@@ -218,9 +235,9 @@ def test_load_account_pnl_rebuilds_the_days_from_the_three_endpoints() -> None:
     result = account_reader.load_account_pnl(trading, data, date(2026, 10, 7))
 
     assert result.days == [
-        {"date": "2026-10-05", "realized": 0.0, "unrealized": 10.0},
-        {"date": "2026-10-06", "realized": 0.0, "unrealized": 20.0},
-        {"date": "2026-10-07", "realized": 0.0, "unrealized": 30.0},
+        {"date": "2026-10-05", "realized": 0.0, "unrealized": 10.0, "change": 10.0},
+        {"date": "2026-10-06", "realized": 0.0, "unrealized": 20.0, "change": 10.0},
+        {"date": "2026-10-07", "realized": 0.0, "unrealized": 30.0, "change": 10.0},
     ]
     (position,) = result.positions
     assert (position.symbol, position.qty, position.current_price, position.unrealized_plpc) == ("AAA", 10.0, 103.0, 0.03)

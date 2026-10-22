@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from trading_agent_framework.dashboard.pnl import AverageCostBook, BrokerPosition, Fee, Fill, daily_account_pnl
+from trading_agent_framework.dashboard.pnl import AverageCostBook, BrokerPosition, Dividend, Fee, Fill, daily_account_pnl
 
 T0 = datetime(2026, 10, 5, 14, tzinfo=UTC)
 
@@ -89,9 +89,9 @@ def test_realized_is_booked_on_the_sale_day_net_of_fills_fees_and_fee_activities
     result = daily_account_pnl(fills, fees, closes, [], WED)
 
     assert result.days == [
-        {"date": "2026-10-05", "realized": 0.0, "unrealized": 49.0},  # 10 * 105 - 1,001
-        {"date": "2026-10-06", "realized": 96.95, "unrealized": 0.0},  # 1,100 - 2 - 1,001 - 0.05
-        {"date": "2026-10-07", "realized": 0.0, "unrealized": 0.0},
+        {"date": "2026-10-05", "realized": 0.0, "unrealized": 49.0, "change": 49.0},  # 10 * 105 - 1,001
+        {"date": "2026-10-06", "realized": 96.95, "unrealized": 0.0, "change": 47.95},  # 1,100 - 2 - 1,001 - 0.05; the open 49 is realized
+        {"date": "2026-10-07", "realized": 0.0, "unrealized": 0.0, "change": 0.0},
     ]
     assert result.realized_total == pytest.approx(96.95)
 
@@ -102,7 +102,7 @@ def test_today_unrealized_comes_from_the_positions_not_a_close() -> None:
 
     result = daily_account_pnl(fills, [], closes, [_position("AAA", 10, 42.0)], TUE)
 
-    assert result.days[-1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 42.0}
+    assert result.days[-1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 42.0, "change": 32.0}
     assert result.unrealized_now == 42.0
 
 
@@ -111,7 +111,7 @@ def test_a_fill_in_the_evening_utc_belongs_to_the_new_york_day() -> None:
 
     result = daily_account_pnl(fills, [], {"AAA": {MON: 100.0}}, [], WED)
 
-    assert result.days[0] == {"date": "2026-10-05", "realized": 100.0, "unrealized": 0.0}
+    assert result.days[0] == {"date": "2026-10-05", "realized": 100.0, "unrealized": 0.0, "change": 100.0}
 
 
 def test_a_missing_close_is_carried_forward_and_a_symbol_never_priced_is_named() -> None:
@@ -120,7 +120,7 @@ def test_a_missing_close_is_carried_forward_and_a_symbol_never_priced_is_named()
 
     result = daily_account_pnl(fills, [], closes, [_position("AAA", 10, 0.0), _position("ZZZ", 1, 0.0)], WED)
 
-    assert result.days[1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 20.0}  # 10 * 102 - 1,000
+    assert result.days[1] == {"date": "2026-10-06", "realized": 0.0, "unrealized": 20.0, "change": 0.0}  # 10 * 102 - 1,000
     assert result.unpriced == ["ZZZ"]
 
 
@@ -153,7 +153,7 @@ def test_today_unrealized_keeps_the_cost_basis_the_realized_pnl_uses_not_the_bro
 
     result = daily_account_pnl(fills, [], closes, [_priced_position("AAA", 10, 150.0, -500.0)], THU)
 
-    assert result.days[-1] == {"date": "2026-10-08", "realized": 0.0, "unrealized": 0.0}
+    assert result.days[-1] == {"date": "2026-10-08", "realized": 0.0, "unrealized": 0.0, "change": 0.0}
     assert result.unrealized_now == 0.0
     assert result.broker_unrealized == -500.0
 
@@ -165,6 +165,35 @@ def test_today_unrealized_falls_back_to_the_brokers_when_the_fills_do_not_explai
 
     assert result.unrealized_now == 99.0
     assert result.broker_unrealized == 99.0
+
+
+def test_an_open_loss_that_shrinks_is_a_positive_day_not_a_negative_one() -> None:
+    # The level of the open P&L is -100, -90, -80 (always a loss); the days themselves are -100, +10, +10.
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100)]
+    closes = {"AAA": {MON: 90.0, TUE: 91.0}}
+
+    result = daily_account_pnl(fills, [], closes, [_priced_position("AAA", 10, 92.0, -80.0)], WED)
+
+    assert [(d["unrealized"], d["change"]) for d in result.days] == [(-100.0, -100.0), (-90.0, 10.0), (-80.0, 10.0)]
+
+
+def test_dividends_net_of_withholding_are_realized_on_their_day() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100)]
+    dividends = [Dividend(TUE, 0.43), Dividend(TUE, -0.06)]  # the credit, then its 15% withholding
+    closes = {"AAA": {MON: 100.0, TUE: 100.0}}
+
+    result = daily_account_pnl(fills, [], closes, [_priced_position("AAA", 10, 100.0, 0.0)], WED, dividends)
+
+    assert result.days[1] == {"date": "2026-10-06", "realized": 0.37, "unrealized": 0.0, "change": 0.37}
+    assert result.realized_total == pytest.approx(0.37)
+
+
+def test_a_dividend_on_a_day_with_no_close_or_fill_still_makes_a_day() -> None:
+    fills = [Fill(_at(MON), "AAA", "buy", 10, 100)]
+
+    result = daily_account_pnl(fills, [], {"AAA": {MON: 100.0}}, [_priced_position("AAA", 10, 100.0, 0.0)], THU, [Dividend(WED, 1.0)])
+
+    assert [(d["date"], d["realized"]) for d in result.days] == [("2026-10-05", 0.0), ("2026-10-07", 1.0), ("2026-10-08", 0.0)]
 
 
 def test_days_between_keeps_the_days_inside_the_window_ends_included() -> None:

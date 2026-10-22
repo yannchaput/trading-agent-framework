@@ -135,8 +135,9 @@ def page_account(mode: str) -> None:
     if pnl.days:
         st.plotly_chart(account_pnl_chart(days), width="stretch")
         st.caption(
-            "Each point is that day's realized plus unrealized P&L. Realized: the day's sales, net of fees, against the "
-            "average cost. Unrealized: the open positions at the day's close; today, at the current price."
+            "Each point is that day's P&L: the day's sales (net of fees, against the average cost) plus the move of the open "
+            "positions' P&L since the previous close; today, at the current price. Hover a point for the realized part and "
+            "the open P&L level at the close."
         )
     else:
         st.info("No fill history in this account: only today's unrealized P&L is known.")

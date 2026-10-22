@@ -888,26 +888,26 @@ def _sign_colors(values: Sequence[float]) -> list[str]:
 
 
 def account_pnl_chart(days: list[dict[str, Any]], title: str = "P&L per day") -> go.Figure:
-    """One point per trading day (`pnl.daily_account_pnl`) joined by a line: the P&L realized by that day's sales plus
-    the unrealized P&L of the positions open at its close. Markers are green for a gain, red for a loss; the hover
-    gives the two parts."""
+    """One point per trading day (`pnl.daily_account_pnl`) joined by a line: that day's P&L, i.e. the P&L realized by
+    its sales plus the move of the open positions' P&L since the previous close. Markers are green for a gain, red for
+    a loss; the hover gives the realized part and the open P&L level at the close."""
     if not days:
         fig = go.Figure()
         fig.add_annotation(text="No trade data available", showarrow=False)
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    totals = [day["realized"] + day["unrealized"] for day in days]
+    changes = [day["change"] for day in days]
     fig = go.Figure(
         go.Scatter(
             x=[day["date"] for day in days],
-            y=totals,
-            name="Total",
+            y=changes,
+            name="Day",
             mode="lines+markers",
             line=dict(color="#9ca3af", width=2),
-            marker=dict(color=_sign_colors(totals), size=9),
+            marker=dict(color=_sign_colors(changes), size=9),
             customdata=[[day["realized"], day["unrealized"]] for day in days],
-            hovertemplate="%{x}<br>Total: %{y:$,.2f}<br>Realized: %{customdata[0]:$,.2f}<br>Unrealized: %{customdata[1]:$,.2f}<extra></extra>",
+            hovertemplate="%{x}<br>Day: %{y:$,.2f}<br>Realized: %{customdata[0]:$,.2f}<br>Open P&L at close: %{customdata[1]:$,.2f}<extra></extra>",
         )
     )
     fig.add_hline(y=0, line_dash="dot", line_color="#6b7280")

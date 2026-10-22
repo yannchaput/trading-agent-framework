@@ -80,6 +80,14 @@ class Fee:
 
 
 @dataclass(frozen=True, slots=True)
+class Dividend:
+    """A dividend credit or its tax withholding, signed like Alpaca's `net_amount` (a withholding is negative)."""
+
+    day: date
+    amount: float
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerPosition:
     """An open position as the broker reports it now."""
 
@@ -94,7 +102,9 @@ class BrokerPosition:
 
 @dataclass(frozen=True, slots=True)
 class AccountPnl:
-    """`days`: `{date, realized, unrealized}` per trading day from the first fill to today, oldest first.
+    """`days`: `{date, realized, unrealized, change}` per trading day from the first fill to today, oldest first.
+    `unrealized` is a level (the open positions' P&L at the close) and `realized` that day's flow, so neither is the
+    day's P&L: `change` is `realized` plus the move of `unrealized` since the previous day (from 0 before the first fill).
     `unrealized_now` is on the replay's average cost, the basis of the realized P&L; `broker_unrealized` is Alpaca's
     own figure (it re-bases overnight positions to compressed FIFO, so the two differ after a partial sale).
     `mismatches`: `(symbol, replayed shares, broker shares)` where the fills do not explain the positions;
@@ -144,27 +154,29 @@ def daily_account_pnl(
     closes: Mapping[str, Mapping[date, float]],
     positions: Sequence[BrokerPosition],
     today: date,
+    dividends: Sequence[Dividend] = (),
 ) -> AccountPnl:
-    """Realized P&L of each day's sales (net of fees, at average cost, plus that day's fee activities) and the
+    """Realized P&L of each day's sales (net of fees, at average cost, plus that day's fee and dividend activities) and the
     unrealized P&L of the shares held at each day's close; today's unrealized is the broker's, not a close's.
-    A day is any day with a close, a fill or a fee between the first fill and today, and today."""
+    A day is any day with a close, a fill, a fee or a dividend between the first fill and today, and today."""
     broker_unrealized = sum(p.unrealized_pl or 0.0 for p in positions)
     unrealized_now = broker_unrealized  # replaced below by the replay's figure once today's fills are in
     ordered = sorted(fills, key=lambda f: f.time)
     book = AverageCostBook()
     days: list[dict[str, Any]] = []
     unpriced: set[str] = set()
+    previous_unrealized = 0.0
     if ordered:
         fills_by_day: dict[date, list[Fill]] = {}
         for fill in ordered:
             fills_by_day.setdefault(market_day(fill.time), []).append(fill)
-        fees_by_day: dict[date, float] = {}
-        for fee in fees:
-            fees_by_day[fee.day] = fees_by_day.get(fee.day, 0.0) + fee.amount
+        cash_by_day: dict[date, float] = {}  # fee activities and dividends, both signed like Alpaca's net_amount
+        for activity in (*fees, *dividends):
+            cash_by_day[activity.day] = cash_by_day.get(activity.day, 0.0) + activity.amount
         first = market_day(ordered[0].time)
-        calendar = {d for series in closes.values() for d in series} | set(fills_by_day) | set(fees_by_day) | {today}
+        calendar = {d for series in closes.values() for d in series} | set(fills_by_day) | set(cash_by_day) | {today}
         for day in sorted(d for d in calendar if first <= d <= today):
-            realized = fees_by_day.get(day, 0.0)
+            realized = cash_by_day.get(day, 0.0)
             for fill in fills_by_day.get(day, []):
                 sale = book.apply(fill)
                 if sale is not None:
@@ -180,7 +192,15 @@ def daily_account_pnl(
                         unpriced.add(symbol)
                     else:
                         unrealized += shares * close - cost
-            days.append({"date": day.isoformat(), "realized": round(realized, 2), "unrealized": round(unrealized, 2)})
+            days.append(
+                {
+                    "date": day.isoformat(),
+                    "realized": round(realized, 2),
+                    "unrealized": round(unrealized, 2),
+                    "change": round(realized + unrealized - previous_unrealized, 2),
+                }
+            )
+            previous_unrealized = unrealized
 
     held = {symbol: shares for symbol, (shares, _) in book.holdings().items()}
     broker = {p.symbol: p.qty for p in positions}

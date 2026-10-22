@@ -18,7 +18,7 @@ from dotenv import dotenv_values
 
 from trading_agent_framework.brokers.alpaca.client import build_stock_data_client, build_trading_client
 from trading_agent_framework.config.env import AlpacaCredentials, find_project_root
-from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, Fee, Fill, daily_account_pnl, market_day
+from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, Dividend, Fee, Fill, daily_account_pnl, market_day
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError
 
@@ -82,7 +82,7 @@ class AccountDataClient(Protocol):
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet: ...
 
 
-def _parse_activity(item: dict[str, Any]) -> Fill | Fee | None:
+def _parse_activity(item: dict[str, Any]) -> Fill | Fee | Dividend | None:
     # Parsed by hand: the Trading API's activities have no `account_id`, which alpaca-py's activity models require.
     kind = item.get("activity_type")
     if kind == "FILL":
@@ -95,14 +95,18 @@ def _parse_activity(item: dict[str, Any]) -> Fill | Fee | None:
         )
     if kind == "FEE" and item.get("status") != "canceled":
         return Fee(day=date.fromisoformat(str(item["date"])[:10]), amount=float(item["net_amount"]))
+    if kind in ("DIV", "DIVNRA"):  # DIVNRA: the non-resident tax withheld on a dividend, negative
+        return Dividend(day=date.fromisoformat(str(item["date"])[:10]), amount=float(item["net_amount"]))
     return None
 
 
-def fetch_activities(client: AccountTradingClient) -> tuple[list[Fill], list[Fee]]:
-    """Every fill and fee of the account, oldest first, following `page_token` until a short page."""
+def fetch_activities(client: AccountTradingClient) -> tuple[list[Fill], list[Fee], list[Dividend]]:
+    """Every fill, fee and dividend (credits and their withholding) of the account, oldest first, following `page_token`
+    until a short page."""
     fills: list[Fill] = []
     fees: list[Fee] = []
-    params: dict[str, Any] = {"activity_types": "FILL,FEE", "direction": "asc", "page_size": PAGE_SIZE}
+    dividends: list[Dividend] = []
+    params: dict[str, Any] = {"activity_types": "FILL,FEE,DIV,DIVNRA", "direction": "asc", "page_size": PAGE_SIZE}
     while True:
         page = cast(list[dict[str, Any]], client.get("/account/activities", params))
         for item in page:
@@ -111,8 +115,10 @@ def fetch_activities(client: AccountTradingClient) -> tuple[list[Fill], list[Fee
                 fills.append(parsed)
             elif isinstance(parsed, Fee):
                 fees.append(parsed)
+            elif isinstance(parsed, Dividend):
+                dividends.append(parsed)
         if len(page) < PAGE_SIZE:
-            return fills, fees
+            return fills, fees, dividends
         params = {**params, "page_token": page[-1]["id"]}
 
 
@@ -150,13 +156,13 @@ def to_broker_position(position: Position) -> BrokerPosition:
 
 def load_account_pnl(trading: AccountTradingClient, data: AccountDataClient, today: date) -> AccountPnl:
     """The account's daily P&L: its fills and fees, the daily closes of every symbol it traded, its positions now."""
-    fills, fees = fetch_activities(trading)
+    fills, fees, dividends = fetch_activities(trading)
     positions = [to_broker_position(p) for p in trading.get_all_positions()]
     closes: dict[str, dict[date, float]] = {}
     if fills:
         first_day = min(market_day(f.time) for f in fills)
         closes = fetch_daily_closes(data, sorted({f.symbol for f in fills}), first_day, today)
-    return daily_account_pnl(fills, fees, closes, positions, today)
+    return daily_account_pnl(fills, fees, closes, positions, today, dividends)
 
 
 def load_strategy_pnl(strategy: str, mode: str, env_dir: Path, today: date) -> AccountPnl:
