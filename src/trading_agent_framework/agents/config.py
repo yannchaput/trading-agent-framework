@@ -6,6 +6,7 @@ import os
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from trading_agent_framework.utils.errors import ConfigurationError
 
@@ -13,6 +14,13 @@ from trading_agent_framework.utils.errors import ConfigurationError
 PLACEHOLDER_API_KEY = "not-needed"
 
 _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
+
+
+class ReasoningEffort(StrEnum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
 
 
 def normalize_base_url(url: str) -> str:
@@ -32,6 +40,8 @@ class LLMCredentials:
     default_model: str | None = None
     # The server's context window (vLLM `max_model_len`), for history compaction; `None` when unknown.
     max_input_tokens: int | None = None
+    # Sent as `reasoning_effort` with every agent model call; `None` sends nothing (the server default applies).
+    reasoning_effort: ReasoningEffort | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> LLMCredentials:
@@ -49,7 +59,7 @@ class LLMCredentials:
         if default_model is not None and not default_model.strip():
             default_model = None
 
-        return cls(base_url=normalize_base_url(base_url), api_key=api_key, default_model=default_model, max_input_tokens=_max_input_tokens(source))
+        return cls(base_url=normalize_base_url(base_url), api_key=api_key, default_model=default_model, max_input_tokens=_max_input_tokens(source), reasoning_effort=_reasoning_effort(source))
 
 
 def _max_input_tokens(source: Mapping[str, str]) -> int | None:
@@ -64,3 +74,15 @@ def _max_input_tokens(source: Mapping[str, str]) -> int | None:
     if value <= 0:
         raise ConfigurationError(f"LLM_MAX_INPUT_TOKENS must be a positive integer (the server's context window), got {raw!r}")
     return value
+
+
+def _reasoning_effort(source: Mapping[str, str]) -> ReasoningEffort | None:
+    """`LLM_REASONING_EFFORT` as a `ReasoningEffort` (case-insensitive); blank or missing is `None`."""
+    raw = (source.get("LLM_REASONING_EFFORT") or "").strip()
+    if not raw:
+        return None
+    try:
+        return ReasoningEffort(raw.lower())
+    except ValueError:
+        allowed = ", ".join(effort.value for effort in ReasoningEffort)
+        raise ConfigurationError(f"LLM_REASONING_EFFORT must be one of {allowed}, got {raw!r}") from None

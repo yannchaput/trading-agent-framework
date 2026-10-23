@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from trading_agent_framework.agents.config import PLACEHOLDER_API_KEY, LLMCredentials, normalize_base_url
+from trading_agent_framework.agents.config import PLACEHOLDER_API_KEY, LLMCredentials, ReasoningEffort, normalize_base_url
 from trading_agent_framework.utils.errors import ConfigurationError
 
 
@@ -117,3 +117,31 @@ def test_from_env_reads_max_input_tokens(value: str, expected: int | None) -> No
 def test_from_env_refuses_a_max_input_tokens_that_is_not_a_positive_integer(value: str) -> None:
     with pytest.raises(ConfigurationError, match="LLM_MAX_INPUT_TOKENS"):
         LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_MAX_INPUT_TOKENS": value})
+
+
+def test_from_env_reasoning_effort_is_optional() -> None:
+    assert LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1"}).reasoning_effort is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("xhigh", ReasoningEffort.XHIGH),
+        (" XHIGH ", ReasoningEffort.XHIGH),
+        ("low", ReasoningEffort.LOW),
+        ("Medium", ReasoningEffort.MEDIUM),
+        ("high", ReasoningEffort.HIGH),
+        ("", None),
+        ("   ", None),
+    ],
+)
+def test_from_env_reads_reasoning_effort(value: str, expected: ReasoningEffort | None) -> None:
+    credentials = LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_REASONING_EFFORT": value})
+
+    assert credentials.reasoning_effort == expected
+
+
+@pytest.mark.parametrize("value", ["extreme", "none", "minimal", "x-high"])
+def test_from_env_refuses_an_unknown_reasoning_effort(value: str) -> None:
+    with pytest.raises(ConfigurationError, match=r"LLM_REASONING_EFFORT must be one of low, medium, high, xhigh, got"):
+        LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_REASONING_EFFORT": value})

@@ -448,6 +448,7 @@ def test_a_real_agent_builds_with_every_tool_and_logs_its_output(tmp_path: Path,
         )
     )
     monkeypatch.setattr(AgentManager, "_resolve_model", lambda self, model_arg, timeout, temperature=None: model)
+    monkeypatch.setenv("LLM_BASE_URL", "http://localhost:8000/v1")  # `create()` reads the credentials for the reasoning effort, with or without a built model
     strategy = NewsBinaryStrategy(FakeBroker(FakeClock(_START), strategy_name="news_builtin"), mode=TradingMode.PAPER, project_root=tmp_path)
 
     with caplog.at_level(logging.INFO):
