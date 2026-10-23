@@ -69,6 +69,7 @@ pattern, so a plain `git add` will not pick it up.
 | `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN`, `TASTYTRADE_ACCOUNT_NUMBER` | Tastytrade trading | `BROKER=tastytrade`, live |
 | `ALPACA_DATA_API_KEY`, `ALPACA_DATA_API_SECRET`, `ALPACA_DATA_IS_PAPER` | market data and calendar | paper/live (every broker: Alpaca, IBKR, Tastytrade); `AlpacaBacktestData` backtests for historical market data |
 | `ALPACA_NEWS_API_KEY`, `ALPACA_NEWS_API_SECRET` | news tool | a strategy uses the news tool |
+| `LLM_REASONING_EFFORT` | every agent's model calls (`reasoning_effort` in the request) | optional: `low`, `medium`, `high` or `xhigh`; blank sends nothing |
 | `DASHBOARD_DISPLAY` | dashboard Live/Paper picker (the agent ignores it) | `true` to show the strategy in that mode's picker; missing means hidden |
 
 Groups never fall back to each other; with one Alpaca key pair, repeat it in each group you need.
