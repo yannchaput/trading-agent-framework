@@ -47,8 +47,15 @@
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * ~~Compute the residual volatility compared to the market (cf chatgpt thread)~~
 
+### Insider
+
+* Replace the fixed 10 stocks with the 100 first stocks of the cross momentum universe. As this universe won't be rabalanced, criteria is to decide.
+
 ### LLM benchmark
 
+* Test Qwen 3.8-27B
+* If Qwen 3.8-27B does not wrok, test quatnization: https://x.com/NFT_Chen/status/2113228486399902153
+* Test Sage 1.5
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
 
