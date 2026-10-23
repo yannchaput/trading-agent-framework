@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.compaction import compaction_middleware
-from trading_agent_framework.agents.config import LLMCredentials
+from trading_agent_framework.agents.config import LLMCredentials, ReasoningEffort
 from trading_agent_framework.agents.output_cap import output_cap_middleware
 from trading_agent_framework.agents.results import AgentRunResult, parse_agent_messages
 from trading_agent_framework.agents.telemetry import CallRecord, summarize, usage_from_message
@@ -200,6 +200,8 @@ class AgentManager:
         self._telemetry_store: LLMStatsStore | None = None
         self._calls: list[CallRecord] = []
         self._temperatures: dict[str, float | None] = {}
+        self._reasoning_efforts: dict[str, ReasoningEffort | None] = {}
+        self._reasoning_effort_refused = False
 
     def enable_telemetry(self, *, now: Callable[[], datetime], store: LLMStatsStore | None = None) -> None:
         """Record every model call of the agents created from now on (tokens, latency, requested tool calls).
@@ -213,10 +215,15 @@ class AgentManager:
         self._telemetry_store = store
 
     def telemetry_summary(self) -> dict[str, dict[str, Any]]:
-        """Per-agent totals of the calls recorded so far, each with the agent's sampling `temperature` (empty when telemetry is off or nothing ran)."""
+        """Per-agent totals of the calls recorded so far, each with the agent's sampling `temperature` and `reasoning_effort` (empty when telemetry is off or nothing ran).
+
+        `reasoning_effort` is the effort's value, or `None` when none was configured, the agent's model was pre-built, or the server refused it during the run.
+        """
         summary = summarize(self._calls)
         for agent, totals in summary.items():
             totals["temperature"] = self._temperatures.get(agent)
+            effort = None if self._reasoning_effort_refused else self._reasoning_efforts.get(agent)
+            totals["reasoning_effort"] = effort.value if effort is not None else None
         return summary
 
     def _tool_call_repair_middleware(self, *, glm_format: bool = False) -> Any:
@@ -342,6 +349,31 @@ class AgentManager:
 
         return end_after_final_tool
 
+    def _reasoning_effort_middleware(self, effort: ReasoningEffort) -> Any:
+        """A `wrap_model_call` that sends `reasoning_effort` with every agent turn, until the server refuses it.
+
+        A server that does not accept the value answers 400 with a message naming `reasoning_effort` (vLLM: "Input
+        should be 'low', 'medium' or 'high'"); the call is then sent again without it and the manager drops the effort
+        for every later call of every agent, so the refusal costs one extra request and one WARNING. Any other error
+        propagates, and so does a refusal of the resend.
+        """
+        from langchain.agents.middleware import wrap_model_call
+
+        @wrap_model_call
+        def send_reasoning_effort(request: Any, handler: Callable[[Any], Any]) -> Any:
+            if self._reasoning_effort_refused:
+                return handler(request)
+            try:
+                return handler(request.override(model_settings={**request.model_settings, "reasoning_effort": effort.value}))
+            except Exception as exc:
+                if "reasoning_effort" not in str(exc):
+                    raise
+                self._reasoning_effort_refused = True
+                logger.log_warning(f"the server refused reasoning_effort={effort.value}: sent without it for the rest of the run ({exc})")
+                return handler(request)
+
+        return send_reasoning_effort
+
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
 
@@ -420,8 +452,12 @@ class AgentManager:
         turn that would think until the window is full stops at `finish_reason="length"`; compaction's summary call
         is not capped. Default: no cap.
 
+        `LLM_REASONING_EFFORT` (`LLMCredentials.reasoning_effort`), when set, is sent as `reasoning_effort` with every agent
+        turn of a model built here; a pre-built model gets none. A server that refuses it is sent the call again without it,
+        and the manager drops it for all later calls (`_reasoning_effort_middleware`). Compaction's summary call never gets it.
+
         `middleware` adds the caller's own LangChain middleware, inside every framework middleware but the output
-        cap, compaction and telemetry: a model call it makes (a retry, say) is capped and recorded like any other.
+        cap, reasoning effort, compaction and telemetry: a model call it makes (a retry, say) is capped and recorded like any other.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
@@ -429,6 +465,7 @@ class AgentManager:
             raise ValueError(f"max_output_tokens must be at least 1, got {max_output_tokens}")
 
         chat_model = self._resolve_model(model, timeout_seconds, temperature)
+        effort = None if model is not None and not isinstance(model, str) else self._credentials_source().reasoning_effort
         try:
             from langchain.agents import create_agent
 
@@ -445,6 +482,8 @@ class AgentManager:
             stack.extend(middleware or ())
             if max_output_tokens is not None:
                 stack.append(output_cap_middleware(max_output_tokens))
+            if effort is not None:
+                stack.append(self._reasoning_effort_middleware(effort))
             if compact_history:
                 stack.append(compaction_middleware(chat_model))
             if self._telemetry_now is not None:
@@ -458,6 +497,7 @@ class AgentManager:
         handle = AgentHandle(name, agent, limiter)
         self._agents[name] = handle
         self._temperatures[name] = getattr(chat_model, "temperature", None)
+        self._reasoning_efforts[name] = effort
         return handle
 
     def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None, temperature: float | None = None) -> Any:
