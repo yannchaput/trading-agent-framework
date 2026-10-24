@@ -333,10 +333,34 @@ class ReviewPipeline:
     def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None, calls_out: list[ToolCallRecord] | None = None) -> None:
         """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
 
-        When `calls_out` is given, the tool calls of every attempt (failed, rejected or submitting) are appended to it.
+        Attempt 1 runs `task` as is. If it records no valid submission, attempt 2 runs a fresh agent run (same `run_id`)
+        with `retry_prompt` (quoting the rejection, or saying the agent ended without the tool) and `tool` forced, so the
+        model must call it. On success the submit tool is a final tool, so the run ends without a closing model turn.
+        `AgentLoopError` is not retried: it raises `AgentLooped` at once.
+
+        Args:
+            agent_name: key into `self._agents` (`"bull"`, `"bear"` or `"judge"`).
+            tool: the submit tool the agent must call, e.g. `"submit_verdicts"`.
+            task: the first-attempt prompt; the retry prompt is built from it.
+            context: the template variables passed to the agent run.
+            tool_budget: cap on the agent's non-submit tool calls per run (the judge's memory tools), or `None`.
+            calls_out: optional list the tool calls of every run that returned a result are appended to, in order,
+                across both attempts (a rejected or unsubmitted attempt's calls included). A run that raised
+                (`AgentError`, `AgentLoopError`) returns no result, so its calls are not added. The judge reads it
+                in a `finally` to build the `memory` record in `reviews.jsonl` (`_memory_record`), so lessons it
+                stored are logged even when the review is abandoned.
+
+        Returns:
+            None. The accepted submission is in `self._recorder.submission`.
+
+        Raises:
+            AgentLooped: the run hit the step limit (`AgentLoopError`); no retry.
+            ReviewAbandoned: neither attempt recorded a valid `tool` call.
         """
         agent = self._agents[agent_name]
+        # Both attempts share one run_id, so the first run and its forced retry are recorded under the same id.
         run_id = uuid.uuid4().hex
+        # `prompt` and `force_tool` change only for the retry: `force_tool=None` lets the model choose.
         prompt, force_tool, error = task, None, ""
         for attempt in range(2):
             self._recorder.last_error, error, stop = None, "", ""  # an error from the first attempt must not be reported for the second
@@ -344,8 +368,8 @@ class ReviewPipeline:
                 self._strategy.log_info(f"[{agent_name}] retrying with {tool} forced")
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget, max_steps=self._params.max_agent_steps)
-                stop = _stop_detail(result)
-                if calls_out is not None:
+                stop = _stop_detail(result)  # how the run's last model call ended, for the warnings below
+                if calls_out is not None:  # kept whatever the outcome, so the caller can log them even if this stage abandons
                     calls_out.extend(result.tool_calls)
                 if result.output:  # empty when a final tool ended the run with no closing turn (the normal case), or the model spent its window thinking (warned about below, with `stop`)
                     self._strategy.log_info(f"[{agent_name}] {result.output}")
@@ -353,22 +377,24 @@ class ReviewPipeline:
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentLoopError as exc:
                 # The run reached the maximum number of steps: the model looped. The review is abandoned, no retry: a retry would only loop again.
-                self._strategy.log_error(f"[{agent_name}] run stopped as a loop: {exc}")
+                self._strategy.log_error(f"[{agent_name}] run stopped as a loop (too many steps): {exc}")
                 raise AgentLooped(agent_name, str(exc)) from exc
             except AgentError as exc:
                 # Any other failure than AgentLoopError: the run will trigger a retry with a force submission.
                 error = str(exc)
                 self._strategy.log_error(f"[{agent_name}] run failed: {exc}")
+            # `submitted` is set by the recorder when the submit tool was accepted: the only success exit.
             if self._recorder.submitted:
                 if attempt:
                     self._strategy.log_info(f"[{agent_name}] forced retry recorded {tool}")
                 for line in _submission_lines(agent_name, self._recorder.submission):
                     self._strategy.log_info(line)
                 return
-            if self._recorder.last_error:
+            if self._recorder.last_error:  # the model called the tool and it was refused: the refusal is the retry's reason
                 self._strategy.log_warning(f"[{agent_name}] submission rejected: {self._recorder.last_error}{stop}")
             elif not error:  # a failed run was already logged as an error above
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
+            # The retry prompt names the most specific reason: the rejection, else the run's failure, else "no call".
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
             self._strategy.log_debug(f"[{agent_name}] retry with prompt: {prompt}")

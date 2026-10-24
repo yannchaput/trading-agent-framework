@@ -39,6 +39,7 @@
 * ~~Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)~~
 * Review  Agent table pivot format to be consistent with all strategies
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
+* Draw a plot of realized P&L in grey
 
 ### Cross sectional momentum
 
@@ -46,6 +47,15 @@
 * ~~When a nex position is taken, put a stop order at 1 x ATR (confirm threshold)~~ => Poor results
 * ~~Restrain the number of positions to a hard cap of 20: do not buy if more than 20~~ => Poor results
 * ~~Compute the residual volatility compared to the market (cf chatgpt thread)~~
+
+### Bull Bear
+
+* Retry agent with thinking diasbled when an AgentLoop or Token cap error
+* ~~Retest a 1Y backtest with news 'off'~~
+* ~~Bump up research_tool_budget to 5 with news on~~
+* ~~Enable compaction of the state in langchain with middleware~~
+* ~~Enrich logging, specifically the research agent~~
+* ~~Show P&L in the log when a stock is sold~~
 
 ### Insider
 
@@ -102,10 +112,3 @@
 * ~~Log the system prompt in 'initialize' method~~
 * ~~Fix prompt to avoid chineese character with GLM models~~
 
-### Bull Bear
-
-* ~~Retest a 1Y backtest with news 'off'~~
-* ~~Bump up research_tool_budget to 5 with news on~~
-* ~~Enable compaction of the state in langchain with middleware~~
-* ~~Enrich logging, specifically the research agent~~
-* ~~Show P&L in the log when a stock is sold~~

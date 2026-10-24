@@ -44,7 +44,7 @@ class BullBearParams:
     # Output tokens per model call, reasoning included (all four agents; None: no cap). The 10-17 run: every call that
     # worked used at most 11k, every call that thought the 32k window full 19k or more.
     # The cap counts every output token: a call that spends it all on reasoning stops with finish_reason=length.
-    max_output_tokens: int | None = 24012
+    max_output_tokens: int | None = 12288
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
     yahoo_retry_delays: tuple[float, ...] = (60.0, 180.0)  # seconds before each new attempt at an unusable Yahoo batch

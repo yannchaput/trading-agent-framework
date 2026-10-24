@@ -37,7 +37,7 @@ def output_cap_middleware(max_tokens: int) -> Any:
         except Exception as exc:
             if _WINDOW_REFUSAL not in str(exc):
                 raise
-            logger.log_info(f"the output cap of {max_tokens} tokens does not fit what is left of the window: sent without it")
+            logger.log_info(f"the output cap of {max_tokens} tokens does not fit what is left of the window: sent without token cap")
             return handler(request)
 
     return cap_output
