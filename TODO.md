@@ -50,7 +50,6 @@
 
 ### Bull Bear
 
-* Retry agent with thinking diasbled when an AgentLoop or Token cap error (check if still needed)
 * Permettre de fixer le reasoning effort par agent. Notamment judge = xhigh. Faire faire un test sur le judge par claude sur 3 ou 3 runs avant.
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
@@ -67,6 +66,8 @@
 * Add a cli parameter to select scenarios to run
 * Test new scenarios from bull bear and insider
 * Test Sage 1.5
+* Test Nanbeige 4.3
+* Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 ~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
