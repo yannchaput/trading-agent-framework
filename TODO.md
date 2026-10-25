@@ -50,7 +50,8 @@
 
 ### Bull Bear
 
-* Retry agent with thinking diasbled when an AgentLoop or Token cap error
+* Retry agent with thinking diasbled when an AgentLoop or Token cap error (check if still needed)
+* Permettre de fixer le reasoning effort par agent. Notamment judge = xhigh. Faire faire un test sur le judge par claude sur 3 ou 3 runs avant.
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
 * ~~Enable compaction of the state in langchain with middleware~~
@@ -63,9 +64,10 @@
 
 ### LLM benchmark
 
-* Test Qwen 3.8-27B
-* If Qwen 3.8-27B does not wrok, test quatnization: https://x.com/NFT_Chen/status/2113228486399902153
+* Add a cli parameter to select scenarios to run
+* Test new scenarios from bull bear and insider
 * Test Sage 1.5
+~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
 
@@ -111,4 +113,3 @@
 * ~~Add a log in executor to log the execution hour : usefull for intraday.~~
 * ~~Log the system prompt in 'initialize' method~~
 * ~~Fix prompt to avoid chineese character with GLM models~~
-
