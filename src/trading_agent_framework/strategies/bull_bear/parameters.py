@@ -30,9 +30,10 @@ class BullBearParams:
     research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     # LangGraph steps one agent run may take before it counts as a loop and abandons the review: a model resubmitting a rejected
     # call for ever. LangGraph supersteps: a tool call is a round trip of 3, a run takes 3 x calls + 5 at worst, so a normal run
-    # needs a limit of at most 24 (the judge using its 6 memory calls); a rejected resubmission adds 3.
+    # needs a limit of at most 21 (the researcher using its 5 tool calls; the judge with 3 memory calls needs 15); a rejected resubmission adds 3.
     max_agent_steps: int = 60
-    judge_memory_budget: int = 6  # memory tool calls per judge run; submit_verdicts is exempt
+    # Memory tool calls per judge run; submit_verdicts is exempt. The 10-23 run (Qwen 3.8) made 107 memory calls, each kept in its context.
+    judge_memory_budget: int = 3
     note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
     note_hard_max_chars: int = 600  # the length the recorder refuses above: a model cannot count characters (10-19: 25 notes 1 to 20% over 500)
     argument_max_chars: int = 300  # the bull's and the bear's submitted argument
@@ -41,10 +42,14 @@ class BullBearParams:
     feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
-    # Output tokens per model call, reasoning included (all four agents; None: no cap). The 10-17 run: every call that
+    # Output tokens per model call, reasoning included (the researcher, bull and bear; None: no cap). The 10-17 run: every call that
     # worked used at most 11k, every call that thought the 32k window full 19k or more.
     # The cap counts every output token: a call that spends it all on reasoning stops with finish_reason=length.
     max_output_tokens: int | None = 12288
+    # The judge's own cap (researcher, bull and bear keep max_output_tokens); None: NO cap for the judge, not max_output_tokens.
+    # The 10-23 run: 14 judge calls spent 12,288 tokens on reasoning. Its prompt reaches 20.5k (90th percentile 14.8k) of the 32k
+    # window, and above that output_cap's fallback sends the call uncapped.
+    judge_max_output_tokens: int | None = 16384
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
     yahoo_retry_delays: tuple[float, ...] = (60.0, 180.0)  # seconds before each new attempt at an unusable Yahoo batch
@@ -79,6 +84,7 @@ class BullBearParams:
             "max_consecutive_abandoned must be at least 1": self.max_consecutive_abandoned < 1,
             "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
             "max_output_tokens must be None or at least 1": self.max_output_tokens is not None and self.max_output_tokens < 1,
+            "judge_max_output_tokens must be None or at least 1": self.judge_max_output_tokens is not None and self.judge_max_output_tokens < 1,
             f"rebalance_time: {time_problem}": bool(time_problem),
             "rebalance_weekday must be a weekday (0 = Monday ... 4 = Friday)": not 0 <= self.rebalance_weekday <= 4,
             "yahoo_retry_delays must be finite and at least 0": not all(math.isfinite(delay) and delay >= 0 for delay in self.yahoo_retry_delays),

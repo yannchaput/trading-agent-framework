@@ -26,6 +26,14 @@ class HandoffError(ValueError):
     """A submission that breaks a rule; the message tells the model what is wrong and what is allowed."""
 
 
+class NoteTooLong(HandoffError):
+    """A note over the hard limit; `note` is the refused (stripped) text, so the recorder can spot a resubmission."""
+
+    def __init__(self, message: str, note: str) -> None:
+        super().__init__(message)
+        self.note = note
+
+
 @dataclass(frozen=True, slots=True)
 class Note:
     symbol: str
@@ -124,15 +132,40 @@ def _covering(raw: Any, expected: Sequence[str], what: str = "cases") -> list[tu
     return covered
 
 
-def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int) -> Note:
+def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_chars: int) -> Note:
+    """`max_chars` is the hard limit; `ask_chars` the length the model is told (the hard limit is never quoted)."""
     if not isinstance(symbol, str) or symbol.strip().upper() != expected:
         raise HandoffError(f"this note is for {expected}: submit it with symbol {expected}")
     if not isinstance(note, str) or not note.strip():
         raise HandoffError(f"the note for {expected} is empty: write the dated facts you found, or say that you found none")
     text = note.strip()
     if len(text) > max_chars:
-        raise HandoffError(f"the note for {expected} is {len(text)} characters: keep it under {max_chars}")
+        raise NoteTooLong(
+            f"the note for {expected} is {len(text)} characters; a note is at most {ask_chars}: "
+            f"rewrite it to about {int(ask_chars * 0.9)} characters by dropping your least important facts, not by trimming words",
+            text,
+        )
     return Note(expected, text)
+
+
+def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
+    """`text` cut to at most `max_chars`, never reworded: the longest run of whole sentences that fits, if it has
+    at least `min_chars`; otherwise a cut at a word with a trailing ellipsis (or hard, when there is no space)."""
+    text = text.strip()
+    if len(text) <= max_chars:
+        return text
+    end = 0  # length of the longest prefix that ends a sentence (. ! or ? before whitespace or at the end) and fits
+    for index, char in enumerate(text[:max_chars]):
+        if char in ".!?" and (index + 1 == len(text) or text[index + 1].isspace()):
+            end = index + 1
+    whole = text[:end].rstrip()
+    if len(whole) >= min_chars:
+        return whole
+    head = text[: max_chars - 1]
+    cut = max((index for index, char in enumerate(head) if char.isspace()), default=-1)
+    if cut <= 0:
+        return head + "…"
+    return head[:cut].rstrip() + "…"
 
 
 def validate_bull_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BullCase]:
@@ -180,6 +213,7 @@ class HandoffRecorder:
         self._context: dict[str, Any] = {}
         self._submission: Any = None
         self._submitted = False
+        self._refused_note: str | None = None
         self.last_error: str | None = None
 
     def expect_note(self, symbol: str) -> None:
@@ -197,6 +231,12 @@ class HandoffRecorder:
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
         self._stage, self._context = stage, context
         self._submission, self._submitted, self.last_error = None, False, None
+        self._refused_note = None
+
+    @property
+    def refused_note(self) -> str | None:
+        """The most recent note refused for length since the stage was armed (kept across other refusals), else None."""
+        return self._refused_note
 
     @property
     def submitted(self) -> bool:
@@ -217,13 +257,17 @@ class HandoffRecorder:
         params, context = self._params, self._context
         try:
             if stage == NOTE:
-                value: Any = validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars)
+                value: Any = validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars, ask_chars=params.note_max_chars)
             elif stage == BULL:
                 value = validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             elif stage == BEAR:
                 value = validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
             else:
                 value = validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_max_chars, previous=context["previous"])
+        except NoteTooLong as exc:
+            message = f"this is the same text you sent before: {exc}" if exc.note == self._refused_note else str(exc)
+            self._refused_note = exc.note
+            return self._fail(message)
         except HandoffError as exc:
             return self._fail(str(exc))
         self._submission, self._submitted, self.last_error = value, True, None

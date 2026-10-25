@@ -73,7 +73,12 @@ class BullBearStrategy(Strategy):
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or BullBearParams()
         # Recorded in settings.json, so the news-on and news-off runs, and runs with another output cap, can be told apart.
-        self.parameters = {**self.parameters, "research_news": self.settings.research_news, "max_output_tokens": self.settings.max_output_tokens}
+        self.parameters = {
+            **self.parameters,
+            "research_news": self.settings.research_news,
+            "max_output_tokens": self.settings.max_output_tokens,
+            "judge_max_output_tokens": self.settings.judge_max_output_tokens,
+        }
         self.iteration_start_time = parse_rebalance_time(self.settings.rebalance_time)
         self.universe = [symbol for symbol in universe if symbol != self.settings.parking_symbol]  # SHV is parking, never a stock
         # Paper/live read Yahoo's daily bars (Alpaca's IEX volume would empty the dollar-volume filter); a backtest reads the gate.
@@ -102,9 +107,9 @@ class BullBearStrategy(Strategy):
 
             temperature = self.settings.agent_temperature
 
-            # Every agent: an output cap per model call. A run it stops, or whose submission is rejected, is not corrected in
-            # place: it ends and the pipeline's forced retry is a fresh run (corrective prompt, submit tool forced, thinking on).
-            cap = self.settings.max_output_tokens
+            # An output cap per model call: one for the researcher, bull and bear, and the judge has its own (`judge_max_output_tokens`).
+            # A run it stops, or whose submission is rejected, is not corrected in place: it ends and the pipeline's forced retry is a fresh run (corrective prompt, submit tool forced, thinking on).
+            cap = self.settings.max_output_tokens  # the researcher, bull and bear
 
             sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
@@ -131,7 +136,7 @@ class BullBearStrategy(Strategy):
                 exempt_tools=["submit_verdicts"],
                 final_tools=["submit_verdicts"],
                 compact_history=True,
-                max_output_tokens=cap,
+                max_output_tokens=self.settings.judge_max_output_tokens,
             )
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).

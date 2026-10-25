@@ -115,14 +115,23 @@ def test_the_researcher_and_the_judge_compact_their_history_and_the_single_shot_
     assert compacting == {"researcher": True, "bull": False, "bear": False, "judge": True}
 
 
-def test_every_agent_gets_the_output_cap_of_the_settings(tmp_path: Path) -> None:
-    strategy, agents = _strategy(tmp_path, settings=BullBearParams(max_output_tokens=9000))
+def test_the_judge_gets_its_own_output_cap_and_the_others_share_one(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(max_output_tokens=9000, judge_max_output_tokens=20000))
 
     strategy.initialize()
 
     caps = {created["name"]: created["max_output_tokens"] for created in agents.created}
-    assert caps == {"researcher": 9000, "bull": 9000, "bear": 9000, "judge": 9000}
-    assert strategy.parameters["max_output_tokens"] == 9000  # recorded in settings.json: runs with another cap can be told apart
+    assert caps == {"researcher": 9000, "bull": 9000, "bear": 9000, "judge": 20000}
+    assert (strategy.parameters["max_output_tokens"], strategy.parameters["judge_max_output_tokens"]) == (9000, 20000)  # recorded in settings.json
+
+
+def test_a_judge_cap_of_none_means_no_cap_not_the_shared_one(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(judge_max_output_tokens=None))
+
+    strategy.initialize()
+
+    caps = {created["name"]: created["max_output_tokens"] for created in agents.created}
+    assert caps["judge"] is None and caps["bull"] == 12288
 
 
 def test_no_agent_gets_a_middleware_that_corrects_a_run_in_place(tmp_path: Path) -> None:

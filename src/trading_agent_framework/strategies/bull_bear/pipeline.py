@@ -3,7 +3,7 @@
 The judge puts every candidate in or out; code validates (through the `HandoffRecorder`), builds the book from the
 stocks put in (rank order), sizes it, remembers (`StateStore`) and calls the `Rebalancer`. A debater stage that
 never yields a valid submission abandons the review: no order at all, forced exits included. One stock's failed
-research only gives it the note "research unavailable". Free text from an agent is logged and otherwise ignored.
+research only gives it the note "research unavailable", unless a note was refused for length: that one is kept, trimmed. Free text from an agent is logged and otherwise ignored.
 See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md and
 docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
@@ -25,7 +25,7 @@ from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldo
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.feedback import recent_outcomes
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts, trim_note
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
@@ -217,6 +217,7 @@ class ReviewPipeline:
 
         # 4. Researcher: one short run per stock, so one failure costs one note, not the review.
         notes: dict[str, str] = {}
+        trimmed: list[str] = []
         for symbol in symbols:
             self._recorder.expect_note(symbol)
             try:
@@ -226,15 +227,25 @@ class ReviewPipeline:
                     researcher_task(symbol, params.note_max_chars),
                     {"current_datetime": moment, "fact_sheet": sheets[symbol]},
                     tool_budget=params.research_tool_budget,
+                    skip_retry=lambda: self._recorder.refused_note is not None,  # a note refused for length is kept (trimmed) below, not rewritten from the fact sheet alone
                 )
             except ReviewAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
-                strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
-                notes[symbol] = UNAVAILABLE_NOTE
+                refused = self._recorder.refused_note
+                if refused is None:
+                    strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
+                    notes[symbol] = UNAVAILABLE_NOTE
+                    continue
+                # The last note refused for length still carries the research: keep it, cut at a sentence, never reworded.
+                kept = trim_note(refused, max_chars=params.note_hard_max_chars, min_chars=params.note_max_chars // 2)
+                strategy.log_warning(f"[researcher] note for {symbol} trimmed from {len(refused)} to {len(kept)} characters: the last refused note is kept with its research")
+                strategy.log_info(f"[researcher] {symbol}: {kept}")
+                notes[symbol] = kept
+                trimmed.append(symbol)
                 continue
             note: Note = self._recorder.submission
             notes[symbol] = note.note
         failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
-        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed}
+        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed, "trimmed": trimmed}
         evidence = [{"fact_sheet": sheets[symbol], "note": notes[symbol]} for symbol in symbols]
 
         # 5. Bull, then bear: the same evidence; neither sees the other's case.
@@ -330,7 +341,16 @@ class ReviewPipeline:
 
     # --- helpers -----------------------------------------------------------------------------------
 
-    def _run_stage(self, agent_name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None, calls_out: list[ToolCallRecord] | None = None) -> None:
+    def _run_stage(
+        self,
+        agent_name: str,
+        tool: str,
+        task: str,
+        context: dict[str, Any],
+        tool_budget: int | None = None,
+        calls_out: list[ToolCallRecord] | None = None,
+        skip_retry: Callable[[], bool] | None = None,
+    ) -> None:
         """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
 
         Attempt 1 runs `task` as is. If it records no valid submission, attempt 2 runs a fresh agent run (same `run_id`)
@@ -349,13 +369,15 @@ class ReviewPipeline:
                 (`AgentError`, `AgentLoopError`) returns no result, so its calls are not added. The judge reads it
                 in a `finally` to build the `memory` record in `reviews.jsonl` (`_memory_record`), so lessons it
                 stored are logged even when the review is abandoned.
+            skip_retry: called after a first attempt that recorded nothing; `True` raises `ReviewAbandoned` at once,
+                with no forced retry (the researcher, when its note was refused for length: the caller keeps that note).
 
         Returns:
             None. The accepted submission is in `self._recorder.submission`.
 
         Raises:
             AgentLooped: the run hit the step limit (`AgentLoopError`); no retry.
-            ReviewAbandoned: neither attempt recorded a valid `tool` call.
+            ReviewAbandoned: neither attempt recorded a valid `tool` call, or the first attempt alone did when `skip_retry()` is true.
         """
         agent = self._agents[agent_name]
         # Both attempts share one run_id, so the first run and its forced retry are recorded under the same id.
@@ -396,6 +418,8 @@ class ReviewPipeline:
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             # The retry prompt names the most specific reason: the rejection, else the run's failure, else "no call".
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
+            if not attempt and skip_retry is not None and skip_retry():
+                raise ReviewAbandoned(agent_name, error)
             prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
             self._strategy.log_debug(f"[{agent_name}] retry with prompt: {prompt}")
         raise ReviewAbandoned(agent_name, error)

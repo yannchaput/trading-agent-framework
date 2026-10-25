@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, trim_note
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
@@ -56,12 +56,54 @@ def test_a_note_for_another_symbol_is_refused_with_the_symbol_to_use() -> None:
     assert result == {"error": "this note is for AAA: submit it with symbol AAA"} and not recorder.submitted
 
 
-def test_an_empty_or_long_note_is_refused() -> None:
+def test_an_empty_note_is_refused() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    assert "empty" in tools["submit_note"]("AAA", "   ")["error"]
+
+
+def test_a_long_note_is_refused_with_the_asked_length_and_how_to_shorten_it() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
 
-    assert "empty" in tools["submit_note"]("AAA", "   ")["error"]
-    assert tools["submit_note"]("AAA", "x" * 601) == {"error": "the note for AAA is 601 characters: keep it under 600"}  # the hard limit, not the 500 the researcher is asked for
+    error = tools["submit_note"]("AAA", "x" * 662)["error"]
+
+    assert error == "the note for AAA is 662 characters; a note is at most 500: rewrite it to about 450 characters by dropping your least important facts, not by trimming words"
+    assert "600" not in error  # the hard limit stays hidden from the model
+
+
+def test_the_same_long_note_sent_again_is_called_out() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    tools["submit_note"]("AAA", "x" * 662)
+
+    again = tools["submit_note"]("AAA", "  " + "x" * 662 + " ")["error"]  # same text once stripped
+    shorter = tools["submit_note"]("AAA", "x" * 650)["error"]
+
+    assert again.startswith("this is the same text you sent before: the note for AAA is 662 characters")
+    assert not shorter.startswith("this is the same text")
+
+
+def test_the_recorder_keeps_the_last_note_refused_for_length_until_the_next_stage() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    assert recorder.refused_note is None
+
+    tools["submit_note"]("AAA", "x" * 700)
+    tools["submit_note"]("AAA", " " + "y" * 650 + " ")
+    tools["submit_note"]("BBB", "z" * 10)  # refused for its symbol: the length-refused note stays
+
+    assert recorder.refused_note == "y" * 650
+    recorder.expect_note("BBB")
+    assert recorder.refused_note is None
+
+
+def test_a_note_refused_for_another_reason_leaves_no_refused_note() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    tools["submit_note"]("BBB", "x" * 700)
+    tools["submit_note"]("AAA", "  ")
+    assert recorder.refused_note is None
 
 
 # --- bull and bear ------------------------------------------------------------------------------
@@ -230,3 +272,38 @@ def test_a_long_what_changed_is_refused() -> None:
     raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
 
     assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]
+
+
+# --- trim_note ----------------------------------------------------------------------------------
+
+
+def test_a_note_within_the_limit_is_only_stripped() -> None:
+    assert trim_note("  A fact. Another.  ", max_chars=600, min_chars=250) == "A fact. Another."
+
+
+def test_a_long_note_keeps_the_most_whole_sentences_that_fit() -> None:
+    text = "a" * 300 + ". " + "b" * 250 + "! " + "c" * 100 + "."
+    assert trim_note(text, max_chars=600, min_chars=250) == "a" * 300 + ". " + "b" * 250 + "!"
+
+
+def test_a_decimal_point_is_not_a_sentence_end() -> None:
+    text = "Revenue " + "r" * 280 + ". Q3 EPS $1.58 vs $1.47 est " + "e" * 300 + "."
+    assert trim_note(text, max_chars=600, min_chars=250) == "Revenue " + "r" * 280 + "."
+
+
+def test_with_no_long_enough_sentence_the_note_is_cut_at_a_word_with_an_ellipsis() -> None:
+    text = "Short. " + "word " * 200
+    trimmed = trim_note(text, max_chars=600, min_chars=250)
+    assert len(trimmed) <= 600 and trimmed.endswith("word…")
+
+
+def test_a_note_with_no_space_is_cut_hard_with_an_ellipsis() -> None:
+    assert trim_note("x" * 700, max_chars=600, min_chars=250) == "x" * 599 + "…"
+
+
+@pytest.mark.parametrize("length", [601, 650, 1200])
+def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
+    text = ("Fact 2025-10-27: revenue $1.58B. " * 60)[:length]
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    assert tools["submit_note"]("AAA", trim_note(text, max_chars=600, min_chars=250)) == {"status": "recorded"}

@@ -116,11 +116,15 @@ def test_the_judge_starts_from_its_previous_verdict_and_says_what_changed() -> N
     assert "previous_verdict" in prompts.JUDGE_SYSTEM and "what_changed" in prompts.JUDGE_SYSTEM
 
 
-def test_a_stronger_candidate_needing_a_place_is_a_new_material_fact_for_the_previous_verdict() -> None:
+def test_max_in_is_a_ceiling_not_a_target_and_no_stock_is_put_out_for_room_alone() -> None:
     text = " ".join(prompts.JUDGE_SYSTEM.split())
 
-    assert "A stronger candidate that needs a place under max_in is a new, material fact: put the weaker stock out and say so in what_changed." in text
-    assert text.index("change it only for a new, material fact") < text.index("A stronger candidate")
+    assert "max_in, given in the constraints, is a ceiling, not a target" in text
+    assert "put a stock in only when its own case earns a place" in text
+    assert "Putting fewer than max_in in is normal, and you may put none in." in text
+    assert "Only when more stocks earn a place than max_in allows" in text
+    assert "A stronger candidate" not in text and "needs a place under max_in" not in text
+    assert "change it only for a new, material fact" in text  # the previous_verdict rule stays
 
 
 def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
