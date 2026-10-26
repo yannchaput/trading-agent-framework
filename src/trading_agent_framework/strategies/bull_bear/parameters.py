@@ -42,14 +42,15 @@ class BullBearParams:
     feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
-    # Output tokens per model call, reasoning included (the researcher, bull and bear; None: no cap). The 10-17 run: every call that
-    # worked used at most 11k, every call that thought the 32k window full 19k or more.
-    # The cap counts every output token: a call that spends it all on reasoning stops with finish_reason=length.
-    max_output_tokens: int | None = 12288
+    # Output tokens per model call, reasoning included (the researcher, bull and bear; None: no cap), sized for an 81,920-token
+    # window and reasoning effort xhigh. The 10-25 run (Qwen 3.8, effort medium, 32k window) peaked at 11.6k (bear); 32k leaves room
+    # for xhigh and still stops a runaway turn. The cap counts every output token: a call that spends it all on reasoning stops with
+    # finish_reason=length.
+    max_output_tokens: int | None = 32768
     # The judge's own cap (researcher, bull and bear keep max_output_tokens); None: NO cap for the judge, not max_output_tokens.
-    # The 10-23 run: 14 judge calls spent 12,288 tokens on reasoning. Its prompt reaches 20.5k (90th percentile 14.8k) of the 32k
-    # window, and above that output_cap's fallback sends the call uncapped.
-    judge_max_output_tokens: int | None = 16384
+    # Half the 81,920 window: the judge's prompt reached 17.4k in the 10-25 run (20.5k in the 10-23 run), and a prompt plus the cap
+    # above the window makes output_cap's fallback send the call uncapped.
+    judge_max_output_tokens: int | None = 40960
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
     yahoo_retry_delays: tuple[float, ...] = (60.0, 180.0)  # seconds before each new attempt at an unusable Yahoo batch

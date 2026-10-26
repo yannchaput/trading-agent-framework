@@ -21,8 +21,8 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.research_news is True
     assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 5 tool calls, needs a limit of 21; each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 600)  # the researcher is asked for 500, a note up to 600 is kept
-    assert params.max_output_tokens == 12288  # above every call that worked in the 10-17 run (max 11k), below every runaway (19k+)
-    assert params.judge_max_output_tokens == 16384  # the judge's own cap: its prompt reaches 20.5k of the 32k window
+    assert params.max_output_tokens == 32768  # about 3x the 10-25 run's peak (11.6k at effort medium), room for xhigh
+    assert params.judge_max_output_tokens == 40960  # the judge's own cap: half the 81,920 window, its prompt reaches ~20k
 
 
 @pytest.mark.parametrize(

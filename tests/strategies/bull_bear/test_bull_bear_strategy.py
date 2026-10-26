@@ -131,7 +131,7 @@ def test_a_judge_cap_of_none_means_no_cap_not_the_shared_one(tmp_path: Path) -> 
     strategy.initialize()
 
     caps = {created["name"]: created["max_output_tokens"] for created in agents.created}
-    assert caps["judge"] is None and caps["bull"] == 12288
+    assert caps["judge"] is None and caps["bull"] == 32768
 
 
 def test_no_agent_gets_a_middleware_that_corrects_a_run_in_place(tmp_path: Path) -> None:
