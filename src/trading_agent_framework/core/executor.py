@@ -160,6 +160,18 @@ class StrategyExecutor:
         return None
 
     def _run_session(self, session: MarketSession) -> None:
+        """Run one market session, from the pre-open wait to `after_market_closes`.
+
+        The regime is refreshed before the open. `before_market_opens` runs only when the run started before the
+        open. Then come `before_starting_trading`, the trading iterations, `before_market_closes` and
+        `after_market_closes`. Each wait is followed by a stop check, so `stop()` skips the remaining hooks.
+
+        Args:
+            session: The market session to run, with its `open` and `close` times.
+
+        Returns:
+            None. The hooks run for their side effects.
+        """
         strategy = self.strategy
         logger.info(
             "Next session for %s: %s -> %s",
@@ -167,10 +179,13 @@ class StrategyExecutor:
             session.open.isoformat(),
             session.close.isoformat(),
         )
+        # Remembered before the wait: a run that starts before the open gets the `before_market_opens` hook.
         started_before_open = self._now() < session.open
+        # Wait for the pre-open window; `stop()` during the wait ends the session here.
         self.wait_until(session.open - timedelta(minutes=strategy.minutes_before_opening))
         if self._stop.is_set():
             return
+        # Once per session, before any hook that might read the regime.
         self._refresh_regime()
         if started_before_open:
             self._call_hook(strategy.before_market_opens)
@@ -178,9 +193,11 @@ class StrategyExecutor:
             if self._stop.is_set():
                 return
         self._call_hook(strategy.before_starting_trading)
+        # Iterations run from the first iteration time until the trading cutoff.
         self._trade(session)
         if self._stop.is_set():
             return
+        # Hook at the close, then wait `minutes_after_closing` past it before the final hook.
         self._call_hook(strategy.before_market_closes)
         self.wait_until(session.close + timedelta(minutes=strategy.minutes_after_closing))
         if self._stop.is_set():

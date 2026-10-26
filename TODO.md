@@ -50,7 +50,13 @@
 
 ### Bull Bear
 
+* Verifier si le tools search_memory a ete utilisé et pourquoi
 * Permettre de fixer le reasoning effort par agent. Notamment judge = xhigh. Faire faire un test sur le judge par claude sur 3 ou 3 runs avant.
+* Improve compaction when the history is already too long (ex of MU stock selling out of the portfolio)
+What I found: in the 10-25 run, the judge lost its entire input on 11 of 55 reviews.
+  * What happened. When a run's history passes 80% of the window, it is summarized. With the old 32,768-token window, the judge's long prompt (17k+ tokens) plus its memory lookups crossed that line. The summary then failed and replaced everything with one sentence: "Previous conversation was too long to summarize."
+  * Effect. The judge then submitted verdicts for every stock without the fact sheets, notes, or bull and bear cases.
+
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
 * ~~Enable compaction of the state in langchain with middleware~~
@@ -63,7 +69,7 @@
 
 ### LLM benchmark
 
-* Add a cli parameter to select scenarios to run
+* ~~Add a cli parameter to select scenarios to run~~
 * Test new scenarios from bull bear and insider
 * Test Sage 1.5
 * Test Nanbeige 4.3
