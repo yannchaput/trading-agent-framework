@@ -16,7 +16,9 @@ from typing import Any
 SEC_ARCHIVES_BASE_URL = "https://www.sec.gov/Archives/edgar/data/"
 
 INCOME_STATEMENT_TAGS: dict[str, list[str]] = {
-    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet"],
+    # The gross-of-tax ASC 606 tag comes last: some filers (Hecla, Lumentum) tag revenue only that way, and a filer tagging
+    # both in one filing keeps the net figure (the tag order decides within a period).
+    "revenue": ["RevenueFromContractWithCustomerExcludingAssessedTax", "Revenues", "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"],
     "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold"],
     "gross_profit": ["GrossProfit"],
     "operating_income": ["OperatingIncomeLoss"],

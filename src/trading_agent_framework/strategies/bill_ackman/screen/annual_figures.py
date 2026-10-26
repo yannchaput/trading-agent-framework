@@ -23,9 +23,8 @@ ANNUAL_FLOW_TAGS: dict[str, list[str]] = {
     # equipment rentals) while `Revenues` is the total, and utilities (NEE) report the whole company
     # under the last two. Every other field takes the first tag present.
     "revenue": [
-        *INCOME_STATEMENT_TAGS["revenue"],
+        *INCOME_STATEMENT_TAGS["revenue"],  # includes RevenueFromContractWithCustomerIncludingAssessedTax
         "RegulatedAndUnregulatedOperatingRevenue",
-        "RevenueFromContractWithCustomerIncludingAssessedTax",
     ],
     "operating_income": INCOME_STATEMENT_TAGS["operating_income"],
     "operating_cash_flow": CASH_FLOW_TAGS["operating_cash_flow"],
