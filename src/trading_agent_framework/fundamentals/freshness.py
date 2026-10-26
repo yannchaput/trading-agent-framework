@@ -3,7 +3,7 @@
 A cached record is stale when it was fetched more than `max_age_days` before `as_of`. `as_of` is the
 caller's clock, so the rule covers every mode: in a backtest `as_of` is simulated, and a record
 fetched today is fresh for every past date; in paper/live `as_of` is now, and records refresh every
-`max_age_days`. `fetched_at` is real time, but it is only ever compared with `as_of`, never with data.
+`max_age_days` (`SecEdgarClient`'s cached payload getters default to `DEFAULT_MAX_AGE_DAYS`, one day). `fetched_at` is real time, but it is only ever compared with `as_of`, never with data.
 
 The rule is used by the annual store and by `SecEdgarClient`'s cached payload getters; split history is judged
 by the wall clock instead (`splits.SplitHistory`), because it must match the basis of today's split-adjusted prices.
@@ -12,6 +12,10 @@ by the wall clock instead (`splits.SplitHistory`), because it must match the bas
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+
+# One day: an agent reading fundamentals in paper/live sees a filing within a day of its release. A backtest is
+# unaffected (a file written today is fresh for every past `as_of`), and a caller may still pass its own value.
+DEFAULT_MAX_AGE_DAYS = 1
 
 
 def is_stale(fetched_at: datetime, as_of: datetime, max_age_days: int) -> bool:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
 from datetime import UTC, datetime
@@ -18,7 +19,7 @@ from typing import Any
 import httpx
 
 from trading_agent_framework.fundamentals import sec
-from trading_agent_framework.fundamentals.freshness import is_stale
+from trading_agent_framework.fundamentals.freshness import DEFAULT_MAX_AGE_DAYS, is_stale
 from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError, FundamentalsNotFoundError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -103,8 +104,9 @@ class SecEdgarClient:
         Without `as_of` and `max_age_days` a cached file is served forever (the original behaviour). With both,
         a cached file whose modification time is more than `max_age_days` before `as_of` is stale and is
         fetched again (`freshness.is_stale`, the screen's rule): in a backtest `as_of` is simulated, and a file
-        written today is fresh for every past date; live refreshes monthly. A stale file that cannot be
-        refreshed is served with a warning rather than failing the caller.
+        written today is fresh for every past date. The cached payload getters pass `DEFAULT_MAX_AGE_DAYS` (one day)
+        unless the caller gives its own. A stale file that cannot be refreshed is served with a warning rather
+        than failing the caller.
         """
         cache_path = self._cache_path(*cache_key)
         cached = self._read_cached_json(cache_path)
@@ -163,14 +165,14 @@ class SecEdgarClient:
         except ValueError as exc:
             raise FundamentalsNotFoundError(str(exc)) from exc
 
-    def get_company_facts_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
+    def get_company_facts_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = DEFAULT_MAX_AGE_DAYS) -> dict[str, Any]:
         return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
         """Uncached: the payload is about 4 MB, and the quality screen keeps only a reduced copy."""
         return self.fetch_json(_company_facts_url(cik))
 
-    def get_submissions_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = None) -> dict[str, Any]:
+    def get_submissions_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = DEFAULT_MAX_AGE_DAYS) -> dict[str, Any]:
         return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def get_submissions_page(self, name: str) -> dict[str, Any]:
@@ -184,3 +186,11 @@ class SecEdgarClient:
     def get_filing_text(self, cik: str, accession_number: str, primary_document: str) -> str:
         url = sec.filing_url(cik, accession_number, primary_document)
         return self.get_text(url, ("filings", cik, accession_number, primary_document))
+
+
+def default_client(project_root: Path) -> SecEdgarClient:
+    """A `SecEdgarClient` from `SEC_EDGAR_USER_AGENT`, caching to `<project_root>/cache/sec`."""
+    user_agent = os.environ.get("SEC_EDGAR_USER_AGENT", "")
+    if not user_agent.strip():
+        raise ConfigurationError("Missing or blank SEC_EDGAR_USER_AGENT environment variable")
+    return SecEdgarClient(user_agent, project_root / "cache" / "sec")

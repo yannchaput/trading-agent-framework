@@ -13,6 +13,7 @@ from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.bull_bear import BullBearStrategy
+from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore, state_path
@@ -62,6 +63,7 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 def _strategy(tmp_path: Path, mode: TradingMode = TradingMode.PAPER, now: datetime = TUESDAY, **kwargs: Any) -> tuple[BullBearStrategy, _FakeAgents]:
     broker = FakeBroker(FakeClock(now), strategy_name="bull_bear")
     broker.news = FakeNewsProvider()  # the researcher's news tool needs a source (`initialize` checks)
+    kwargs.setdefault("fundamentals_of", lambda symbol, as_of: {})  # no test builds a real SEC source
     strategy = BullBearStrategy(broker, mode=mode, universe=UNIVERSE, project_root=tmp_path, bars_source=_NoBars(), sector_of=lambda symbol: "Technology", **kwargs)
     agents = _FakeAgents()
     strategy._agents = cast(AgentManager, agents)
@@ -70,6 +72,18 @@ def _strategy(tmp_path: Path, mode: TradingMode = TradingMode.PAPER, now: dateti
 
 def _tool_names(created: dict[str, Any]) -> set[str]:
     return {tool.__name__ for tool in created["tools"]}
+
+
+def test_without_an_injected_source_the_strategy_reads_sec(tmp_path: Path) -> None:
+    broker = FakeBroker(FakeClock(TUESDAY), strategy_name="bull_bear")
+    broker.news = FakeNewsProvider()
+    strategy = BullBearStrategy(broker, mode=TradingMode.PAPER, universe=UNIVERSE, project_root=tmp_path, bars_source=_NoBars(), sector_of=lambda symbol: "Technology")
+    strategy._agents = cast(AgentManager, _FakeAgents())
+
+    strategy.initialize()
+
+    assert strategy.pipeline is not None
+    assert isinstance(strategy.pipeline._fundamentals_of, SecFundamentals)
 
 
 def test_it_is_registered_as_bull_bear() -> None:

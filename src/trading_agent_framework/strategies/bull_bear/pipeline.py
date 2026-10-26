@@ -25,6 +25,7 @@ from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldo
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.feedback import recent_outcomes
+from trading_agent_framework.strategies.bull_bear.fundamentals import unavailable_fundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts, trim_note
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
@@ -101,6 +102,7 @@ class ReviewPipeline:
         universe: Sequence[str],
         bars: DailyBars,
         sector_of: Callable[[str], str],
+        fundamentals_of: Callable[[str, datetime], Mapping[str, Any]],
         momentum: Mapping[str, Any],
     ) -> None:
         self._strategy = strategy
@@ -113,6 +115,7 @@ class ReviewPipeline:
         self._universe = list(universe)
         self._bars = bars
         self._sector_of = sector_of
+        self._fundamentals_of = fundamentals_of  # (symbol, the strategy clock's now) -> the SEC fields of the fact sheet
         self._momentum = momentum  # cross_momentum's CONFIG: the score weights, the skip and the filters
         # max_volatility gates new entries only: holdings are scored with a copy that lifts it (CONFIG itself is never changed)
         self._holding_momentum = {**momentum, "max_volatility": math.inf}
@@ -121,6 +124,14 @@ class ReviewPipeline:
 
     def _now(self) -> datetime:
         return self._strategy.clock.now().astimezone(MARKET_TZ)
+
+    def _fundamentals(self, symbol: str, now: datetime) -> Mapping[str, Any]:
+        """One stock's SEC fields as of the strategy clock; whatever goes wrong costs that stock its figures, never the review."""
+        try:
+            return self._fundamentals_of(symbol, now)
+        except Exception as exc:  # noqa: BLE001 -- a source that raises must not abandon the review
+            self._strategy.log_warning(f"[bull_bear] fundamentals for {symbol} unavailable: {exc!r}")
+            return unavailable_fundamentals("error")
 
     def completed_today(self) -> bool:
         """Whether today's review (market date) already completed: a restart then does not run it again."""
@@ -213,7 +224,8 @@ class ReviewPipeline:
             raise ReviewAbandoned("data", "no stock to debate")
 
         # 3. Fact sheet.
-        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol)) for stock in debate.stocks}
+        now = strategy.clock.now()
+        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), fundamentals=self._fundamentals(stock.symbol, now)) for stock in debate.stocks}
 
         # 4. Researcher: one short run per stock, so one failure costs one note, not the review.
         notes: dict[str, str] = {}

@@ -10,8 +10,8 @@ and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 from __future__ import annotations
 
 import calendar
-from collections.abc import Callable, Sequence
-from datetime import date
+from collections.abc import Callable, Mapping, Sequence
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -23,6 +23,8 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.fundamentals.edgar_client import default_client
+from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bull_bear.market_data import BarsSource, DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
@@ -68,6 +70,7 @@ class BullBearStrategy(Strategy):
         settings: BullBearParams | None = None,
         bars_source: BarsSource | None = None,
         sector_of: Callable[[str], str] | None = None,
+        fundamentals_of: Callable[[str, datetime], Mapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(broker, mode=mode, **kwargs)
@@ -88,6 +91,7 @@ class BullBearStrategy(Strategy):
             bars_source = YahooDailyBars()
         self._bars_source = bars_source
         self._sector_of = sector_of  # injected in tests; yfinance's sectors otherwise
+        self._fundamentals_of = fundamentals_of  # injected in tests; the SEC otherwise
         self.pipeline: ReviewPipeline | None = None
 
     # --- lifecycle ------------------------------------------------------------------------------------
@@ -115,7 +119,9 @@ class BullBearStrategy(Strategy):
             cap = self.settings.max_output_tokens  # the researcher, bull and bear
             budget = self.settings.thinking_token_budget
 
-            sources = [*(news_tools(self) if news else []), *fundamentals_tools(self)]
+            # One SEC client (one rate limiter, one cache) serves the researcher's tools and the fact sheet.
+            sec_client = default_client(self.project_root)
+            sources = [*(news_tools(self) if news else []), *fundamentals_tools(self, client=sec_client)]
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
             self.agents.create(
                 name="researcher",
@@ -158,6 +164,7 @@ class BullBearStrategy(Strategy):
             universe=self.universe,
             bars=self._daily_bars(),
             sector_of=self._sector_of or SectorProvider().get_sector,
+            fundamentals_of=self._fundamentals_of or SecFundamentals(sec_client),
             momentum=CONFIG,
         )
         news_state = "on" if self.settings.research_news else "off"

@@ -1,27 +1,17 @@
 """Plain typed SEC fundamentals tools for a LangChain agent, gated on the strategy clock."""
 
-import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.fundamentals import sec
-from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError
+from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient, default_client
+from trading_agent_framework.utils.errors import FundamentalsError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
 
 MIN_FILINGS_LIMIT = 1
 MAX_FILINGS_LIMIT = 25
-# A cached SEC payload older than this (by the strategy clock, so a backtest never refetches) is fetched again.
-MAX_PAYLOAD_AGE_DAYS = 30
-
-
-def _default_client(strategy: "Strategy") -> SecEdgarClient:  # noqa: UP037
-    user_agent = os.environ.get("SEC_EDGAR_USER_AGENT", "")
-    if not user_agent.strip():
-        raise ConfigurationError("Missing or blank SEC_EDGAR_USER_AGENT environment variable")
-    return SecEdgarClient(user_agent, strategy.project_root / "cache" / "sec")
 
 
 def fundamentals_tools(
@@ -30,13 +20,13 @@ def fundamentals_tools(
     client: SecEdgarClient | None = None,  # noqa: UP037
 ) -> list[Callable[..., dict[str, Any]]]:
     """SEC fundamentals tools bound to `strategy`, backed by one shared `SecEdgarClient`."""
-    edgar = client if client is not None else _default_client(strategy)
+    edgar = client if client is not None else default_client(strategy.project_root)
 
     def _statement(symbol: str, build: Callable[..., dict[str, dict[str, Any]]]) -> dict[str, Any]:
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
+            payload = edgar.get_company_facts_payload(cik, as_of=as_of)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         values = build(payload, as_of=as_of)
@@ -50,7 +40,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
+            payload = edgar.get_company_facts_payload(cik, as_of=as_of)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         compact = sec.compact_company_facts(payload, as_of=as_of, max_facts=max_facts)
@@ -70,7 +60,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            submissions = edgar.get_submissions_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
+            submissions = edgar.get_submissions_payload(cik, as_of=as_of)
         except FundamentalsError as exc:
             return {"error": str(exc)}
         rows = sec.parse_filings(submissions, cik=cik, as_of=as_of, form=form, limit=clamped_limit)
@@ -82,7 +72,7 @@ def fundamentals_tools(
         as_of = strategy.clock.now()
         try:
             cik = edgar.ticker_to_cik(symbol)
-            submissions = edgar.get_submissions_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
+            submissions = edgar.get_submissions_payload(cik, as_of=as_of)
             rows = sec.parse_filings(submissions, cik=cik, as_of=as_of, limit=1000)
             match = next((row for row in rows if row["accession_number"] == accession_number), None)
             if match is None:

@@ -7,6 +7,7 @@ from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.utils.errors import FundamentalsError
 
 _CIK = "0000320193"
+_DEFAULT = object()  # what the fake records when a tool passes no `max_age_days`, so the client's own default applies
 
 
 class _FakeEdgarClient:
@@ -22,11 +23,11 @@ class _FakeEdgarClient:
             raise self.raises
         return _CIK
 
-    def get_company_facts_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+    def get_company_facts_payload(self, cik: str, *, as_of: object = None, max_age_days: object = _DEFAULT) -> dict[str, object]:
         self.freshness_args.append(("companyfacts", as_of, max_age_days))
         return self.company_facts
 
-    def get_submissions_payload(self, cik: str, *, as_of: object = None, max_age_days: object = None) -> dict[str, object]:
+    def get_submissions_payload(self, cik: str, *, as_of: object = None, max_age_days: object = _DEFAULT) -> dict[str, object]:
         self.freshness_args.append(("submissions", as_of, max_age_days))
         return self.submissions
 
@@ -173,7 +174,7 @@ def test_get_filing_document_unknown_accession_number_returns_error() -> None:
     assert "error" in result
 
 
-def test_every_payload_read_passes_the_strategy_clock_and_a_thirty_day_freshness_to_the_client() -> None:
+def test_every_payload_read_passes_the_strategy_clock_and_no_freshness_of_their_own_to_the_client() -> None:
     client = _FakeEdgarClient()
     client.submissions = {
         "filings": {
@@ -197,7 +198,7 @@ def test_every_payload_read_passes_the_strategy_clock_and_a_thirty_day_freshness
     tools["get_filing_document"]("AAPL", "0000320193-26-000001")  # type: ignore
 
     assert [endpoint for endpoint, _, _ in client.freshness_args] == ["companyfacts", "companyfacts", "companyfacts", "submissions", "submissions"]
-    assert all(as_of == now and max_age_days == 30 for _, as_of, max_age_days in client.freshness_args)
+    assert all(as_of == now and max_age_days is _DEFAULT for _, as_of, max_age_days in client.freshness_args)
 
 
 def test_the_income_statement_tool_has_cash_flow_and_flags_a_stale_statement() -> None:

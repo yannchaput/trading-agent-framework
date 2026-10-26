@@ -15,7 +15,7 @@ def _stock(closes: list[float]) -> DebateStock:
 
 
 def test_a_row_reports_the_momentum_facts_in_rounded_percentages() -> None:
-    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology")
+    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology", fundamentals={})
 
     assert sheet["symbol"] == "AAA" and sheet["momentum_rank"] == 3
     assert sheet["return_12m_skip_1m_pct"] == 200.0
@@ -31,7 +31,7 @@ def test_a_row_reports_the_momentum_facts_in_rounded_percentages() -> None:
 
 
 def test_no_agent_is_told_whether_a_stock_is_held() -> None:
-    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology")  # the stock IS held
+    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology", fundamentals={})  # the stock IS held
 
     assert "held" not in sheet and "weight_pct" not in sheet
 
@@ -40,6 +40,19 @@ def test_the_drawdown_is_measured_from_the_52_week_high() -> None:
     # The last close falls 10% from 398 (a 50% fall would push the 20-day volatility over max_volatility and filter the stock out)
     closes = [100.0 + i for i in range(299)] + [398.0 * 0.9]
 
-    sheet = fact_sheet_row(_stock(closes), sector="UNKNOWN")
+    sheet = fact_sheet_row(_stock(closes), sector="UNKNOWN", fundamentals={})
 
     assert sheet["drawdown_from_52w_high_pct"] == pytest.approx(-10.0, abs=0.05)
+
+
+def test_the_return_before_the_last_week_leaves_out_the_last_5_sessions() -> None:
+    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology", fundamentals={})
+
+    assert sheet["return_1m_skip_1w_pct"] == 4.2  # (394 - 378) / 378: the month before the last week
+
+
+def test_the_fundamentals_are_merged_into_the_row() -> None:
+    sheet = fact_sheet_row(_stock([100.0 + i for i in range(300)]), sector="Technology", fundamentals={"revenue_growth_pct": 12.0})  # the stock IS held
+
+    assert sheet["revenue_growth_pct"] == 12.0
+    assert "held" not in sheet and "weight_pct" not in sheet

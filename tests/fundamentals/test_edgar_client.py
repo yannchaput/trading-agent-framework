@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
+from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient, default_client
 from trading_agent_framework.utils.errors import ConfigurationError, FundamentalsError, FundamentalsNotFoundError
 
 _TICKERS = {"0": {"cik_str": 320193, "ticker": "AAPL"}}
@@ -344,6 +344,80 @@ def test_the_submissions_payload_takes_the_same_freshness_arguments(tmp_path: Pa
 
     assert payload == {"filings": "new"}
     assert len(calls) == 1
+
+
+def test_by_default_a_cached_payload_older_than_one_day_is_refetched(tmp_path: Path) -> None:
+    calls = []
+    path = _seed_facts(tmp_path, {"v": "cached"}, age_days=2)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC))
+
+    assert payload == {"v": "new"}
+    assert len(calls) == 1
+    assert json.loads(path.read_text(encoding="utf-8")) == {"v": "new"}
+
+
+def test_by_default_a_cached_payload_younger_than_one_day_is_served(tmp_path: Path) -> None:
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=0.5)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC))
+
+    assert payload == {"v": "cached"}
+    assert calls == []
+
+
+def test_by_default_a_past_as_of_never_refetches(tmp_path: Path) -> None:
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=0)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime(2025, 1, 2, tzinfo=UTC))
+
+    assert payload == {"v": "cached"}
+    assert calls == []
+
+
+def test_an_explicit_zero_max_age_still_refetches(tmp_path: Path) -> None:
+    calls = []
+    _seed_facts(tmp_path, {"v": "cached"}, age_days=1 / 1440)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"v": "new"}))
+
+    payload = client.get_company_facts_payload("0000320193", as_of=datetime.now(UTC), max_age_days=0)
+
+    assert payload == {"v": "new"}
+    assert len(calls) == 1
+
+
+def test_the_submissions_payload_is_refetched_after_one_day_by_default(tmp_path: Path) -> None:
+    calls = []
+    path = tmp_path / "submissions" / "CIK0000320193.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"filings": "old"}), encoding="utf-8")
+    _age_file(path, days=2)
+    client = _client(tmp_path, lambda request: calls.append(request) or httpx.Response(200, json={"filings": "new"}))
+
+    payload = client.get_submissions_payload("0000320193", as_of=datetime.now(UTC))
+
+    assert payload == {"filings": "new"}
+    assert len(calls) == 1
+
+
+def test_default_client_requires_the_user_agent(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "  ")
+
+    with pytest.raises(ConfigurationError, match="SEC_EDGAR_USER_AGENT"):
+        default_client(tmp_path)
+
+
+def test_default_client_caches_under_the_project_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "TestApp test@example.com")
+
+    with default_client(tmp_path) as client:
+        assert client.cache_dir == tmp_path / "cache" / "sec"
+        assert client.user_agent == "TestApp test@example.com"
 
 
 def test_get_submissions_page_hits_the_older_page_url_and_is_cached_for_good(tmp_path: Path) -> None:

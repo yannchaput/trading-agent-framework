@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass, field, replace
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -144,6 +144,7 @@ def _harness(
     series: dict[str, DailySeries] | None = None,
     params: BullBearParams | None = None,
     state: BullBearState | None = None,
+    fundamentals_of: Callable[[str, datetime], Mapping[str, Any]] | None = None,
 ) -> Harness:
     """Tuesday 2026-10-06 12:00, portfolio value 10,000; every stock costs 50, SHV 100; `held` maps a symbol to shares."""
     params = params or BullBearParams()
@@ -175,6 +176,7 @@ def _harness(
         universe=UNIVERSE,
         bars=bars,
         sector_of=lambda symbol: "Technology",
+        fundamentals_of=fundamentals_of or (lambda symbol, as_of: {}),
         momentum=CONFIG,
     )
     return Harness(pipeline, broker, bars, agents, rebalancer, store, log_path)
@@ -220,6 +222,43 @@ def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: P
     assert set(state.verdicts) == set(UNIVERSE[:15])
     assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}
     assert state.verdicts["S14"]["verdict"] == "out"
+
+
+def test_the_fact_sheet_carries_each_stocks_fundamentals_as_of_the_clock(tmp_path: Path) -> None:
+    asked: list[tuple[str, datetime]] = []
+
+    def fundamentals_of(symbol: str, as_of: datetime) -> dict[str, Any]:
+        asked.append((symbol, as_of))
+        return {"revenue_growth_pct": 5.0}
+
+    h = _harness(tmp_path, fundamentals_of=fundamentals_of)
+
+    assert h.run().completed
+
+    assert all(call["context"]["fact_sheet"]["revenue_growth_pct"] == 5.0 for call in h.agents["researcher"].calls)
+    assert [symbol for symbol, _ in asked] == UNIVERSE[:15]
+    assert {as_of for _, as_of in asked} == {et(2026, 10, 6, 12)}  # the strategy clock's now, never the wall clock
+    bull_context = h.agents["bull"].calls[0]["context"]
+    assert all(stock["fact_sheet"]["revenue_growth_pct"] == 5.0 for stock in bull_context["stocks"])
+
+
+def test_a_failing_fundamentals_source_costs_that_stock_its_figures_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    def fundamentals_of(symbol: str, as_of: datetime) -> dict[str, Any]:
+        if symbol == "S02":
+            raise RuntimeError("boom")
+        return {"revenue_growth_pct": 5.0}
+
+    h = _harness(tmp_path, fundamentals_of=fundamentals_of)
+
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome.completed
+    sheets = {call["context"]["fact_sheet"]["symbol"]: call["context"]["fact_sheet"] for call in h.agents["researcher"].calls}
+    assert sheets["S02"]["fundamentals_unavailable"] == "error" and "revenue_growth_pct" not in sheets["S02"]
+    assert sheets["S03"]["revenue_growth_pct"] == 5.0
+    warnings = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("S02" in message and "fundamentals" in message and "RuntimeError('boom')" in message for message in warnings)
 
 
 def test_the_debaters_are_told_the_character_caps_that_reject_a_submission(tmp_path: Path) -> None:

@@ -105,6 +105,7 @@ def _run(tmp_path: Path, manager: _Manager) -> BullBearStrategy:
         universe=UNIVERSE,
         project_root=tmp_path,
         sector_of=lambda symbol: "Technology",
+        fundamentals_of=lambda symbol, as_of: {},
         settings=BullBearParams(candidate_count=6, max_book_size=5),  # six stocks: the judge rules on all six and puts five in
     )
     strategy._agents = cast(AgentManager, manager)
