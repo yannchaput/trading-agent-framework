@@ -114,6 +114,32 @@ def _tool_name(tool: Any) -> str:
     return getattr(tool, "name", None) or tool.__name__
 
 
+def _last_ai_message(response: Any) -> Any:
+    """The last AI message of a model call's response (a `ModelResponse`'s `result`, or the message itself), or `None`."""
+    messages = getattr(response, "result", None) or [response]
+    return next((m for m in reversed(messages) if getattr(m, "type", None) == "ai"), None)
+
+
+def _warn_if_budget_reached(agent_name: str, budget: int, response: Any) -> None:
+    """Log a WARNING when the call's reported reasoning is within `max(64, 1%)` of the thinking budget, or above it.
+
+    A cut turn reports slightly FEWER reasoning tokens than the budget (vLLM counts from the prompt's open
+    `<think>`, the parser counts generated tokens only), hence the margin. A count ABOVE the budget therefore means
+    the server did not honour it (the output cap is then the backstop), and gets its own wording. No reported count,
+    no line. Never raises: the check is observational.
+    """
+    try:
+        reasoning = usage_from_message(_last_ai_message(response)).reasoning_tokens
+        if reasoning is None:
+            return
+        if reasoning > budget:
+            logger.log_warning(f"[{agent_name}] thinking budget of {budget} tokens exceeded ({reasoning} reasoning tokens): the server did not end the thinking")
+        elif reasoning >= budget - max(64, budget // 100):
+            logger.log_warning(f"[{agent_name}] thinking budget of {budget} tokens reached ({reasoning} reasoning tokens): the server ended the thinking")
+    except Exception:  # noqa: BLE001 - observational: a malformed usage block must not break the run
+        pass
+
+
 def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[str]) -> str:
     """The error a call past the budget gets instead of running; names only the caller's own tools."""
     spent = f"tool budget of {budget} calls spent; {blocked_tool} was not run."
@@ -202,6 +228,8 @@ class AgentManager:
         self._temperatures: dict[str, float | None] = {}
         self._reasoning_efforts: dict[str, ReasoningEffort | None] = {}
         self._reasoning_effort_refused = False
+        self._thinking_budgets: dict[str, int | None] = {}
+        self._thinking_budget_refused = False
 
     def enable_telemetry(self, *, now: Callable[[], datetime], store: LLMStatsStore | None = None) -> None:
         """Record every model call of the agents created from now on (tokens, latency, requested tool calls).
@@ -215,15 +243,17 @@ class AgentManager:
         self._telemetry_store = store
 
     def telemetry_summary(self) -> dict[str, dict[str, Any]]:
-        """Per-agent totals of the calls recorded so far, each with the agent's sampling `temperature` and `reasoning_effort` (empty when telemetry is off or nothing ran).
+        """Per-agent totals of the calls recorded so far, each with the agent's sampling `temperature`, `reasoning_effort` and `thinking_token_budget` (empty when telemetry is off or nothing ran).
 
         `reasoning_effort` is the effort's value, or `None` when none was configured, the agent's model was pre-built, or the server refused it during the run.
+        `thinking_token_budget` is the agent's budget, or `None` when none was set or the server refused it during the run.
         """
         summary = summarize(self._calls)
         for agent, totals in summary.items():
             totals["temperature"] = self._temperatures.get(agent)
             effort = None if self._reasoning_effort_refused else self._reasoning_efforts.get(agent)
             totals["reasoning_effort"] = effort.value if effort is not None else None
+            totals["thinking_token_budget"] = None if self._thinking_budget_refused else self._thinking_budgets.get(agent)
         return summary
 
     def _tool_call_repair_middleware(self, *, glm_format: bool = False) -> Any:
@@ -374,6 +404,35 @@ class AgentManager:
 
         return send_reasoning_effort
 
+    def _thinking_budget_middleware(self, agent_name: str, budget: int) -> Any:
+        """A `wrap_model_call` that sends vLLM's `thinking_token_budget` with every agent turn, until the server refuses it.
+
+        It is not an OpenAI field, so it goes in the request body through `extra_body`. langchain_openai would let a
+        call-level `extra_body` replace the model's, so this merges the model's, the call's and the budget. A server that does not
+        accept it answers 400 with a message naming `thinking_token_budget`; the call is then sent again without it and
+        the manager drops the budget for every later call of every agent, so the refusal costs one extra request and one
+        WARNING. Any other error propagates, and so does a refusal of the resend.
+        """
+        from langchain.agents.middleware import wrap_model_call
+
+        @wrap_model_call
+        def send_thinking_budget(request: Any, handler: Callable[[Any], Any]) -> Any:
+            if self._thinking_budget_refused:
+                return handler(request)
+            extra_body = {**(getattr(request.model, "extra_body", None) or {}), **(request.model_settings.get("extra_body") or {}), "thinking_token_budget": budget}
+            try:
+                response = handler(request.override(model_settings={**request.model_settings, "extra_body": extra_body}))
+            except Exception as exc:
+                if "thinking_token_budget" not in str(exc):
+                    raise
+                self._thinking_budget_refused = True
+                logger.log_warning(f"[{agent_name}] the server refused thinking_token_budget={budget}: sent without it for the rest of the run ({exc})")
+                return handler(request)
+            _warn_if_budget_reached(agent_name, budget, response)
+            return response
+
+        return send_thinking_budget
+
     def _telemetry_middleware(self, agent_name: str) -> Any:
         from langchain.agents.middleware import wrap_model_call
 
@@ -388,8 +447,7 @@ class AgentManager:
 
     def _record_call(self, agent_name: str, chat_model: Any, response: Any, latency_ms: float) -> None:
         assert self._telemetry_now is not None
-        messages = getattr(response, "result", None) or [response]
-        ai_message = next((m for m in reversed(messages) if getattr(m, "type", None) == "ai"), None)
+        ai_message = _last_ai_message(response)
         usage = usage_from_message(ai_message)
         call = CallRecord(
             ts=self._telemetry_now(),
@@ -422,6 +480,7 @@ class AgentManager:
         final_tools: Sequence[str] | None = None,
         compact_history: bool = False,
         max_output_tokens: int | None = None,
+        thinking_token_budget: int | None = None,
         middleware: Sequence[Any] | None = None,
     ) -> AgentHandle:
         """Build and register a named agent; raises `ValueError` if `name` is already taken.
@@ -452,17 +511,30 @@ class AgentManager:
         turn that would think until the window is full stops at `finish_reason="length"`; compaction's summary call
         is not capped. Default: no cap.
 
+        `thinking_token_budget` (opt-in, default: nothing is sent) is vLLM's field: when a turn's reasoning reaches that many
+        tokens the server ends the thinking and the turn goes on to its answer or tool call. It is sent in the request body
+        (`extra_body`, merged with the model's own) with every agent turn, also to a pre-built model (the caller sets it, the
+        environment does not). A server that refuses it is sent the call again without it and the manager drops it for all later
+        calls (`_thinking_budget_middleware`). A budget not below `max_output_tokens` is allowed but warned about, since the cap
+        then stops the turn first. Compaction's summary call never gets it.
+
         `LLM_REASONING_EFFORT` (`LLMCredentials.reasoning_effort`), when set, is sent as `reasoning_effort` with every agent
         turn of a model built here; a pre-built model gets none. A server that refuses it is sent the call again without it,
         and the manager drops it for all later calls (`_reasoning_effort_middleware`). Compaction's summary call never gets it.
 
         `middleware` adds the caller's own LangChain middleware, inside every framework middleware but the output
-        cap, reasoning effort, compaction and telemetry: a model call it makes (a retry, say) is capped and recorded like any other.
+        cap, thinking budget, reasoning effort, compaction and telemetry: a model call it makes (a retry, say) is capped and recorded like any other.
         """
         if name in self._agents:
             raise ValueError(f"Agent with name {name!r} already exists.")
         if max_output_tokens is not None and max_output_tokens < 1:
             raise ValueError(f"max_output_tokens must be at least 1, got {max_output_tokens}")
+        if thinking_token_budget is not None and thinking_token_budget < 1:
+            raise ValueError(f"thinking_token_budget must be at least 1, got {thinking_token_budget}")
+        if thinking_token_budget is not None and max_output_tokens is not None and thinking_token_budget >= max_output_tokens:
+            logger.log_warning(
+                f"[{name}] thinking budget of {thinking_token_budget} tokens is not below the output cap of {max_output_tokens}: the cap stops the turn first and the budget never fires"
+            )
 
         chat_model = self._resolve_model(model, timeout_seconds, temperature)
         effort = None if model is not None and not isinstance(model, str) else self._credentials_source().reasoning_effort
@@ -482,6 +554,8 @@ class AgentManager:
             stack.extend(middleware or ())
             if max_output_tokens is not None:
                 stack.append(output_cap_middleware(max_output_tokens))
+            if thinking_token_budget is not None:
+                stack.append(self._thinking_budget_middleware(name, thinking_token_budget))
             if effort is not None:
                 stack.append(self._reasoning_effort_middleware(effort))
             if compact_history:
@@ -498,6 +572,7 @@ class AgentManager:
         self._agents[name] = handle
         self._temperatures[name] = getattr(chat_model, "temperature", None)
         self._reasoning_efforts[name] = effort
+        self._thinking_budgets[name] = thinking_token_budget
         return handle
 
     def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None, temperature: float | None = None) -> Any:

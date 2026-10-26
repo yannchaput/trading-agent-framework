@@ -61,7 +61,7 @@ budget nor the cap (as today for the cap and the effort).
 - Both are recorded in `strategy.parameters` (so in `settings.json`) next to `max_output_tokens` and
   `judge_max_output_tokens`.
 - The caps rise to budget + 8,192 (the user chose this over lowering the budgets): `max_output_tokens` 32768 -> 36864,
-  `judge_max_output_tokens` 40960 -> 45056. Window check: prompts peaked at about 20k tokens in the 10-25 run, and
+  `judge_max_output_tokens` 40960 -> 45056. Window check: prompts peaked at 17.4k in the 10-25 run (20.5k in the 10-23 run), and
   20k + 45,056 is about 65k of the 81,920 window.
 - **Comments beside the four parameters explain how the values are set** (the user's request):
   - a budget is set high on purpose: it is a safety net, and a healthy turn should never reach it, so a budget below

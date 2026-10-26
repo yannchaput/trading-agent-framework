@@ -42,15 +42,24 @@ class BullBearParams:
     feedback_reviews: int = 4  # completed reviews whose out verdicts the judge sees with their outcome
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
-    # Output tokens per model call, reasoning included (the researcher, bull and bear; None: no cap), sized for an 81,920-token
-    # window and reasoning effort xhigh. The 10-25 run (Qwen 3.8, effort medium, 32k window) peaked at 11.6k (bear); 32k leaves room
-    # for xhigh and still stops a runaway turn. The cap counts every output token: a call that spends it all on reasoning stops with
-    # finish_reason=length.
-    max_output_tokens: int | None = 32768
+    # Reasoning tokens per model call for the researcher, bull and bear (None: no budget), sent to the server, which cuts the
+    # reasoning there and lets the model write its answer. A safety net set high on purpose: a healthy turn never reaches it
+    # (the 10-25 run, Qwen 3.8 at effort medium, peaked at 11.6k output tokens), and a budget below normal use would cut good
+    # reasoning. A turn that reaches it is logged as a warning.
+    thinking_token_budget: int | None = 28672
+    # The judge's own budget (it reasons over every candidate at once); None: NO budget for the judge, not thinking_token_budget.
+    judge_thinking_token_budget: int | None = 36864
+    # Output tokens per model call, reasoning included (the researcher, bull and bear; None: no cap). Each cap is its budget plus
+    # 8,192: the room left after a cut for the submission. One run per review covers every stock (up to about 25): the judge's
+    # reason (up to 300 characters per stock) plus what_changed (up to 300 on each flip) come to about 15,000 characters, 4-5k
+    # tokens, at most; the bull's and the bear's argument is up to 300 per stock; the rest is margin for text written after the cut.
+    # The cap is the backstop for an answer that runs on and for a server that ignores the budget: it counts every output token,
+    # and a call that spends it all on reasoning stops with finish_reason=length.
+    max_output_tokens: int | None = 36864
     # The judge's own cap (researcher, bull and bear keep max_output_tokens); None: NO cap for the judge, not max_output_tokens.
-    # Half the 81,920 window: the judge's prompt reached 17.4k in the 10-25 run (20.5k in the 10-23 run), and a prompt plus the cap
-    # above the window makes output_cap's fallback send the call uncapped.
-    judge_max_output_tokens: int | None = 40960
+    # Window check: the judge's prompt peaked at 17.4k tokens in the 10-25 run and 20.5k in the 10-23 run, so 20k + 45,056 is
+    # about 65k of the 81,920 window (a prompt plus the cap above the window makes output_cap's fallback send the call uncapped).
+    judge_max_output_tokens: int | None = 45056
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday, as cross_momentum
     yahoo_retry_delays: tuple[float, ...] = (60.0, 180.0)  # seconds before each new attempt at an unusable Yahoo batch
@@ -86,6 +95,8 @@ class BullBearParams:
             "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
             "max_output_tokens must be None or at least 1": self.max_output_tokens is not None and self.max_output_tokens < 1,
             "judge_max_output_tokens must be None or at least 1": self.judge_max_output_tokens is not None and self.judge_max_output_tokens < 1,
+            "thinking_token_budget must be None or at least 1": self.thinking_token_budget is not None and self.thinking_token_budget < 1,
+            "judge_thinking_token_budget must be None or at least 1": self.judge_thinking_token_budget is not None and self.judge_thinking_token_budget < 1,
             f"rebalance_time: {time_problem}": bool(time_problem),
             "rebalance_weekday must be a weekday (0 = Monday ... 4 = Friday)": not 0 <= self.rebalance_weekday <= 4,
             "yahoo_retry_delays must be finite and at least 0": not all(math.isfinite(delay) and delay >= 0 for delay in self.yahoo_retry_delays),

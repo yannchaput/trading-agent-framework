@@ -21,8 +21,12 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.research_news is True
     assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 5 tool calls, needs a limit of 21; each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 600)  # the researcher is asked for 500, a note up to 600 is kept
-    assert params.max_output_tokens == 32768  # about 3x the 10-25 run's peak (11.6k at effort medium), room for xhigh
-    assert params.judge_max_output_tokens == 40960  # the judge's own cap: half the 81,920 window, its prompt reaches ~20k
+    assert params.max_output_tokens == 36864  # the thinking budget plus 8,192 for the submission
+    assert params.judge_max_output_tokens == 45056  # the judge's own cap: its budget plus 8,192; ~20k prompt + 45,056 fits the 81,920 window
+    assert params.thinking_token_budget == 28672  # a safety net set high on purpose: a healthy turn never reaches it
+    assert params.judge_thinking_token_budget == 36864  # the judge's own budget
+    assert params.max_output_tokens - params.thinking_token_budget == 8192  # room after a cut for the submission
+    assert params.judge_max_output_tokens - params.judge_thinking_token_budget == 8192
 
 
 @pytest.mark.parametrize(
@@ -47,6 +51,8 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"max_agent_steps": 0}, "max_agent_steps must be at least 1"),
         ({"max_output_tokens": 0}, "max_output_tokens must be None or at least 1"),
         ({"judge_max_output_tokens": 0}, "judge_max_output_tokens must be None or at least 1"),
+        ({"thinking_token_budget": 0}, "thinking_token_budget must be None or at least 1"),
+        ({"judge_thinking_token_budget": 0}, "judge_thinking_token_budget must be None or at least 1"),
         ({"note_hard_max_chars": 499}, "note_hard_max_chars must be at least note_max_chars"),
     ],
 )

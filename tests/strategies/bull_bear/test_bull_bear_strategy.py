@@ -131,7 +131,27 @@ def test_a_judge_cap_of_none_means_no_cap_not_the_shared_one(tmp_path: Path) -> 
     strategy.initialize()
 
     caps = {created["name"]: created["max_output_tokens"] for created in agents.created}
-    assert caps["judge"] is None and caps["bull"] == 32768
+    assert caps["judge"] is None and caps["bull"] == 36864
+
+
+def test_each_agent_gets_its_thinking_budget_next_to_its_cap(tmp_path: Path) -> None:
+    params = BullBearParams(thinking_token_budget=7000, judge_thinking_token_budget=15000, max_output_tokens=9000, judge_max_output_tokens=20000)
+    strategy, agents = _strategy(tmp_path, settings=params)
+
+    strategy.initialize()
+
+    budgets = {created["name"]: created["thinking_token_budget"] for created in agents.created}
+    assert budgets == {"researcher": 7000, "bull": 7000, "bear": 7000, "judge": 15000}
+    assert (strategy.parameters["thinking_token_budget"], strategy.parameters["judge_thinking_token_budget"]) == (7000, 15000)  # recorded in settings.json
+
+
+def test_a_judge_budget_of_none_means_no_budget_not_the_shared_one(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(judge_thinking_token_budget=None))
+
+    strategy.initialize()
+
+    budgets = {created["name"]: created["thinking_token_budget"] for created in agents.created}
+    assert budgets["judge"] is None and budgets["bull"] == 28672
 
 
 def test_no_agent_gets_a_middleware_that_corrects_a_run_in_place(tmp_path: Path) -> None:
