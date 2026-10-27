@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from trading_agent_framework.entities.enums import OrderSide
+from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.portfolio import TargetPortfolio
 from trading_agent_framework.utils.errors import TradingFrameworkError
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power
@@ -56,9 +57,10 @@ def _estimated_pnl(price: float, cost: float, quantity: float) -> str:
 
 
 class Rebalancer:
-    def __init__(self, strategy: Strategy, params: RebalanceParams) -> None:
+    def __init__(self, strategy: Strategy, params: RebalanceParams, *, fill_wait_seconds: float = 30.0) -> None:
         self._strategy = strategy
         self._params = params
+        self._fill_wait_seconds = fill_wait_seconds  # how long the buys wait for this run's sells to fill (paper/live only)
         self.placed: list[PlacedOrder] = []  # the orders accepted by the current/last `rebalance`, readable if it raises half way
 
     # --- what is held ----------------------------------------------------------------------------
@@ -117,6 +119,10 @@ class Rebalancer:
         once, and an earlier sell that has already filled (its proceeds are in the snapshot, it is no longer open) is
         not credited again; earlier open orders count only their unfilled part, so no fill is deducted twice.
         Reading the account after positions/open orders would double-count an older sell that fills in between.
+        After the stock sells go out, paper/live waits (up to `fill_wait_seconds`, 30 s) for them to fill before the
+        buying power re-read: a live broker credits buying power only on a fill (2026-10-27 bull_bear: read 350 ms
+        before SYRE's fill, the buy was skipped). A backtest never waits (its buying power credits a submitted sell).
+        On a timeout the buys are sized on buying power as it stands, with a warning.
         NOT covered: an earlier open BUY that fills between the account read and the open-order read. Its cost leaves
         `incoming` while the snapshot still holds the pre-fill cash. Buying power, read again after the sells but only
         inside `min()`, bounds that on a cash account only. A buy refused for buying power replaces `available` with
@@ -150,13 +156,17 @@ class Rebalancer:
             """The position's value counting open orders: held, plus buys in flight, minus sells in flight."""
             return max(0.0, held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0)) * prices.get(symbol, 0.0)
 
+        sells: list[Order] = []  # the stock sells of this run, whose fills the buys wait for
+
         def submit(symbol: str, side: str, quantity: float, why: str) -> bool:
             try:
-                strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
+                order = strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
             except TradingFrameworkError as exc:
                 refusals[:] = [exc]
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
                 return False
+            if side == "sell" and symbol != parking:
+                sells.append(order)
             note = _estimated_pnl(prices[symbol], costs[symbol], quantity) if side == "sell" and symbol in costs and prices[symbol] > 0 else ""
             strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why}{note})")
             self.placed.append(PlacedOrder(symbol, side, quantity))
@@ -177,6 +187,12 @@ class Rebalancer:
                 quantity, why = min(fractional_qty(excess / price), sellable(symbol)), "trim above target"
             if quantity > 0 and submit(symbol, "sell", quantity, why):
                 proceeds += quantity * price
+
+        # A live broker credits buying power only when a sell FILLS (2026-10-27: read 350 ms before SYRE's fill, it still
+        # showed the old figure and the buy was skipped). A backtest's buying power already credits a submitted sell and
+        # fills on the next bar, so waiting there would only move the simulated clock.
+        if sells and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
+            strategy.log_warning(f"{len(sells)} sell(s) did not fill within {self._fill_wait_seconds:g}s: sizing the buys on the broker's buying power as it stands")
 
         # What the buys need, and what is available for them: the smaller of buying power and cash plus the
         # estimated proceeds of the sells just submitted (and the net credit of earlier reviews' open orders), less the

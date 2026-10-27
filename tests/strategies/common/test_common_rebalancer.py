@@ -12,7 +12,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
+from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
@@ -378,6 +378,79 @@ def test_a_live_filled_buy_is_not_deducted_twice_from_the_next_buy(tmp_path: Pat
 
     assert placed[:2] == [PlacedOrder("B", "buy", 96.0), PlacedOrder("C", "buy", 120.0)]
     assert broker.account.cash >= Decimal(0)
+
+
+class _DeferredFillBroker(FakeBroker):
+    """Alpaca on a cash account (multiplier 1): a sell is accepted at once but its money (and buying power) lands only when it fills.
+
+    `fill_sells` is what the fill looks like; the test's clock runs it during the rebalancer's wait.
+    """
+
+    def fill_sells(self) -> None:
+        for order in self.submitted:
+            if order.side is OrderSide.SELL and order.status is not OrderStatus.FILL:
+                proceeds = self.last_prices[order.asset.symbol] * order.quantity
+                cash = self.account.cash + proceeds
+                self.account = AccountBalances(cash=cash, portfolio_value=self.account.portfolio_value, buying_power=cash)
+                order.status, order.filled_quantity = OrderStatus.FILL, order.quantity
+                self.tracker.process_trade_event(order, OrderEvent.FILLED, price=self.last_prices[order.asset.symbol], filled_quantity=order.quantity)
+
+
+def _deferred_book(tmp_path: Path, *, fills_on_wait: bool = True) -> tuple[_DeferredFillBroker, FakeClock, Rebalancer]:
+    """A held (100 x 50), B to buy (25), cash 200 = exactly the reserve: the sale of A is the only money for B."""
+    clock = FakeClock(et(2026, 9, 14, 10))
+    broker = _DeferredFillBroker(clock, strategy_name="bill_ackman")
+    broker.positions = [Position(strategy_name="bill_ackman", asset=Asset("A"), quantity=Decimal(100), side=PositionSide.LONG)]
+    broker.last_prices = {"A": Decimal(50), "B": Decimal(25), "SHV": Decimal(100)}
+    broker.account = AccountBalances(cash=Decimal(200), portfolio_value=Decimal(10_000), buying_power=Decimal(200))
+    if fills_on_wait:
+        clock.on_wait = broker.fill_sells
+    strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
+    return broker, clock, Rebalancer(strategy, AckmanParams())
+
+
+def test_buys_wait_for_the_sells_to_fill_so_buying_power_has_the_proceeds(tmp_path: Path) -> None:
+    """2026-10-27 bull_bear: SYRE's sell was accepted at 16:18:21.86, buying power was read at .05 (still the old 193.87), the fill came at .40."""
+    broker, clock, rebalancer = _deferred_book(tmp_path)
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    # buying power 5,200 once A has filled; available = min(5,200, 200 + 5,000) - 200 reserve = 5,000: B takes 3,500, 1,500 is parked
+    assert placed == [PlacedOrder("A", "sell", 100.0), PlacedOrder("B", "buy", 140.0), PlacedOrder("SHV", "buy", 15.0)]
+    assert clock.waits  # it did wait on the clock for the sell
+
+
+def test_a_sell_that_never_fills_costs_the_buys_but_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    _, clock, rebalancer = _deferred_book(tmp_path, fills_on_wait=False)
+
+    with caplog.at_level(logging.WARNING):
+        placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    # buying power is still 200: nothing to spend after the reserve, and the wait ended at its timeout
+    assert placed == [PlacedOrder("A", "sell", 100.0)]
+    assert "did not fill" in caplog.text
+    assert sum(clock.waits) == pytest.approx(30.0)
+
+
+def test_no_wait_without_a_sell(tmp_path: Path) -> None:
+    broker, clock, rebalancer = _deferred_book(tmp_path)
+    broker.positions = []
+    broker.account = AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(10_000))
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    assert PlacedOrder("B", "buy", 140.0) in placed
+    assert clock.waits == []
+
+
+def test_a_backtest_does_not_wait_for_its_sells(tmp_path: Path) -> None:
+    """A backtest fills on the next bar and its buying power already credits a submitted sell: waiting would only move the simulated clock."""
+    broker, clock, _ = _deferred_book(tmp_path, fills_on_wait=False)
+    strategy = Strategy(broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
+
+    Rebalancer(strategy, AckmanParams()).rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    assert clock.waits == []
 
 
 def test_a_sell_logs_the_estimated_gain_against_the_positions_average_cost(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
