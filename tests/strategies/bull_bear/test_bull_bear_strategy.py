@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, time
 from decimal import Decimal
 from pathlib import Path
@@ -323,3 +324,43 @@ def test_run_backtesting_charges_no_slippage_so_runs_compare_with_the_picker_bas
     strategy.run_backtesting()
 
     assert captured["slippage"] == BullBearStrategy.parameters["slippage"] == Decimal(0)  # the picker run 2026-10-10_085928 had none
+
+
+# --- order-event logs (bull_bear only: the base hooks and the executor stay silent) ---------------------------------
+
+
+def _order_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if "order" in record.getMessage()]
+
+
+def test_a_new_order_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path)
+    order = strategy.create_order("SYRE", Decimal("7.842749"), "sell")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_new_order(order)
+
+    (line,) = _order_lines(caplog)
+    assert "new order: sell 7.842749 SYRE" in line and order.identifier in line
+
+
+def test_a_partial_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path)
+    order = strategy.create_order("VSXY", 10, "buy")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_partially_filled_order(None, order, Decimal("77.5"), Decimal(4), 1)
+
+    (line,) = _order_lines(caplog)
+    assert "order partially filled: buy 4 of 10 VSXY @ $77.50" in line and order.identifier in line
+
+
+def test_a_full_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path)
+    order = strategy.create_order("SYRE", Decimal("7.842749"), "sell")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_filled_order(None, order, Decimal("96.84"), Decimal("7.842749"), 1)
+
+    (line,) = _order_lines(caplog)
+    assert "order filled: sell 7.842749 of 7.842749 SYRE @ $96.84" in line and order.identifier in line

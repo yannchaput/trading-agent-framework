@@ -23,6 +23,8 @@ from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.order import Order
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.fundamentals.edgar_client import default_client
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
@@ -44,6 +46,11 @@ if TYPE_CHECKING:
 
 _RESEARCH_TOOLS = {"search_news", "get_income_statement", "get_balance_sheet"}
 _JUDGE_MEMORY_TOOLS = {"search_memory", "remember_lesson"}
+
+
+def _size(quantity: Decimal | None) -> str:
+    """A share count for a log line: `10`, `7.842749`; `?` for a notional order, which has none."""
+    return "?" if quantity is None else f"{quantity.normalize():f}"
 
 
 class BullBearStrategy(Strategy):
@@ -199,6 +206,17 @@ class BullBearStrategy(Strategy):
         outcome = self.pipeline.run()
         if not outcome.completed and self.is_backtesting and outcome.abandoned_streak >= self.settings.max_consecutive_abandoned:
             raise FatalStrategyError(f"{outcome.abandoned_streak} reviews abandoned in a row, aborting the backtest (see the log for the stage and the error)")
+
+    # --- order events: logged here only (the base hooks and the executor stay silent for the other strategies) -------
+
+    def on_new_order(self, order: Order) -> None:
+        self.log_info(f"new order: {order.side.value} {_size(order.quantity)} {order.asset.symbol} ({order.order_type.value}, id {order.identifier})")
+
+    def on_partially_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        self.log_info(f"order partially filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
+
+    def on_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        self.log_info(f"order filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
 
     def _market_date(self) -> date:
         return self.clock.now().astimezone(MARKET_TZ).date()
