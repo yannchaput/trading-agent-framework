@@ -64,7 +64,14 @@ def page_scorecard():
         return
 
     all_strategies = index.strategy_names()
-    selected_strategies = st.sidebar.multiselect("Strategies", all_strategies, default=all_strategies[: min(3, len(all_strategies))])
+    # persist_state keeps the choice while another tab (or Run Detail / Side-by-Side) is drawn: an unrendered widget's value is dropped otherwise.
+    selected_strategies = st.sidebar.multiselect(
+        "Strategies",
+        all_strategies,
+        default=all_strategies[: min(3, len(all_strategies))],
+        key="scorecard_strategies",
+        persist_state="session",
+    )
     if not selected_strategies:
         st.info("Select at least one strategy.")
         return
