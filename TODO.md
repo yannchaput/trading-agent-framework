@@ -19,6 +19,13 @@
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Update tools comments with parameters + check if tool annotation is recommended
 
+## Skills
+
+* Caveman
+* RTK
+* Wait-what
+* poneytail
+
 ## PEA Manager
 
 * Trouver un skills ou MCP permettant de remplacer EODHD quand son credit est epuisé pour le scan des tickers
@@ -51,13 +58,6 @@
 ### Bull Bear
 
 * Verifier si le tools search_memory a ete utilisé et pourquoi
-* Permettre de fixer le reasoning effort par agent. Notamment judge = xhigh. Faire faire un test sur le judge par claude sur 3 ou 3 runs avant.
-* Improve compaction when the history is already too long (ex of MU stock selling out of the portfolio)
-  * What I found: in the 10-25 run, the judge lost its entire input on 11 of 55 reviews.
-  * What happened. When a run's history passes 80% of the window, it is summarized. With the old 32,768-token window, the judge's long prompt (17k+ tokens) plus its memory lookups crossed that line. The summary then failed and replaced everything with one sentence: "Previous conversation was too long to summarize."
-  * Effect. The judge then submitted verdicts for every stock without the fact sheets, notes, or bull and bear cases.
-  * See if "previous_verdict" could be replaced by a memory tool.
-
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
 * ~~Enable compaction of the state in langchain with middleware~~
@@ -75,6 +75,7 @@
 * Test Sage 1.5
 * Test Nanbeige 4.3
 * Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
+* Test Qwen 3.8 35B: [X](https://x.com/Oluwaphilemon1/status/2114912917157974508)
 ~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
@@ -82,6 +83,29 @@
 ### NAS_KELT
 
 * To study
+
+### Time Machine
+
+``` code
+Ce qui est demandé : chaque mardi, juste avant d'envoyer les ordres, cross_momentum et bull_bear simulent le portefeuille qu'elles s'apprêtent à acheter. Elles calculent la même chose pour le portefeuille qu'elles détiennent. Deux méthodes, dans l'esprit de Time Machine :
+
+	1.	Monte Carlo : 5 000 rejeux des 20 prochaines séances, tirés des rendements réels de l'année écoulée des titres visés, avec une graine fixe. On obtient la fourchette de résultats (le pire cas sur 20 et le cas médian), la probabilité de perdre 5 % ou 10 %, et la baisse maximale probable.
+	2.	Rejeu historique : les mêmes pondérations appliquées à chaque période réelle de 20 séances de l'année écoulée, avec le pire résultat, le médian et le meilleur.
+
+Garde-fous du brief :
+
+	•	La simulation sert uniquement d'information : elle ne change aucune pondération et ne bloque aucun ordre.
+	•	En cas d'erreur, elle produit un simple avertissement et le rééquilibrage continue.
+	•	Elle est désactivée en backtest, pour que les résultats de P1 et P2 ne changent pas.
+	•	Les résultats vont dans les logs et dans un fichier :
+	•	pour cross_momentum, dans un nouveau previews.jsonl ;
+	•	pour bull_bear, dans reviews.jsonl, à côté des verdicts du juge.
+
+La suite :
+
+	1.	Au retour du worker, je relis le code et je lance ruff, pyright et les tests.
+	2.	Je vous propose ensuite de fusionner. Il faudra alors redémarrer les deux stratégies pour charger le nouveau code, avant mardi.
+```
 
 ---
 
