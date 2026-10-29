@@ -30,7 +30,7 @@ from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullC
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
-from trading_agent_framework.strategies.bull_bear.sizing import strength_weights
+from trading_agent_framework.strategies.bull_bear.sizing import equal_weights
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
@@ -312,8 +312,8 @@ class ReviewPipeline:
         book = build_book(debate, verdicts.chosen)
         strategy.log_info(f"[bull_bear] book: {', '.join(book) or 'empty, everything parked'}")
 
-        # 8. Sizing and execution: the judge's strength alone sizes a stock (no volatility, no conviction, no risk); the rest is parked.
-        target_weights = strength_weights({symbol: verdicts.strengths[symbol] for symbol in book}, weights=params.weights_by_strength, total=params.investable)
+        # 8. Sizing and execution: every stock in the book gets the same weight (no volatility, no strength); the rest is parked.
+        target_weights = equal_weights(book, weight=params.stock_weight)
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
         chosen = set(verdicts.chosen)

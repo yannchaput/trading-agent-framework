@@ -181,7 +181,6 @@ def test_every_verdict_carries_a_strength() -> None:
         max_chars=300,
     )
     assert [x.strength for x in v.verdicts] == ["strong", "weak"]
-    assert v.strengths == {"AAA": "strong", "BBB": "weak"}
 
 
 @pytest.mark.parametrize(

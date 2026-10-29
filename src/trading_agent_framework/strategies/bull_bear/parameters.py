@@ -12,14 +12,15 @@ from dataclasses import dataclass
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.utils.errors import ConfigurationError
 
+_EPS = 1e-9  # 10 x 0.098 is a hair above 0.98 in floating point
+
 
 @dataclass(frozen=True, slots=True)
 class BullBearParams:
     retention_rank: int = 35  # a holding ranked worse (or unranked) is a forced exit; above candidate_count
     candidate_count: int = 15  # the top ranks the judge rules on every review (plus the holdings ranked up to retention_rank)
     max_book_size: int = 10  # most stocks the judge may put in
-    strong_weight: float = 0.14  # per-stock weight by the judge's strength, fractions of portfolio value; there is no weak weight (a weak stock is out)
-    standard_weight: float = 0.09  # ten standard stocks make 90%; above 98% every weight is scaled by one factor
+    stock_weight: float = 0.098  # every stock in the book, whatever its strength (fraction of portfolio value): a full book of 10 makes 98%, a shorter one parks the rest
     cash_buffer: float = 0.02  # never invested (fees, fill drift)
     rebalance_band: float = 0.03  # drift that triggers a trade
     min_trade_pct: float = 0.005  # smallest order
@@ -64,22 +65,20 @@ class BullBearParams:
     min_yahoo_coverage: float = 0.5  # share of the universe a Yahoo batch must cover
 
     def __post_init__(self) -> None:
-        floats = (self.strong_weight, self.standard_weight, self.cash_buffer, self.rebalance_band, self.min_trade_pct, self.min_yahoo_coverage)
+        floats = (self.stock_weight, self.cash_buffer, self.rebalance_band, self.min_trade_pct, self.min_yahoo_coverage)
         investable = 1 - self.cash_buffer
-        # a standard stock in the fullest book of strong ones, once scaled down to what is investable (checked only for a book that makes sense)
-        fullest_book = (self.max_book_size - 1) * self.strong_weight + self.standard_weight
-        smallest_target = min(self.standard_weight, self.standard_weight * investable / fullest_book) if fullest_book > 0 else math.inf
         try:
             parse_rebalance_time(self.rebalance_time)
             time_problem = ""
         except ConfigurationError as exc:
             time_problem = str(exc)
         problems = {
-            "strong_weight, standard_weight, cash_buffer, rebalance_band, min_trade_pct and min_yahoo_coverage must be finite": not all(math.isfinite(value) for value in floats),
+            "stock_weight, cash_buffer, rebalance_band, min_trade_pct and min_yahoo_coverage must be finite": not all(math.isfinite(value) for value in floats),
             "candidate_count and max_book_size must be at least 1": self.candidate_count < 1 or self.max_book_size < 1,
             "retention_rank must be above candidate_count": self.retention_rank <= self.candidate_count,
-            "0 < standard_weight < strong_weight <= 1": not 0 < self.standard_weight < self.strong_weight <= 1,
-            "a standard stock in a full book of strong ones must stay above rebalance_band (it would never be bought)": smallest_target <= self.rebalance_band,
+            "stock_weight must be in (0, 1]": not 0 < self.stock_weight <= 1,
+            "max_book_size x stock_weight must fit in 1 - cash_buffer": self.max_book_size * self.stock_weight > investable + _EPS,
+            "stock_weight must be above rebalance_band (a new stock would never be bought)": self.stock_weight <= self.rebalance_band,
             "cash_buffer must be in [0, 1)": not 0 <= self.cash_buffer < 1,
             "rebalance_band must be in (0, 1)": not 0 < self.rebalance_band < 1,
             "min_trade_pct must be in [0, 1)": not 0 <= self.min_trade_pct < 1,
@@ -110,8 +109,3 @@ class BullBearParams:
     def investable(self) -> float:
         """The share of portfolio value the stock weights sum to: everything but the cash buffer."""
         return 1 - self.cash_buffer
-
-    @property
-    def weights_by_strength(self) -> dict[str, float]:
-        """The weight of a stock the judge rates strong or standard (a weak stock is never in the book)."""
-        return {"strong": self.strong_weight, "standard": self.standard_weight}

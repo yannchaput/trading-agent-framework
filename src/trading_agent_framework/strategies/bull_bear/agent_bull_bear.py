@@ -86,8 +86,7 @@ class BullBearStrategy(Strategy):
         self.parameters = {
             **self.parameters,
             "research_news": self.settings.research_news,
-            "strong_weight": self.settings.strong_weight,
-            "standard_weight": self.settings.standard_weight,
+            "stock_weight": self.settings.stock_weight,
             "thinking_token_budget": self.settings.thinking_token_budget,
             "judge_thinking_token_budget": self.settings.judge_thinking_token_budget,
             "max_output_tokens": self.settings.max_output_tokens,

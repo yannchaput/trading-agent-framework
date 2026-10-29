@@ -225,7 +225,7 @@ def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: P
     assert [stock["fact_sheet"]["symbol"] for stock in bull_context["stocks"]] == UNIVERSE[:15]
     assert bull_context["stocks"][0]["note"] == "2026-09-30: quarterly revenue up 12% y/y"
     assert h.agents["bear"].calls[0]["context"] == bull_context  # the same evidence, and not the bull's case
-    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in [*UNIVERSE[:10], "SHV"]]  # in the book's order, the parked rest last
+    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:10]]  # in the book's order; a full book parks nothing
     state = h.store.load()
     assert state.last_completed_review == "2026-10-06" and state.abandoned_streak == 0
     assert set(state.verdicts) == set(UNIVERSE[:15])
@@ -308,9 +308,9 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["book"] == UNIVERSE[:10]
     stock_weights = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert list(stock_weights) == UNIVERSE[:10]
-    assert all(weight == pytest.approx(0.09) for weight in stock_weights.values())  # ten standard stocks
-    assert sum(stock_weights.values()) == pytest.approx(0.90) and line["targets"]["SHV"] == pytest.approx(0.08)
-    assert [order["symbol"] for order in line["orders"]] == [*UNIVERSE[:10], "SHV"]
+    assert all(weight == pytest.approx(0.098) for weight in stock_weights.values())  # ten stocks, the same weight
+    assert sum(stock_weights.values()) == pytest.approx(0.98) and line["targets"].get("SHV", 0.0) == pytest.approx(0.0)  # a full book parks nothing
+    assert [order["symbol"] for order in line["orders"]] == UNIVERSE[:10]
 
 
 def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_out(tmp_path: Path) -> None:
@@ -353,7 +353,7 @@ def test_the_judges_choice_not_the_rank_decides_the_book(tmp_path: Path) -> None
     assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in [*line["book"], "SHV"]]
 
 
-def test_strength_weights_leave_the_rest_parked(tmp_path: Path) -> None:
+def test_equal_weights_whatever_the_strength_leave_the_rest_parked(tmp_path: Path) -> None:
     h = _harness(tmp_path)
     h.agents["judge"].script = verdicts({"S03", "S14"}, strengths={"S03": "strong"})
 
@@ -361,7 +361,7 @@ def test_strength_weights_leave_the_rest_parked(tmp_path: Path) -> None:
 
     (line,) = h.log_lines()
     assert line["book"] == ["S03", "S14"]
-    assert line["targets"] == pytest.approx({"S03": 0.14, "S14": 0.09, "SHV": 0.75})
+    assert line["targets"] == pytest.approx({"S03": 0.098, "S14": 0.098, "SHV": 0.784})
     assert any(order[0] == "SHV" and order[1] == "buy" for order in h.orders)
 
 
@@ -411,7 +411,7 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
     assert "S04" not in debated
     assert line["forced_exits"] == []
     assert "S03" in line["book"]  # the high-volatility holding the judge put in, kept in the book...
-    assert line["targets"]["S03"] == pytest.approx(0.09)  # ...and sized at its strength weight, whatever its volatility
+    assert line["targets"]["S03"] == pytest.approx(0.098)  # ...and sized like every other stock, whatever its volatility
 
 
 def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
@@ -426,15 +426,16 @@ def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
     assert ("S11", "sell", 20.0) in h.orders
 
 
-def test_a_held_stock_whose_strength_falls_is_sold_down(tmp_path: Path) -> None:
-    h = _harness(tmp_path, held={"S00": 28})  # 1,400 = 14% at 50
-    h.agents["judge"].script = verdicts()  # S00 stays in, now standard (9%)
+def test_a_strength_change_alone_does_not_resize_a_holding(tmp_path: Path) -> None:
+    earlier = {"S00": {"verdict": "in", "reason": "strong", "date": "2026-09-29", "strength": "strong"}}
+    h = _harness(tmp_path, held={"S00": 19.6}, state=BullBearState(verdicts=earlier))  # 980 = 9.8% at 50
+    h.agents["judge"].script = verdicts()  # S00 stays in, now standard
 
     assert h.run().completed
 
     (line,) = h.log_lines()
-    assert line["targets"]["S00"] == pytest.approx(0.09)
-    assert any(order[0] == "S00" and order[1] == "sell" for order in h.orders)
+    assert line["verdicts"][0]["strength"] == "standard" and line["targets"]["S00"] == pytest.approx(0.098)
+    assert not any(order[0] == "S00" for order in h.orders)
 
 
 def test_a_held_stock_rated_weak_is_put_out_and_sold(tmp_path: Path) -> None:
@@ -453,18 +454,6 @@ def test_a_held_stock_rated_weak_is_put_out_and_sold(tmp_path: Path) -> None:
     assert "S00" not in line["book"] and line["verdicts"][0]["strength"] == "weak" and line["verdicts"][0]["what_changed"] == "the guidance was cut"
     assert ("S00", "sell", 20.0) in h.orders
     assert h.store.load().cooldowns == {"S00": 4}
-
-
-def test_a_scaled_strength_change_inside_the_band_is_not_traded(tmp_path: Path) -> None:
-    held = {symbol: 19.6 for symbol in UNIVERSE[:10]}  # 980 = 9.8% each
-    h = _harness(tmp_path, held=held)
-    h.agents["judge"].script = verdicts(strengths={**{s: "strong" for s in UNIVERSE[:7]}, **{s: "standard" for s in UNIVERSE[7:10]}})
-
-    assert h.run().completed
-
-    (line,) = h.log_lines()
-    assert line["targets"]["S07"] == pytest.approx(0.09 * 0.98 / 1.25)  # 7.06%, a 2.74-point move: inside the 3-point band
-    assert not any(order[0] in {"S07", "S08", "S09"} for order in h.orders)
 
 
 # --- research failures --------------------------------------------------------------------------------
@@ -694,7 +683,7 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     assert len(line["verdicts"]) == 15
     stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert sorted(stock_targets) == UNIVERSE[:10] and "SHV" in line["targets"]
-    assert sum(stock_targets.values()) == pytest.approx(0.90)
+    assert sum(stock_targets.values()) == pytest.approx(0.98)
     state = h.store.load()
     assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
 

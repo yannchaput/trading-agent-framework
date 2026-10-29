@@ -280,7 +280,7 @@ def test_the_judge_is_told_strength_sets_the_size_but_not_the_numbers() -> None:
     text = " ".join(prompts.JUDGE_SYSTEM.split())
     passage = _strength_passage()
     assert "largest position" in passage
-    assert not any(n in text for n in ("14", "0.14", "9%", "0.09", "4%", "0.04"))
+    assert not any(n in text for n in ("14", "0.14", "9%", "0.09", "9.8", "4%", "0.04"))
     assert "cash" not in passage and "SHV" not in text
 
 

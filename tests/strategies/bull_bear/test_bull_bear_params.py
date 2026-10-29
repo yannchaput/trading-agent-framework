@@ -14,9 +14,9 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     params = BullBearParams()
 
     assert (params.candidate_count, params.max_book_size, params.retention_rank) == (15, 10, 35)
-    assert (params.strong_weight, params.standard_weight, params.cash_buffer, params.rebalance_band) == (0.14, 0.09, 0.02, 0.03)
-    assert params.weights_by_strength == {"strong": 0.14, "standard": 0.09}
+    assert (params.stock_weight, params.cash_buffer, params.rebalance_band) == (0.098, 0.02, 0.03)
     assert params.investable == pytest.approx(0.98)
+    assert params.max_book_size * params.stock_weight == pytest.approx(params.investable)  # a full book is fully invested
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
     assert params.reentry_cooldown_reviews == 4
     assert params.feedback_reviews == 4
@@ -35,10 +35,11 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"standard_weight": 0.14}, "0 < standard_weight < strong_weight <= 1"),
-        ({"strong_weight": 1.2}, "0 < standard_weight < strong_weight <= 1"),
-        ({"standard_weight": 0.035}, "a standard stock in a full book of strong ones must stay above rebalance_band"),  # 0.035 x 0.98 / 1.295 = 2.65%
-        ({"strong_weight": math.nan}, "must be finite"),
+        ({"stock_weight": 0.0}, "stock_weight must be in (0, 1]"),
+        ({"stock_weight": 1.2}, "stock_weight must be in (0, 1]"),
+        ({"stock_weight": 0.1}, "max_book_size x stock_weight must fit in 1 - cash_buffer"),  # 10 x 10% > 98%
+        ({"stock_weight": 0.03}, "stock_weight must be above rebalance_band"),
+        ({"stock_weight": math.nan}, "must be finite"),
         ({"candidate_count": 35}, "retention_rank must be above candidate_count"),
         ({"retention_rank": 15}, "retention_rank must be above candidate_count"),
         ({"candidate_count": 0}, "candidate_count and max_book_size must be at least 1"),

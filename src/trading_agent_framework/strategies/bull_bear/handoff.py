@@ -74,11 +74,6 @@ class Verdicts:
         """The symbols the judge put in, in submission order."""
         return [verdict.symbol for verdict in self.verdicts if verdict.verdict == "in"]
 
-    @property
-    def strengths(self) -> dict[str, str]:
-        """The strength of every stock the judge rated, in or out, in submission order."""
-        return {verdict.symbol: verdict.strength for verdict in self.verdicts if verdict.strength}
-
 
 # --- validation (pure) --------------------------------------------------------------------------
 
