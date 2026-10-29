@@ -4,7 +4,7 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, trim_note
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffError, HandoffRecorder, Note, Verdict, submit_tools, trim_note, validate_verdicts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
@@ -24,7 +24,8 @@ def _bear(symbols: list[str]) -> list[dict[str, Any]]:
 
 
 def _verdicts(chosen: list[str], out: list[str] | None = None) -> list[dict[str, Any]]:
-    return [{"symbol": s, "verdict": "in", "reason": "bull wins"} for s in chosen] + [{"symbol": s, "verdict": "out", "reason": "bear wins"} for s in out or []]
+    ins = [{"symbol": s, "verdict": "in", "reason": "bull wins", "strength": "standard"} for s in chosen]
+    return ins + [{"symbol": s, "verdict": "out", "reason": "bear wins", "strength": "weak"} for s in out or []]
 
 
 # --- note ---------------------------------------------------------------------------------------
@@ -168,8 +169,44 @@ def test_a_verdict_for_every_stock_is_recorded_with_the_stocks_put_in() -> None:
     result = tools["submit_verdicts"](_verdicts(["AAA", "BBB", "CCC", "DDD"], ["EEE", "FFF"]))
 
     assert result == {"status": "recorded"}
-    assert recorder.submission.verdicts[0] == Verdict("AAA", "in", "bull wins")
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "in", "bull wins", None, "standard")
     assert recorder.submission.chosen == ["AAA", "BBB", "CCC", "DDD"]
+
+
+def test_every_verdict_carries_a_strength() -> None:
+    v = validate_verdicts(
+        [{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": " Strong "}, {"symbol": "BBB", "verdict": "out", "reason": "r", "strength": "weak"}],
+        expected=["AAA", "BBB"],
+        max_in=10,
+        max_chars=300,
+    )
+    assert [x.strength for x in v.verdicts] == ["strong", "weak"]
+    assert v.strengths == {"AAA": "strong", "BBB": "weak"}
+
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        ({"symbol": "AAA", "verdict": "in", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "out", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "high"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}, "AAA is weak: a weak stock goes out"),
+    ],
+)
+def test_a_missing_unknown_or_weak_in_strength_is_refused(item: dict[str, Any], message: str) -> None:
+    with pytest.raises(HandoffError, match=message):
+        validate_verdicts([item], expected=["AAA"], max_in=10, max_chars=300)
+
+
+def test_a_strong_or_standard_stock_may_still_be_out_and_a_changed_strength_needs_no_what_changed() -> None:
+    v = validate_verdicts(
+        [{"symbol": "AAA", "verdict": "out", "reason": "r", "strength": "strong"}, {"symbol": "BBB", "verdict": "in", "reason": "r", "strength": "standard"}],
+        expected=["AAA", "BBB"],
+        max_in=10,
+        max_chars=300,
+        previous={"BBB": "in"},
+    )
+    assert v.chosen == ["BBB"] and v.verdicts[1].what_changed is None
 
 
 def test_putting_every_stock_out_is_valid() -> None:
@@ -184,10 +221,10 @@ def test_verdicts_and_symbols_are_normalised_like_the_debaters_cases() -> None:
     recorder, tools = _tools()
     recorder.expect_verdicts(DEBATE, max_in=6)
 
-    raw = [{"symbol": " aaa ", "verdict": "Out ", "reason": "  lawsuit filed  "}, *_verdicts(DEBATE[1:])]
+    raw = [{"symbol": " aaa ", "verdict": "Out ", "reason": "  lawsuit filed  ", "strength": " Weak"}, *_verdicts(DEBATE[1:])]
 
     assert tools["submit_verdicts"](raw) == {"status": "recorded"}
-    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "lawsuit filed")
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "lawsuit filed", None, "weak")
 
 
 @pytest.mark.parametrize(
@@ -197,9 +234,9 @@ def test_verdicts_and_symbols_are_normalised_like_the_debaters_cases() -> None:
         (_verdicts(DEBATE[:5]), "no case for FFF"),
         (_verdicts([*DEBATE, "ZZZ"]), "ZZZ is not in the debate"),
         (_verdicts([*DEBATE, "AAA"]), "AAA appears twice"),
-        ([{"symbol": "AAA", "verdict": "keep", "reason": "x"}, *_verdicts([], DEBATE[1:])], "the verdict for AAA must be one of in, out"),
-        ([{"symbol": "AAA", "verdict": "in", "reason": " "}, *_verdicts([], DEBATE[1:])], "AAA has no reason"),
-        ([{"symbol": "AAA", "verdict": "in", "reason": "x" * 301}, *_verdicts([], DEBATE[1:])], "the reason for AAA is 301 characters"),
+        ([{"symbol": "AAA", "verdict": "keep", "reason": "x", "strength": "standard"}, *_verdicts([], DEBATE[1:])], "the verdict for AAA must be one of in, out"),
+        ([{"symbol": "AAA", "verdict": "in", "reason": " ", "strength": "standard"}, *_verdicts([], DEBATE[1:])], "AAA has no reason"),
+        ([{"symbol": "AAA", "verdict": "in", "reason": "x" * 301, "strength": "standard"}, *_verdicts([], DEBATE[1:])], "the reason for AAA is 301 characters"),
         (_verdicts(DEBATE[:3], DEBATE[3:]), "3 stocks in: put at most 2 in and the others out"),
     ],
 )
@@ -252,10 +289,10 @@ def test_a_changed_verdict_needs_what_changed() -> None:
 def test_a_changed_verdict_with_what_changed_is_recorded_with_it() -> None:
     recorder, tools = _tools()
     recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in", "BBB": "in"})
-    raw = [{"symbol": "AAA", "verdict": "out", "reason": "bear wins", "what_changed": "8-K: guidance cut"}, *_verdicts(DEBATE[1:])]
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "bear wins", "strength": "weak", "what_changed": "8-K: guidance cut"}, *_verdicts(DEBATE[1:])]
 
     assert tools["submit_verdicts"](raw) == {"status": "recorded"}
-    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "bear wins", "8-K: guidance cut")
+    assert recorder.submission.verdicts[0] == Verdict("AAA", "out", "bear wins", "8-K: guidance cut", "weak")
     assert recorder.submission.verdicts[1].what_changed is None
 
 
@@ -269,7 +306,7 @@ def test_an_unchanged_verdict_or_a_first_verdict_needs_no_what_changed() -> None
 def test_a_long_what_changed_is_refused() -> None:
     recorder, tools = _tools()
     recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
-    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "strength": "weak", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
 
     assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]
 
@@ -307,3 +344,8 @@ def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
     assert tools["submit_note"]("AAA", trim_note(text, max_chars=600, min_chars=250)) == {"status": "recorded"}
+
+
+def test_the_weak_in_refusal_tells_a_held_stock_to_give_what_changed() -> None:
+    with pytest.raises(HandoffError, match="with what_changed if your previous verdict was in"):
+        validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}], expected=["AAA"], max_in=10, max_chars=300)

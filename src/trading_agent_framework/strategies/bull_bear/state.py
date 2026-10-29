@@ -3,8 +3,12 @@
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
 restart), the abandoned-review streak, the judge's latest verdict on every stock it judged and the re-entry
 cooldowns (the stocks the judge sold, and the completed reviews each stays out of the candidates), in one small JSON
-file per mode, written atomically. A missing or invalid file is an empty state; a version-1 file (the picker, the
-veto judge) keeps its review date and streak and nothing else. `ReviewLog` appends one JSON line per review to the
+file per mode, written atomically. The verdict also carries the judge's strength (strong, standard or weak; never weak
+on an `in`), so the next review shows the previous strength of every stock. A missing or invalid file is an empty
+state; a version-2 file (verdicts without strengths) still loads whole, its verdicts showing no strength until a
+review judges the stock again, and a save writes them back as they are (a version-3 entry may lack a strength; one
+that has a strength must hold a valid one); a version-1 file (the picker, the veto judge) keeps its review date and
+streak and nothing else. `ReviewLog` appends one JSON line per review to the
 run directory. Neither ever raises on an I/O problem: bookkeeping must not stop a review.
 """
 
@@ -19,11 +23,13 @@ from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.bull_bear.handoff import STRENGTHS
 from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
 
-STATE_VERSION = 2
+STATE_VERSION = 3
+_UNRATED_VERSION = 2  # the file before strengths: a verdict is {verdict, reason, date}
 _PICKER_VERSION = 1  # the picker's and the veto judge's file: a review date and a streak
 _VERDICT_KEYS = {"verdict", "reason", "date"}
 _VERDICTS = {"in", "out"}
@@ -38,7 +44,7 @@ def state_path(project_root: Path, mode: TradingMode) -> Path:
 class BullBearState:
     last_completed_review: str | None = None  # ISO market date of the last completed review
     abandoned_streak: int = 0  # abandoned reviews in a row
-    verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date}
+    verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date, strength}; no strength on a version-2 verdict
     cooldowns: dict[str, int] = field(default_factory=dict)  # symbol -> completed reviews it stays out of the candidates
     history: list[dict[str, Any]] = field(default_factory=list)  # the last feedback_reviews reviews: {date, verdicts: {symbol: {verdict, reason, close}}}
 
@@ -66,8 +72,17 @@ def _valid_dates(raw: dict[str, Any]) -> bool:
     return (last is None or isinstance(last, str)) and isinstance(streak, int) and not isinstance(streak, bool) and streak >= 0
 
 
+def _valid_verdict(entry: Any, version: int) -> bool:
+    """One `verdicts` entry: {verdict, reason, date} in version 2; in version 3 also a `strength`, which may be absent (a version-2 verdict
+    not judged again) but, when there, is a known one (never weak on an `in`)."""
+    allowed = _VERDICT_KEYS if version == _UNRATED_VERSION else _VERDICT_KEYS | {"strength"}
+    if not isinstance(entry, dict) or not _VERDICT_KEYS <= set(entry) <= allowed or not all(isinstance(value, str) for value in entry.values()) or entry["verdict"] not in _VERDICTS:
+        return False
+    return "strength" not in entry or (entry["strength"] in STRENGTHS and not (entry["verdict"] == "in" and entry["strength"] == "weak"))
+
+
 def _valid(raw: Any) -> bool:
-    if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
+    if not isinstance(raw, dict) or raw.get("version") not in (_UNRATED_VERSION, STATE_VERSION):
         return False
     verdicts = raw.get("verdicts", {})
     cooldowns = raw.get("cooldowns", {})
@@ -75,10 +90,7 @@ def _valid(raw: Any) -> bool:
     return (
         _valid_dates(raw)
         and isinstance(verdicts, dict)
-        and all(
-            isinstance(entry, dict) and set(entry) == _VERDICT_KEYS and all(isinstance(value, str) for value in entry.values()) and entry["verdict"] in _VERDICTS
-            for entry in verdicts.values()
-        )
+        and all(_valid_verdict(entry, raw["version"]) for entry in verdicts.values())
         and isinstance(cooldowns, dict)
         and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
         and isinstance(history, list)

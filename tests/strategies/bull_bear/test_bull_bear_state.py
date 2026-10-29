@@ -23,7 +23,7 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
     state = BullBearState(
         last_completed_review="2026-10-06",
         abandoned_streak=0,
-        verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}},
+        verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"}},
         cooldowns={"BBB": 3},
         history=[{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "close": 51.5}}}],
     )
@@ -32,6 +32,103 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
 
     assert store.load() == state
     assert json.loads((tmp_path / "data" / "state.json").read_text())["version"] == STATE_VERSION
+
+
+def test_a_version_3_state_with_strengths_loads_back(tmp_path: Path) -> None:
+    store = StateStore(tmp_path / "state.json")
+    state = BullBearState(
+        last_completed_review="2026-10-06",
+        verdicts={
+            "AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"},
+            "BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"},
+        },
+    )
+
+    store.save(state)
+
+    assert json.loads((tmp_path / "state.json").read_text())["version"] == 3
+    assert store.load() == state
+
+
+def test_a_version_2_state_loads_without_strengths(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    content = {
+        "version": 2,
+        "last_completed_review": "2026-10-06",
+        "abandoned_streak": 1,
+        "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}, "BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-09-29"}},
+        "cooldowns": {"BBB": 2},
+        "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "close": 51.5}}}],
+    }
+    path.write_text(json.dumps(content))
+
+    with caplog.at_level(logging.WARNING):
+        state = StateStore(path).load()
+
+    assert state == BullBearState(
+        last_completed_review="2026-10-06",
+        abandoned_streak=1,
+        verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}, "BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-09-29"}},
+        cooldowns={"BBB": 2},
+        history=content["history"],
+    )
+    assert caplog.text == ""
+
+
+def test_saving_a_state_keeps_a_verdict_that_predates_strengths(tmp_path: Path) -> None:
+    # a version-2 verdict no review has judged again has no strength: the file still holds it and loads back whole
+    store = StateStore(tmp_path / "state.json")
+    state = BullBearState(
+        verdicts={
+            "AAA": {"verdict": "in", "reason": "old", "date": "2026-09-29"},
+            "BBB": {"verdict": "out", "reason": "new", "date": "2026-10-06", "strength": "weak"},
+        },
+        cooldowns={"AAA": 1},
+    )
+
+    store.save(state)
+
+    assert json.loads((tmp_path / "state.json").read_text())["version"] == STATE_VERSION
+    assert store.load() == state
+
+
+def test_a_version_3_entry_without_a_strength_loads(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    entry = {"verdict": "in", "reason": "r", "date": "2026-10-06"}
+    path.write_text(json.dumps({"version": 3, "last_completed_review": "2026-10-06", "verdicts": {"AAA": entry}}))
+
+    with caplog.at_level(logging.WARNING):
+        state = StateStore(path).load()
+
+    assert state.verdicts == {"AAA": entry}
+    assert caplog.text == ""
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"verdict": "in", "reason": "r", "date": "2026-10-06", "strength": "high"},
+        {"verdict": "in", "reason": "r", "date": "2026-10-06", "strength": None},
+        {"verdict": "in", "reason": "r", "date": "2026-10-06", "strength": 3},
+        {"verdict": "in", "reason": "r", "date": "2026-10-06", "strength": "weak"},
+    ],
+)
+def test_an_unknown_non_string_or_weak_in_strength_is_an_invalid_state(tmp_path: Path, entry: dict[str, object], caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 3, "last_completed_review": "2026-10-06", "verdicts": {"AAA": entry}}))
+
+    with caplog.at_level(logging.WARNING):
+        assert StateStore(path).load() == BullBearState()
+    assert "not a valid state" in caplog.text
+
+
+def test_a_version_2_entry_with_a_strength_is_an_invalid_state(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 2, "verdicts": {"AAA": {"verdict": "in", "reason": "r", "date": "2026-10-06", "strength": "strong"}}}))
+
+    with caplog.at_level(logging.WARNING):
+        assert StateStore(path).load() == BullBearState()
+    assert "not a valid state" in caplog.text
 
 
 def test_a_state_from_the_picker_or_the_veto_judge_keeps_its_review_date_and_streak(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -59,7 +156,7 @@ def test_a_version_1_state_without_a_review_date_keeps_its_streak(tmp_path: Path
         {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": -1},
         {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": True},
         {"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": "1"},
-        {"version": 3, "last_completed_review": "2026-10-06", "abandoned_streak": 1},
+        {"version": 4, "last_completed_review": "2026-10-06", "abandoned_streak": 1},
     ],
 )
 def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_warning(tmp_path: Path, content: dict[str, object], caplog: pytest.LogCaptureFixture) -> None:
@@ -84,7 +181,7 @@ def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_
         json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": True}}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "r"}}}]}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06"}]}),
-        json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "maybe", "reason": "r", "date": "2026-10-06"}}}),
+        json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "maybe", "reason": "r", "date": "2026-10-06", "strength": "weak"}}}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "veto", "reason": "r", "close": 1.0}}}]}),
         json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": ["in"], "reason": "r", "close": 1.0}}}]}),
     ],

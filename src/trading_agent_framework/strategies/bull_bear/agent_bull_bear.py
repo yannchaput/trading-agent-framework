@@ -2,7 +2,7 @@
 
 Port of lumibot's "Bull vs Bear AI Stock Trading Bot", hardened for a local model: code ranks the universe with
 cross_momentum's own score and filters, builds the fact sheets, builds the book from the stocks the judge puts in,
-sizes it by inverse volatility and places every order (`ReviewPipeline`, `Rebalancer`). No agent has an order tool.
+sizes it by the judge's strength and places every order (`ReviewPipeline`, `Rebalancer`). No agent has an order tool.
 One review a week, on Tuesday at 12:00 ET, as cross_momentum. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
 and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
@@ -86,6 +86,8 @@ class BullBearStrategy(Strategy):
         self.parameters = {
             **self.parameters,
             "research_news": self.settings.research_news,
+            "strong_weight": self.settings.strong_weight,
+            "standard_weight": self.settings.standard_weight,
             "thinking_token_budget": self.settings.thinking_token_budget,
             "judge_thinking_token_budget": self.settings.judge_thinking_token_budget,
             "max_output_tokens": self.settings.max_output_tokens,

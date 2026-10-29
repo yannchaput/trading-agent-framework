@@ -1,4 +1,4 @@
-"""`uv run bull-bear-scores <run_dir> [<run_dir>...]`: the bull, the bear and the judge of bull_bear backtest runs,
+"""`uv run bull-bear-scores <run_dir> [<run_dir>...]`: the bull, the bear, the judge and its strengths of bull_bear backtest runs,
 scored against forward returns (`agent_scores.py`), runs side by side.
 
 Reads each run's `reviews.jsonl` itself (a strategy package never imports the dashboard), fetches daily opens from
@@ -42,7 +42,13 @@ _WINDOW_AFTER = timedelta(days=40)  # 20 sessions plus slack
 _CALENDAR_DAYS_PER_BAR = 1.5  # how far back `YahooDailyBars` reaches per bar of history
 _LABEL = 32
 _CELL = 26
-_TITLES = {"bull": "BULL conviction", "bear": "BEAR risk", "judge": "JUDGE verdict"}
+_TITLES = {
+    "bull": "BULL conviction",
+    "bear": "BEAR risk",
+    "judge": "JUDGE verdict",
+    "strength": "JUDGE strength",
+    "strength_standard": "JUDGE strength",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +62,7 @@ class RunReport:
 def main(argv: Sequence[str] | None = None, *, download: DownloadFn | None = None, today: date | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="bull-bear-scores",
-        description="Score the bull, the bear and the judge of bull_bear backtest runs against forward returns (Yahoo opens, 5 and 20 sessions).",
+        description="Score the bull, the bear, the judge and its strengths of bull_bear backtest runs against forward returns (Yahoo opens, 5 and 20 sessions).",
     )
     parser.add_argument("run_dirs", nargs="+", type=Path, metavar="run_dir", help="a backtest run directory holding reviews.jsonl")
     args = parser.parse_args(argv)
@@ -125,12 +131,12 @@ def _session_opens(df: pd.DataFrame) -> dict[date, float]:
 
 
 def format_report(runs: Sequence[RunReport], horizons: Sequence[int] = HORIZONS) -> str:
-    """One block per agent (bull, bear, judge), each run a column group with one column per horizon."""
+    """One block per agent (bull, bear, judge, strength, strength_standard), each run a column group with one column per horizon."""
     width = _CELL * len(horizons) + len(horizons) - 1
     header = " " * _LABEL + "".join(f" | {run.name:<{width}}" for run in runs)
     subheader = " " * _LABEL + "".join(" | " + " ".join(f"{horizon}d".rjust(_CELL) for horizon in horizons) for _ in runs)
     lines: list[str] = []
-    for index, agent in enumerate(runs[0].scores.agents):  # every run lists bull, bear, judge in that order
+    for index, agent in enumerate(runs[0].scores.agents):  # every run lists the agents in the same order
         scores = [[run.scores.agents[index].by_horizon[horizon] for horizon in horizons] for run in runs]
         lines += ["", f"{_TITLES[agent.agent]}, spread {agent.spread_label}", header, subheader]
         for group in agent.by_horizon[horizons[0]].groups:

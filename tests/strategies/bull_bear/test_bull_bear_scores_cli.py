@@ -57,6 +57,12 @@ def _judge_review(day: str) -> dict[str, Any]:
     }
 
 
+def _rated_review(day: str) -> dict[str, Any]:
+    record = _judge_review(day)
+    record["verdicts"] = [{"symbol": "AAA", "verdict": "in", "strength": "strong", "reason": "x"}, {"symbol": "BBB", "verdict": "out", "strength": "weak", "reason": "x"}]
+    return record
+
+
 def _picker_review(day: str) -> dict[str, Any]:
     record = _judge_review(day)
     del record["verdicts"]
@@ -83,7 +89,7 @@ def test_two_runs_print_the_bull_the_bear_and_the_judge_side_by_side(tmp_path: P
     assert "picker_run: 1 reviews scored" in out and "1 malformed lines" in out
     assert "judge_run: 2 reviews scored" in out
     spread_rows = [line for line in out.splitlines() if line.startswith("  spread")]
-    assert len(spread_rows) == 3 and all("+" in row for row in spread_rows)  # AAA rises, BBB falls: every agent is right
+    assert len(spread_rows) == 5 and all("+" in row for row in spread_rows[:3])  # AAA rises, BBB falls: every agent is right
 
 
 def test_each_run_reports_the_reviews_without_a_spread_per_agent_and_horizon(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -94,7 +100,7 @@ def test_each_run_reports_the_reviews_without_a_spread_per_agent_and_horizon(tmp
     assert main([str(run)], download=FakeDownload(_prices()), today=TODAY) == 0
 
     out = capsys.readouterr().out
-    assert "  reviews without a spread (a group missing): bull 5d 1, 20d 1; bear 5d 0, 20d 0; judge 5d 0, 20d 0" in out
+    assert "  reviews without a spread (a group missing): bull 5d 1, 20d 1; bear 5d 0, 20d 0; judge 5d 0, 20d 0; strength 5d 2, 20d 2; strength_standard 5d 2, 20d 2" in out
 
 
 def test_exits_past_the_end_of_the_data_are_counted_apart_from_missing_prices(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -159,3 +165,28 @@ def test_a_run_from_another_strategy_prints_a_report_with_no_review_scored(tmp_p
     assert main([str(ackman)], download=FakeDownload(_prices()), today=TODAY) == 0
 
     assert "ackman_run: 0 reviews scored" in capsys.readouterr().out
+
+
+def test_the_report_prints_the_strength_blocks(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run = _run(tmp_path, "rated_run", [json.dumps(_rated_review("2026-01-06")), json.dumps(_rated_review("2026-01-13"))])
+
+    assert main([str(run)], download=FakeDownload(_prices()), today=TODAY) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    assert "JUDGE strength, spread strong - weak" in lines and "JUDGE strength, spread strong - standard" in lines
+    strength = lines[lines.index("JUDGE strength, spread strong - weak") :]
+    assert next(line for line in strength if line.startswith("  strong")).count("n=2") == 2  # AAA, both reviews, at each horizon
+    assert "+" in next(line for line in strength if line.startswith("  spread"))  # strong AAA rises, weak BBB falls
+    standard = lines[lines.index("JUDGE strength, spread strong - standard") :]
+    assert "- (0 rev)" in next(line for line in standard if line.startswith("  spread"))  # no standard stock in this run
+
+
+def test_a_run_without_strengths_prints_empty_strength_blocks_and_exits_0(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    run = _run(tmp_path, "old_run", [json.dumps(_judge_review("2026-01-06")), json.dumps(_judge_review("2026-01-13"))])
+
+    assert main([str(run)], download=FakeDownload(_prices()), today=TODAY) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    for title in ("JUDGE strength, spread strong - weak", "JUDGE strength, spread strong - standard"):
+        block = lines[lines.index(title) :]
+        assert "- (0 rev)" in next(line for line in block if line.startswith("  spread"))

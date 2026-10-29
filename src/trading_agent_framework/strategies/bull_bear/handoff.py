@@ -17,6 +17,7 @@ from trading_agent_framework.strategies.bull_bear.parameters import BullBearPara
 LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")
 VERDICTS = ("in", "out")
+STRENGTHS = ("strong", "standard", "weak")
 
 NOTE, BULL, BEAR, VERDICT = "note", "bull", "bear", "verdict"
 _TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", VERDICT: "submit_verdicts"}
@@ -61,6 +62,7 @@ class Verdict:
     verdict: str  # one of VERDICTS
     reason: str
     what_changed: str | None = None  # the new fact behind a verdict that differs from the judge's previous one
+    strength: str | None = None  # one of STRENGTHS, set on every verdict by `validate_verdicts`
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +73,11 @@ class Verdicts:
     def chosen(self) -> list[str]:
         """The symbols the judge put in, in submission order."""
         return [verdict.symbol for verdict in self.verdicts if verdict.verdict == "in"]
+
+    @property
+    def strengths(self) -> dict[str, str]:
+        """The strength of every stock the judge rated, in or out, in submission order."""
+        return {verdict.symbol: verdict.strength for verdict in self.verdicts if verdict.strength}
 
 
 # --- validation (pure) --------------------------------------------------------------------------
@@ -188,13 +195,23 @@ def _what_changed(item: Mapping[str, Any], symbol: str, verdict: str, before: st
     return _text(item, "what_changed", symbol, max_chars) if given else None
 
 
+def _strength(item: Mapping[str, Any], symbol: str, verdict: str) -> str:
+    """The strength of a stock (required on every verdict, one of STRENGTHS); a weak stock cannot be put in."""
+    strength = _one_of(item, "strength", symbol, STRENGTHS)
+    if verdict == "in" and strength == "weak":
+        raise HandoffError(f"{symbol} is weak: a weak stock goes out, put it out or rate it standard or strong, with what_changed if your previous verdict was in")
+    return strength
+
+
 def validate_verdicts(raw: Any, *, expected: Sequence[str], max_in: int, max_chars: int, previous: Mapping[str, str] | None = None) -> Verdicts:
-    """One verdict (in or out) with a reason per `expected` symbol; at most `max_in` in; `what_changed` on every flip from `previous`."""
+    """One verdict (in or out) with a reason per `expected` symbol; a strength on every verdict (a weak stock is always out); at most `max_in` in; `what_changed` on every flip from `previous`."""
     before = previous or {}
     verdicts = []
     for symbol, item in _covering(raw, expected, "verdicts"):
         verdict = _one_of(item, "verdict", symbol, VERDICTS)
-        verdicts.append(Verdict(symbol, verdict, _text(item, "reason", symbol, max_chars), _what_changed(item, symbol, verdict, before.get(symbol), max_chars)))
+        reason = _text(item, "reason", symbol, max_chars)
+        changed = _what_changed(item, symbol, verdict, before.get(symbol), max_chars)
+        verdicts.append(Verdict(symbol, verdict, reason, changed, _strength(item, symbol, verdict)))
     chosen = sum(1 for verdict in verdicts if verdict.verdict == "in")
     if chosen > max_in:
         raise HandoffError(f"{chosen} stocks in: put at most {max_in} in and the others out")
@@ -297,7 +314,7 @@ def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str,
         return recorder.submit(BEAR, cases)
 
     def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
-        """Submit one verdict per stock: objects with symbol, verdict (in or out), one short reason, and what_changed when it differs from your previous_verdict."""
+        """Submit one verdict per stock: objects with symbol, strength (strong, standard or weak), verdict (in or out; a weak stock is always out), one short reason, and what_changed when the verdict differs from your previous_verdict."""  # noqa: E501
         return recorder.submit(VERDICT, verdicts)
 
     return {

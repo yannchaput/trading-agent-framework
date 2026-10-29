@@ -188,6 +188,42 @@ def test_the_judge_scores_in_against_out() -> None:
     assert score.spread.mean == pytest.approx(0.01 - (-0.02))
 
 
+def _rated(**rated: tuple[str, str]) -> list[dict[str, Any]]:
+    """Verdicts with a strength: symbol -> (verdict, strength)."""
+    return [{"symbol": s, "verdict": v, "strength": strength, "reason": "x", "what_changed": None, "previous_verdict": None} for s, (v, strength) in rated.items()]
+
+
+def test_the_judges_strengths_are_scored_strong_against_weak_and_standard() -> None:
+    ratings = _rated(AAA=("in", "strong"), BBB=("in", "standard"), CCC=("out", "standard"), DDD=("out", "weak"))
+    reviews = [_review(TUESDAY, ["AAA", "BBB", "CCC", "DDD"], verdicts=ratings), _review(NEXT_TUESDAY, ["AAA", "BBB", "CCC", "DDD"], verdicts=ratings)]
+    rows = [(day, symbol, value) for day in (TUESDAY, NEXT_TUESDAY) for symbol, value in (("AAA", 0.04), ("BBB", 0.01), ("CCC", 0.0), ("DDD", -0.03))]
+
+    strength, against_standard = score_agents(reviews, _returns(*rows), horizons=(5,)).agents[3:5]
+
+    assert (strength.agent, strength.spread_label) == ("strength", "strong - weak")
+    assert (against_standard.agent, against_standard.spread_label) == ("strength_standard", "strong - standard")
+    score = strength.by_horizon[5]
+    assert list(score.groups) == ["strong", "standard", "weak"]
+    assert [score.groups[group].n for group in score.groups] == [2, 4, 2]  # every rated stock counts, in and out
+    assert score.spread.mean == pytest.approx(0.04 - (-0.03)) and score.spread.reviews == 2
+    standard = against_standard.by_horizon[5]
+    assert standard.groups["standard"].mean_excess == pytest.approx(0.005)
+    assert standard.spread.mean == pytest.approx(0.04 - 0.005)
+
+
+def test_a_run_without_strengths_gives_empty_strength_scores() -> None:
+    reviews = [_review(TUESDAY, ["AAA", "BBB"], verdicts=_verdicts(AAA="in", BBB="out")), _review(NEXT_TUESDAY, ["AAA", "BBB"], picks=[{"symbol": "AAA", "reason": "x"}])]
+    returns = _returns((TUESDAY, "AAA", 0.02), (TUESDAY, "BBB", -0.02))
+
+    agents = score_agents(reviews, returns, horizons=(5,)).agents
+
+    assert [agent.agent for agent in agents] == ["bull", "bear", "judge", "strength", "strength_standard"]
+    for agent in agents[3:]:
+        score = agent.by_horizon[5]
+        assert all(stats.n == 0 for stats in score.groups.values())
+        assert score.spread.mean is None and score.spread.reviews == 0
+
+
 def test_a_picker_record_puts_its_picks_in_and_the_rest_of_its_debate_set_out() -> None:
     reviews = [_review(TUESDAY, ["AAA", "BBB", "CCC"], picks=[{"symbol": "AAA", "reason": "x"}])]
     returns = _returns((TUESDAY, "AAA", 0.02), (TUESDAY, "BBB", 0.0), (TUESDAY, "CCC", -0.02))

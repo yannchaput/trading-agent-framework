@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import dataclasses
+import math
 import re
 from typing import Any
 
@@ -12,7 +14,8 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     params = BullBearParams()
 
     assert (params.candidate_count, params.max_book_size, params.retention_rank) == (15, 10, 35)
-    assert (params.min_weight, params.max_weight, params.cash_buffer, params.rebalance_band) == (0.04, 0.20, 0.02, 0.03)
+    assert (params.strong_weight, params.standard_weight, params.cash_buffer, params.rebalance_band) == (0.14, 0.09, 0.02, 0.03)
+    assert params.weights_by_strength == {"strong": 0.14, "standard": 0.09}
     assert params.investable == pytest.approx(0.98)
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
     assert params.reentry_cooldown_reviews == 4
@@ -32,8 +35,10 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [
-        ({"min_weight": 0.03}, "min_weight must be above rebalance_band"),
-        ({"max_book_size": 30}, "max_book_size x min_weight must fit"),
+        ({"standard_weight": 0.14}, "0 < standard_weight < strong_weight <= 1"),
+        ({"strong_weight": 1.2}, "0 < standard_weight < strong_weight <= 1"),
+        ({"standard_weight": 0.035}, "a standard stock in a full book of strong ones must stay above rebalance_band"),  # 0.035 x 0.98 / 1.295 = 2.65%
+        ({"strong_weight": math.nan}, "must be finite"),
         ({"candidate_count": 35}, "retention_rank must be above candidate_count"),
         ({"retention_rank": 15}, "retention_rank must be above candidate_count"),
         ({"candidate_count": 0}, "candidate_count and max_book_size must be at least 1"),
@@ -71,3 +76,9 @@ def test_the_picker_and_veto_parameters_are_gone(field: str) -> None:
 
 def test_there_is_no_derived_debate_size() -> None:
     assert not hasattr(BullBearParams(), "debate_size")
+
+
+def test_there_is_no_min_weight_max_weight_or_weak_weight() -> None:
+    names = {field.name for field in dataclasses.fields(BullBearParams)}
+
+    assert not names & {"min_weight", "max_weight", "weak_weight"}

@@ -63,7 +63,12 @@ def _bear(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None
 
 def _judge(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> None:
     symbols = [s["fact_sheet"]["symbol"] for s in context["stocks"]]
-    tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if i < 5 else "out", "reason": "bull wins" if i < 5 else "bear wins"} for i, s in enumerate(symbols)])
+    tools["submit_verdicts"](
+        [
+            {"symbol": s, "verdict": "in", "reason": "bull wins", "strength": "standard"} if i < 5 else {"symbol": s, "verdict": "out", "reason": "bear wins", "strength": "weak"}
+            for i, s in enumerate(symbols)
+        ]
+    )
 
 
 class _Manager:
@@ -127,7 +132,7 @@ def test_a_backtest_reviews_on_the_two_tuesdays_and_buys_the_book(tmp_path: Path
     assert [line["date"] for line in lines] == ["2026-09-15", "2026-09-22"]
     assert not any(line["abandoned"] for line in lines)
     assert [stock["symbol"] for stock in lines[0]["debate_set"]] == UNIVERSE  # ranked by momentum, S0 first
-    assert {order["symbol"] for order in lines[0]["orders"]} == set(UNIVERSE[:5])
+    assert {order["symbol"] for order in lines[0]["orders"]} == {*UNIVERSE[:5], "SHV"}  # the five stocks, and the rest parked
     assert manager.handles["researcher"].runs == 2 * len(UNIVERSE)
     assert all(manager.handles[name].runs == 2 for name in ("bull", "bear", "judge"))
     assert list(tmp_path.rglob("metrics.json"))  # the run completed and wrote its report

@@ -248,3 +248,63 @@ def test_the_bear_keeps_none_with_low_for_no_concrete_risk_and_the_fundamentals_
 
     assert "Use none with low when you find no concrete risk." in text
     assert "no risk in the fundamentals" not in text  # a narrowed none would cancel momentum_exhaustion, valuation, sector, news_event
+
+
+def _strength_passage() -> str:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    start = text.index("rate every stock")
+    return text[start : text.index("A stock you judged before", start)]
+
+
+def test_the_judge_rates_every_stock_by_the_balance_of_both_cases() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    for definition in (
+        "rate every stock of the debate",
+        "strong when the bull's case clearly outweighs the bear's",
+        "standard when it outweighs it",
+        "weak when the stock only narrowly earns a place or does not",
+        "every stock carries some risk",
+    ):
+        assert definition in text
+    assert "no material risk" not in text and "risk-free" in text  # "a strong case does not need a risk-free stock"
+
+
+def test_the_judge_leaves_the_weak_stocks_out_and_chooses_only_among_the_strong_and_standard() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    assert "a weak stock goes out" in text
+    assert "Only once every stock is rated, choose the stocks to put in, and only among the strong and standard ones" in text
+    assert "A strong or standard stock may still go out" in text
+
+
+def test_the_judge_is_told_strength_sets_the_size_but_not_the_numbers() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    passage = _strength_passage()
+    assert "largest position" in passage
+    assert not any(n in text for n in ("14", "0.14", "9%", "0.09", "4%", "0.04"))
+    assert "cash" not in passage and "SHV" not in text
+
+
+def test_the_judge_submits_a_strength_for_every_stock() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    assert "a strength (strong, standard or weak) for every stock" in text
+    assert "a weak stock is always out" in text
+    assert "none for a stock you put out" not in text
+
+
+def test_a_change_of_strength_alone_needs_no_new_fact_and_no_what_changed() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    assert "That holds for the verdict only" in text
+    assert "you may change it without a new fact and without what_changed" in text
+
+
+def test_a_stock_rated_weak_goes_out_even_after_an_in_and_gives_what_changed() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    assert "A stock you now rate weak goes out even if your previous_verdict was in" in text
+    assert "that change needs what_changed, one short sentence on why the rating fell" in text
+
+
+def test_the_evidence_rules_hold_for_the_strength_as_for_the_verdict() -> None:
+    text = " ".join(prompts.JUDGE_SYSTEM.split())
+    assert "hold for the strength as for the verdict" in text
+    assert "rate it on the fundamentals first" in text
+    assert "news from others, already priced or not, is no reason to lower it" in text

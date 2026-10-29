@@ -94,13 +94,22 @@ def bear_cases(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> Non
     tools["submit_bear_case"]([{"symbol": s["fact_sheet"]["symbol"], "risk": "low", "concern": "none", "argument": "no red flag"} for s in ctx["stocks"]])
 
 
-def verdicts(chosen: Collection[str] | None = None) -> Script:
-    """The judge puts `chosen` in (default: the first 10 stocks it is shown, the best ranked) and the others out."""
+def verdicts(chosen: Collection[str] | None = None, strengths: Mapping[str, str] | None = None, what_changed: Mapping[str, str] | None = None) -> Script:
+    """The judge puts `chosen` in (default: the first 10 stocks it is shown) and the others out.
+
+    An `in` is standard and an `out` weak unless `strengths` says otherwise; `what_changed` gives a flip's reason.
+    """
 
     def step(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
         symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
         put_in = set(symbols[:10]) if chosen is None else set(chosen)
-        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in put_in else "out", "reason": "bull wins" if s in put_in else "bear wins"} for s in symbols])
+
+        def verdict(s: str) -> dict[str, Any]:
+            put = s in put_in
+            entry = {"symbol": s, "verdict": "in" if put else "out", "reason": "bull wins" if put else "bear wins", "strength": (strengths or {}).get(s, "standard" if put else "weak")}
+            return {**entry, "what_changed": what_changed[s]} if what_changed and s in what_changed else entry
+
+        tools["submit_verdicts"]([verdict(s) for s in symbols])
 
     return step
 
@@ -216,11 +225,11 @@ def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: P
     assert [stock["fact_sheet"]["symbol"] for stock in bull_context["stocks"]] == UNIVERSE[:15]
     assert bull_context["stocks"][0]["note"] == "2026-09-30: quarterly revenue up 12% y/y"
     assert h.agents["bear"].calls[0]["context"] == bull_context  # the same evidence, and not the bull's case
-    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in UNIVERSE[:10]]  # in the book's order
+    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in [*UNIVERSE[:10], "SHV"]]  # in the book's order, the parked rest last
     state = h.store.load()
     assert state.last_completed_review == "2026-10-06" and state.abandoned_streak == 0
     assert set(state.verdicts) == set(UNIVERSE[:15])
-    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}
+    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"}
     assert state.verdicts["S14"]["verdict"] == "out"
 
 
@@ -293,14 +302,15 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["notes"] == {"written": 15, "failed": [], "trimmed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
     assert "picks" not in line and "drops" not in line
-    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins", "what_changed": None, "previous_verdict": None} and len(line["verdicts"]) == 15
+    assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins", "what_changed": None, "strength": "standard", "previous_verdict": None} and len(line["verdicts"]) == 15
     assert line["verdict_counts"] == {"in": 10, "out": 5} and "veto_cap" not in line and "judge_verdicts" not in line
+    assert line["strength_counts"] == {"standard": 10, "weak": 5}
     assert line["book"] == UNIVERSE[:10]
     stock_weights = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert list(stock_weights) == UNIVERSE[:10]
-    assert sum(stock_weights.values()) == pytest.approx(0.98)
-    assert all(0.04 <= weight <= 0.20 for weight in stock_weights.values())
-    assert [order["symbol"] for order in line["orders"]] == UNIVERSE[:10]
+    assert all(weight == pytest.approx(0.09) for weight in stock_weights.values())  # ten standard stocks
+    assert sum(stock_weights.values()) == pytest.approx(0.90) and line["targets"]["SHV"] == pytest.approx(0.08)
+    assert [order["symbol"] for order in line["orders"]] == [*UNIVERSE[:10], "SHV"]
 
 
 def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_out(tmp_path: Path) -> None:
@@ -315,7 +325,7 @@ def test_holdings_in_the_retention_band_are_debated_and_the_others_are_forced_ou
     assert line["debate_set"][-1] == {"symbol": "S16", "rank": 17, "held": True}
     assert line["forced_exits"] == [{"symbol": "OLD", "reason": "unranked"}, {"symbol": "S19", "reason": "rank 20"}]
     assert_no_agent_is_told_what_is_held(h)
-    assert {"symbol": "S16", "verdict": "out", "reason": "bear wins", "what_changed": None, "previous_verdict": None} in line["verdicts"]
+    assert {"symbol": "S16", "verdict": "out", "reason": "bear wins", "what_changed": None, "strength": "weak", "previous_verdict": None} in line["verdicts"]
     assert line["book"] == UNIVERSE[:10]
     assert {("OLD", "sell", 20.0), ("S19", "sell", 20.0), ("S16", "sell", 20.0)} <= set(h.orders)  # a holding put out is sold
     assert h.bars.calls == [(UNIVERSE, ["OLD", "S16", "S19"])]
@@ -329,7 +339,7 @@ def test_a_holding_put_in_stays_whatever_its_rank_and_gets_no_preferred_slot(tmp
 
     (line,) = h.log_lines()
     assert line["book"] == [*UNIVERSE[:9], "S16"]  # rank order: the holding comes last
-    assert not any(order[0] == "S16" for order in h.orders)  # held at 10%, target ~9.8%: inside the band
+    assert not any(order[0] == "S16" for order in h.orders)  # held at 10%, target 9%: inside the band
 
 
 def test_the_judges_choice_not_the_rank_decides_the_book(tmp_path: Path) -> None:
@@ -340,18 +350,18 @@ def test_the_judges_choice_not_the_rank_decides_the_book(tmp_path: Path) -> None
 
     (line,) = h.log_lines()
     assert line["book"] == ["S03", "S07", "S11", "S12", "S14"]
-    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in line["book"]]
+    assert [order[:2] for order in h.orders] == [(symbol, "buy") for symbol in [*line["book"], "SHV"]]
 
 
-def test_fewer_than_five_stocks_put_in_leave_the_rest_parked(tmp_path: Path) -> None:
+def test_strength_weights_leave_the_rest_parked(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    h.agents["judge"].script = verdicts({"S03", "S14"})
+    h.agents["judge"].script = verdicts({"S03", "S14"}, strengths={"S03": "strong"})
 
     assert h.run().completed
 
     (line,) = h.log_lines()
     assert line["book"] == ["S03", "S14"]
-    assert line["targets"] == pytest.approx({"S03": 0.20, "S14": 0.20, "SHV": 0.58})
+    assert line["targets"] == pytest.approx({"S03": 0.14, "S14": 0.09, "SHV": 0.75})
     assert any(order[0] == "SHV" and order[1] == "buy" for order in h.orders)
 
 
@@ -401,7 +411,7 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
     assert "S04" not in debated
     assert line["forced_exits"] == []
     assert "S03" in line["book"]  # the high-volatility holding the judge put in, kept in the book...
-    assert line["targets"]["S03"] == pytest.approx(0.04)  # ...and sized at the minimum weight
+    assert line["targets"]["S03"] == pytest.approx(0.09)  # ...and sized at its strength weight, whatever its volatility
 
 
 def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
@@ -414,6 +424,47 @@ def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
     assert line["book"] == UNIVERSE[:10]
     assert ("S10", "sell", 20.0) in h.orders
     assert ("S11", "sell", 20.0) in h.orders
+
+
+def test_a_held_stock_whose_strength_falls_is_sold_down(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S00": 28})  # 1,400 = 14% at 50
+    h.agents["judge"].script = verdicts()  # S00 stays in, now standard (9%)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert line["targets"]["S00"] == pytest.approx(0.09)
+    assert any(order[0] == "S00" and order[1] == "sell" for order in h.orders)
+
+
+def test_a_held_stock_rated_weak_is_put_out_and_sold(tmp_path: Path) -> None:
+    earlier = {"S00": {"verdict": "in", "reason": "strong", "date": "2026-09-29", "strength": "strong"}}
+    h = _harness(tmp_path, held={"S00": 20}, state=BullBearState(verdicts=earlier))
+    h.agents["judge"].overrides = [verdicts(UNIVERSE[1:11])]  # S00 out, weak, with no what_changed: a flip from in
+    h.agents["judge"].script = verdicts(UNIVERSE[1:11], what_changed={"S00": "the guidance was cut"})
+
+    assert h.run().completed
+
+    stocks = {s["fact_sheet"]["symbol"]: s for s in h.agents["judge"].calls[0]["context"]["stocks"]}
+    assert stocks["S00"]["previous_verdict"] == earlier["S00"]
+    assert len(h.agents["judge"].calls) == 2  # the first submission was refused
+    assert "your previous verdict on S00 was in" in h.agents["judge"].calls[1]["task"]
+    (line,) = h.log_lines()
+    assert "S00" not in line["book"] and line["verdicts"][0]["strength"] == "weak" and line["verdicts"][0]["what_changed"] == "the guidance was cut"
+    assert ("S00", "sell", 20.0) in h.orders
+    assert h.store.load().cooldowns == {"S00": 4}
+
+
+def test_a_scaled_strength_change_inside_the_band_is_not_traded(tmp_path: Path) -> None:
+    held = {symbol: 19.6 for symbol in UNIVERSE[:10]}  # 980 = 9.8% each
+    h = _harness(tmp_path, held=held)
+    h.agents["judge"].script = verdicts(strengths={**{s: "strong" for s in UNIVERSE[:7]}, **{s: "standard" for s in UNIVERSE[7:10]}})
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert line["targets"]["S07"] == pytest.approx(0.09 * 0.98 / 1.25)  # 7.06%, a 2.74-point move: inside the 3-point band
+    assert not any(order[0] in {"S07", "S08", "S09"} for order in h.orders)
 
 
 # --- research failures --------------------------------------------------------------------------------
@@ -643,7 +694,7 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
     assert len(line["verdicts"]) == 15
     stock_targets = {symbol: weight for symbol, weight in line["targets"].items() if symbol != "SHV"}
     assert sorted(stock_targets) == UNIVERSE[:10] and "SHV" in line["targets"]
-    assert sum(stock_targets.values()) == pytest.approx(0.98)
+    assert sum(stock_targets.values()) == pytest.approx(0.90)
     state = h.store.load()
     assert (state.last_completed_review, state.abandoned_streak) == (None, 1)
 
@@ -659,14 +710,20 @@ def _raises_after(h: Harness, monkeypatch: pytest.MonkeyPatch, placed: list[Plac
 
 
 def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_stocks_cooldown(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts={"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29"}}))
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts={"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29", "strength": "strong"}}))
 
     def sells_s03(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
         symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
         put_in = set(symbols[:10]) - {"S03"}
         tools["submit_verdicts"](
             [
-                {"symbol": s, "verdict": "in" if s in put_in else "out", "reason": "bull wins" if s in put_in else "bear wins", **({"what_changed": "guidance cut"} if s == "S03" else {})}
+                {
+                    "symbol": s,
+                    "verdict": "in" if s in put_in else "out",
+                    "reason": "bull wins" if s in put_in else "bear wins",
+                    "strength": "standard" if s in put_in else "weak",
+                    **({"what_changed": "guidance cut"} if s == "S03" else {}),
+                }
                 for s in symbols
             ]
         )
@@ -678,8 +735,8 @@ def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_
 
     assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
     state = h.store.load()
-    assert state.verdicts["S03"] == {"verdict": "out", "reason": "bear wins", "date": "2026-10-06"}  # the stored "in" is replaced
-    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}
+    assert state.verdicts["S03"] == {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"}  # the stored "in" is replaced
+    assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"}
     assert set(state.verdicts) == set(UNIVERSE[:15]) | {"S03"}
     assert state.cooldowns == {"S03": 4}
     assert state.history == [] and state.last_completed_review is None and state.abandoned_streak == 1
@@ -725,7 +782,7 @@ def test_an_execution_abandonment_does_not_count_the_running_cooldowns_down(tmp_
 
 @pytest.mark.parametrize("stage", ["broker", "judge"])
 def test_an_abandonment_before_the_execution_stage_stores_nothing_but_the_streak(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stage: str) -> None:
-    earlier = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29"}}
+    earlier = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29", "strength": "standard"}}
     h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts=earlier, cooldowns={"S05": 2}))
     if stage == "judge":
         h.agents["judge"].script = does_nothing
@@ -1006,28 +1063,85 @@ def test_an_agent_that_ends_without_calling_its_submit_tool_is_warned_about_on_e
 
 
 def test_the_judge_sees_its_previous_verdict_on_a_stock_it_judged_before(tmp_path: Path) -> None:
-    earlier = {"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29"}, "ZZZ": {"verdict": "in", "reason": "x", "date": "2026-09-29"}}
+    earlier = {"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29", "strength": "weak"}, "ZZZ": {"verdict": "in", "reason": "x", "date": "2026-09-29", "strength": "standard"}}
     h = _harness(tmp_path, state=BullBearState(verdicts=earlier))
     h.agents["judge"].script = verdicts(UNIVERSE[1:11])  # S00 stays out: no what_changed needed
 
     assert h.run().completed
 
     stocks = {s["fact_sheet"]["symbol"]: s for s in h.agents["judge"].calls[0]["context"]["stocks"]}
-    assert stocks["S00"]["previous_verdict"] == {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29"}
+    assert stocks["S00"]["previous_verdict"] == earlier["S00"]
     assert "previous_verdict" not in stocks["S01"]
     (line,) = h.log_lines()
     assert line["verdicts"][0]["previous_verdict"] == "out"
     assert h.store.load().verdicts["ZZZ"] == earlier["ZZZ"]  # a stock not judged this time keeps its last verdict
 
 
+def test_the_judge_sees_its_previous_strength(tmp_path: Path) -> None:
+    earlier = {
+        "S00": {"verdict": "in", "reason": "x", "date": "2026-09-29", "strength": "strong"},
+        "S01": {"verdict": "out", "reason": "y", "date": "2026-09-29", "strength": "weak"},
+    }
+    h = _harness(tmp_path, state=BullBearState(verdicts=earlier))
+    h.agents["judge"].script = verdicts(UNIVERSE[:1] + UNIVERSE[2:11], strengths={"S00": "standard", "S01": "weak"})  # S01 stays out
+
+    assert h.run().completed
+
+    stocks = {s["fact_sheet"]["symbol"]: s for s in h.agents["judge"].calls[0]["context"]["stocks"]}
+    assert stocks["S00"]["previous_verdict"] == earlier["S00"] and stocks["S01"]["previous_verdict"] == earlier["S01"]
+    stored = h.store.load().verdicts
+    assert stored["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"}
+    assert stored["S01"]["strength"] == "weak" and stored["S02"]["strength"] == "standard"
+
+
+def test_a_strength_change_alone_needs_no_what_changed(tmp_path: Path) -> None:
+    earlier = {"S00": {"verdict": "in", "reason": "x", "date": "2026-09-29", "strength": "strong"}}
+    h = _harness(tmp_path, state=BullBearState(verdicts=earlier))
+    h.agents["judge"].script = verdicts(UNIVERSE[:10], strengths={"S00": "standard"})  # strong -> standard, still in
+
+    assert h.run().completed
+
+    assert len(h.agents["judge"].calls) == 1  # accepted on the first run
+    assert h.store.load().verdicts["S00"]["strength"] == "standard"
+
+
+def test_the_judge_log_line_names_each_strength_put_in(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts({"S00", "S03"}, strengths={"S00": "standard", "S03": "strong"})
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[judge] in: S00 (standard), S03 (strong); out: " in caplog.text
+
+
+def test_the_judge_log_line_without_a_stock_in(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts(set())
+    with caplog.at_level(logging.INFO):
+        h.run()
+
+    assert "[judge] in: none; out: " in caplog.text
+
+
 def test_a_judge_flipping_a_verdict_without_what_changed_is_refused_then_corrects_itself(tmp_path: Path) -> None:
     # a verdict from months ago still counts
-    h = _harness(tmp_path, state=BullBearState(verdicts={"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-07-07"}}))
+    h = _harness(tmp_path, state=BullBearState(verdicts={"S00": {"verdict": "out", "reason": "lawsuit", "date": "2026-07-07", "strength": "weak"}}))
     h.agents["judge"].overrides = [verdicts()]  # puts S00 in with no what_changed
 
     def with_what_changed(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
         symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
-        tools["submit_verdicts"]([{"symbol": s, "verdict": "in" if s in symbols[:10] else "out", "reason": "r", **({"what_changed": "lawsuit dismissed"} if s == "S00" else {})} for s in symbols])
+        tools["submit_verdicts"](
+            [
+                {
+                    "symbol": s,
+                    "verdict": "in" if s in symbols[:10] else "out",
+                    "reason": "r",
+                    "strength": "standard" if s in symbols[:10] else "weak",
+                    **({"what_changed": "lawsuit dismissed"} if s == "S00" else {}),
+                }
+                for s in symbols
+            ]
+        )
 
     h.agents["judge"].script = with_what_changed
 
@@ -1036,6 +1150,57 @@ def test_a_judge_flipping_a_verdict_without_what_changed_is_refused_then_correct
     assert "your previous verdict on S00 was out" in h.agents["judge"].calls[1]["task"]
     (line,) = h.log_lines()
     assert line["verdicts"][0]["what_changed"] == "lawsuit dismissed"
+
+
+def _write_v2_state(tmp_path: Path) -> dict[str, Any]:
+    """A version-2 file (verdicts without strengths) where `_harness` will look for it."""
+    content = {
+        "version": 2,
+        "last_completed_review": "2026-09-29",
+        "abandoned_streak": 1,
+        "verdicts": {
+            "S00": {"verdict": "in", "reason": "trend", "date": "2026-09-29"},
+            "S01": {"verdict": "out", "reason": "lawsuit", "date": "2026-09-29"},
+            "ZZZ": {"verdict": "in", "reason": "not debated", "date": "2026-09-22"},
+        },
+        "cooldowns": {"S19": 2},
+        "history": [{"date": "2026-09-29", "verdicts": {"S01": {"verdict": "out", "reason": "lawsuit", "close": 50.0}}}],
+    }
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "state.json").write_text(json.dumps(content))
+    return content
+
+
+def test_an_abandoned_first_review_after_the_upgrade_keeps_every_version_2_verdict(tmp_path: Path) -> None:
+    content = _write_v2_state(tmp_path)
+    h = _harness(tmp_path)
+    h.agents["judge"].script = does_nothing  # the judge never submits: the review is abandoned before execution
+
+    outcome = h.run()
+
+    assert not outcome.completed
+    saved = h.store.load()
+    assert saved.verdicts == content["verdicts"]
+    assert saved.cooldowns == {"S19": 2} and saved.history == content["history"]
+    assert saved.abandoned_streak == 2 and saved.last_completed_review == "2026-09-29"
+
+
+def test_a_review_after_the_upgrade_shows_version_2_verdicts_and_keeps_the_undebated_ones(tmp_path: Path) -> None:
+    content = _write_v2_state(tmp_path)
+    h = _harness(tmp_path)
+    h.agents["judge"].script = verdicts([UNIVERSE[0], *UNIVERSE[2:11]], strengths={"S00": "strong"})  # S00 stays in, S01 stays out
+
+    assert h.run().completed
+
+    stocks = {s["fact_sheet"]["symbol"]: s for s in h.agents["judge"].calls[0]["context"]["stocks"]}
+    assert stocks["S00"]["previous_verdict"] == content["verdicts"]["S00"] and "strength" not in stocks["S00"]["previous_verdict"]
+    assert "S19" not in stocks  # in its cooldown
+    saved = h.store.load()
+    assert saved.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"}
+    assert saved.verdicts["ZZZ"] == content["verdicts"]["ZZZ"]  # undebated: its version-2 verdict survives the save
+    assert saved.cooldowns == {"S19": 1}
+    assert [entry["date"] for entry in saved.history] == ["2026-09-29", "2026-10-06"]
+    assert saved.last_completed_review == "2026-10-06" and saved.abandoned_streak == 0
 
 
 # --- the re-entry cooldown ---------------------------------------------------------------------------------

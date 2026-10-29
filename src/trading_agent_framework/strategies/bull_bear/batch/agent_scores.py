@@ -1,4 +1,4 @@
-"""Score the bull, the bear and the judge of a bull_bear run against forward returns (pure: no I/O, no network).
+"""Score the bull, the bear and the judge (its verdicts, and its strengths) of a bull_bear run against forward returns (pure: no I/O, no network).
 
 A review's candidates are its `debate_set`, the stocks every agent was shown. Each candidate's forward return runs
 from the open of the first session after the review date (the fill: a Tuesday 12:00 review's market orders fill at
@@ -19,6 +19,7 @@ from typing import Any
 HORIZONS = (5, 20)  # sessions: about one and four weeks
 LEVELS = ("low", "medium", "high")
 VERDICTS = ("in", "out")
+STRENGTHS = ("strong", "standard", "weak")
 _SESSIONS_PER_REVIEW = 5  # one review a week
 
 
@@ -117,14 +118,14 @@ class HorizonScore:
 
 @dataclass(frozen=True, slots=True)
 class AgentScore:
-    agent: str  # "bull", "bear" or "judge"
+    agent: str  # "bull", "bear", "judge", "strength" or "strength_standard"
     spread_label: str  # e.g. "high - low"
     by_horizon: dict[int, HorizonScore]
 
 
 @dataclass(frozen=True, slots=True)
 class RunScores:
-    agents: list[AgentScore]  # bull, bear, judge
+    agents: list[AgentScore]  # bull, bear, judge, strength, strength_standard
     dropped: int  # from `Returns.dropped`: candidate x horizon pairs left out for want of prices
     immature: int = 0  # from `Returns.immature`: pairs whose exit is past the end of the data
 
@@ -151,11 +152,18 @@ def judge_calls(review: Mapping[str, Any]) -> dict[str, str]:
     return {}
 
 
+def strength_calls(review: Mapping[str, Any]) -> dict[str, str]:
+    """The judge's strength of every rated stock, `in` or `out`; a record without strengths (an older run, a picker's) gives none."""
+    return {verdict["symbol"]: verdict["strength"] for verdict in review.get("verdicts") or [] if verdict.get("strength") in STRENGTHS}
+
+
 # (agent, its groups in display order, (the group that should do better, the one that should do worse), its calls)
 _AGENTS: tuple[tuple[str, tuple[str, ...], tuple[str, str], Callable[[Mapping[str, Any]], dict[str, str]]], ...] = (
     ("bull", LEVELS, ("high", "low"), bull_calls),
     ("bear", LEVELS, ("low", "high"), bear_calls),
     ("judge", VERDICTS, ("in", "out"), judge_calls),
+    ("strength", STRENGTHS, ("strong", "weak"), strength_calls),
+    ("strength_standard", STRENGTHS, ("strong", "standard"), strength_calls),
 )
 
 

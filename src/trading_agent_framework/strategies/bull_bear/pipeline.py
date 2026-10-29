@@ -30,7 +30,7 @@ from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullC
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
-from trading_agent_framework.strategies.bull_bear.sizing import capped_inverse_volatility
+from trading_agent_framework.strategies.bull_bear.sizing import strength_weights
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
@@ -77,7 +77,7 @@ class AgentLooped(ReviewAbandoned):
 class _Pending:
     """What a review decided, kept for an abandonment during execution (the judge's verdicts are out in the market)."""
 
-    decided: dict[str, dict[str, str]]  # symbol -> the judge's {verdict, reason, date}
+    decided: dict[str, dict[str, str]]  # symbol -> the judge's {verdict, reason, date, strength}
     sold: list[str]  # the held stocks the judge put out
     review: dict[str, Any]  # the `history` entry of a completed review
 
@@ -305,28 +305,28 @@ class ReviewPipeline:
             record["memory"] = _memory_record(judge_calls)  # lessons may be stored even when the stage then abandons the review
         verdicts: Verdicts = self._recorder.submission
         outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
-        strategy.log_info(f"[judge] in: {', '.join(verdicts.chosen) or 'none'}; out: {outs or 'none'}")
+        ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
+        strategy.log_info(f"[judge] in: {ins or 'none'}; out: {outs or 'none'}")
 
         # 7. The book: every stock the judge put in, in rank order.
         book = build_book(debate, verdicts.chosen)
         strategy.log_info(f"[bull_bear] book: {', '.join(book) or 'empty, everything parked'}")
 
-        # 8. Sizing and execution: inverse volatility within the weight bounds; below 5 stocks the rest is parked.
-        volatilities = {symbol: debate.stock(symbol).row.volatility for symbol in book}
-        total = min(params.investable, len(book) * params.max_weight)
-        target_weights = capped_inverse_volatility(volatilities, total=total, min_weight=params.min_weight, max_weight=params.max_weight) if book else {}
+        # 8. Sizing and execution: the judge's strength alone sizes a stock (no volatility, no conviction, no risk); the rest is parked.
+        target_weights = strength_weights({symbol: verdicts.strengths[symbol] for symbol in book}, weights=params.weights_by_strength, total=params.investable)
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
         chosen = set(verdicts.chosen)
         sold = [stock.symbol for stock in debate.stocks if stock.held and stock.symbol not in chosen]
         # What a completed review remembers, built before the first order so that nothing after it can fail on a missing close.
-        decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today} for verdict in verdicts.verdicts}
+        decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today, "strength": verdict.strength} for verdict in verdicts.verdicts}
         review = {"date": today, "verdicts": {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "close": closes_now[verdict.symbol]} for verdict in verdicts.verdicts}}
         self._pending = _Pending(decided=decided, sold=sold, review=review)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
             verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
             verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
+            strength_counts=dict(Counter(verdict.strength for verdict in verdicts.verdicts if verdict.strength)),
             book=list(book),
             cooldowns_started=sold,
             recent_verdicts=recent,

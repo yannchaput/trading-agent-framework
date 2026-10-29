@@ -136,8 +136,8 @@ class MomentumRow:
 def score_stock(symbol: str, closes: Sequence[float], volumes: Sequence[float], params: Mapping[str, Any]) -> MomentumRow | None:
     """A stock's momentum row, or None when it has no inputs, fails cross_momentum's filters, or has no volatility.
 
-    cross_momentum ranks a stock whose volatility cannot be computed (non-positive closes); bull_bear sizes by
-    volatility, so `score_stock` leaves such a stock out. It cannot happen with positive prices.
+    cross_momentum ranks a stock whose volatility cannot be computed (non-positive closes); `score_stock` leaves such a
+    stock out, since bull_bear needs the volatility for `max_volatility` and the fact sheet. It cannot happen with positive prices.
     """
     inputs = momentum_inputs(closes, volumes, params)
     if inputs is None or inputs.volatility is None or not (math.isfinite(inputs.volatility) and inputs.volatility > 0):

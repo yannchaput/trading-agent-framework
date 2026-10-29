@@ -196,6 +196,7 @@ def test_research_news_is_on_by_default_and_recorded_in_the_parameters(tmp_path:
     strategy, _ = _strategy(tmp_path)
 
     assert strategy.settings.research_news is True and strategy.parameters["research_news"] is True
+    assert (strategy.parameters["strong_weight"], strategy.parameters["standard_weight"]) == (0.14, 0.09)  # recorded in settings.json
 
 
 def test_the_researcher_and_the_judge_end_with_a_budget_exempt_submit_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
