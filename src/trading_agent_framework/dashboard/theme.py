@@ -25,6 +25,31 @@ THEME_CSS = """
     color: #22d3ee; padding: 2px 8px; border-radius: 4px;
     font-size: 0.75rem; font-weight: 500;
 }
+/* st.logo only has three fixed heights; assets/logo.svg is drawn larger than "large", at its own 235 px width,
+   and shrinks with a narrower sidebar. The sidebar header grows with it, and its collapse button floats at the
+   right edge instead of squeezing the logo. */
+[data-testid="stSidebarHeader"] {
+    height: auto !important;
+    min-height: 3.75rem;
+    position: relative;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+}
+img[data-testid="stSidebarLogo"] {
+    height: auto !important;
+    width: 100%;
+    max-width: 235px;
+}
+[data-testid="stSidebarCollapseButton"] {
+    position: absolute;
+    top: 1.125rem;
+    right: -0.5rem;
+}
+/* The icon shown in the header while the sidebar is collapsed (assets/logo-icon.svg), as tall as the sidebar's
+   logo (assets/logo.svg is 48 px high), so the mascot keeps its size when the sidebar is collapsed. */
+img[data-testid="stHeaderLogo"] {
+    height: 3rem;
+}
 [data-testid="stTopNavLink"][aria-current="page"] span {
     color: #22c55e !important;
     font-weight: 700 !important;

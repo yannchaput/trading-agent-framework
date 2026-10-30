@@ -220,6 +220,19 @@ def test_the_logo_files_exist_and_carry_the_name() -> None:
     assert (app.ASSETS / "logo-icon.svg").is_file()
 
 
+def test_the_stacked_logo_is_as_wide_as_the_css_that_sizes_it() -> None:
+    # st.logo has fixed heights only: theme.py gives the logo its own width, which must be the SVG's.
+    import re
+
+    from trading_agent_framework.dashboard import app
+    from trading_agent_framework.dashboard.theme import THEME_CSS
+
+    svg = (app.ASSETS / "logo.svg").read_text(encoding="utf-8")
+    width = re.search(r'<svg[^>]* width="(\d+)"', svg)
+    assert width is not None
+    assert f"max-width: {width.group(1)}px" in THEME_CSS
+
+
 def test_backtesting_is_the_default_tab_with_its_sidebar(run_dir: Path) -> None:
     at = AppTest.from_file(str(APP_PATH), default_timeout=30)
     at.run()
