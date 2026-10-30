@@ -30,6 +30,7 @@ from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundame
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bull_bear.market_data import BarsSource, DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
+from trading_agent_framework.strategies.bull_bear.pinned_news import pin_search_news
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateStore, state_path
@@ -129,7 +130,9 @@ class BullBearStrategy(Strategy):
 
             # One SEC client (one rate limiter, one cache) serves the researcher's tools and the fact sheet.
             sec_client = default_client(self.project_root)
-            sources = [*(news_tools(self) if news else []), *fundamentals_tools(self, client=sec_client)]
+            # The researcher's news search is pinned to the stock whose note is expected: no empty or company-name symbols (`pinned_news.py`).
+            news_sources = [pin_search_news(tool, stock=lambda: recorder.note_symbol) for tool in news_tools(self)] if news else []
+            sources = [*news_sources, *fundamentals_tools(self, client=sec_client)]
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
             self.agents.create(
                 name="researcher",

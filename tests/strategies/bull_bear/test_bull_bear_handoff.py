@@ -348,3 +348,14 @@ def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
 def test_the_weak_in_refusal_tells_a_held_stock_to_give_what_changed() -> None:
     with pytest.raises(HandoffError, match="with what_changed if your previous verdict was in"):
         validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}], expected=["AAA"], max_in=10, max_chars=300)
+
+
+def test_the_recorder_names_the_stock_whose_note_is_expected_only_during_the_note_stage() -> None:
+    recorder = HandoffRecorder(BullBearParams())
+    assert recorder.note_symbol is None
+
+    recorder.expect_note("AAA")
+    assert recorder.note_symbol == "AAA"
+
+    recorder.expect_bull(["AAA", "BBB"])
+    assert recorder.note_symbol is None

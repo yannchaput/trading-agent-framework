@@ -231,6 +231,11 @@ class HandoffRecorder:
     def expect_note(self, symbol: str) -> None:
         self._arm(NOTE, {"expected": symbol})
 
+    @property
+    def note_symbol(self) -> str | None:
+        """The stock whose note is expected while the note stage is armed (the researcher's current stock), else None."""
+        return self._context["expected"] if self._stage == NOTE else None
+
     def expect_bull(self, symbols: Sequence[str]) -> None:
         self._arm(BULL, {"expected": list(symbols)})
 

@@ -308,3 +308,10 @@ def test_the_evidence_rules_hold_for_the_strength_as_for_the_verdict() -> None:
     assert "hold for the strength as for the verdict" in text
     assert "rate it on the fundamentals first" in text
     assert "news from others, already priced or not, is no reason to lower it" in text
+
+
+def test_the_researcher_is_told_to_search_news_by_the_stocks_ticker() -> None:
+    text = " ".join(prompts.researcher_system(True).split())
+
+    assert "ticker in symbols" in text and "never leave it empty" in text and "company name" in text
+    assert "ticker in symbols" not in prompts.researcher_system(False)  # no news tool, nothing to say about it

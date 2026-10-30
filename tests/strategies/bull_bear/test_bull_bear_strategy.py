@@ -365,3 +365,16 @@ def test_a_full_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path:
 
     (line,) = _order_lines(caplog)
     assert "order filled: sell 7.842749 of 7.842749 SYRE @ $96.84" in line and order.identifier in line
+
+
+def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expected(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path)
+    strategy.initialize()
+    researcher = next(created for created in agents.created if created["name"] == "researcher")
+    search = next(tool for tool in researcher["tools"] if tool.__name__ == "search_news")
+    recorder = strategy.pipeline._recorder  # type: ignore[union-attr]
+    recorder.expect_note("GGAL")
+
+    result = search(symbols="Grupo Galicia")
+
+    assert result["symbols_searched"] == "GGAL"
