@@ -120,6 +120,15 @@ class AccountPnl:
     unpriced: list[str]
 
 
+@dataclass(frozen=True, slots=True)
+class ReturnBases:
+    """What a day's move is measured against, each keyed by the day of the close: `equity` is the account's equity at
+    that close, `benchmark` the benchmark's close (today's is its latest price)."""
+
+    equity: Mapping[date, float]
+    benchmark: Mapping[date, float]
+
+
 def market_day(moment: datetime) -> date:
     return moment.astimezone(MARKET_TZ).date()
 
@@ -132,6 +141,30 @@ def days_between(days: list[dict[str, Any]], start: date, end: date) -> list[dic
 def _close_on_or_before(closes: Mapping[date, float], day: date) -> float | None:
     earlier = [d for d in closes if d <= day]
     return closes[max(earlier)] if earlier else None
+
+
+def _close_before(closes: Mapping[date, float], day: date) -> float | None:
+    earlier = [d for d in closes if d < day]
+    return closes[max(earlier)] if earlier else None
+
+
+def daily_returns_pct(days: Sequence[Mapping[str, Any]], bases: ReturnBases) -> list[dict[str, Any]]:
+    """`{date, strategy, benchmark}` per `AccountPnl.days` row, both in percent against the day before: the strategy's
+    `change` over the account's equity at the previous close, the benchmark's close over its previous close. A value is
+    None when its base is missing (no history yet, an account not funded yet), so the plot leaves a gap, not a zero."""
+    rows: list[dict[str, Any]] = []
+    for day in days:
+        moment = date.fromisoformat(day["date"])
+        equity = _close_before(bases.equity, moment)
+        previous, close = _close_before(bases.benchmark, moment), bases.benchmark.get(moment)
+        rows.append(
+            {
+                "date": day["date"],
+                "strategy": round(day["change"] / equity * 100, 4) if equity else None,
+                "benchmark": round((close / previous - 1) * 100, 4) if previous and close is not None else None,
+            }
+        )
+    return rows
 
 
 def _unrealized_today(positions: Sequence[BrokerPosition], held: Mapping[str, tuple[float, float]]) -> float:

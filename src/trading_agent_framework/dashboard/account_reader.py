@@ -7,7 +7,7 @@ Streamlit-free. Keys are read with `dotenv_values` -- never `load_dotenv` -- so 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
@@ -18,13 +18,16 @@ from dotenv import dotenv_values
 
 from trading_agent_framework.brokers.alpaca.client import build_stock_data_client, build_trading_client
 from trading_agent_framework.config.env import AlpacaCredentials, find_project_root
-from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, Dividend, Fee, Fill, daily_account_pnl, market_day
+from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, Dividend, Fee, Fill, ReturnBases, daily_account_pnl, market_day
+from trading_agent_framework.strategies.common.yahoo_daily_bars import HISTORY_BARS, YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError
 
 if TYPE_CHECKING:
     from alpaca.data.models import BarSet
     from alpaca.trading.models import Position
+
+    from trading_agent_framework.entities.bars import Bars
 
 
 def default_env_dir() -> Path:
@@ -69,6 +72,8 @@ def account_is_paper(strategy: str, mode: str, env_dir: Path) -> bool:
 
 
 PAGE_SIZE = 100  # Alpaca's maximum for /account/activities
+BENCHMARK_SYMBOL = "SPY"  # what the daily % is compared with, as in the backtests
+_BASE_DAYS = 7  # calendar days read before the first day, so that day has a base even over a long weekend
 
 
 class AccountTradingClient(Protocol):
@@ -76,6 +81,12 @@ class AccountTradingClient(Protocol):
 
     def get(self, path: str, data: dict[str, Any] | str | None = None, **kwargs: Any) -> Any: ...
     def get_all_positions(self) -> list[Position]: ...
+
+
+class BenchmarkBars(Protocol):
+    """`strategies.common.yahoo_daily_bars.YahooDailyBars`: the backtests' own daily bars, each stamped at its session's close."""
+
+    def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]: ...
 
 
 class AccountDataClient(Protocol):
@@ -138,6 +149,32 @@ def fetch_daily_closes(client: AccountDataClient, symbols: Sequence[str], first_
     return {symbol: {market_day(bar.timestamp): bar.close for bar in bars} for symbol, bars in barset.data.items() if bars}
 
 
+def fetch_benchmark_closes(source: BenchmarkBars, first_day: date, today: date) -> dict[date, float]:
+    """The benchmark's closes from a week before `first_day` to today, whose bar is still forming (its close is the
+    latest price). Yahoo's, like the backtests': consolidated, official closes, split- and dividend-adjusted."""
+    bars = source.bars([BENCHMARK_SYMBOL], today).get(BENCHMARK_SYMBOL)
+    if bars is None:
+        return {}
+    closes = {market_day(stamp): float(close) for stamp, close in bars.df["close"].items()}
+    return {day: close for day, close in closes.items() if day >= first_day - timedelta(days=_BASE_DAYS)}
+
+
+def fetch_equity_closes(client: AccountTradingClient, first_day: date, today: date) -> dict[date, float]:
+    """The account's equity at each close from a week before `first_day` (so the first day has a base) to today.
+    Alpaca's portfolio history labels a close with the *next* calendar day (Monday's close under Tuesday, Friday's
+    under Saturday), so the date is moved back by one. Equity is 0 before the account is funded: kept, and read as
+    "no base" downstream."""
+    history = cast(
+        dict[str, Any],
+        client.get("/account/portfolio/history", {"timeframe": "1D", "start": (first_day - timedelta(days=_BASE_DAYS)).isoformat(), "end": (today + timedelta(days=1)).isoformat()}),
+    )
+    return {
+        datetime.fromtimestamp(stamp, UTC).date() - timedelta(days=1): float(equity)
+        for stamp, equity in zip(history.get("timestamp") or [], history.get("equity") or [], strict=True)
+        if equity is not None
+    }
+
+
 def _float(value: str | None) -> float | None:
     return None if value is None else float(value)
 
@@ -165,9 +202,24 @@ def load_account_pnl(trading: AccountTradingClient, data: AccountDataClient, tod
     return daily_account_pnl(fills, fees, closes, positions, today, dividends)
 
 
+def load_return_bases(trading: AccountTradingClient, benchmark: BenchmarkBars, first_day: date, today: date) -> ReturnBases:
+    """What the daily % are measured against: the account's equity at each close and the benchmark's closes, both from
+    a week before `first_day` (the first fill's day)."""
+    return ReturnBases(equity=fetch_equity_closes(trading, first_day, today), benchmark=fetch_benchmark_closes(benchmark, first_day, today))
+
+
 def load_strategy_pnl(strategy: str, mode: str, env_dir: Path, today: date) -> AccountPnl:
     """The daily P&L of the strategy's Alpaca account, fetched now."""
     trading_creds, data_creds = load_account_credentials(strategy, mode, env_dir)
     trading = cast(AccountTradingClient, build_trading_client(trading_creds))
     data = cast(AccountDataClient, build_stock_data_client(data_creds))
     return load_account_pnl(trading, data, today)
+
+
+def load_strategy_return_bases(strategy: str, mode: str, env_dir: Path, first_day: date, today: date) -> ReturnBases:
+    """The equity and benchmark closes the strategy's daily % are measured against, fetched now."""
+    trading_creds, _ = load_account_credentials(strategy, mode, env_dir)
+    trading = cast(AccountTradingClient, build_trading_client(trading_creds))
+    # One Yahoo bar per session: enough of them to reach back a week before the first day.
+    history = max(HISTORY_BARS, (today - first_day).days + _BASE_DAYS)
+    return load_return_bases(trading, YahooDailyBars(history=history), first_day, today)

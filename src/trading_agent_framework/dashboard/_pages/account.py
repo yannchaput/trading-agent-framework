@@ -12,17 +12,22 @@ from alpaca.common.exceptions import APIError
 from requests import RequestException
 
 from trading_agent_framework.dashboard import account_reader
-from trading_agent_framework.dashboard.components.charts import account_pnl_chart, signed_usd
+from trading_agent_framework.dashboard.components.charts import account_pnl_chart, account_returns_chart, signed_usd
 from trading_agent_framework.dashboard.components.metric_cards import render_metric_card
-from trading_agent_framework.dashboard.pnl import AccountPnl, days_between
+from trading_agent_framework.dashboard.pnl import AccountPnl, ReturnBases, daily_returns_pct, days_between
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import ConfigurationError
+from trading_agent_framework.utils.errors import ConfigurationError, YahooDataError
 
 
 @st.cache_data(show_spinner="Fetching the account from Alpaca...", ttl="5m", max_entries=32)
 def _account_pnl(strategy: str, mode: str, today: date) -> AccountPnl:
     # Keyed by name, mode and day only: the keys are re-read from the env file inside, never cached or shown.
     return account_reader.load_strategy_pnl(strategy, mode, account_reader.default_env_dir(), today)
+
+
+@st.cache_data(show_spinner=False, ttl="5m", max_entries=32)
+def _return_bases(strategy: str, mode: str, first_day: date, today: date) -> ReturnBases:
+    return account_reader.load_strategy_return_bases(strategy, mode, account_reader.default_env_dir(), first_day, today)
 
 
 def _problems(pnl: AccountPnl) -> list[str]:
@@ -54,6 +59,22 @@ def _render_metrics(pnl: AccountPnl, realized: float) -> None:
     for column, (label, value) in zip(st.columns(len(cards)), cards, strict=True):
         with column:
             render_metric_card(label, signed_usd(value), tone="positive" if value >= 0 else "negative")
+
+
+def _render_returns(strategy: str, mode: str, pnl: AccountPnl, start: date, end: date) -> None:
+    """The strategy's and SPY's daily % under the P&L plot. The percentages are worked out over the whole history and
+    then cut to the window, so the window's first day still has its base. A failed fetch costs this plot only."""
+    try:
+        bases = _return_bases(strategy, mode, date.fromisoformat(pnl.days[0]["date"]), datetime.now(MARKET_TZ).date())
+    except (APIError, RequestException, YahooDataError) as exc:
+        st.warning(f"Could not load the daily returns: {exc}")
+        return
+    st.plotly_chart(account_returns_chart(days_between(daily_returns_pct(pnl.days, bases), start, end), account_reader.BENCHMARK_SYMBOL), width="stretch")
+    st.caption(
+        "Each point is the day's move against the day before, in percent, so the two lines compare: the strategy's P&L of "
+        f"the day over the account's equity at the previous close, and {account_reader.BENCHMARK_SYMBOL}'s close over its previous close (Yahoo's, as in the backtests). "
+        "Deposits and withdrawals change the equity base, not the P&L."
+    )
 
 
 def _render_positions(pnl: AccountPnl) -> None:
@@ -100,6 +121,7 @@ def page_account(mode: str) -> None:
     st.session_state[remembered] = strategy
     if st.sidebar.button("Refresh", icon=":material/refresh:", width="stretch", key=f"account_refresh_{mode}"):
         _account_pnl.clear()
+        _return_bases.clear()
 
     try:
         # The account the keys really hit, which the env file's name may not say (BROKER_API_IS_PAPER).
@@ -139,6 +161,7 @@ def page_account(mode: str) -> None:
             "positions' P&L since the previous close; today, at the current price. Hover a point for the realized part and "
             "the open P&L level at the close."
         )
+        _render_returns(strategy, mode, pnl, start, end)
     else:
         st.info("No fill history in this account: only today's unrealized P&L is known.")
     problems = _problems(pnl)

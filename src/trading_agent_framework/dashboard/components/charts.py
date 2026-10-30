@@ -923,6 +923,59 @@ def account_pnl_chart(days: list[dict[str, Any]], title: str = "P&L per day") ->
     return fig
 
 
+STRATEGY_COLOR = "#0891b2"  # cyan, the strategy line of every backtest chart
+BENCHMARK_COLOR = "#eab308"  # the benchmark line of every backtest chart
+
+
+def account_returns_chart(rows: list[dict[str, Any]], benchmark_label: str = "SPY", title: str = "Daily return vs benchmark") -> go.Figure:
+    """The strategy's and the benchmark's move against the day before, in percent (`pnl.daily_returns_pct` rows), one
+    line each in the backtest colours. The last known value of each line is written at its end, in the line's colour;
+    a day without a base is a gap."""
+    if not any(row[key] is not None for row in rows for key in ("strategy", "benchmark")):
+        fig = go.Figure()
+        fig.add_annotation(text="No return data available", showarrow=False)
+        fig.update_layout(title=title, template=CHART_TEMPLATE)
+        return fig
+
+    series = [("Strategy", "strategy", STRATEGY_COLOR, dict(width=2)), (benchmark_label, "benchmark", BENCHMARK_COLOR, dict(width=1.5, dash="dash"))]
+    ends = {key: max((i for i, row in enumerate(rows) if row[key] is not None), default=None) for _, key, _, _ in series}
+    last = {key: rows[i][key] if i is not None else float("-inf") for key, i in ends.items()}
+    fig = go.Figure()
+    for name, key, color, line in series:
+        values = [row[key] for row in rows]
+        # The two labels end the plot side by side: the higher value's sits above its point, the other below, so they never overlap.
+        higher = last[key] >= max(last.values())
+        fig.add_trace(
+            go.Scatter(
+                x=[row["date"] for row in rows],
+                y=values,
+                name=name,
+                mode="lines+markers+text",
+                line=dict(color=color, **line),
+                marker=dict(size=6, color=color),
+                text=[f"{name} {value:+.2f}%" if i == ends[key] else "" for i, value in enumerate(values)],
+                textposition="top right" if higher else "bottom right",
+                textfont=dict(color=color, size=13),
+                cliponaxis=False,
+                connectgaps=False,
+                hovertemplate=f"%{{y:+.2f}}%<extra>{name}</extra>",
+            )
+        )
+    fig.add_hline(y=0, line_dash="dot", line_color=ZERO_LINE_COLOR, line_width=0.5)
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Change vs the day before (%)",
+        template=CHART_TEMPLATE,
+        hovermode="x unified",
+        margin=dict(l=40, r=130, t=60, b=40),  # room on the right for the end-of-line labels
+        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
+    )
+    fig.update_xaxes(type="category")  # trading days only: no empty weekend gaps
+    fig.update_yaxes(ticksuffix="%", tickformat="+.1f")
+    return fig
+
+
 def rolling_sortino_chart(
     dates: list[str],
     strategy_daily: list[float],

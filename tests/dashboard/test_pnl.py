@@ -4,7 +4,7 @@ from datetime import UTC, date, datetime
 
 import pytest
 
-from trading_agent_framework.dashboard.pnl import AverageCostBook, BrokerPosition, Dividend, Fee, Fill, daily_account_pnl
+from trading_agent_framework.dashboard.pnl import AverageCostBook, BrokerPosition, Dividend, Fee, Fill, ReturnBases, daily_account_pnl, daily_returns_pct
 
 T0 = datetime(2026, 10, 5, 14, tzinfo=UTC)
 
@@ -206,3 +206,49 @@ def test_days_between_keeps_the_days_inside_the_window_ends_included() -> None:
     assert [d["date"] for d in kept] == ["2026-10-06", "2026-10-07"]
     assert days_between(days, date(2026, 10, 9), date(2026, 10, 20)) == []
     assert days_between(days, date(2026, 10, 7), date(2026, 10, 6)) == []
+
+
+# --- daily_returns_pct -----------------------------------------------------------------------------
+
+_DAYS = [
+    {"date": "2026-10-12", "realized": 0.0, "unrealized": 20.0, "change": 20.0},
+    {"date": "2026-10-13", "realized": 5.0, "unrealized": 30.0, "change": 15.0},
+]
+
+
+def test_returns_are_the_days_change_over_the_previous_closes_equity_and_the_benchmarks_close_over_close() -> None:
+    bases = ReturnBases(
+        equity={date(2026, 10, 9): 1000.0, date(2026, 10, 12): 1020.0},
+        benchmark={date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0, date(2026, 10, 13): 100.5},
+    )
+
+    rows = daily_returns_pct(_DAYS, bases)
+
+    assert [(r["date"], r["strategy"]) for r in rows] == [("2026-10-12", 2.0), ("2026-10-13", 1.4706)]  # 20/1000, 15/1020
+    assert [r["benchmark"] for r in rows] == [1.0, -0.495]
+
+
+def test_the_base_is_the_latest_close_before_the_day_across_a_weekend() -> None:
+    bases = ReturnBases(equity={date(2026, 10, 9): 500.0}, benchmark={date(2026, 10, 9): 100.0, date(2026, 10, 12): 110.0})
+
+    (row,) = daily_returns_pct([{"date": "2026-10-12", "realized": 0.0, "unrealized": 5.0, "change": 5.0}], bases)
+
+    assert (row["strategy"], row["benchmark"]) == (1.0, 10.0)
+
+
+@pytest.mark.parametrize("equity", [{}, {date(2026, 10, 9): 0.0}])
+def test_no_equity_or_an_unfunded_account_leaves_the_strategys_return_missing(equity: dict[date, float]) -> None:
+    bases = ReturnBases(equity=equity, benchmark={date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0})
+
+    (row,) = daily_returns_pct(_DAYS[:1], bases)
+
+    assert row["strategy"] is None and row["benchmark"] == 1.0
+
+
+def test_a_benchmark_without_a_previous_or_a_current_close_is_missing() -> None:
+    bases = ReturnBases(equity={date(2026, 10, 9): 1000.0}, benchmark={date(2026, 10, 12): 101.0})
+
+    first, second = daily_returns_pct(_DAYS, bases)
+
+    assert first["benchmark"] is None  # nothing before the 12th to compare with
+    assert second["benchmark"] is None  # no close of the 13th

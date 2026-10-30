@@ -10,7 +10,7 @@ from streamlit.testing.v1 import AppTest
 from tests.fakes import make_api_error
 
 from trading_agent_framework.dashboard import account_reader
-from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition
+from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, ReturnBases
 
 KEYS = "DASHBOARD_DISPLAY=true\nALPACA_API_KEY=k\nALPACA_API_SECRET=s\nALPACA_DATA_API_KEY=dk\nALPACA_DATA_API_SECRET=ds\n"
 
@@ -26,6 +26,11 @@ PNL = AccountPnl(
     mismatches=[],
     unmatched_sales={},
     unpriced=[],
+)
+
+BASES = ReturnBases(
+    equity={date(2026, 10, 9): 1000.0, date(2026, 10, 12): 1020.0},
+    benchmark={date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0, date(2026, 10, 13): 100.5},
 )
 
 
@@ -63,8 +68,15 @@ def env_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return env
 
 
-def _run(script: Callable[[], None], monkeypatch: pytest.MonkeyPatch, result: object) -> tuple[AppTest, list[tuple[str, str]]]:
+def _run(script: Callable[[], None], monkeypatch: pytest.MonkeyPatch, result: object, bases: object = BASES) -> tuple[AppTest, list[tuple[str, str]]]:
     calls: list[tuple[str, str]] = []
+
+    def fake_bases(strategy: str, mode: str, env_dir: Path, first_day: date, today: date) -> ReturnBases:
+        if isinstance(bases, BaseException):
+            raise bases
+        return bases  # ty: ignore[invalid-return-type]
+
+    monkeypatch.setattr(account_reader, "load_strategy_return_bases", fake_bases)
 
     def fake_load(strategy: str, mode: str, env_dir: Path, today: date) -> AccountPnl:
         calls.append((strategy, mode))
@@ -85,7 +97,7 @@ def test_paper_tab_lists_the_paper_strategies_and_shows_the_first_ones_pnl(env_d
     assert at.sidebar.selectbox[0].options == ["alpha", "beta"]
     assert calls == [("alpha", "paper")]
     assert [title.value for title in at.title] == ["Paper"]
-    assert len(at.get("plotly_chart")) == 1
+    assert len(at.get("plotly_chart")) == 2  # the P&L per day, then the daily return vs SPY under it
     assert at.dataframe[0].value["symbol"].tolist() == ["AAA"]
     page_text = " ".join(md.value for md in at.markdown)
     assert "+$5.00" in page_text and "+$30.00" in page_text and "+$35.00" in page_text
@@ -224,11 +236,11 @@ def test_keys_that_match_their_tab_raise_no_account_warning(env_dir: Path, monke
     assert not paper.warning and not live.warning
 
 
-def _plotted_days(at: AppTest) -> list[str]:
+def _plotted_days(at: AppTest, chart_index: int = 0) -> list[str]:
+    """The days of a chart's first line: chart 0 is the P&L per day, chart 1 the daily return vs SPY."""
     import json
 
-    (chart,) = at.get("plotly_chart")
-    figure = json.loads(chart.proto.spec)
+    figure = json.loads(at.get("plotly_chart")[chart_index].proto.spec)
     return list(figure["data"][0]["x"]) if figure["data"] else []
 
 
@@ -298,3 +310,35 @@ def test_each_tab_remembers_its_window_across_tab_switches(env_dir: Path, monkey
     at.session_state["tab"] = "paper"
     at.run()
     assert at.sidebar.date_input[0].value == date(2026, 10, 13)
+
+
+def test_a_failed_returns_fetch_warns_and_keeps_the_pnl_plot(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at, _ = _run(_paper_script, monkeypatch, PNL, bases=make_api_error(500))
+
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 1
+    (warning,) = at.warning
+    assert "Could not load the daily returns" in warning.value
+
+
+def test_the_returns_plot_follows_the_window_and_keeps_the_first_days_base(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import json
+
+    at, _ = _run(_paper_script, monkeypatch, PNL)
+    start, _end = at.sidebar.date_input
+    start.set_value(date(2026, 10, 13)).run()
+
+    assert _plotted_days(at, 1) == ["2026-10-13"]
+    strategy, spy = json.loads(at.get("plotly_chart")[1].proto.spec)["data"]
+    assert strategy["y"] == [1.4706] and spy["y"] == [-0.495]  # 15 over the 12th's equity of 1020, built before the cut
+
+
+def test_a_yahoo_outage_warns_and_keeps_the_pnl_plot(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.utils.errors import YahooDataError
+
+    at, _ = _run(_paper_script, monkeypatch, PNL, bases=YahooDataError("Yahoo returned no data for 1 symbols"))
+
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 1
+    (warning,) = at.warning
+    assert "Could not load the daily returns" in warning.value

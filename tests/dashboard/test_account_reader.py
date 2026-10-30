@@ -4,6 +4,7 @@ import os
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.timeframe import TimeFrame
@@ -11,6 +12,8 @@ from tests.fakes import FakeStockHistoricalDataClient, bar_payload, make_alpaca_
 
 from trading_agent_framework.dashboard import account_reader
 from trading_agent_framework.dashboard.pnl import Dividend, Fee
+from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.utils.errors import ConfigurationError
 
 KEYS = "ALPACA_API_KEY=trade-key\nALPACA_API_SECRET=trade-secret\nALPACA_DATA_API_KEY=data-key\nALPACA_DATA_API_SECRET=data-secret\n"
@@ -242,3 +245,78 @@ def test_load_account_pnl_rebuilds_the_days_from_the_three_endpoints() -> None:
     (position,) = result.positions
     assert (position.symbol, position.qty, position.current_price, position.unrealized_plpc) == ("AAA", 10.0, 103.0, 0.03)
     assert result.mismatches == []
+
+
+# --- daily returns: portfolio history and benchmark closes ------------------------------------------
+
+
+class FakeHistoryClient:
+    """Answers `GET /account/portfolio/history` with a canned payload and records the request."""
+
+    def __init__(self, history: dict[str, list[object]]) -> None:
+        self.history = history
+        self.requests: list[tuple[str, dict[str, object]]] = []
+
+    def get(self, path: str, data: dict[str, object] | None = None) -> dict[str, list[object]]:
+        self.requests.append((path, dict(data or {})))
+        return self.history
+
+
+def _stamp(day: str) -> int:
+    return int(datetime.fromisoformat(f"{day}T00:00:00+00:00").timestamp())
+
+
+def test_equity_closes_move_alpacas_next_day_labels_back_to_the_day_of_the_close() -> None:
+    # Alpaca labels Monday's close Tuesday and Friday's close Saturday.
+    client = FakeHistoryClient({"timestamp": [_stamp("2026-10-06"), _stamp("2026-10-10"), _stamp("2026-10-13")], "equity": [10000.0, 9957.42, None]})
+
+    closes = account_reader.fetch_equity_closes(client, date(2026, 10, 12), date(2026, 10, 13))  # ty: ignore[invalid-argument-type]
+
+    assert closes == {date(2026, 10, 5): 10000.0, date(2026, 10, 9): 9957.42}  # the null point is dropped
+    ((path, params),) = client.requests
+    assert path == "/account/portfolio/history"
+    assert params == {"timeframe": "1D", "start": "2026-10-05", "end": "2026-10-14"}  # a week of base before the first day
+
+
+def test_an_empty_history_gives_no_equity() -> None:
+    assert account_reader.fetch_equity_closes(FakeHistoryClient({}), date(2026, 10, 12), date(2026, 10, 13)) == {}  # ty: ignore[invalid-argument-type]
+
+
+class FakeBenchmarkBars:
+    """Stands in for `YahooDailyBars`: daily closes per symbol, each stamped at its session's close (16:00 New York)."""
+
+    def __init__(self, closes: dict[str, dict[str, float]]) -> None:
+        self.closes = closes
+        self.requests: list[tuple[list[str], date]] = []
+
+    def bars(self, symbols: list[str], today: date) -> dict[str, Bars]:
+        self.requests.append((list(symbols), today))
+        frames = {}
+        for symbol in symbols:
+            if symbol in self.closes:
+                index = pd.DatetimeIndex([datetime.fromisoformat(f"{day}T16:00:00-04:00") for day in self.closes[symbol]], name="timestamp")
+                frames[symbol] = Bars(Asset(symbol), "day", pd.DataFrame({"close": list(self.closes[symbol].values())}, index=index))
+        return frames
+
+
+def test_benchmark_closes_are_the_yahoo_closes_by_session_day_from_a_week_before_the_first_day() -> None:
+    source = FakeBenchmarkBars({"SPY": {"2026-10-01": 98.0, "2026-10-09": 100.0, "2026-10-12": 101.0, "2026-10-13": 100.5}})
+
+    closes = account_reader.fetch_benchmark_closes(source, date(2026, 10, 12), date(2026, 10, 13))
+
+    assert closes == {date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0, date(2026, 10, 13): 100.5}  # the 1st is before the week of base
+    assert source.requests == [(["SPY"], date(2026, 10, 13))]
+
+
+def test_benchmark_closes_are_empty_when_yahoo_has_no_spy() -> None:
+    assert account_reader.fetch_benchmark_closes(FakeBenchmarkBars({}), date(2026, 10, 12), date(2026, 10, 13)) == {}
+
+
+def test_load_return_bases_reads_the_equity_history_and_spys_closes() -> None:
+    trading = FakeHistoryClient({"timestamp": [_stamp("2026-10-13")], "equity": [1000.0]})
+    source = FakeBenchmarkBars({"SPY": {"2026-10-09": 100.0, "2026-10-12": 101.0}})
+
+    bases = account_reader.load_return_bases(trading, source, date(2026, 10, 12), date(2026, 10, 12))  # ty: ignore[invalid-argument-type]
+
+    assert dict(bases.equity) == {date(2026, 10, 12): 1000.0}
+    assert dict(bases.benchmark) == {date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0}
