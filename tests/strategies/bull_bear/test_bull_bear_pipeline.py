@@ -1264,7 +1264,10 @@ def test_the_judge_sees_how_its_recent_out_verdicts_did_since(tmp_path: Path) ->
     assert h.run().completed
 
     shown = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
-    assert shown == [{"symbol": "S18", "date": "2026-09-29", "reason": "dilution", "return_since_pct": -5.0, "in_names_return_pct": 10.0}]
+    assert shown == [
+        {"symbol": "S00", "date": "2026-09-29", "verdict": "in", "reason": "r", "return_since_pct": 10.0, "in_names_return_pct": 10.0, "out_names_return_pct": -5.0},
+        {"symbol": "S18", "date": "2026-09-29", "verdict": "out", "reason": "dilution", "return_since_pct": -5.0, "in_names_return_pct": 10.0, "out_names_return_pct": -5.0},
+    ]
     assert h.log_lines()[0]["recent_verdicts"] == shown
 
 

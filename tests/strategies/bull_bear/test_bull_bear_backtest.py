@@ -163,7 +163,8 @@ def test_the_second_review_shows_the_judge_its_previous_verdicts_and_the_priced_
     for symbol, stock in stocks.items():
         expected = "out" if symbol == UNIVERSE[5] else "in"  # the fixture's judge puts the sixth stock out
         assert stock["previous_verdict"]["verdict"] == expected and stock["previous_verdict"]["date"] == "2026-09-15"
-    (shown,) = second["recent_verdicts"]
+    assert len(second["recent_verdicts"]) == len(UNIVERSE)  # every verdict of the first review, in and out
+    (shown,) = [outcome for outcome in second["recent_verdicts"] if outcome["verdict"] == "out"]
     # from the gated bars: the close of Monday the 14th (the last completed session of the first review) to Monday the 21st
     frame = _bars(0.003 - 5 * 0.0002)
     closes = {stamp.date(): close for stamp, close in zip(frame.index, frame["close"], strict=True)}
