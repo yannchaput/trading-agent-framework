@@ -70,6 +70,33 @@ def test_the_currency_falls_back_to_the_first_money_field_without_revenue():
     assert f["fundamentals_period_end"] == "2025-12-31" and f["period_months"] == 3
 
 
+def _point(value, end="2026-06-30"):
+    return {"value": value, "unit": "USD", "filed": "2026-08-06", "end": end}
+
+
+def test_the_current_assets_and_liabilities_show_what_cash_leaves_out():
+    balance = {"cash": _point(162.007e6), "current_assets": _point(1173.003e6), "current_liabilities": _point(63.302e6)}  # SYRE, 2026-06-30
+    f = fundamentals_fields({}, balance, stale=False)
+    assert f["current_assets_bn"] == 1.173 and f["current_liabilities_bn"] == 0.063
+
+
+def test_a_debt_free_company_with_no_revenue_is_not_unavailable():
+    income = {"operating_income": _flow(-41.639e6, "2026-04-01", "2026-06-30"), "operating_cash_flow": _flow(-127.249e6, "2026-01-01", "2026-06-30")}
+    balance = {"cash": _point(162.007e6), "current_assets": _point(1173.003e6), "current_liabilities": _point(63.302e6)}
+    f = fundamentals_fields(income, balance, stale=False)
+    assert "fundamentals_unavailable" not in f
+    assert f["fundamentals_period_end"] == "2026-06-30" and f["currency"] == "USD"
+
+
+def test_the_currency_can_come_from_the_current_assets():
+    assert fundamentals_fields({}, {"current_assets": {**_point(1e9), "unit": "ARS"}}, stale=False)["currency"] == "ARS"
+
+
+def test_a_bank_with_no_current_assets_leaves_them_out():
+    f = fundamentals_fields(MU_INCOME, MU_BALANCE, stale=False)
+    assert "current_assets_bn" not in f and "current_liabilities_bn" not in f
+
+
 def test_stale_figures_are_flagged():
     assert fundamentals_fields(MU_INCOME, MU_BALANCE, stale=True)["fundamentals_stale"] is True
 

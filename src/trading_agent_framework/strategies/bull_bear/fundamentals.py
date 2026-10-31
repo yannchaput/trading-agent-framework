@@ -77,6 +77,8 @@ def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mappin
     operating_row = income.get("operating_income")
     cash_row = income.get("free_cash_flow")
     debt_row = balance.get("debt")
+    assets_row = balance.get("current_assets")
+    liabilities_row = balance.get("current_liabilities")
 
     revenue, revenue_before = _number((revenue_row or {}).get("value")), _prior_value(revenue_row)
     operating, operating_before = _number((operating_row or {}).get("value")), _prior_value(operating_row)
@@ -102,6 +104,10 @@ def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mappin
         figures["total_debt_bn"] = _billions(debt)
     if debt_before is not None:
         figures["total_debt_prior_year_bn"] = _billions(debt_before)
+    # Cash leaves out marketable securities, so a runway read from it alone can be years short: these two are what the agents judge it from.
+    for name, row in (("current_assets_bn", assets_row), ("current_liabilities_bn", liabilities_row)):
+        if (value := _number((row or {}).get("value"))) is not None:
+            figures[name] = _billions(value)
     if not figures:
         return unavailable_fundamentals(_NO_FIGURES)
 
@@ -115,7 +121,7 @@ def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mappin
         if (months := _months(period_row)) is not None:
             fields["period_months"] = months
     fields.update(figures)
-    currency = (revenue_row or next((row for row in (operating_row, cash_row, debt_row) if row and row.get("unit")), None) or {}).get("unit")
+    currency = (revenue_row or next((row for row in (operating_row, cash_row, debt_row, assets_row) if row and row.get("unit")), None) or {}).get("unit")
     if currency:
         fields["currency"] = currency
     if stale:

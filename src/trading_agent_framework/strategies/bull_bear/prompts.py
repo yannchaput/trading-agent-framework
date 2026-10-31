@@ -25,7 +25,10 @@ _FIGURES = (
     "period_months its length. revenue_growth_pct is revenue against that period a year earlier. operating_margin_pct is "
     "the operating margin of the period and operating_margin_prior_year_pct the same a year earlier. free_cash_flow_bn "
     "and free_cash_flow_prior_year_bn are the free cash flow; it can cover a longer period than revenue, given by "
-    "free_cash_flow_months. total_debt_bn and total_debt_prior_year_bn are the total debt. Money is in billions of the "
+    "free_cash_flow_months. total_debt_bn and total_debt_prior_year_bn are the total debt. current_assets_bn and "
+    "current_liabilities_bn are from the latest balance sheet. A cash figure leaves out marketable securities, so judge "
+    "how long a company can fund itself from current assets less current liabilities (which can also include receivables "
+    "and inventory), not from cash alone. Money is in billions of the "
     "reporting currency, named by currency and never converted. A figure that cannot be computed is absent. "
     "fundamentals_stale means the latest figures are old; fundamentals_unavailable (with its reason) means there are none."
 )
