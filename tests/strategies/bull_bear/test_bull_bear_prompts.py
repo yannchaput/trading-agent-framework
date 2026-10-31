@@ -240,13 +240,7 @@ def test_max_in_is_a_ceiling_not_a_target_and_no_stock_is_put_out_for_room_alone
 
 
 def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
-    assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM and "out_names_return_pct" in prompts.JUDGE_SYSTEM
-
-
-def test_the_judge_weighs_both_sides_of_its_recent_verdicts_and_treats_them_as_noise() -> None:
-    text = " ".join(prompts.JUDGE_SYSTEM.split())
-    assert "an in that then lagged the stocks you put out cost the portfolio as much as an out that then beat the stocks you put in" in text
-    assert "is no new fact" in text
+    assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM
 
 
 def test_the_judge_is_told_about_its_memory_tools() -> None:

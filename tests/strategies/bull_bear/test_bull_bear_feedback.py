@@ -18,32 +18,21 @@ HISTORY = [
 ]
 
 
-def test_every_verdict_in_or_out_is_shown_newest_first_against_that_days_two_sides() -> None:
+def test_each_out_verdict_is_shown_newest_first_against_that_days_in_stocks() -> None:
     now = {"AAA": 121.0, "BBB": 60.0, "CCC": 22.0, "DDD": 9.0}
 
     assert recent_outcomes(HISTORY, now) == [
-        {"symbol": "AAA", "date": "2026-09-29", "verdict": "in", "reason": "r", "return_since_pct": 10.0, "in_names_return_pct": 10.0, "out_names_return_pct": -10.0},
-        {"symbol": "CCC", "date": "2026-09-29", "verdict": "in", "reason": "r", "return_since_pct": 10.0, "in_names_return_pct": 10.0, "out_names_return_pct": -10.0},
-        {"symbol": "DDD", "date": "2026-09-29", "verdict": "out", "reason": "dilution", "return_since_pct": -10.0, "in_names_return_pct": 10.0, "out_names_return_pct": -10.0},
-        {"symbol": "AAA", "date": "2026-09-22", "verdict": "in", "reason": "r", "return_since_pct": 21.0, "in_names_return_pct": 21.0, "out_names_return_pct": 20.0},
-        {"symbol": "BBB", "date": "2026-09-22", "verdict": "out", "reason": "lawsuit", "return_since_pct": 20.0, "in_names_return_pct": 21.0, "out_names_return_pct": 20.0},
+        {"symbol": "DDD", "date": "2026-09-29", "reason": "dilution", "return_since_pct": -10.0, "in_names_return_pct": 10.0},
+        {"symbol": "BBB", "date": "2026-09-22", "reason": "lawsuit", "return_since_pct": 20.0, "in_names_return_pct": 21.0},
     ]
 
 
 def test_a_stock_without_a_price_now_is_left_out_and_never_estimated() -> None:
-    assert [outcome["symbol"] for outcome in recent_outcomes(HISTORY, {"AAA": 121.0, "BBB": 60.0, "CCC": 22.0})] == ["AAA", "CCC", "AAA", "BBB"]  # no DDD
+    assert [outcome["symbol"] for outcome in recent_outcomes(HISTORY, {"AAA": 121.0, "BBB": 60.0, "CCC": 22.0})] == ["BBB"]
 
 
 def test_a_review_whose_in_stocks_have_no_price_shows_none_for_them() -> None:
     assert recent_outcomes(HISTORY[:1], {"BBB": 60.0})[0]["in_names_return_pct"] is None
-
-
-def test_a_review_whose_out_stocks_have_no_price_shows_none_for_them() -> None:
-    assert recent_outcomes(HISTORY[:1], {"AAA": 121.0})[0]["out_names_return_pct"] is None
-
-
-def test_an_in_stock_without_a_price_does_not_move_that_days_mean() -> None:
-    assert recent_outcomes(HISTORY[1:], {"AAA": 121.0, "DDD": 9.0})[0]["in_names_return_pct"] == 10.0  # CCC is left out, not counted as 0
 
 
 def test_no_history_means_no_feedback() -> None:
