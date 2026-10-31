@@ -279,10 +279,11 @@ def test_the_judge_leaves_the_weak_stocks_out_and_chooses_only_among_the_strong_
     assert "A strong or standard stock may still go out" in text
 
 
-def test_the_judge_is_told_strength_sets_the_size_but_not_the_numbers() -> None:
+def test_the_judge_is_told_every_stock_in_gets_the_same_position_but_not_the_numbers() -> None:
     text = " ".join(prompts.JUDGE_SYSTEM.split())
     passage = _strength_passage()
-    assert "largest position" in passage
+    assert "Every stock you put in gets the same position" in passage
+    assert "larger the position" not in text and "sets the size" not in text  # sizing has been equal since c94a9d9
     assert not any(n in text for n in ("14", "0.14", "9%", "0.09", "9.8", "4%", "0.04"))
     assert "cash" not in passage and "SHV" not in text
 
