@@ -52,6 +52,7 @@ def test_momentum_exhaustion_needs_a_decline_that_ran_for_weeks() -> None:
 
 def test_every_agent_reads_the_fundamentals_fields_and_the_sources_rule() -> None:
     fields = (
+        "company",
         "return_1m_skip_1w_pct",
         "fundamentals_period_end",
         "fundamentals_filed",

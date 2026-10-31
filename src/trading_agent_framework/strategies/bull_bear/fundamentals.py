@@ -142,4 +142,6 @@ class SecFundamentals:
         cutoff = datetime.combine(as_of.date(), time.min, tzinfo=as_of.tzinfo) - timedelta(microseconds=1)
         income = sec.income_statement(payload, as_of=cutoff)
         balance = sec.balance_sheet(payload, as_of=cutoff)
-        return fundamentals_fields(income, balance, stale=sec.is_stale_statement(income, as_of=cutoff))
+        fields = fundamentals_fields(income, balance, stale=sec.is_stale_statement(income, as_of=cutoff))
+        name = payload.get("entityName")
+        return {"company": name, **fields} if name else fields

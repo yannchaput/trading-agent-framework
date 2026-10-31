@@ -144,6 +144,19 @@ def test_a_payload_with_nothing_known_at_the_time_is_unavailable():
     assert SecFundamentals(_FakeClient(payload))("AAA", _AS_OF) == {"fundamentals_unavailable": "no SEC figures"}
 
 
+def test_the_company_name_is_read_from_the_filing_payload():
+    payload = {"entityName": "UBIQUITI INC.", "facts": {"us-gaap": {"Revenues": {"units": {"USD": [_revenue(9e9, "2024-01-01", "2024-12-31", "2025-02-20")]}}}}}
+    assert SecFundamentals(_FakeClient(payload))("UI", _AS_OF)["company"] == "UBIQUITI INC."
+
+
+def test_a_stock_with_no_figures_still_shows_its_company():
+    assert SecFundamentals(_FakeClient({"entityName": "EMBRAER S.A."}))("EMBJ", _AS_OF) == {"company": "EMBRAER S.A.", "fundamentals_unavailable": "no SEC figures"}
+
+
+def test_a_payload_without_a_name_has_no_company_field():
+    assert "company" not in SecFundamentals(_FakeClient({"entityName": ""}))("AAA", _AS_OF)
+
+
 _NY = ZoneInfo("America/New_York")
 
 

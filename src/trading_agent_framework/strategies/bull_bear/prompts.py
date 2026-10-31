@@ -12,7 +12,8 @@ from __future__ import annotations
 _ENGLISH = "Write everything in English: your notes, arguments, reasons and every tool argument, even if a source you read drifts into another language."
 
 _FIGURES = (
-    "Each stock comes with a fact sheet computed by code; do not recompute its numbers. momentum_rank is the stock's rank "
+    "Each stock comes with a fact sheet computed by code; do not recompute its numbers. company is the name the company "
+    "files under with the SEC: use it, and do not guess a company from its ticker. momentum_rank is the stock's rank "
     "by momentum across the whole universe (1 is the strongest) and momentum_score the weighted 12-, 6- and 3-month return "
     "behind it. return_12m_skip_1m_pct and return_6m_skip_1m_pct leave out the last month; return_3m_pct, return_1m_pct "
     "and return_1w_pct (the last 5 sessions) do not. return_1m_skip_1w_pct is the return of the month before the last "
