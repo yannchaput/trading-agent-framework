@@ -47,6 +47,7 @@
 * Review  Agent table pivot format to be consistent with all strategies
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
 * Draw a plot of realized P&L in grey
+* ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
 ### Cross sectional momentum
 
