@@ -25,7 +25,6 @@ def test_a_saved_state_loads_back(tmp_path: Path) -> None:
         abandoned_streak=0,
         verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"}},
         cooldowns={"BBB": 3},
-        history=[{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "close": 51.5}}}],
     )
 
     store.save(state)
@@ -70,9 +69,22 @@ def test_a_version_2_state_loads_without_strengths(tmp_path: Path, caplog: pytes
         abandoned_streak=1,
         verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}, "BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-09-29"}},
         cooldowns={"BBB": 2},
-        history=content["history"],
     )
     assert caplog.text == ""
+
+
+def test_a_file_that_still_carries_history_loads_and_the_next_save_drops_it(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    verdicts = {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}
+    history = [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "r", "close": 51.5}}}]
+    path.write_text(json.dumps({"version": 2, "last_completed_review": "2026-10-06", "verdicts": verdicts, "history": history}))
+    store = StateStore(path)
+
+    state = store.load()
+    store.save(state)
+
+    assert state.verdicts == verdicts and state.last_completed_review == "2026-10-06"
+    assert "history" not in json.loads(path.read_text())
 
 
 def test_saving_a_state_keeps_a_verdict_that_predates_strengths(tmp_path: Path) -> None:
@@ -179,11 +191,7 @@ def test_an_invalid_version_1_state_or_another_version_is_an_empty_state_with_a_
         json.dumps({"version": STATE_VERSION, "abandoned_streak": True}),
         json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": 0}}),
         json.dumps({"version": STATE_VERSION, "cooldowns": {"AAA": True}}),
-        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "in", "reason": "r"}}}]}),
-        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06"}]}),
         json.dumps({"version": STATE_VERSION, "verdicts": {"AAA": {"verdict": "maybe", "reason": "r", "date": "2026-10-06", "strength": "weak"}}}),
-        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": "veto", "reason": "r", "close": 1.0}}}]}),
-        json.dumps({"version": STATE_VERSION, "history": [{"date": "2026-10-06", "verdicts": {"AAA": {"verdict": ["in"], "reason": "r", "close": 1.0}}}]}),
     ],
 )
 def test_an_unreadable_or_invalid_file_is_an_empty_state_with_a_warning(tmp_path: Path, content: str, caplog: pytest.LogCaptureFixture) -> None:

@@ -7,17 +7,13 @@ bar dated today is partial while the session is open), at most `HISTORY_BARS` of
 
 from __future__ import annotations
 
-from bisect import bisect_left
 from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
 
-import pandas as pd
-
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.strategies.common.sessions import completed_bars
-from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError, YahooDataError
 
 HISTORY_BARS = 300  # completed sessions scored: cross_momentum's own window
@@ -31,14 +27,6 @@ class DataUnavailable(Exception):
 class DailySeries:
     closes: list[float]  # oldest first
     volumes: list[float]
-    dates: list[date] = field(default_factory=list)  # the market date of each close, aligned with `closes`; empty when unknown
-
-    def close_before(self, day: date) -> float | None:
-        """The close of the last session strictly before `day`; None when the series has none (or carries no dates)."""
-        if len(self.dates) != len(self.closes):
-            return None
-        index = bisect_left(self.dates, day)
-        return self.closes[index - 1] if index > 0 else None
 
 
 class DailyBars(Protocol):
@@ -53,8 +41,7 @@ def _series(bars: Bars, today: date) -> DailySeries | None:
     frame = completed_bars(bars.df, today).tail(HISTORY_BARS)
     if frame.empty:
         return None
-    dates = [stamp.date() for stamp in pd.DatetimeIndex(frame.index).tz_convert(MARKET_TZ)]
-    return DailySeries(closes=[float(value) for value in frame["close"]], volumes=[float(value) for value in frame["volume"]], dates=dates)
+    return DailySeries(closes=[float(value) for value in frame["close"]], volumes=[float(value) for value in frame["volume"]])
 
 
 class YahooBars:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 from collections.abc import Callable
 from datetime import date, timedelta
 from decimal import Decimal
@@ -151,24 +150,15 @@ def test_the_first_reviews_orders_fill_and_the_second_review_trades_nothing(tmp_
     assert equity["portfolio_value"].nunique() > 1  # the book was invested and marked to market
 
 
-def test_the_second_review_shows_the_judge_its_previous_verdicts_and_the_priced_outcome_of_its_out(tmp_path: Path) -> None:
+def test_the_second_review_shows_the_judge_its_previous_verdicts(tmp_path: Path) -> None:
     manager = _Manager()
 
     _run(tmp_path, manager)
 
     first, second = manager.handles["judge"].contexts
-    assert all("previous_verdict" not in stock for stock in first["stocks"]) and first["recent_verdicts"] == []
+    assert all("previous_verdict" not in stock for stock in first["stocks"])
     stocks = {stock["fact_sheet"]["symbol"]: stock for stock in second["stocks"]}
     assert set(stocks) == set(UNIVERSE)
     for symbol, stock in stocks.items():
         expected = "out" if symbol == UNIVERSE[5] else "in"  # the fixture's judge puts the sixth stock out
         assert stock["previous_verdict"]["verdict"] == expected and stock["previous_verdict"]["date"] == "2026-09-15"
-    (shown,) = second["recent_verdicts"]
-    # from the gated bars: the close of Monday the 14th (the last completed session of the first review) to Monday the 21st
-    frame = _bars(0.003 - 5 * 0.0002)
-    closes = {stamp.date(): close for stamp, close in zip(frame.index, frame["close"], strict=True)}
-    assert shown["symbol"] == UNIVERSE[5] and shown["date"] == "2026-09-15" and shown["reason"] == "bear wins"
-    assert math.isfinite(shown["return_since_pct"])
-    assert shown["return_since_pct"] == round((closes[date(2026, 9, 21)] / closes[date(2026, 9, 14)] - 1) * 100, 1)
-    assert math.isfinite(shown["in_names_return_pct"])
-    assert _review_lines(tmp_path)[1]["recent_verdicts"] == second["recent_verdicts"]

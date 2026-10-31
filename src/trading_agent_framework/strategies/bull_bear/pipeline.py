@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import date, datetime
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
@@ -24,7 +24,6 @@ from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldowns
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
-from trading_agent_framework.strategies.bull_bear.feedback import recent_outcomes
 from trading_agent_framework.strategies.bull_bear.fundamentals import unavailable_fundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts, trim_note
 from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
@@ -79,7 +78,6 @@ class _Pending:
 
     decided: dict[str, dict[str, str]]  # symbol -> the judge's {verdict, reason, date, strength}
     sold: list[str]  # the held stocks the judge put out
-    review: dict[str, Any]  # the `history` entry of a completed review
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,8 +157,7 @@ class ReviewPipeline:
         self._strategy.log_error(f"[bull_bear] review abandoned at the {stage} stage (streak {streak}): {error}")
         if stage == "execution" and self._pending is not None:
             # The judge decided and orders may be out: remember its verdicts and the cooldown of each sell actually placed,
-            # so a stock sold today is not bought back next week. Running cooldowns are not counted down, nothing goes into
-            # `history` and the day stays open.
+            # so a stock sold today is not bought back next week. Running cooldowns are not counted down and the day stays open.
             length = self._params.reentry_cooldown_reviews
             sent = {order.symbol for order in self._rebalancer.placed if order.side == "sell"}
             started = [symbol for symbol in self._pending.sold if symbol in sent] if length > 0 else []
@@ -205,7 +202,6 @@ class ReviewPipeline:
             if row is not None:
                 rows.append(row)
         ranked = rank(rows)
-        closes_now = {symbol: data.closes[-1] for symbol, data in series.items() if data.closes}
 
         # 2. The debate set, and the holdings code sells without asking the agents.
         debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state.cooldowns)
@@ -276,13 +272,6 @@ class ReviewPipeline:
         previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
         self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
 
-        def close_before(symbol: str, review_date: str) -> float | None:
-            try:
-                return series[symbol].close_before(date.fromisoformat(review_date)) if symbol in series else None
-            except ValueError:  # a hand-edited date: the stored close is used
-                return None
-
-        recent = recent_outcomes(state.history, closes_now, close_before)
         context = {
             "current_datetime": moment,
             "stocks": [
@@ -295,7 +284,6 @@ class ReviewPipeline:
                 }
                 for symbol in symbols
             ],
-            "recent_verdicts": recent,
             "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
         judge_calls: list[ToolCallRecord] = []
@@ -318,10 +306,9 @@ class ReviewPipeline:
         # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
         chosen = set(verdicts.chosen)
         sold = [stock.symbol for stock in debate.stocks if stock.held and stock.symbol not in chosen]
-        # What a completed review remembers, built before the first order so that nothing after it can fail on a missing close.
+        # What a completed review remembers, built before the first order.
         decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today, "strength": verdict.strength} for verdict in verdicts.verdicts}
-        review = {"date": today, "verdicts": {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "close": closes_now[verdict.symbol]} for verdict in verdicts.verdicts}}
-        self._pending = _Pending(decided=decided, sold=sold, review=review)
+        self._pending = _Pending(decided=decided, sold=sold)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
         record.update(
             verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
@@ -329,7 +316,6 @@ class ReviewPipeline:
             strength_counts=dict(Counter(verdict.strength for verdict in verdicts.verdicts if verdict.strength)),
             book=list(book),
             cooldowns_started=sold,
-            recent_verdicts=recent,
             targets={**target.weights, params.parking_symbol: target.parking_weight},
         )
         # A forced exit is sold by code, never debated: say so at warning level, before its sell order goes out.
@@ -340,8 +326,7 @@ class ReviewPipeline:
 
         # 9. Remember and log.
         cooldowns = advance_cooldowns(state.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
-        history = [*state.history, review][-params.feedback_reviews :]
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns, history=history))
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns))
         self._log.append(
             {
                 **record,

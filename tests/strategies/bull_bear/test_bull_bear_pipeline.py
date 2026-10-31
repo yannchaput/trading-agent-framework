@@ -4,13 +4,12 @@ import json
 import logging
 import re
 from collections.abc import Callable, Collection, Mapping
-from dataclasses import dataclass, field, replace
-from datetime import date, datetime
+from dataclasses import dataclass, field
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
@@ -728,7 +727,7 @@ def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_
     assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"}
     assert set(state.verdicts) == set(UNIVERSE[:15]) | {"S03"}
     assert state.cooldowns == {"S03": 4}
-    assert state.history == [] and state.last_completed_review is None and state.abandoned_streak == 1
+    assert state.last_completed_review is None and state.abandoned_streak == 1
     (line,) = h.log_lines()
     assert line["stage"] == "execution" and line["cooldowns_started"] == ["S03"]
 
@@ -743,7 +742,7 @@ def test_an_execution_abandonment_before_any_order_stores_the_verdicts_but_no_co
     state = h.store.load()
     assert state.verdicts["S03"]["verdict"] == "out" and state.verdicts["S00"]["verdict"] == "in"
     assert state.cooldowns == {}
-    assert state.history == [] and state.last_completed_review is None and state.abandoned_streak == 1
+    assert state.last_completed_review is None and state.abandoned_streak == 1
     assert h.log_lines()[0]["cooldowns_started"] == []
 
 
@@ -1170,7 +1169,7 @@ def test_an_abandoned_first_review_after_the_upgrade_keeps_every_version_2_verdi
     assert not outcome.completed
     saved = h.store.load()
     assert saved.verdicts == content["verdicts"]
-    assert saved.cooldowns == {"S19": 2} and saved.history == content["history"]
+    assert saved.cooldowns == {"S19": 2}
     assert saved.abandoned_streak == 2 and saved.last_completed_review == "2026-09-29"
 
 
@@ -1188,7 +1187,6 @@ def test_a_review_after_the_upgrade_shows_version_2_verdicts_and_keeps_the_undeb
     assert saved.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"}
     assert saved.verdicts["ZZZ"] == content["verdicts"]["ZZZ"]  # undebated: its version-2 verdict survives the save
     assert saved.cooldowns == {"S19": 1}
-    assert [entry["date"] for entry in saved.history] == ["2026-09-29", "2026-10-06"]
     assert saved.last_completed_review == "2026-10-06" and saved.abandoned_streak == 0
 
 
@@ -1247,54 +1245,12 @@ def test_a_holding_still_in_cooldown_is_sold_as_a_forced_exit(tmp_path: Path) ->
 # --- outcome feedback ----------------------------------------------------------------------------------------
 
 
-def test_the_judge_sees_how_its_recent_out_verdicts_did_since(tmp_path: Path) -> None:
-    series = _default_series()
-    now_close = {symbol: s.closes[-1] for symbol, s in series.items()}
-    history = [
-        {
-            "date": "2026-09-29",
-            "verdicts": {
-                "S00": {"verdict": "in", "reason": "r", "close": now_close["S00"] / 1.10},
-                "S18": {"verdict": "out", "reason": "dilution", "close": now_close["S18"] / 0.95},  # S18 is no candidate now, but priced
-            },
-        }
-    ]
-    h = _harness(tmp_path, series=series, state=BullBearState(history=history))
+def test_the_judge_and_the_log_carry_no_recent_verdicts(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
 
     assert h.run().completed
 
-    shown = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
-    assert shown == [{"symbol": "S18", "date": "2026-09-29", "reason": "dilution", "return_since_pct": -5.0, "in_names_return_pct": 10.0}]
-    assert h.log_lines()[0]["recent_verdicts"] == shown
-
-
-def test_the_feedback_prices_the_then_close_from_todays_series_not_from_the_stored_close(tmp_path: Path) -> None:
-    # a split since the review: the stored close (1000) is on the old basis; today's adjusted series is the truth
-    sessions = [day.date() for day in pd.bdate_range(end=date(2026, 10, 5), periods=300)]
-    series = {symbol: replace(data, dates=sessions) for symbol, data in _default_series().items()}
-    before = sessions.index(date(2026, 9, 28))  # the last session strictly before the review of 2026-09-29
-    expected = round((series["S18"].closes[-1] / series["S18"].closes[before] - 1) * 100, 1)
-    history = [{"date": "2026-09-29", "verdicts": {"S18": {"verdict": "out", "reason": "dilution", "close": 1000.0}}}]
-    h = _harness(tmp_path, series=series, state=BullBearState(history=history))
-
-    assert h.run().completed
-
-    (shown,) = h.agents["judge"].calls[0]["context"]["recent_verdicts"]
-    assert shown["symbol"] == "S18" and shown["return_since_pct"] == expected
-    assert expected != round((series["S18"].closes[-1] / 1000.0 - 1) * 100, 1)
-
-
-def test_a_completed_review_stores_each_verdict_with_the_close_it_was_made_at(tmp_path: Path) -> None:
-    series = _default_series()
-    earlier = [{"date": "2026-09-22", "verdicts": {}}, {"date": "2026-09-29", "verdicts": {}}]
-    h = _harness(tmp_path, series=series, params=BullBearParams(feedback_reviews=2), state=BullBearState(history=earlier))
-
-    assert h.run().completed
-
-    history = h.store.load().history
-    assert [review["date"] for review in history] == ["2026-09-29", "2026-10-06"]  # trimmed to feedback_reviews
-    assert history[-1]["verdicts"]["S00"] == {"verdict": "in", "reason": "bull wins", "close": series["S00"].closes[-1]}
-    assert history[-1]["verdicts"]["S14"]["verdict"] == "out"
+    assert "recent_verdicts" not in h.agents["judge"].calls[0]["context"] and "recent_verdicts" not in h.log_lines()[0]
 
 
 def test_the_judge_runs_with_its_memory_budget_and_its_lessons_are_logged(tmp_path: Path) -> None:

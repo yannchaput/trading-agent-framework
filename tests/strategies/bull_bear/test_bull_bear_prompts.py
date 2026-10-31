@@ -239,8 +239,8 @@ def test_max_in_is_a_ceiling_not_a_target_and_no_stock_is_put_out_for_room_alone
     assert "change it only for a new, material fact" in text  # the previous_verdict rule stays
 
 
-def test_the_judge_is_told_how_to_read_its_recent_verdicts() -> None:
-    assert "recent_verdicts" in prompts.JUDGE_SYSTEM and "in_names_return_pct" in prompts.JUDGE_SYSTEM
+def test_the_judge_is_told_nothing_of_recent_verdicts() -> None:
+    assert "recent_verdicts" not in prompts.JUDGE_SYSTEM and "in_names_return_pct" not in prompts.JUDGE_SYSTEM
 
 
 def test_the_judge_is_told_about_its_memory_tools() -> None:
