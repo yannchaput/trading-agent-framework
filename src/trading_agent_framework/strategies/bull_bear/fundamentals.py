@@ -71,6 +71,14 @@ def _margin(operating: float | None, revenue: float | None) -> float | None:
     return None if operating is None or revenue is None or revenue <= 0 else _pct(operating / revenue)
 
 
+def _runway_months(flow_row: Mapping[str, Any] | None, assets: float | None, liabilities: float | None) -> int | None:
+    """The months of cash burn that current assets less current liabilities cover; None for a company not burning cash."""
+    burn, months = _number((flow_row or {}).get("value")), _months(flow_row or {})
+    if burn is None or burn >= 0 or not months or assets is None or liabilities is None:
+        return None
+    return max(0, round((assets - liabilities) / (-burn / months)))
+
+
 def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mapping[str, Mapping[str, Any]], *, stale: bool) -> dict[str, Any]:
     """The fact-sheet fundamentals fields from the SEC income statement and balance sheet (with their `prior_year`)."""
     revenue_row = income.get("revenue")
@@ -78,7 +86,7 @@ def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mappin
     cash_row = income.get("free_cash_flow")
     debt_row = balance.get("debt")
     assets_row = balance.get("current_assets")
-    liabilities_row = balance.get("current_liabilities")
+    assets, liabilities = _number((assets_row or {}).get("value")), _number(balance.get("current_liabilities", {}).get("value"))
 
     revenue, revenue_before = _number((revenue_row or {}).get("value")), _prior_value(revenue_row)
     operating, operating_before = _number((operating_row or {}).get("value")), _prior_value(operating_row)
@@ -104,10 +112,14 @@ def fundamentals_fields(income: Mapping[str, Mapping[str, Any]], balance: Mappin
         figures["total_debt_bn"] = _billions(debt)
     if debt_before is not None:
         figures["total_debt_prior_year_bn"] = _billions(debt_before)
-    # Cash leaves out marketable securities, so a runway read from it alone can be years short: these two are what the agents judge it from.
-    for name, row in (("current_assets_bn", assets_row), ("current_liabilities_bn", liabilities_row)):
-        if (value := _number((row or {}).get("value"))) is not None:
-            figures[name] = _billions(value)
+    if assets is not None:
+        figures["current_assets_bn"] = _billions(assets)
+    if liabilities is not None:
+        figures["current_liabilities_bn"] = _billions(liabilities)
+    # Cash leaves out marketable securities, so a runway read from it alone can be years short. Code does the sum: told in words
+    # to use the two figures above, the bear and the judge of the replay still divided the cash in the note by the burn.
+    if (runway := _runway_months(cash_row or income.get("operating_cash_flow"), assets, liabilities)) is not None:
+        figures["runway_months"] = runway
     if not figures:
         return unavailable_fundamentals(_NO_FIGURES)
 

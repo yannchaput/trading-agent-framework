@@ -97,6 +97,35 @@ def test_a_bank_with_no_current_assets_leaves_them_out():
     assert "current_assets_bn" not in f and "current_liabilities_bn" not in f
 
 
+def test_the_runway_is_current_assets_less_liabilities_over_the_monthly_burn():
+    income = {"free_cash_flow": _flow(-145e6, "2026-01-01", "2026-06-30")}  # IOVA: $24.2M a month
+    balance = {"current_assets": _point(464e6), "current_liabilities": _point(107e6)}
+    assert fundamentals_fields(income, balance, stale=False)["runway_months"] == 15  # 357 / 24.2, not the 4.6 months of its $111M of cash
+
+
+def test_the_runway_uses_operating_cash_flow_when_there_is_no_free_cash_flow():
+    income = {"operating_cash_flow": _flow(-127.249e6, "2026-01-01", "2026-06-30")}  # SYRE
+    balance = {"current_assets": _point(1173.003e6), "current_liabilities": _point(63.302e6)}
+    assert fundamentals_fields(income, balance, stale=False)["runway_months"] == 52
+
+
+def test_a_company_not_burning_cash_has_no_runway():
+    income = {"free_cash_flow": _flow(145e6, "2026-01-01", "2026-06-30")}
+    balance = {"current_assets": _point(464e6), "current_liabilities": _point(107e6)}
+    assert "runway_months" not in fundamentals_fields(income, balance, stale=False)
+
+
+def test_liabilities_above_current_assets_are_no_runway_at_all():
+    income = {"free_cash_flow": _flow(-60e6, "2026-01-01", "2026-06-30")}
+    balance = {"current_assets": _point(100e6), "current_liabilities": _point(400e6)}
+    assert fundamentals_fields(income, balance, stale=False)["runway_months"] == 0
+
+
+def test_the_runway_needs_both_current_figures():
+    income = {"free_cash_flow": _flow(-60e6, "2026-01-01", "2026-06-30")}
+    assert "runway_months" not in fundamentals_fields(income, {"current_assets": _point(100e6)}, stale=False)
+
+
 def test_stale_figures_are_flagged():
     assert fundamentals_fields(MU_INCOME, MU_BALANCE, stale=True)["fundamentals_stale"] is True
 

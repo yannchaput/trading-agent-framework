@@ -67,6 +67,7 @@ def test_every_agent_reads_the_fundamentals_fields_and_the_sources_rule() -> Non
         "total_debt_prior_year_bn",
         "current_assets_bn",
         "current_liabilities_bn",
+        "runway_months",
         "currency",
         "fundamentals_stale",
         "fundamentals_unavailable",
