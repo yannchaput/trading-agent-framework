@@ -189,14 +189,14 @@ def scenario_runs_frame(runs: Sequence[ScenarioRun]) -> pd.DataFrame:
 
 
 def render_reviews_table(ref: RunRef) -> None:
-    """The run's `reviews.jsonl`: one row per review, then a list of the reviews beside one review's raw record."""
+    """The run's `reviews.jsonl` or `runs.jsonl`: one row per record, one column per key, then a list of the reviews beside one review's raw record."""
     try:
         loaded = reviews_reader.load_reviews(ref)
     except OSError as exc:
         st.error(f"This run's reviews cannot be read: {exc}")
         return
 
-    abandoned = sum(1 for record in loaded.records if record.get("abandoned"))
+    abandoned = sum(1 for record in loaded.records if record.get("abandoned") or record.get("outcome") == "abandoned")
     parts = [f"{len(loaded.records)} reviews", f"{abandoned} abandoned"]
     if loaded.malformed:
         parts.append(f"{loaded.malformed} unreadable line{'s' if loaded.malformed != 1 else ''}")

@@ -321,9 +321,24 @@ def test_agents_tab_lists_the_runs_reviews_as_a_table(run_dir: Path) -> None:
 
     assert not at.exception
     (table,) = list(at.tabs[4].dataframe)
-    assert list(table.value["Date"]) == ["2026-01-06", "2026-01-13"]
-    assert list(table.value["Status"]) == ["completed", "abandoned"]
-    assert table.value["Orders"][0] == "BUY AAPL 3"
+    assert list(table.value["date"]) == ["2026-01-06", "2026-01-13"]
+    assert list(table.value["abandoned"]) == [False, True]
+    assert table.value["orders"][0] == '[{"symbol": "AAPL", "side": "buy", "quantity": 3}]'
+    assert any("2 reviews" in caption.value and "1 abandoned" in caption.value for caption in at.tabs[4].caption)
+
+
+def test_agents_tab_also_shows_a_runs_jsonl_with_its_own_columns(run_dir: Path) -> None:
+    import json
+
+    records = [{"date": "2026-01-06", "outcome": "nothing_new"}, {"date": "2026-01-13", "outcome": "abandoned", "stage": "filings", "error": "503"}]
+    (run_dir / "runs.jsonl").write_text("".join(json.dumps(record) + "\n" for record in records), encoding="utf-8")
+
+    at = _detail_page(run_dir, agents=None, with_calls_db=False)
+
+    assert not at.exception
+    assert [tab.label for tab in at.tabs][4] == "Agents"
+    (table,) = list(at.tabs[4].dataframe)
+    assert list(table.value.columns) == ["date", "outcome", "stage", "error"]
     assert any("2 reviews" in caption.value and "1 abandoned" in caption.value for caption in at.tabs[4].caption)
 
 
