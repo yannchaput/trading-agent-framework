@@ -34,7 +34,7 @@ class BullBearParams:
     # Memory tool calls per judge run; submit_verdicts is exempt. The 10-23 run (Qwen 3.8) made 107 memory calls, each kept in its context.
     judge_memory_budget: int = 3
     note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
-    note_hard_max_chars: int = 600  # the length the recorder refuses above: a model cannot count characters (10-19: 25 notes 1 to 20% over 500)
+    note_hard_max_chars: int = 700  # the length the recorder refuses above: a model cannot count characters (10-31 run: 11.8% of drafts over 600, 1.9% over 700)
     argument_max_chars: int = 300  # the bull's and the bear's submitted argument
     reason_max_chars: int = 300  # the judge's submitted reason per verdict
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates

@@ -22,7 +22,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.judge_memory_budget == 3
     assert params.research_news is True
     assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 5 tool calls, needs a limit of 21; each rejected resubmission adds 3
-    assert (params.note_max_chars, params.note_hard_max_chars) == (500, 600)  # the researcher is asked for 500, a note up to 600 is kept
+    assert (params.note_max_chars, params.note_hard_max_chars) == (500, 700)  # the researcher is asked for 500, a note up to 700 is kept
     assert params.max_output_tokens == 36864  # the thinking budget plus 8,192 for the submission
     assert params.judge_max_output_tokens == 45056  # the judge's own cap: its budget plus 8,192; ~20k prompt + 45,056 fits the 81,920 window
     assert params.thinking_token_budget == 28672  # a safety net set high on purpose: a healthy turn never reaches it

@@ -36,8 +36,8 @@ def test_a_note_up_to_the_hard_limit_is_recorded_though_the_researcher_is_asked_
     recorder.expect_note("AAA")
     params = BullBearParams()
 
-    assert params.note_max_chars < params.note_hard_max_chars == 600
-    assert tools["submit_note"]("AAA", "x" * 600) == {"status": "recorded"}
+    assert params.note_max_chars < params.note_hard_max_chars == 700
+    assert tools["submit_note"]("AAA", "x" * 700) == {"status": "recorded"}
 
 
 def test_a_note_for_the_armed_symbol_is_recorded_stripped() -> None:
@@ -67,21 +67,21 @@ def test_a_long_note_is_refused_with_the_asked_length_and_how_to_shorten_it() ->
     recorder, tools = _tools()
     recorder.expect_note("AAA")
 
-    error = tools["submit_note"]("AAA", "x" * 662)["error"]
+    error = tools["submit_note"]("AAA", "x" * 762)["error"]
 
-    assert error == "the note for AAA is 662 characters; a note is at most 500: rewrite it to about 450 characters by dropping your least important facts, not by trimming words"
-    assert "600" not in error  # the hard limit stays hidden from the model
+    assert error == "the note for AAA is 762 characters; a note is at most 500: rewrite it to about 450 characters by dropping your least important facts, not by trimming words"
+    assert "700" not in error  # the hard limit stays hidden from the model
 
 
 def test_the_same_long_note_sent_again_is_called_out() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
-    tools["submit_note"]("AAA", "x" * 662)
+    tools["submit_note"]("AAA", "x" * 762)
 
-    again = tools["submit_note"]("AAA", "  " + "x" * 662 + " ")["error"]  # same text once stripped
-    shorter = tools["submit_note"]("AAA", "x" * 650)["error"]
+    again = tools["submit_note"]("AAA", "  " + "x" * 762 + " ")["error"]  # same text once stripped
+    shorter = tools["submit_note"]("AAA", "x" * 750)["error"]
 
-    assert again.startswith("this is the same text you sent before: the note for AAA is 662 characters")
+    assert again.startswith("this is the same text you sent before: the note for AAA is 762 characters")
     assert not shorter.startswith("this is the same text")
 
 
@@ -90,11 +90,11 @@ def test_the_recorder_keeps_the_last_note_refused_for_length_until_the_next_stag
     recorder.expect_note("AAA")
     assert recorder.refused_note is None
 
-    tools["submit_note"]("AAA", "x" * 700)
-    tools["submit_note"]("AAA", " " + "y" * 650 + " ")
+    tools["submit_note"]("AAA", "x" * 800)
+    tools["submit_note"]("AAA", " " + "y" * 750 + " ")
     tools["submit_note"]("BBB", "z" * 10)  # refused for its symbol: the length-refused note stays
 
-    assert recorder.refused_note == "y" * 650
+    assert recorder.refused_note == "y" * 750
     recorder.expect_note("BBB")
     assert recorder.refused_note is None
 
@@ -102,7 +102,7 @@ def test_the_recorder_keeps_the_last_note_refused_for_length_until_the_next_stag
 def test_a_note_refused_for_another_reason_leaves_no_refused_note() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
-    tools["submit_note"]("BBB", "x" * 700)
+    tools["submit_note"]("BBB", "x" * 800)
     tools["submit_note"]("AAA", "  ")
     assert recorder.refused_note is None
 
@@ -337,12 +337,12 @@ def test_a_note_with_no_space_is_cut_hard_with_an_ellipsis() -> None:
     assert trim_note("x" * 700, max_chars=600, min_chars=250) == "x" * 599 + "…"
 
 
-@pytest.mark.parametrize("length", [601, 650, 1200])
+@pytest.mark.parametrize("length", [701, 750, 1200])
 def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
     text = ("Fact 2025-10-27: revenue $1.58B. " * 60)[:length]
     recorder, tools = _tools()
     recorder.expect_note("AAA")
-    assert tools["submit_note"]("AAA", trim_note(text, max_chars=600, min_chars=250)) == {"status": "recorded"}
+    assert tools["submit_note"]("AAA", trim_note(text, max_chars=700, min_chars=250)) == {"status": "recorded"}
 
 
 def test_the_weak_in_refusal_tells_a_held_stock_to_give_what_changed() -> None:
