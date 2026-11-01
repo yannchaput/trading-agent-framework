@@ -49,6 +49,11 @@
 * Draw a plot of realized P&L in grey
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
+### Time Machine
+
+* https://github.com/Jakeschincariol/day-trader-skill
+* Prends juste le mécanisme Time Machine parce que le reste est une strat différente
+
 ### Cross sectional momentum
 
 * ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
@@ -72,10 +77,11 @@
 ### LLM benchmark
 
 * ~~Add a cli parameter to select scenarios to run~~
-* Test new scenarios from bull bear and insider
+* ~~Test new scenarios from bull bear and insider~~
+* ~~Add mathematical and tradinc calculation problems to the scenarios~~
+* Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 * Test Sage 1.5
 * Test Nanbeige 4.3
-* Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 * Test Qwen 3.8 35B: [X](https://x.com/Oluwaphilemon1/status/2114912917157974508)
 ~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
