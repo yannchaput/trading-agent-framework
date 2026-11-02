@@ -12,7 +12,7 @@ review that follows closely finds the previous orders still pending; in paper/li
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -47,6 +47,19 @@ class PlacedOrder:
     symbol: str
     side: str  # "buy" or "sell"
     quantity: float
+
+
+def in_flight_quantities(open_orders: Iterable[Order]) -> tuple[dict[str, float], dict[str, float]]:
+    """The quantity still to fill per symbol from open orders: (buys, sells). Orders sized by notional are skipped."""
+    buys: dict[str, float] = {}
+    sells: dict[str, float] = {}
+    for order in open_orders:
+        if order.quantity is None:
+            continue
+        remaining = float(order.quantity - order.filled_quantity)
+        book = buys if order.side is OrderSide.BUY else sells
+        book[order.asset.symbol] = book.get(order.asset.symbol, 0.0) + remaining
+    return buys, sells
 
 
 def _estimated_pnl(price: float, cost: float, quantity: float) -> str:
@@ -98,15 +111,7 @@ class Rebalancer:
 
     def _in_flight(self) -> tuple[dict[str, float], dict[str, float]]:
         """The quantity still to fill per symbol from open orders: (buys, sells)."""
-        buys: dict[str, float] = {}
-        sells: dict[str, float] = {}
-        for order in self._strategy.broker.tracker.get_active_orders():
-            if order.quantity is None:
-                continue
-            remaining = float(order.quantity - order.filled_quantity)
-            book = buys if order.side is OrderSide.BUY else sells
-            book[order.asset.symbol] = book.get(order.asset.symbol, 0.0) + remaining
-        return buys, sells
+        return in_flight_quantities(self._strategy.broker.tracker.get_active_orders())
 
     # --- the rebalance -----------------------------------------------------------------------------
 

@@ -22,6 +22,7 @@ from trading_agent_framework.entities.enums import (
 )
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.helpers import parse_insufficient_buying_power
 
 _BROKER_ORDER_ID = "11111111-1111-1111-1111-111111111111"
 
@@ -106,9 +107,10 @@ def test_submit_order_raises_sets_error_and_tracks_nowhere() -> None:
     order = _make_order()
     local_identifier = order.identifier
 
-    with pytest.raises(RuntimeError, match="boom"):
+    with pytest.raises(BrokerError, match="boom") as raised:
         broker.submit_order(order)
 
+    assert raised.value.__cause__ is boom
     assert order.status is OrderStatus.ERROR
     assert order.error_message == "boom"
     assert broker.tracker.get_tracked_order(local_identifier) is None
@@ -123,6 +125,18 @@ def test_submit_order_raises_sets_error_and_tracks_nowhere() -> None:
             broker.tracker.error,
         )
     )
+
+
+def test_submit_order_rejection_keeps_alpaca_body_so_buying_power_resync_still_parses() -> None:
+    """A strategy catches the wrapped error and reads Alpaca's real buying power from its message."""
+    client = FakeTradingClient()
+    client.raise_on_submit = APIError('{"buying_power":"132.45","code":40310000,"message":"insufficient buying power"}')
+    broker = AlpacaBroker("momentum", client)
+
+    with pytest.raises(BrokerError) as raised:
+        broker.submit_order(_make_order())
+
+    assert parse_insufficient_buying_power(raised.value) == 132.45
 
 
 # Test 74

@@ -5,6 +5,7 @@ time is only an estimate. `cash_buffer_pct` holds a slice of it back so the buys
 """
 
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pandas as pd
@@ -13,6 +14,8 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
+from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import unfilled_sell_proceeds
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -52,8 +55,11 @@ class FakeStrategy:
         trend_assets=(),
         bars=None,
         sell_fill=0.0,
+        open_orders=(),
     ):
         self._sell_fill = sell_fill
+        # Orders still open from an earlier rebalance (e.g. before a restart), as the broker's tracker reports them
+        self.broker = SimpleNamespace(tracker=SimpleNamespace(get_active_orders=lambda: list(open_orders)))
         self.parameters = {
             "sell_rank_threshold": 35,
             "cash_buffer_pct": cash_buffer_pct,
@@ -210,6 +216,55 @@ def test_zero_buffer_spends_everything_available():
 
 def _held(symbol, quantity):
     return SimpleNamespace(asset=SimpleNamespace(symbol=symbol), quantity=quantity)
+
+
+def _open(symbol, quantity, side):
+    """An order an earlier rebalance sent that has not filled yet."""
+    return Order(
+        strategy_name="cross_momentum",
+        asset=Asset(symbol=symbol),
+        side=OrderSide(side),
+        order_type=OrderType.MARKET,
+        quantity=Decimal(str(quantity)),
+        time_in_force=TimeInForce.DAY,
+    )
+
+
+def test_a_rerun_does_not_buy_again_what_an_open_buy_already_brings():
+    # The first run's AAA buy (3 x 100 = the 0.3 target) is still open when the strategy restarts and rebalances again
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, open_orders=[_open("AAA", 3, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == []
+
+
+def test_cash_committed_to_an_open_buy_is_not_spent_again():
+    # BBB's open buy (5 x 100) has not debited the cash yet: 1000 - 500 = 500, less the 5% reserve = 475 for AAA
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 50.0, "BBB": 100.0}, open_orders=[_open("BBB", 5, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 50.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [9.5]
+
+
+def test_a_position_already_being_exited_is_not_sold_again_and_its_proceeds_fund_the_buys():
+    # OLD's exit (10 x 100) is still open: no second sell, and its 1000 is counted, less the 5% reserve
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 10.0)], last_prices={"OLD": 100.0, "AAA": 50.0}, open_orders=[_open("OLD", 10, "sell")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 50.0, 1)], {"AAA": 1})  # OLD is unranked
+
+    assert _orders(fake, "OLD", "sell") == []
+    assert _orders(fake, "AAA", "buy") == [10.0]
+
+
+def test_a_trim_already_in_flight_is_not_sent_again():
+    # 10 AAA held, 6 already being sold: 4 x 100 is the 0.4 target, nothing left to trim
+    fake = FakeStrategy(cash=0.0, positions=[_held("AAA", 10.0)], last_prices={"AAA": 100.0}, open_orders=[_open("AAA", 6, "sell")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "sell") == []
 
 
 def _orders(fake, symbol, side):

@@ -40,6 +40,7 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
 from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
 from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
@@ -587,6 +588,23 @@ class CrossMomentumStrategy(Strategy):
         min_trade_value = portfolio_value * parking["min_trade_pct"]
 
         current_positions = self.get_positions()
+        # Orders still open from an earlier rebalance (a restart on a rebalance day sends this one again), read before
+        # this run sends anything: a pending buy counts toward its position, a pending sell is not sent again, and the
+        # buy budget is net of both. Cash is not debited by an open buy, nor credited by an open sell, until it fills.
+        incoming, outgoing = in_flight_quantities(self.broker.tracker.get_active_orders())
+        if incoming or outgoing:
+            pending = [f"buy {q:g} {s}" for s, q in incoming.items()] + [f"sell {q:g} {s}" for s, q in outgoing.items()]
+            self.log_warning(f"Counting orders still open from an earlier rebalance: {', '.join(pending)}")
+
+        def held_quantity(position) -> float:
+            """The position counting open orders: held, plus buys in flight, minus sells in flight."""
+            symbol = position.asset.symbol
+            return max(0.0, float(position.quantity) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0))
+
+        def sellable(position):
+            """What is held and not already being sold; the exact position when nothing is."""
+            pending_sell = outgoing.get(position.asset.symbol, 0.0)
+            return position.quantity if pending_sell == 0 else max(0.0, fractional_qty(float(position.quantity) - pending_sell))
 
         # Size at the last trade: an entry's "price" is the last COMPLETED close, a session old by now.
         prices = {entry["symbol"]: self._price_or_zero(entry["symbol"]) for entry in target}
@@ -617,10 +635,10 @@ class CrossMomentumStrategy(Strategy):
                 if price <= 0:
                     continue
                 target_value = portfolio_value * entry["target_weight"]
-                current_value = float(pos.quantity) * price
+                current_value = held_quantity(pos) * price
                 trim_value = current_value - target_value
                 if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
-                    trim_qty = fractional_qty(trim_value / price)
+                    trim_qty = min(fractional_qty(trim_value / price), float(sellable(pos)))
                     if trim_qty > 0:
                         self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                         try:
@@ -631,6 +649,10 @@ class CrossMomentumStrategy(Strategy):
 
             rank = all_ranks.get(symbol)
             if rank is None or rank > sell_threshold:
+                exit_quantity = sellable(pos)
+                if exit_quantity <= 0:
+                    self.log_info(f"{symbol} is already being sold by an open order: not selling it again")
+                    continue
                 if rank is None:
                     # The position did not pass the scoring pipeline and was kicked out by the filters (volatility, price or not able to compute indicators)
                     self.log_warning(f"Selling {symbol} (not ranked — failed filters or price data unavailable)")
@@ -638,7 +660,7 @@ class CrossMomentumStrategy(Strategy):
                     # The position is ranked but outside the sell threshold (hysteresis band)
                     self.log_warning(f"Selling {symbol} (rank {rank} > {sell_threshold}) - outside hysteresis band")
                 try:
-                    sell_order = self.create_order(symbol, pos.quantity, "sell", time_in_force="day")
+                    sell_order = self.create_order(symbol, exit_quantity, "sell", time_in_force="day")
                     sell_order = self.submit_order(sell_order)
                     sold_count += 1
                     last_price = self.get_last_price(symbol) or 0.0
@@ -648,7 +670,7 @@ class CrossMomentumStrategy(Strategy):
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
             else:
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
-                hysteresis_value += float(pos.quantity) * self._price_or_zero(symbol)
+                hysteresis_value += held_quantity(pos) * self._price_or_zero(symbol)
                 kept_count += 1
 
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
@@ -661,15 +683,14 @@ class CrossMomentumStrategy(Strategy):
             if price <= 0:
                 self.log_warning(f"Parking: no price for {symbol} — no {symbol} order this week")
                 continue
-            value = float(position.quantity) * price if position else 0.0
+            value = (held_quantity(position) if position else incoming.get(symbol, 0.0)) * price
             symbol_target = parking_target * weights.get(symbol, 0.0)
             sleeve.append((symbol, price, value, symbol_target))
             self.log_info(f"Parking: {symbol} target ${symbol_target:,.0f} (current ${value:,.0f})")
             excess = value - symbol_target
-            if value > symbol_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
-                # A zero target sells the exact holding, so float flooring leaves no dust behind.
-                # Guard against a missing position so static analysis does not treat it as a known quantity.
-                sell_qty = float(position.quantity) if position is not None and symbol_target == 0 else fractional_qty(excess / price)
+            if position is not None and value > symbol_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
+                # A zero target sells the exact holding (less what is already being sold), so float flooring leaves no dust behind.
+                sell_qty = float(sellable(position)) if symbol_target == 0 else min(fractional_qty(excess / price), float(sellable(position)))
                 if sell_qty > 0:
                     self.log_info(f"Selling {sell_qty} {symbol} @ ${price:.2f} (parking above target)")
                     try:
@@ -688,9 +709,13 @@ class CrossMomentumStrategy(Strategy):
         cash = float(self.get_cash())
         pending_proceeds = unfilled_sell_proceeds(sells)
         filled_sells = sum(1 for order, _ in sells if not order.is_active())
-        self.log_info(f"Buy budget: cash ${cash:,.0f} + ${pending_proceeds:,.0f} from unfilled sells ({filled_sells} of {len(sells)} sells already filled)")
-        cash_reserve = (cash + pending_proceeds) * self.parameters["cash_buffer_pct"]
-        available_cash = cash + pending_proceeds - cash_reserve
+        # Earlier open orders: a pending sell will bring its proceeds, a pending buy has already claimed its cost
+        earlier_credit = sum(quantity * self._price_or_zero(symbol) for symbol, quantity in outgoing.items()) - sum(quantity * self._price_or_zero(symbol) for symbol, quantity in incoming.items())
+        earlier_note = f" {'+' if earlier_credit >= 0 else '-'} ${abs(earlier_credit):,.0f} net from earlier open orders" if incoming or outgoing else ""
+        self.log_info(f"Buy budget: cash ${cash:,.0f} + ${pending_proceeds:,.0f} from unfilled sells ({filled_sells} of {len(sells)} sells already filled){earlier_note}")
+        spendable = cash + pending_proceeds + earlier_credit
+        cash_reserve = spendable * self.parameters["cash_buffer_pct"]
+        available_cash = spendable - cash_reserve
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
             if available_cash <= 0:
@@ -705,7 +730,7 @@ class CrossMomentumStrategy(Strategy):
             target_value = portfolio_value * target_weight
 
             current_pos = next((p for p in current_positions if p.asset.symbol == symbol), None)
-            current_value = float(current_pos.quantity) * price if current_pos else 0.0
+            current_value = (held_quantity(current_pos) if current_pos else incoming.get(symbol, 0.0)) * price
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value

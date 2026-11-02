@@ -131,7 +131,9 @@ class AlpacaBroker(Broker):
             order.set_error(exc)
             logger.exception("Failed to submit order %s", order.identifier)
             self.tracker.untrack(order)
-            raise  # set_error BEFORE re-raising -- lumibot's contract
+            # set_error BEFORE raising -- lumibot's contract. Wrapped so callers catching BrokerError (the Rebalancer)
+            # don't abort half way; the message stays Alpaca's own body, which parse_insufficient_buying_power reads.
+            raise BrokerError(str(exc)) from exc
         order.set_identifier(response.id)
         order.status = orders.map_status(response.status)
         order.update_raw(response)
