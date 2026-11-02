@@ -21,6 +21,7 @@ uv run python scripts/tests/smoke_alpaca_orders.py     # manual paper-trading sm
 uv run python scripts/tests/smoke_strategy_paper.py    # manual paper-trading smoke test: strategy lifecycle
 uv run python scripts/tests/smoke_alpaca_data.py       # manual paper-account smoke test: market data + indicators (read-only)
 uv run python scripts/tests/smoke_quality_screen.py    # manual smoke test: fundamentals quality screen against real SEC + Yahoo (read-only)
+uv run python scripts/tests/smoke_traded_prices.py    # manual smoke test: Yahoo traded close/volume and the rebuilt adjusted bars (read-only)
 uv run python scripts/tests/smoke_earnings_events.py    # manual smoke test: earnings_drift events + Benzinga surprises against real SEC + Alpaca news (read-only)
 uv run python scripts/tests/smoke_insider_trades.py    # manual smoke test: insider_trades Form 4 filings (AAPL, JPM) against real SEC: raw XML, parsed trades, labels (read-only; fills cache/sec)
 uv run python scripts/tests/smoke_congress_trades.py    # manual smoke test: congress_trades against the real House Clerk (yearly report + PTRs -> holdings, tiers, baseline weights; read-only; needs CONGRESS_USER_AGENT)

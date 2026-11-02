@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Protocol
 
+from trading_agent_framework.backtesting.data.yahoo import traded_series
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.strategies.common.sessions import completed_bars
 from trading_agent_framework.utils.errors import BrokerError, YahooDataError
@@ -27,6 +28,8 @@ class DataUnavailable(Exception):
 class DailySeries:
     closes: list[float]  # oldest first
     volumes: list[float]
+    traded_closes: list[float] | None = None  # the close and volume as traded, same rows as `closes`; None when the source carries none
+    traded_volumes: list[float] | None = None
 
 
 class DailyBars(Protocol):
@@ -41,7 +44,13 @@ def _series(bars: Bars, today: date) -> DailySeries | None:
     frame = completed_bars(bars.df, today).tail(HISTORY_BARS)
     if frame.empty:
         return None
-    return DailySeries(closes=[float(value) for value in frame["close"]], volumes=[float(value) for value in frame["volume"]])
+    traded = traded_series(frame)  # after the cut: the same rows as closes
+    return DailySeries(
+        closes=[float(value) for value in frame["close"]],
+        volumes=[float(value) for value in frame["volume"]],
+        traded_closes=traded[0] if traded else None,
+        traded_volumes=traded[1] if traded else None,
+    )
 
 
 class YahooBars:

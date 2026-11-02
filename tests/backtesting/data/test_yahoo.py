@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pytest
 
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData, parse_yahoo_frame
+from trading_agent_framework.backtesting.data.yahoo import (
+    YahooBacktestData,
+    parse_yahoo_frame,
+    traded_series,
+)
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.errors import BacktestDataError
 
@@ -29,6 +33,88 @@ def _raw_yahoo_frame() -> pd.DataFrame:
         },
         index=index,
     )
+
+
+def _raw_unadjusted_frame() -> pd.DataFrame:
+    """An auto_adjust=False, actions=True download: Close split-adjusted only, Adj Close also dividend-adjusted."""
+    index = pd.date_range("2026-01-05", periods=5, freq="B")
+    return pd.DataFrame(
+        {
+            "Open": [49.0, 50.0, 51.0, 52.0, 53.0], "High": [51.0, 52.0, 53.0, 54.0, 55.0],
+            "Low": [48.0, 49.0, 50.0, 51.0, 52.0], "Close": [50.0, 51.0, 52.0, 53.0, 54.0],
+            "Adj Close": [45.0, 45.9, 46.8, 53.0, 54.0], "Volume": [2000.0, 2000.0, 1000.0, 1000.0, 1000.0],
+            "Dividends": [0.0, 0.0, 0.0, 0.5, 0.0], "Stock Splits": [0.0, 0.0, 2.0, 0.0, 0.0],
+        },
+        index=index,
+    )
+
+
+def test_traded_close_undoes_every_later_split() -> None:
+    df = parse_yahoo_frame(_raw_unadjusted_frame())
+
+    assert list(df["traded_close"]) == [100.0, 102.0, 52.0, 53.0, 54.0]
+    assert list(df["traded_volume"]) == [1000.0] * 5
+    assert list(df.columns) == ["open", "high", "low", "close", "volume", "traded_close", "traded_volume"]
+
+
+def test_adjusted_columns_follow_yfinances_auto_adjust() -> None:
+    raw = _raw_unadjusted_frame()
+    df = parse_yahoo_frame(raw)
+
+    ratio = raw["Adj Close"] / raw["Close"]
+    assert list(df["close"]) == pytest.approx(list(raw["Adj Close"]))
+    assert list(df["open"]) == pytest.approx(list(raw["Open"] * ratio))
+    assert list(df["high"]) == pytest.approx(list(raw["High"] * ratio))
+    assert list(df["low"]) == pytest.approx(list(raw["Low"] * ratio))
+    assert list(df["volume"]) == list(raw["Volume"])
+
+
+def test_a_reverse_split_and_two_splits_multiply() -> None:
+    index = pd.date_range("2026-01-05", periods=5, freq="B")
+    raw = pd.DataFrame(
+        {
+            "Open": [10.0] * 5, "High": [10.0] * 5, "Low": [10.0] * 5, "Close": [10.0] * 5,
+            "Adj Close": [10.0] * 5, "Volume": [100.0] * 5,
+            "Stock Splits": [0.0, 0.1, 0.0, 3.0, 0.0],
+        },
+        index=index,
+    )
+
+    df = parse_yahoo_frame(raw)
+
+    assert list(df["traded_close"]) == pytest.approx([3.0, 30.0, 30.0, 10.0, 10.0])
+
+
+def test_a_split_on_a_nan_row_still_scales_the_rows_before_it() -> None:
+    raw = _raw_unadjusted_frame()
+    raw.loc[raw.index[2], ["Open", "High", "Low", "Close", "Adj Close"]] = float("nan")
+
+    df = parse_yahoo_frame(raw)
+
+    assert len(df) == 4
+    assert list(df["traded_close"]) == [100.0, 102.0, 53.0, 54.0]
+
+
+def test_an_adjusted_shape_frame_parses_as_today() -> None:
+    df = parse_yahoo_frame(_raw_yahoo_frame())
+
+    assert list(df.columns) == ["open", "high", "low", "close", "volume"]
+    assert traded_series(df) is None
+
+
+def test_a_frame_without_a_stock_splits_column_traded_equals_the_split_adjusted_close_and_volume() -> None:
+    raw = _raw_unadjusted_frame().drop(columns=["Stock Splits"])
+    df = parse_yahoo_frame(raw)
+
+    assert list(df["traded_close"]) == list(raw["Close"])
+    assert list(df["traded_volume"]) == list(raw["Volume"])
+
+
+def test_traded_series_needs_both_columns() -> None:
+    df = parse_yahoo_frame(_raw_unadjusted_frame())
+
+    assert traded_series(df) == ([100.0, 102.0, 52.0, 53.0, 54.0], [1000.0] * 5)
+    assert traded_series(df.drop(columns=["traded_volume"])) is None
 
 
 def test_parse_yahoo_frame_lowercases_columns_and_indexes_by_session_close() -> None:
@@ -253,11 +339,68 @@ def test_load_honors_its_own_start_and_end_arguments() -> None:
 
     other_start = datetime(2026, 2, 1, tzinfo=UTC)
     other_end = datetime(2026, 2, 10, tzinfo=UTC)
-    source = YahooBacktestData(START, END, download=fake_download)
+    source = YahooBacktestData(START, END, download=fake_download, today=lambda: date(2026, 3, 1))
     source.load([AAPL], other_start, other_end, "day")
 
     assert calls[0]["start"] == other_start.date().isoformat()
-    assert calls[0]["end"] == (other_end.date() + timedelta(days=1)).isoformat()
+    # The download runs through today (so Yahoo's split rows are visible), not through load()'s end.
+    assert calls[0]["end"] == "2026-03-02"
+
+
+def test_downloads_ask_for_unadjusted_prices_and_splits() -> None:
+    calls: list[dict] = []
+
+    def fake_download(symbols: object, **kwargs: object) -> pd.DataFrame:
+        calls.append(kwargs)
+        return _raw_unadjusted_frame()
+
+    source = YahooBacktestData(START, END, download=fake_download, today=lambda: date(2026, 3, 1))
+    source.load([AAPL], START, END, "day")
+    source.bars(Asset("MSFT"), END, 1, "day")  # lazy single-asset fetch
+
+    assert len(calls) == 2
+    for kwargs in calls:
+        assert kwargs["auto_adjust"] is False
+        assert kwargs["actions"] is True
+        assert kwargs["end"] == "2026-03-02"  # today + 1 (yfinance's end is exclusive), the lazy fetch included
+
+
+def _split_after_window_download() -> pd.DataFrame:
+    """The unadjusted frame moved to 2026-01-07..2026-01-13: its split row lands on 2026-01-09."""
+    raw = _raw_unadjusted_frame()
+    raw.index = pd.date_range("2026-01-07", periods=5, freq="B")
+    return raw
+
+
+def _assert_window_trimmed_and_scaled(source: YahooBacktestData) -> None:
+    far_future = datetime(2030, 1, 1, tzinfo=UTC)
+    result = source.bars(AAPL, far_future, 10, "day")
+
+    assert result is not None
+    assert [ts.date() for ts in result.df.index] == [date(2026, 1, 7), date(2026, 1, 8)]
+    assert list(result.df["traded_close"]) == [100.0, 102.0]
+    assert list(result.df["traded_close"]) == [2 * c for c in [50.0, 51.0]]
+
+
+def test_a_split_after_the_window_scales_the_window_and_stays_invisible() -> None:
+    window_end = datetime(2026, 1, 8, tzinfo=UTC)
+    source = YahooBacktestData(
+        START, window_end, download=lambda *a, **k: _split_after_window_download(),
+        today=lambda: date(2026, 3, 1),
+    )
+    source.load([AAPL], START, window_end, "day")
+
+    _assert_window_trimmed_and_scaled(source)
+
+
+def test_the_lazy_fetch_trims_to_the_constructor_window() -> None:
+    window_end = datetime(2026, 1, 8, tzinfo=UTC)
+    source = YahooBacktestData(
+        START, window_end, download=lambda *a, **k: _split_after_window_download(),
+        today=lambda: date(2026, 3, 1),
+    )
+
+    _assert_window_trimmed_and_scaled(source)
 
 
 def test_minute_timestep_is_not_supported() -> None:
@@ -308,7 +451,8 @@ def test_sessions_skip_a_market_holiday_that_has_no_daily_bar() -> None:
         calls.append(symbol)
         return _frame_for_dates(traded)
 
-    source = YahooBacktestData(START, END, download=fake_download)
+    # The window must cover the bars: the fetch is trimmed to the constructor's end.
+    source = YahooBacktestData(START, datetime(2026, 1, 31, tzinfo=UTC), download=fake_download)
     sessions = source.sessions(datetime(2026, 1, 16, tzinfo=ET), datetime(2026, 1, 21, tzinfo=ET))
 
     session_dates = [s.open.date() for s in sessions]

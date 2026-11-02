@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
+from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData, traded_series
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
@@ -304,7 +304,15 @@ class CrossMomentumStrategy(Strategy):
             return None
 
         closes = df["close"].tolist()
-        inputs = momentum_inputs(closes, df["volume"].tolist(), self.parameters)
+        # Cut from the same rows as `closes`: the filters read the price and volume the stock traded at, not the adjusted ones.
+        traded = traded_series(df)
+        inputs = momentum_inputs(
+            closes,
+            df["volume"].tolist(),
+            self.parameters,
+            traded_closes=traded[0] if traded else None,
+            traded_volumes=traded[1] if traded else None,
+        )
         if inputs is None:
             return None
 
@@ -606,7 +614,7 @@ class CrossMomentumStrategy(Strategy):
             pending_sell = outgoing.get(position.asset.symbol, 0.0)
             return position.quantity if pending_sell == 0 else max(0.0, fractional_qty(float(position.quantity) - pending_sell))
 
-        # Size at the last trade: an entry's "price" is the last COMPLETED close, a session old by now.
+        # Size at the last trade: an entry's "price" is the traded close of the last completed session, a session old by now.
         prices = {entry["symbol"]: self._price_or_zero(entry["symbol"]) for entry in target}
         for symbol, price in prices.items():
             if price <= 0:

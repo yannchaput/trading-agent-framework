@@ -3,8 +3,9 @@
 Alpaca's IEX bars carry ~5% of consolidated volume, skip a thin stock's quiet days, and close at the last IEX
 trade rather than the official close, so the strategy's filter and ranks ran on other data than the backtest's
 (whose bars are Yahoo's). One batched download per scan gives paper/live the backtest's own bars: the same
-download (split- and dividend-adjusted) and the same parse (`backtesting/data/yahoo.py`), stamped at the session
-close. `yfinance` is imported lazily.
+download (`auto_adjust=False, actions=True`, so the parse can rebuild the split- and dividend-adjusted columns and
+add the traded close and volume) and the same parse (`backtesting/data/yahoo.py`), stamped at the session close.
+`yfinance` is imported lazily.
 """
 
 import logging
@@ -39,6 +40,9 @@ class YahooDailyBars:
 
         Raises YahooDataError when the download fails or returns nothing at all (an outage, not a missing symbol). A
         symbol whose data cannot be parsed is left out with a warning, like one Yahoo has nothing for.
+
+        The `traded_*` columns are right only when `today` is the real download date: Yahoo adjusts to the day its
+        download ends, so a past `today` (as `scores_cli` passes) misses the splits after it. Only `traded_*` are affected.
         """
         symbol_list = list(symbols)
         try:
@@ -47,7 +51,8 @@ class YahooDailyBars:
                 symbol_list,
                 start=(today - timedelta(days=round(self._history * _CALENDAR_DAYS_PER_BAR))).isoformat(),
                 end=(today + timedelta(days=1)).isoformat(),  # yfinance's end is exclusive
-                auto_adjust=True,
+                auto_adjust=False,
+                actions=True,
                 progress=False,
                 group_by="ticker",
             )

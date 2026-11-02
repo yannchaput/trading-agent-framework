@@ -69,3 +69,58 @@ def test_rank_orders_by_score_best_first_from_1() -> None:
 
 def test_rank_of_nothing_is_empty() -> None:
     assert rank([]) == []
+
+
+TRADED = [c * 10 for c in CLOSES]
+TRADED_VOLUMES = [v / 10 for v in VOLUMES]
+
+
+def test_the_filter_inputs_come_from_the_traded_series() -> None:
+    plain = momentum_inputs(CLOSES, VOLUMES, CONFIG)
+    traded = momentum_inputs(CLOSES, VOLUMES, CONFIG, traded_closes=TRADED, traded_volumes=TRADED_VOLUMES)
+
+    assert plain is not None and traded is not None
+    assert traded.price == 3990.0
+    # The mean of each of the last 20 sessions' traded close x 1e5 shares (closes 380..399 x 10), not the last close x the mean volume.
+    assert traded.avg_dollar_volume == pytest.approx(sum(t * v for t, v in zip(TRADED[-20:], TRADED_VOLUMES[-20:], strict=True)) / 20)
+    assert traded.avg_dollar_volume == pytest.approx(389.5e6)
+    assert (traded.ret_12_1m, traded.ret_6_1m, traded.ret_3m) == (plain.ret_12_1m, plain.ret_6_1m, plain.ret_3m)
+    assert traded.volatility == plain.volatility
+
+
+def test_a_stock_under_min_price_on_adjusted_prices_passes_on_its_traded_price() -> None:
+    adjusted = [c / 100 for c in CLOSES]  # last adjusted close 3.99, under min_price 10
+
+    assert score_stock("SPLIT", adjusted, VOLUMES, CONFIG) is None
+    assert score_stock("SPLIT", adjusted, VOLUMES, CONFIG, traded_closes=CLOSES, traded_volumes=VOLUMES) is not None  # traded at 399, $399M a day
+
+
+def test_a_dividend_payer_passes_the_dollar_volume_filter_on_traded_prices() -> None:
+    # Adjusted closes rise linearly from 5 to 15 with 1e6 shares a day: 15 x 1e6 = $15M, under min_dollar_volume ($20M).
+    # The dividends adjusted away left it trading 40% higher: the last 20 sessions average about 14.7 x 1.4 x 1e6 = $20.6M, over. The price (15, 21), the
+    # volatility (a gentle linear ramp) and the 300 trading days all pass either way, so only the dollar volume decides.
+    adjusted = [5.0 + 10.0 * i / 299 for i in range(300)]
+    traded = [c * 1.4 for c in adjusted]
+
+    assert adjusted[-1] * 1e6 < CONFIG["min_dollar_volume"] <= traded[-1] * 1e6
+    assert score_stock("DIV", adjusted, VOLUMES, CONFIG) is None
+    assert score_stock("DIV", adjusted, VOLUMES, CONFIG, traded_closes=traded, traded_volumes=VOLUMES) is not None
+
+
+def test_one_traded_series_alone_is_ignored() -> None:
+    plain = momentum_inputs(CLOSES, VOLUMES, CONFIG)
+
+    assert momentum_inputs(CLOSES, VOLUMES, CONFIG, traded_closes=TRADED) == plain
+    assert momentum_inputs(CLOSES, VOLUMES, CONFIG, traded_volumes=TRADED_VOLUMES) == plain
+
+
+def test_the_dollar_volume_averages_each_sessions_traded_dollars_across_a_split() -> None:
+    # Every session at $30M a day, a 2:1 split 10 sessions before the end: 100 x 300,000 shares before, 50 x 600,000 after.
+    # Last close x average shares would read 50 x 450,000 = $22.5M; the sessions' own dollars average to $30M.
+    traded = [100.0] * 290 + [50.0] * 10
+    traded_volumes = [300_000.0] * 290 + [600_000.0] * 10
+    inputs = momentum_inputs(CLOSES, VOLUMES, CONFIG, traded_closes=traded, traded_volumes=traded_volumes)
+
+    assert inputs is not None
+    assert inputs.price == 50.0
+    assert inputs.avg_dollar_volume == pytest.approx(30e6)

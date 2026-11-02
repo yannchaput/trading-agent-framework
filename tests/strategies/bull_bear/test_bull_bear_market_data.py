@@ -99,3 +99,31 @@ def test_the_gate_reads_each_symbol_skips_failures_and_drops_todays_bar() -> Non
     assert set(series) == {"AAA"} and series["AAA"].closes[-1] == 400.0
     assert requested == [("AAA", 301), ("BAD", 301), ("NONE", 301)]
     assert any("BAD" in warning for warning in warnings)
+
+
+def _with_traded_columns(bars: Bars) -> Bars:
+    frame = bars.df.copy()
+    frame["traded_close"] = [1000.0 + i for i in range(len(frame))]
+    frame["traded_volume"] = [3e6 + i for i in range(len(frame))]
+    return Bars(bars.asset, "day", frame)
+
+
+def test_the_series_carries_the_traded_columns_cut_like_the_closes() -> None:
+    bars = _with_traded_columns(_bars("AAA", sessions=306))  # today's bar + 305 completed sessions
+    source = FakeSource([{"AAA": bars}])
+
+    (series,) = _yahoo(source, [], []).load(["AAA"], held=[]).values()
+
+    assert series.traded_closes is not None and series.traded_volumes is not None
+    assert len(series.traded_closes) == len(series.traded_volumes) == len(series.closes) == 300
+    assert series.closes[-1] == 404.0  # the last completed session: today's 405 is dropped
+    assert series.traded_closes[-1] == 1304.0 and series.traded_volumes[-1] == 3e6 + 304
+    assert series.traded_closes[0] == 1005.0  # the same first row as closes[0] == 105.0
+
+
+def test_a_frame_without_traded_columns_gives_none() -> None:
+    source = FakeSource([{"AAA": _bars("AAA")}])
+
+    (series,) = _yahoo(source, [], []).load(["AAA"], held=[]).values()
+
+    assert series.traded_closes is None and series.traded_volumes is None

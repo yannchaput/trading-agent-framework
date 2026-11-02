@@ -87,19 +87,29 @@ def apply_filters(
 
 @dataclass(frozen=True, slots=True)
 class MomentumInputs:
-    price: float  # the last completed close
+    price: float  # the last completed close, as it traded when the traded series is given (read only by `min_price`)
     ret_12_1m: float
     ret_6_1m: float
     ret_3m: float
     volatility: float | None  # annualized, over `volatility_window` sessions; None when it cannot be computed
-    avg_dollar_volume: float  # the last 20 sessions' average volume times the last close
+    avg_dollar_volume: float  # 20-session average dollar volume (traded close x traded volume per session when given; read only by `min_dollar_volume`)
     trading_days: int
 
 
-def momentum_inputs(closes: Sequence[float], volumes: Sequence[float], params: Mapping[str, Any]) -> MomentumInputs | None:
+def momentum_inputs(
+    closes: Sequence[float],
+    volumes: Sequence[float],
+    params: Mapping[str, Any],
+    *,
+    traded_closes: Sequence[float] | None = None,
+    traded_volumes: Sequence[float] | None = None,
+) -> MomentumInputs | None:
     """The returns, volatility and liquidity cross_momentum scores on, from completed sessions, oldest first.
 
-    None when the history is shorter than `min_trading_days` or too short for one of the returns.
+    The returns and volatility always come from `closes` (adjusted). The two filter inputs, `price` and
+    `avg_dollar_volume`, come from `traded_closes` and `traded_volumes` (the price and volume the stock actually traded
+    at) when both are given; one alone is ignored. None when the history is shorter than `min_trading_days` or too
+    short for one of the returns.
     """
     trading_days = len(closes)
     if trading_days < params["min_trading_days"]:
@@ -110,16 +120,22 @@ def momentum_inputs(closes: Sequence[float], volumes: Sequence[float], params: M
     ret_3m = compute_return_from_prices(closes, _QUARTER, 0)
     if ret_12_1m is None or ret_6_1m is None or ret_3m is None:
         return None
-    price = closes[-1]
-    recent = volumes[-_DOLLAR_VOLUME_DAYS:] if len(volumes) >= _DOLLAR_VOLUME_DAYS else volumes
-    avg_volume = sum(recent) / max(len(recent), 1)
+    if traded_closes is not None and traded_volumes is not None:
+        price = traded_closes[-1]
+        # Each session's own traded dollars: the last close times the average shares would mix the pre- and post-split share counts.
+        dollars = [c * v for c, v in zip(traded_closes[-_DOLLAR_VOLUME_DAYS:], traded_volumes[-_DOLLAR_VOLUME_DAYS:], strict=False)]
+        avg_dollar_volume = sum(dollars) / max(len(dollars), 1)
+    else:
+        price = closes[-1]
+        recent = volumes[-_DOLLAR_VOLUME_DAYS:] if len(volumes) >= _DOLLAR_VOLUME_DAYS else volumes
+        avg_dollar_volume = sum(recent) / max(len(recent), 1) * price
     return MomentumInputs(
         price=price,
         ret_12_1m=ret_12_1m,
         ret_6_1m=ret_6_1m,
         ret_3m=ret_3m,
         volatility=annualized_volatility(closes, params["volatility_window"]),
-        avg_dollar_volume=avg_volume * price,
+        avg_dollar_volume=avg_dollar_volume,
         trading_days=trading_days,
     )
 
@@ -133,13 +149,22 @@ class MomentumRow:
     closes: tuple[float, ...]  # the completed closes scored, oldest first (the fact sheet reads them)
 
 
-def score_stock(symbol: str, closes: Sequence[float], volumes: Sequence[float], params: Mapping[str, Any]) -> MomentumRow | None:
+def score_stock(
+    symbol: str,
+    closes: Sequence[float],
+    volumes: Sequence[float],
+    params: Mapping[str, Any],
+    *,
+    traded_closes: Sequence[float] | None = None,
+    traded_volumes: Sequence[float] | None = None,
+) -> MomentumRow | None:
     """A stock's momentum row, or None when it has no inputs, fails cross_momentum's filters, or has no volatility.
 
     cross_momentum ranks a stock whose volatility cannot be computed (non-positive closes); `score_stock` leaves such a
     stock out, since bull_bear needs the volatility for `max_volatility` and the fact sheet. It cannot happen with positive prices.
+    `traded_closes` and `traded_volumes` feed the price and dollar-volume filters (see `momentum_inputs`).
     """
-    inputs = momentum_inputs(closes, volumes, params)
+    inputs = momentum_inputs(closes, volumes, params, traded_closes=traded_closes, traded_volumes=traded_volumes)
     if inputs is None or inputs.volatility is None or not (math.isfinite(inputs.volatility) and inputs.volatility > 0):
         return None
     if not apply_filters(inputs.price, inputs.avg_dollar_volume, inputs.volatility, inputs.trading_days, params):

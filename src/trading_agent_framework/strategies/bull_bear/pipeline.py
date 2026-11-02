@@ -189,16 +189,17 @@ class ReviewPipeline:
         for symbol in self._universe:
             if symbol not in series:
                 continue
-            closes, volumes = series[symbol].closes, series[symbol].volumes
+            daily = series[symbol]
+            closes, volumes = daily.closes, daily.volumes
             if symbol in held_now:
                 # A holding: every filter but max_volatility. A volatility spike after a crash must not force it out
                 # near its low; at or below the cap this is the very row the full filters would give.
-                row = score_stock(symbol, closes, volumes, self._holding_momentum)
+                row = score_stock(symbol, closes, volumes, self._holding_momentum, traded_closes=daily.traded_closes, traded_volumes=daily.traded_volumes)
                 if row is not None and row.volatility > max_volatility:
                     strategy.log_info(f"[bull_bear] {symbol} is held at a volatility of {row.volatility:.0%}, above max_volatility ({max_volatility:.0%}): kept in the ranking")
             else:
                 # A possible new entry: cross_momentum's filters in full, max_volatility included.
-                row = score_stock(symbol, closes, volumes, self._momentum)
+                row = score_stock(symbol, closes, volumes, self._momentum, traded_closes=daily.traded_closes, traded_volumes=daily.traded_volumes)
             if row is not None:
                 rows.append(row)
         ranked = rank(rows)

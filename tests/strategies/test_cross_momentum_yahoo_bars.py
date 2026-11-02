@@ -39,6 +39,26 @@ def _yahoo_frame(sessions, *, close=50.0, volume=1_000_000.0, last=YESTERDAY, cl
     )
 
 
+def _raw_unadjusted_frame(sessions=300, *, close=50.0, volume=1_000_000.0, last=YESTERDAY) -> pd.DataFrame:
+    """One ticker as yfinance returns it with `auto_adjust=False, actions=True`: raw OHLC (split-adjusted only), Adj Close,
+    Volume, Dividends and Stock Splits."""
+    index = pd.bdate_range(end=last, periods=sessions)
+    values = [close] * sessions
+    return pd.DataFrame(
+        {
+            "Open": values,
+            "High": [v + 1 for v in values],
+            "Low": [v - 1 for v in values],
+            "Close": values,
+            "Adj Close": values,
+            "Volume": [volume] * sessions,
+            "Dividends": [0.0] * sessions,
+            "Stock Splits": [0.0] * sessions,
+        },
+        index=index,
+    )
+
+
 def _batch(frames: dict[str, pd.DataFrame]) -> pd.DataFrame:
     """What `yfinance.download(symbols, group_by="ticker")` returns: (ticker, field) columns."""
     return pd.concat(frames, axis=1)
@@ -110,13 +130,30 @@ def test_one_batch_serves_every_symbol():
     assert download.calls[0][0] == ["AAA", "BBB"]
 
 
-def test_the_batch_is_adjusted_ends_after_today_and_reaches_back_over_the_scan_history():
+def test_paper_bars_carry_the_traded_columns():
+    raw = _raw_unadjusted_frame(300)
+    raw.iloc[150, raw.columns.get_loc("Stock Splits")] = 2.0  # a 2:1 split after the first 150 bars
+    adjusted = _yahoo_frame(300)
+
+    def yahoo(symbols, **kwargs):  # Yahoo returns the shape the flag asks for
+        return _batch({"AAA": raw if kwargs["auto_adjust"] is False else adjusted})
+
+    frame = YahooDailyBars(download=yahoo).bars(["AAA"], TODAY)["AAA"].pandas_df
+
+    assert {"traded_close", "traded_volume"} <= set(frame.columns)
+    pd.testing.assert_frame_equal(frame, parse_yahoo_frame(raw))
+    assert frame["traded_close"].iloc[0] == 100.0  # the split-adjusted 50.0 undone for the bars before the split
+    assert frame["traded_close"].iloc[-1] == 50.0
+
+
+def test_the_batch_is_unadjusted_with_actions_ends_after_today_and_reaches_back_over_the_scan_history():
     download = FakeDownload(_batch({"AAA": _yahoo_frame(300)}))
 
     YahooDailyBars(download=download).bars(["AAA"], TODAY)
 
     kwargs = download.calls[0][1]
-    assert kwargs["auto_adjust"] is True  # split- and dividend-adjusted, like the backtest and Alpaca's Adjustment.ALL
+    assert kwargs["auto_adjust"] is False  # the parse rebuilds the adjusted columns and adds the traded close and volume
+    assert kwargs["actions"] is True
     assert kwargs["end"] == "2026-10-08"  # yfinance's end is exclusive: today's forming bar comes back, the strategy drops it
     assert date.fromisoformat(kwargs["start"]) <= TODAY - timedelta(days=440)  # 301 sessions plus holidays
 

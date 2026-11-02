@@ -413,6 +413,54 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
     assert line["targets"]["S03"] == pytest.approx(0.098)  # ...and sized like every other stock, whatever its volatility
 
 
+def _cheap_adjusted(growth: float, *, traded: bool) -> DailySeries:
+    """Adjusted closes ending near $8 (under min_price) with an adjusted dollar volume of ~$40M (over min_dollar_volume), so only
+    `min_price` can drop it; the traded columns, when given, are the ~$160 and 1e6 shares it really traded at."""
+    real = _series(growth)
+    adjusted = [close / 20 for close in real.closes]
+    if traded:
+        return DailySeries(closes=adjusted, volumes=[5e6] * len(adjusted), traded_closes=real.closes, traded_volumes=real.volumes)
+    return DailySeries(closes=adjusted, volumes=[5e6] * len(adjusted))
+
+
+def test_a_stock_under_10_dollars_adjusted_is_ranked_on_its_traded_price(tmp_path: Path) -> None:
+    series = _default_series()
+    series["S01"] = _cheap_adjusted(0.0039, traded=True)  # a new entry
+    series["S02"] = _cheap_adjusted(0.0038, traded=False)  # the same, without traded columns: min_price drops it
+    h = _harness(tmp_path, series=series)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    debated = {stock["symbol"] for stock in line["debate_set"]}
+    assert "S01" in debated
+    assert "S02" not in debated
+
+
+def test_a_holding_under_10_dollars_adjusted_stays_ranked_on_its_traded_price(tmp_path: Path) -> None:
+    series = _default_series()
+    series["S03"] = _cheap_adjusted(0.0037, traded=True)  # held
+    h = _harness(tmp_path, held={"S03": 20}, series=series)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    debated = {stock["symbol"]: stock for stock in line["debate_set"]}
+    assert debated["S03"]["held"] is True
+    assert line["forced_exits"] == []
+
+
+def test_a_holding_under_10_dollars_adjusted_without_traded_columns_is_forced_out(tmp_path: Path) -> None:
+    series = _default_series()
+    series["S03"] = _cheap_adjusted(0.0037, traded=False)  # held, but the adjusted price fails min_price: unranked
+    h = _harness(tmp_path, held={"S03": 20}, series=series)
+
+    assert h.run().completed
+
+    (line,) = h.log_lines()
+    assert [exit["symbol"] for exit in line["forced_exits"]] == ["S03"]
+
+
 def test_holdings_the_judge_puts_out_are_sold(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={symbol: 20 for symbol in UNIVERSE[:12]})  # 12 holdings of 20 shares at 50 = 1,000 each
 

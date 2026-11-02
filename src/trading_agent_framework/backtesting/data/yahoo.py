@@ -35,6 +35,11 @@ CALENDAR_SYMBOL = "SPY"
 
 _OHLCV = ("open", "high", "low", "close", "volume")
 
+# The price and volume a stock actually traded at on each bar (split-unadjusted
+# close; volume restated to the shares then outstanding). Present only on frames
+# parsed from an `auto_adjust=False` download -- see `parse_yahoo_frame`.
+TRADED_COLUMNS: tuple[str, str] = ("traded_close", "traded_volume")
+
 DownloadFn = Callable[..., "pd.DataFrame"]
 
 
@@ -51,7 +56,13 @@ class YahooBacktestData(BacktestDataSource):
         *,
         download: DownloadFn | None = None,
         calendar_symbol: str = CALENDAR_SYMBOL,
+        # The DOWNLOAD date only: Yahoo adjusts every price for every split up to the
+        # date a download ends, so the download must reach today for its `Stock Splits`
+        # rows to cover splits after the window. It is never a decision cutoff (no
+        # wall-clock cutoffs in data tools); frames are trimmed back to the window.
+        today: Callable[[], date] = date.today,
     ) -> None:
+        self._today = today
         self._start = start
         self._end = end
         self._download = download  # injected in tests; real yfinance.download otherwise
@@ -84,8 +95,9 @@ class YahooBacktestData(BacktestDataSource):
                 raw = download(
                     symbols,
                     start=start.date().isoformat(),
-                    end=(end.date() + timedelta(days=1)).isoformat(),
-                    auto_adjust=True,
+                    end=self._download_end(),
+                    auto_adjust=False,
+                    actions=True,
                     progress=False,
                     group_by="ticker",
                 )
@@ -100,7 +112,7 @@ class YahooBacktestData(BacktestDataSource):
             ) from exc
 
         for asset in missing:
-            frame = parse_yahoo_frame(extract_ticker_frame(raw, asset.symbol))
+            frame = _trim_to_window(parse_yahoo_frame(extract_ticker_frame(raw, asset.symbol)), end)
             if frame.empty:
                 logger.warning(
                     "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
@@ -174,11 +186,12 @@ class YahooBacktestData(BacktestDataSource):
                 raw = download(
                     asset.symbol,
                     start=start.date().isoformat(),
-                    end=(end.date() + timedelta(days=1)).isoformat(),
-                    auto_adjust=True,
+                    end=self._download_end(),
+                    auto_adjust=False,
+                    actions=True,
                     progress=False,
                 )
-            df = parse_yahoo_frame(raw)
+            df = _trim_to_window(parse_yahoo_frame(raw), end)
         except ImportError as exc:
             raise BacktestDataError(
                 "yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra"
@@ -192,8 +205,21 @@ class YahooBacktestData(BacktestDataSource):
         self._frames[asset] = df
         return df
 
+    def _download_end(self) -> str:
+        """yfinance's `end` is exclusive: today's date plus one day includes today."""
+        return (self._today() + timedelta(days=1)).isoformat()
+
     def _real_download(self) -> DownloadFn:
         return yfinance_download()
+
+
+def _trim_to_window(frame: pd.DataFrame, end: datetime) -> pd.DataFrame:
+    """Drop rows whose session date is after `end`'s date (inclusive end, by DATE --
+    the backtesting rule), so a download that ran through today shows nothing past
+    the requested window."""
+    if frame.empty:
+        return frame
+    return cast("pd.DataFrame", frame[frame.index.date <= end.date()])
 
 
 def yfinance_download() -> DownloadFn:
@@ -246,6 +272,16 @@ def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
     raises `decimal.InvalidOperation` out of `fills.py`'s comparisons. This is a
     data-quality filter, not a no-look-ahead concern, so simply removing the bad rows
     is the right answer: a bar with no prices carries no information to preserve.
+
+    Two input shapes. An `auto_adjust=True` download (no `Adj Close` column) yields
+    `open, high, low, close, volume`, all split- and dividend-adjusted back from today.
+    An `auto_adjust=False, actions=True` download (with `Adj Close`) yields those same
+    five columns rebuilt with yfinance's own `auto_adjust` arithmetic (`ratio = Adj
+    Close / Close`; Open/High/Low times the ratio; Close replaced by Adj Close; Volume
+    unchanged) plus `traded_close` and `traded_volume`: what the stock really printed
+    then, undoing every LATER split (`Stock Splits` is the ratio on the ex-date and 0.0
+    elsewhere). The split factor is computed on the raw frame, before the NaN drop, so
+    a split sitting on a NaN row still scales the rows before it.
     """
     import pandas as pd
 
@@ -255,7 +291,47 @@ def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df = df.droplevel(1, axis=1)
     df.columns = [str(c).lower() for c in df.columns]
-    df = cast("pd.DataFrame", df[list(_OHLCV)]).astype("float64").dropna(subset=list(_OHLCV))
+    if "adj close" in df.columns:
+        df = df.sort_index()
+        factor = _later_split_factor(df.get("stock splits"), df.index)
+        ratio = df["adj close"] / df["close"]
+        traded_close = df["close"] * factor
+        traded_volume = df["volume"] / factor
+        for column in ("open", "high", "low"):
+            df[column] = df[column] * ratio
+        df["close"] = df["adj close"]
+        df[TRADED_COLUMNS[0]] = traded_close
+        df[TRADED_COLUMNS[1]] = traded_volume
+        df = df[[*_OHLCV, *TRADED_COLUMNS]]
+    else:
+        df = df[list(_OHLCV)]
+    df = df.astype("float64").dropna(subset=list(_OHLCV))
     close_index = [datetime.combine(ts.date(), SESSION_CLOSE, tzinfo=MARKET_TZ) for ts in df.index]
     df.index = pd.DatetimeIndex(close_index, name="timestamp")
     return df.sort_index()
+
+
+def _later_split_factor(splits: pd.Series | None, index: pd.Index) -> pd.Series:
+    """Pure: per row, the product of the split ratios on rows strictly AFTER it (1.0
+    when none, or when the frame carries no `Stock Splits`). `splits` holds the ratio
+    on an ex-date and 0.0 (or NaN) on every other row, so those read as 1.0. A traded
+    close is the unadjusted close times this factor; a traded volume is divided by it.
+    """
+    import pandas as pd
+
+    if splits is None:
+        return pd.Series(1.0, index=index)
+    ratios = splits.astype("float64").fillna(0.0).replace(0.0, 1.0)
+    later = ratios[::-1].cumprod()[::-1].shift(-1)
+    return later.fillna(1.0)
+
+
+def traded_series(frame: pd.DataFrame) -> tuple[list[float], list[float]] | None:
+    """The `traded_close` and `traded_volume` columns as float lists, or None unless
+    the frame carries both (an `auto_adjust=True` parse has neither)."""
+    if not all(column in frame.columns for column in TRADED_COLUMNS):
+        return None
+    return (
+        [float(v) for v in frame[TRADED_COLUMNS[0]]],
+        [float(v) for v in frame[TRADED_COLUMNS[1]]],
+    )

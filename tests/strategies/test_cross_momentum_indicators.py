@@ -113,3 +113,38 @@ def test_the_scan_computes_cross_momentums_inputs_on_completed_sessions():
     closes = [100.0 + i for i in range(300)]
     logs = [math.log(closes[i] / closes[i - 1]) for i in range(-20, 0)]
     assert result["volatility"] == pytest.approx(statistics.stdev(logs) * math.sqrt(252))
+
+
+def _with_traded_columns(bars: Bars) -> Bars:
+    """The same sessions with an adjusted close under $10, as a decades-old dividend payer's looks, and the prices it traded at."""
+    frame = bars.df.copy()
+    count = len(frame)
+    adjusted = [5.0 + 0.01 * i for i in range(count)]
+    for column in ("open", "high", "low", "close"):
+        frame[column] = adjusted
+    frame["traded_close"] = [50.0 + i for i in range(count)]
+    frame["traded_volume"] = [2e6] * count
+    return Bars(bars.asset, "day", frame)
+
+
+def test_the_scan_filters_on_the_traded_close():
+    bars = _with_traded_columns(_daily_bars(301, date(2026, 10, 6)))  # 300 completed sessions + today's partial bar
+    fake = FakeStrategy(bars=bars)
+
+    result = CrossMomentumStrategy._compute_indicators_for_ticker(fake, "AAA")
+
+    assert result is not None
+    assert result["price"] == bars.df["traded_close"].iloc[-2]  # Monday's traded close, not today's partial bar
+    assert result["price"] > 10 > bars.df["close"].iloc[-2]
+    # The mean of the last 20 completed sessions' traded dollars (rows -21..-2), each at its own close.
+    assert result["avg_dollar_volume"] == pytest.approx(2e6 * bars.df["traded_close"].iloc[-21:-1].mean())
+
+
+def test_bars_without_traded_columns_scan_as_before():
+    bars = _daily_bars(301, date(2026, 10, 6))
+    fake = FakeStrategy(bars=bars)
+
+    result = CrossMomentumStrategy._compute_indicators_for_ticker(fake, "AAA")
+
+    assert result is not None
+    assert result["price"] == bars.df["close"].iloc[-2]

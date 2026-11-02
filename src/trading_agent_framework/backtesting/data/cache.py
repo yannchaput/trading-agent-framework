@@ -23,7 +23,8 @@ class CachedDataSource(BacktestDataSource):
     `<cache_dir>/<inner.name>/<symbol>_<timestep>_<start>_<end>.parquet` plus a
     `.meta.json` sidecar recording provenance (provider, symbol, fetch time, row count)
     -- `inner` may revise its data over time (e.g. Yahoo's retroactive dividend
-    adjustments), so a cached file is a frozen, dated snapshot on purpose.
+    adjustments), so a cached file is a frozen, dated snapshot on purpose. A parquet file written before the traded
+    columns existed carries none, so a warm-cache rerun scores on the adjusted filters until the file is deleted.
     """
 
     def __init__(self, inner: BacktestDataSource, cache_dir: Path) -> None:
