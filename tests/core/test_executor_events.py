@@ -277,3 +277,24 @@ def test_waiting_is_cut_short_by_stop_from_another_thread() -> None:
     strategy.executor.run()
     assert strategy.milestones == ["on_strategy_end"]
     assert strategy.get_datetime() == started[0]
+
+
+def test_order_events_from_settling_are_dispatched_before_the_iteration() -> None:
+    class SettlingBroker(FakeBroker):
+        order = None
+
+        def settle_unknown_orders(self) -> None:
+            self.tracker.process_trade_event(self.order, OrderEvent.CANCELED)
+
+    class Ordered(OrderHooks):
+        def on_trading_iteration(self) -> None:
+            self.events.append(("iteration",))
+
+    clock = FakeClock(et(2026, 9, 14, 7), weekday_sessions(MONDAY, 1))
+    broker = SettlingBroker(clock)
+    strategy = Ordered(broker)
+    broker.order = broker.submit_order(strategy.create_order("AAPL", 1, "buy"))
+
+    strategy.executor.run()
+
+    assert strategy.events == [("canceled", broker.order.identifier), ("iteration",)]

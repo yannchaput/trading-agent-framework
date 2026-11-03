@@ -37,6 +37,12 @@ def test_default_stream_hooks_are_no_ops() -> None:
     assert Broker.stop_stream(broker) is None
 
 
+def test_the_base_broker_settle_is_a_no_op() -> None:
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 9)))
+    assert Broker.settle_unknown_orders(broker) is None
+    assert broker.submitted == []
+
+
 def test_fake_broker_modify_marks_the_original_replaced() -> None:
     broker = FakeBroker(FakeClock(et(2026, 9, 14, 9)))
     order = broker.submit_order(_limit_order())

@@ -847,6 +847,41 @@ def test_a_clean_miss_right_after_an_uncertain_submit_keeps_the_order(broker: Ta
     assert len(session.posted(ORDERS)) == 1
 
 
+def test_settle_adopts_an_unknown_submission_that_exists(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    order = _unknown_submit(broker, session)
+    snapshot = make_tt_order(order_id=1001, status="Filled", external=order.client_order_id, fills=[make_tt_fill("f1", "10", "150")])
+    session.responses[("GET", f"{ORDERS}/live")] = {"items": []}
+    session.responses[("GET", ORDERS)] = {"items": [snapshot]}
+
+    broker.settle_unknown_orders()
+
+    assert broker._events.tt_id_of(order) == "1001"
+    assert (order.status, order.filled_quantity) == (OrderStatus.FILL, D(10))
+    assert len(session.posted(ORDERS)) == 1
+
+
+def test_settle_fails_a_phantom_submission_after_two_spaced_misses(broker: TastytradeBroker, session: FakeTastytradeSession, seen: list[OrderEvent]) -> None:
+    order = _unknown_submit(broker, session, lookups="empty")
+
+    _later(broker)
+    broker.settle_unknown_orders()
+    assert order.is_active()
+    _later(broker)
+    broker.settle_unknown_orders()
+
+    assert order.status is OrderStatus.ERROR
+    assert seen == [OrderEvent.ERROR]
+    assert len(session.posted(ORDERS)) == 1  # never resent
+
+
+def test_settle_makes_no_request_without_unknown_orders(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
+    before = len(session.calls)
+
+    broker.settle_unknown_orders()
+
+    assert len(session.calls) == before
+
+
 def test_a_2xx_without_an_id_and_a_clean_miss_keeps_the_order(broker: TastytradeBroker, session: FakeTastytradeSession) -> None:
     order = _unknown_submit(broker, session, lookups="empty", post={})
 

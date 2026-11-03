@@ -236,6 +236,7 @@ class StrategyExecutor:
             if sleeptime.sessions is not None and not self._iteration_due(sleeptime.sessions):
                 self.wait_until(stop_at)
                 return
+            self._settle_unknown_orders()
             self._iterate()
             # Re-parse after the iteration, since it may have changed the sleeptime.
             sleeptime = parse_sleeptime(strategy.sleeptime)
@@ -303,6 +304,16 @@ class StrategyExecutor:
             self.strategy._refresh_regime()
         except Exception:
             logger.exception("Market regime refresh failed for strategy %s", self.strategy.name)
+
+    def _settle_unknown_orders(self) -> None:
+        """Before every tick: let the broker decide the orders whose submission outcome is unknown, then deliver the events that
+        produces, so the tick sees the outcome. A framework step, not a strategy hook: a failure is logged and the tick still
+        runs, without `on_bot_crash` (the same rule as `_refresh_regime`)."""
+        try:
+            self.strategy.broker.settle_unknown_orders()
+        except Exception:
+            logger.warning("Settling unknown orders failed for strategy %s; the tick runs anyway", self.strategy.name, exc_info=True)
+        self._dispatch_events()
 
     def _call_hook(self, hook: Callable[[], None]) -> None:
         try:

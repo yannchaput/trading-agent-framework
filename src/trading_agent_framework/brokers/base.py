@@ -136,3 +136,10 @@ class Broker(ABC):
 
     def stop_stream(self, timeout: float = 5.0) -> None:  # noqa: B027 -- optional hook
         """Stop the order-event stream. No-op for brokers without a stream."""
+
+    def settle_unknown_orders(self) -> None:  # noqa: B027 -- optional hook
+        """Decide the orders whose submission outcome is unknown (`BrokerUncertainError`); the executor calls it before every tick.
+
+        No-op for brokers whose submits are never uncertain. A broker that has them looks each up and adopts the real ones
+        and fails the missing ones (never resending), so a strategy's next tick sees the outcome.
+        """

@@ -521,3 +521,64 @@ def test_an_iteration_start_time_in_the_closing_window_skips_the_iterations(capl
     skipped = [record for record in caplog.records if "iteration_start_time" in record.getMessage()]
     assert skipped
     assert all(record.levelno == logging.WARNING for record in skipped)
+
+
+# --- unknown orders are settled before every tick ---------------------------------------------------------
+
+
+class _SettlingBroker(FakeBroker):
+    """Records `settle_unknown_orders` calls in the same list the strategy appends its iterations to."""
+
+    def __init__(self, clock: FakeClock, log: list[str], *, raises: BaseException | None = None) -> None:
+        super().__init__(clock)
+        self.log = log
+        self.raises = raises
+
+    def settle_unknown_orders(self) -> None:
+        self.log.append("settle")
+        if self.raises is not None:
+            raise self.raises
+
+
+def _settling_run(cls: type[Recorder] = Recorder, *, sessions: int = 1, raises: BaseException | None = None) -> tuple[Recorder, list[str]]:
+    log: list[str] = []
+    clock = FakeClock(et(2026, 9, 14, 7), weekday_sessions(MONDAY, sessions))
+    strategy = cls(_SettlingBroker(clock, log, raises=raises))
+    original = strategy.on_trading_iteration
+
+    def traced() -> None:
+        log.append("iteration")
+        original()
+
+    strategy.on_trading_iteration = traced  # ty: ignore[invalid-assignment]
+    strategy.executor.run()
+    return strategy, log
+
+
+def test_unknown_orders_are_settled_before_each_iteration() -> None:
+    class Daily(Recorder):
+        sleeptime = "1D"
+
+    _, log = _settling_run(Daily, sessions=3)
+
+    assert log == ["settle", "iteration"] * 3
+
+
+def test_an_interval_sleeptime_settles_before_every_tick() -> None:
+    strategy, log = _settling_run()  # Recorder ticks every 2H
+
+    ticks = len(strategy.times("on_trading_iteration"))
+    assert ticks > 1
+    assert log == ["settle", "iteration"] * ticks
+
+
+def test_a_failing_settle_is_logged_and_the_iteration_still_runs(caplog: pytest.LogCaptureFixture) -> None:
+    class Daily(Recorder):
+        sleeptime = "1D"
+
+    with caplog.at_level(logging.WARNING, logger="trading_agent_framework"):
+        strategy, log = _settling_run(Daily, raises=BrokerError("down"))
+
+    assert log == ["settle", "iteration"]
+    assert strategy.errors == []  # on_bot_crash was not called
+    assert "Settling unknown orders failed" in caplog.text

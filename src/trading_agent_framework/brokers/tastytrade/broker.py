@@ -553,6 +553,10 @@ class TastytradeBroker(Broker):
             except BrokerError:
                 logger.exception("Re-reading Tastytrade order %s failed", tt_id)
 
+    def settle_unknown_orders(self) -> None:
+        """The executor's per-tick hook: look up the submits and replaces whose outcome is unknown (no request without any)."""
+        self._resolve_unknown_writes()
+
     def _resolve_unknown_writes(self) -> None:
         """Decide the submits and replaces whose outcome was unknown (cheap when there are none; nothing is resent).
 
