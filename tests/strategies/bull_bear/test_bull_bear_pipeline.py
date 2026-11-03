@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -153,6 +153,7 @@ def _harness(
     params: BullBearParams | None = None,
     state: BullBearState | None = None,
     fundamentals_of: Callable[[str, datetime], Mapping[str, Any]] | None = None,
+    universe_on: Callable[[date], Sequence[str]] | None = None,
 ) -> Harness:
     """Tuesday 2026-10-06 12:00, portfolio value 10,000; every stock costs 50, SHV 100; `held` maps a symbol to shares."""
     params = params or BullBearParams()
@@ -181,7 +182,7 @@ def _harness(
         state=store,
         review_log=ReviewLog(log_path),
         rebalancer=rebalancer,
-        universe=UNIVERSE,
+        universe_on=universe_on or (lambda day: UNIVERSE),
         bars=bars,
         sector_of=lambda symbol: "Technology",
         fundamentals_of=fundamentals_of or (lambda symbol, as_of: {}),
@@ -991,6 +992,38 @@ def test_the_parking_instrument_is_never_forced_out_and_a_position_outside_the_u
     assert_no_agent_is_told_what_is_held(h)
     assert seen == [["OLD"]]
     assert ("OLD", "sell", 20.0) in h.orders
+
+
+# --- the universe is read per review ------------------------------------------------------------------------
+
+
+def test_a_backtest_review_ranks_the_month_list_of_its_date(tmp_path: Path) -> None:
+    october, november = UNIVERSE[:12], UNIVERSE[6:]
+    month_lists = {(2026, 10): october, (2026, 11): november}
+    h = _harness(tmp_path, universe_on=lambda day: month_lists[(day.year, day.month)])
+    h.agents["judge"].script = verdicts({"S06", "S07", "S08"})  # in both months' lists, and no flip between the reviews
+
+    assert h.run().completed
+    h.broker.clock.advance(28 * 24 * 3600)  # Tuesday 2026-11-03, 12:00
+    assert h.run().completed
+
+    assert [universe for universe, _ in h.bars.calls] == [october, november]
+    first, second = h.log_lines()
+    assert (first["date"], second["date"]) == ("2026-10-06", "2026-11-03")
+    assert first["ranked"] == 12 and second["ranked"] == 14
+
+
+def test_a_holding_outside_the_month_list_is_dropped_and_sold(tmp_path: Path) -> None:
+    h = _harness(tmp_path, held={"S00": 20, "S10": 20}, universe_on=lambda day: UNIVERSE[1:])  # S00 left the list; S10 stays in it
+
+    assert h.run().completed
+
+    assert h.bars.calls == [(UNIVERSE[1:], ["S00", "S10"])]
+    (line,) = h.log_lines()
+    assert [stock["symbol"] for stock in line["debate_set"] if stock["held"]] == ["S10"]  # S10 is ranked and debated
+    assert "S00" not in {stock["symbol"] for stock in line["debate_set"]}  # S00 is not ranked
+    assert line["forced_exits"] == [{"symbol": "S00", "reason": "unranked"}]
+    assert ("S00", "sell", 20.0) in h.orders
 
 
 def _forced_exit_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:

@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
-from datetime import datetime
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
@@ -97,7 +97,7 @@ class ReviewPipeline:
         state: StateStore,
         review_log: ReviewLog,
         rebalancer: Rebalancer,
-        universe: Sequence[str],
+        universe_on: Callable[[date], Sequence[str]],
         bars: DailyBars,
         sector_of: Callable[[str], str],
         fundamentals_of: Callable[[str, datetime], Mapping[str, Any]],
@@ -110,7 +110,7 @@ class ReviewPipeline:
         self._state = state
         self._log = review_log
         self._rebalancer = rebalancer
-        self._universe = list(universe)
+        self._universe_on = universe_on  # the stocks to rank on a market date: a constant list in paper/live, the month's list in a backtest
         self._bars = bars
         self._sector_of = sector_of
         self._fundamentals_of = fundamentals_of  # (symbol, the strategy clock's now) -> the SEC fields of the fact sheet
@@ -179,14 +179,15 @@ class ReviewPipeline:
 
         # 1. Data and ranking.
         holdings = self._rebalancer.holdings()
+        universe = list(self._universe_on(now.date()))
         try:
-            series = self._bars.load(self._universe, holdings)
+            series = self._bars.load(universe, holdings)
         except DataUnavailable as exc:
             raise ReviewAbandoned("data", str(exc)) from exc
         held_now = set(holdings)
         max_volatility = self._momentum["max_volatility"]
         rows: list[MomentumRow] = []
-        for symbol in self._universe:
+        for symbol in universe:
             if symbol not in series:
                 continue
             daily = series[symbol]

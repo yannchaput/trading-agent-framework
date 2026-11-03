@@ -13,11 +13,11 @@ import calendar
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.tools import only
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
@@ -37,10 +37,13 @@ from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateS
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory
 from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
+from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import ensure_universe_history
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
+from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData, universe_parameters
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError, UniverseHistoryError
 
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
@@ -52,6 +55,11 @@ _JUDGE_MEMORY_TOOLS = {"search_memory", "remember_lesson"}
 def _size(quantity: Decimal | None) -> str:
     """A share count for a log line: `10`, `7.842749`; `?` for a notional order, which has none."""
     return "?" if quantity is None else f"{quantity.normalize():f}"
+
+
+def _market_day(moment: datetime) -> date:
+    """The market-time date of a backtest bound (bounds are timezone-aware by convention; a naive one is taken as is)."""
+    return moment.astimezone(MARKET_TZ).date() if moment.tzinfo is not None else moment.date()
 
 
 class BullBearStrategy(Strategy):
@@ -74,7 +82,7 @@ class BullBearStrategy(Strategy):
         broker: Broker,
         *,
         mode: TradingMode = TradingMode.PAPER,
-        universe: Sequence[str],
+        universe: Sequence[str] = (),
         settings: BullBearParams | None = None,
         bars_source: BarsSource | None = None,
         sector_of: Callable[[str], str] | None = None,
@@ -94,7 +102,12 @@ class BullBearStrategy(Strategy):
             "judge_max_output_tokens": self.settings.judge_max_output_tokens,
         }
         self.iteration_start_time = parse_rebalance_time(self.settings.rebalance_time)
+        # Paper/live trade the universe file's list, so they need one. A backtest has none at construction: its lists come
+        # from the point-in-time history, loaded by `run_backtesting` and read per review date (`_universe_on`).
+        if not universe and self.trading_mode is not TradingMode.BACKTESTING:
+            raise ConfigurationError("BullBearStrategy needs a universe in paper and live trading (run `uv run batch-universe`)")
         self.universe = [symbol for symbol in universe if symbol != self.settings.parking_symbol]  # SHV is parking, never a stock
+        self._history: UniverseHistory | None = None  # set by `run_backtesting`; None (paper/live) keeps `universe` as built
         # Paper/live read Yahoo's daily bars (Alpaca's IEX volume would empty the dollar-volume filter); a backtest reads the gate.
         if bars_source is None and self.trading_mode is not TradingMode.BACKTESTING:
             bars_source = YahooDailyBars()
@@ -172,14 +185,15 @@ class BullBearStrategy(Strategy):
             state=state_store,
             review_log=ReviewLog(self._review_log_path()),
             rebalancer=Rebalancer(self, self.settings),
-            universe=self.universe,
+            universe_on=self._universe_on,
             bars=self._daily_bars(),
             sector_of=self._sector_of or SectorProvider().get_sector,
             fundamentals_of=self._fundamentals_of or SecFundamentals(sec_client),
             momentum=CONFIG,
         )
         news_state = "on" if self.settings.research_news else "off"
-        self.log_info(f"BullBearStrategy initialized: {len(self.universe)} symbols, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}, research news {news_state}")
+        size = f"{len(self.universe)} symbols" if self._history is None else "the point-in-time monthly universe"
+        self.log_info(f"BullBearStrategy initialized: {size}, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}, research news {news_state}")
 
     def _require_news_provider(self) -> None:
         """Refuse to start without a news source: the researcher's `search_news` would only ever return `{"error": ...}`.
@@ -225,6 +239,21 @@ class BullBearStrategy(Strategy):
     def _market_date(self) -> date:
         return self.clock.now().astimezone(MARKET_TZ).date()
 
+    def _universe_on(self, day: date) -> list[str]:
+        """The stocks a review on `day` ranks: the history's list for its month in a backtest, `universe` otherwise.
+
+        A holding that dropped out of the list is not ranked and is sold by the existing rule. A month the history lacks
+        ends the run: the pipeline would otherwise let the error through to a tick the executor rides out, dropping the
+        week's review without a trace in the results.
+        """
+        if self._history is None:
+            return self.universe
+        try:
+            month_list = self._history.on(day)
+        except UniverseHistoryError as exc:
+            raise FatalStrategyError(str(exc)) from exc
+        return [symbol for symbol in month_list if symbol != self.settings.parking_symbol]
+
     def _warn(self, message: str) -> None:
         self.log_warning(message)
 
@@ -249,13 +278,26 @@ class BullBearStrategy(Strategy):
     # --- backtesting ------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any) -> BacktestResult:
-        """Backtest over the class `parameters` window on Yahoo daily bars, the universe preloaded."""
-        symbols = list(dict.fromkeys([*self.universe, self.settings.parking_symbol, self.parameters["benchmark_symbol"]]))
+        """Backtest on Yahoo daily bars over the point-in-time universe history, every symbol of the window preloaded.
+
+        The history is the only universe of a backtest (never today's universe file, which holds today's winners). It is
+        ensured over the window first, so a failure (`UniverseHistoryError`) stops the run before it starts.
+        """
+        start: datetime = overrides.get("start", self.parameters["backtesting_start"])
+        end: datetime = overrides.get("end", self.parameters["backtesting_end"])
+        history = ensure_universe_history(_market_day(start), _market_day(end))
+        self._history = history
+        # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)
+        universe = universe_parameters(history)
+        self.parameters["universe"] = universe
+        benchmark = overrides.get("benchmark", self.parameters["benchmark_symbol"])
+        stocks = [symbol for symbol in history.union(_market_day(start), _market_day(end)) if symbol != self.settings.parking_symbol]
+        symbols = list(dict.fromkeys([*stocks, self.settings.parking_symbol, benchmark]))
         defaults: dict[str, Any] = dict(
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             budget=Decimal(str(self.parameters["budget"])),
-            data_source=YahooBacktestData,
+            data_source=partial(UniverseBacktestData, record=universe),  # Yahoo in batches, failing when Yahoo returns too little
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],  # one Yahoo download, not 1,200 per review
             benchmark=self.parameters["benchmark_symbol"],
             timestep="day",

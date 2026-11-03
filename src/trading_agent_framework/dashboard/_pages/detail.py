@@ -103,6 +103,7 @@ def page_detail():
         model=model,
         data_source=s.backtesting_data_sources if s else "",
         backtest_time=s.backtest_time_seconds if s else 0,
+        parameters=s.parameters if s else None,
     )
 
     # The Agents tab exists only for a run that wrote a reviews.jsonl (the agent strategies).

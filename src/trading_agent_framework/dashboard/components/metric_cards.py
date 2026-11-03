@@ -44,6 +44,13 @@ def render_metric_card(
     )
 
 
+def _universe_label(parameters: dict | None) -> str:
+    universe = (parameters or {}).get("universe")
+    if isinstance(universe, dict) and universe.get("mode") == "point_in_time":
+        return "as it stood on each date (delisted stocks missing)"
+    return "today's list"
+
+
 def render_header_card(
     strategy_name: str,
     run_ts: str,
@@ -54,8 +61,13 @@ def render_header_card(
     model: str = "",
     data_source: str = "",
     backtest_time: float = 0.0,
+    parameters: dict | None = None,
 ) -> None:
-    """Render a run detail header card with metadata."""
+    """Render a run detail header card with metadata.
+
+    `parameters` is the run's settings.json `parameters`; its `universe.mode == "point_in_time"` (cross_momentum and
+    bull_bear backtests) selects the Universe line, anything else is today's list.
+    """
     cols = st.columns([2, 2, 1, 1, 2])
     with cols[0]:
         st.markdown(f"**Strategy:** {strategy_name}")
@@ -66,6 +78,7 @@ def render_header_card(
     with cols[2]:
         st.markdown(f"**Mode:** {mode}")
         st.markdown(f"**Data:** {data_source}")
+        st.markdown(f"**Universe:** {_universe_label(parameters)}")
     with cols[3]:
         if model:
             st.markdown(f"**Model:** `{model}`")

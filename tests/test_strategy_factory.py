@@ -76,8 +76,6 @@ def test_insider_trades_returns_the_strategy_without_needing_a_universe_file(mon
     ("name", "strategy_class"),
     [
         (Strategies.BILL_ACKMAN, BillAckmanStrategy),
-        (Strategies.BULL_BEAR, BullBearStrategy),
-        (Strategies.CROSS_MOMENTUM, CrossMomentumStrategy),
         (Strategies.EARNINGS_DRIFT, EarningsDriftStrategy),
         (Strategies.EARNINGS_DRIFT_BASELINE, EarningsDriftStrategy),
         (Strategies.VWAP_PULLBACK_CONTINUATION, VwapPullbackStrategy),
@@ -97,8 +95,6 @@ def test_universe_strategies_receive_the_universe(monkeypatch: pytest.MonkeyPatc
     "name",
     [
         Strategies.BILL_ACKMAN,
-        Strategies.BULL_BEAR,
-        Strategies.CROSS_MOMENTUM,
         Strategies.EARNINGS_DRIFT,
         Strategies.EARNINGS_DRIFT_BASELINE,
         Strategies.VWAP_PULLBACK_CONTINUATION,
@@ -124,3 +120,69 @@ def test_earnings_drift_variants(monkeypatch: pytest.MonkeyPatch) -> None:
         start, end = strategy.parameters["backtesting_start"], strategy.parameters["backtesting_end"]
         assert start.tzinfo is not None and end.tzinfo is not None  # run_backtest refuses naive bounds
         assert start < end
+
+
+# --- cross_momentum backtests take their universe from the history, not from the universe file ------------------
+
+
+def test_backtest_mode_builds_cross_momentum_without_the_universe_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail() -> list[str]:
+        raise AssertionError("a point-in-time backtest must not read today's universe file")
+
+    monkeypatch.setattr(strategy_factory, "load_cross_momentum_universe", fail)
+
+    strategy = build_strategy(Strategies.CROSS_MOMENTUM, _broker(Strategies.CROSS_MOMENTUM), TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, CrossMomentumStrategy)
+    assert strategy.is_backtesting
+    assert strategy.vars.universe == []  # filled from the history by run_backtesting
+
+
+def test_paper_mode_still_gives_cross_momentum_the_universe_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_universe(monkeypatch, ["AAA", "BBB"])
+
+    strategy = build_strategy(Strategies.CROSS_MOMENTUM, FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="cross_momentum", is_paper=True), TradingMode.PAPER)
+
+    assert isinstance(strategy, CrossMomentumStrategy)
+    assert strategy.vars.universe == ["AAA", "BBB"]
+
+
+def test_paper_mode_still_needs_the_universe_file_for_cross_momentum(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    _set_universe(monkeypatch, [])
+
+    with caplog.at_level("WARNING"):
+        assert build_strategy(Strategies.CROSS_MOMENTUM, FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="cross_momentum", is_paper=True), TradingMode.PAPER) is None
+
+    assert "batch-universe" in caplog.text
+
+
+def test_backtest_mode_builds_bull_bear_without_the_universe_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail() -> list[str]:
+        raise AssertionError("a point-in-time backtest must not read today's universe file")
+
+    monkeypatch.setattr(strategy_factory, "load_cross_momentum_universe", fail)
+
+    strategy = build_strategy(Strategies.BULL_BEAR, _broker(Strategies.BULL_BEAR), TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, BullBearStrategy)
+    assert strategy.is_backtesting
+    assert strategy.universe == []  # filled from the history by run_backtesting
+
+
+def test_paper_mode_still_gives_bull_bear_the_universe_file(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    broker = FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bull_bear", is_paper=True)
+    _set_universe(monkeypatch, ["AAA", "BBB"])
+    strategy = build_strategy(Strategies.BULL_BEAR, broker, TradingMode.PAPER)
+    assert isinstance(strategy, BullBearStrategy) and strategy.universe == ["AAA", "BBB"]
+
+    _set_universe(monkeypatch, [])
+    with caplog.at_level("WARNING"):
+        assert build_strategy(Strategies.BULL_BEAR, broker, TradingMode.PAPER) is None
+    assert "batch-universe" in caplog.text
+
+
+@pytest.mark.parametrize("name", [Strategies.BILL_ACKMAN, Strategies.EARNINGS_DRIFT, Strategies.VWAP_PULLBACK_CONTINUATION])
+def test_the_other_universe_strategies_still_need_the_file_in_a_backtest(monkeypatch: pytest.MonkeyPatch, name: Strategies) -> None:
+    _set_universe(monkeypatch, [])
+
+    assert build_strategy(name, _broker(name), TradingMode.BACKTESTING) is None

@@ -57,6 +57,10 @@ class BacktestDataError(BacktestError):
     """Raised when a BacktestDataSource cannot fetch, cache, or parse historical data."""
 
 
+class UniverseHistoryError(BacktestError):
+    """Raised when the point-in-time universe history cannot be built, or has no list for a requested month."""
+
+
 class MacroDataError(TradingFrameworkError):
     """Raised when a macro (FRED) data lookup fails."""
 

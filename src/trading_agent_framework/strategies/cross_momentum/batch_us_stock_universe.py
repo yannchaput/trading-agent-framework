@@ -22,30 +22,64 @@ Filters:
 
 Output: JSON file with date, source metadata, and sorted symbol list.
 
+History mode (`--history`): the point-in-time universe of strategies/common/universe_history.py, one top-1200 list
+per month ranked only on data dated before that month, for backtests (`ensure_universe_history`). Its Yahoo bars
+are cached in `cache/universe_history/` (git-ignored), laid out as:
+  - `pool.json`: the candidate pool and its date, reused while it is dated in or after the last month needed;
+  - `bars/<SYMBOL>.parquet`: one symbol's raw `auto_adjust=False, actions=True` download (SPY included, for the
+    market calendar);
+  - `bars/index.json`: per symbol, the window [start, end] its file was downloaded over.
+One file per symbol (not per batch) so a changed pool, or a rerun after a crash, downloads only the symbols not
+yet cached. A symbol is cached for a request when its window covers it; a larger window (earlier start, later
+end) downloads that symbol again over the whole new window instead of appending, because Yahoo restates `Close`
+for every split up to the download date and a spliced frame would mix two adjustment bases. An index entry whose
+file is gone counts as not cached, and a batch's entries are dropped from the index before its files are replaced
+(written to a temp file, then renamed), so a crash can never leave an entry claiming a window its file lacks.
+yfinance reports a rate limit as missing data, not an error: an all-empty batch is retried, symbols still without
+data are asked for once more after a pause, and the build stops (nothing saved) when more than 1% of the pool
+remain without data. Symbols without data are not cached. The history file records the pool size, the candidates
+whose common-stock check got no answer and the pool symbols still without bars. A build holds an exclusive lock
+(`<cache>/.lock`), so two backtests starting at once build once: the second waits, then finds the first one's history.
+
 Usage:
   uv run batch-universe
   uv run batch-universe --output-dir /custom/path
+  uv run batch-universe --history --start 2023-01 --end 2024-12
 """
 
 import argparse
 import csv
+import fcntl
 import io
 import json
 import logging
 import sys
 import threading
 import time
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date
+from contextlib import contextmanager
+from datetime import date, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
+import pandas as pd
 import requests
 import yfinance as yf
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from yfinance.exceptions import YFRateLimitError
 
+from trading_agent_framework.backtesting.data.yahoo import (
+    CALENDAR_SYMBOL,
+    DownloadFn,
+    extract_ticker_frame,
+    parse_yahoo_frame,
+    yfinance_download,
+)
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory, _month_keys, monthly_lists
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
+from trading_agent_framework.utils.errors import UniverseHistoryError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data" / "universe"
@@ -354,6 +388,17 @@ def merge_ticker_candidates(nasdaq_candidates: list[tuple[str, float]], extra_sy
     return merged
 
 
+def _fetch_nasdaq_rows() -> list[dict]:
+    """The NASDAQ screener's rows for every US exchange; raises on any HTTP or parse failure.
+
+    Shared by the live batch (`get_ticker_universe`, which logs and returns [] on failure) and the history pool
+    (`get_history_pool`, which raises).
+    """
+    r = requests.get(_NASDAQ_SCREENER_URL, headers=_NASDAQ_HEADERS, timeout=60)
+    r.raise_for_status()
+    return r.json().get("data", {}).get("rows", [])
+
+
 def get_ticker_universe() -> list[tuple[str, float]]:
     """Fetch all US exchange-listed stock symbols from the NASDAQ screener API.
 
@@ -370,14 +415,11 @@ def get_ticker_universe() -> list[tuple[str, float]]:
     console.print("[bold]Fetching all US exchange-listed stocks from NASDAQ screener...[/bold]")
 
     try:
-        r = requests.get(_NASDAQ_SCREENER_URL, headers=_NASDAQ_HEADERS, timeout=60)
-        r.raise_for_status()
-        data = r.json()
+        rows = _fetch_nasdaq_rows()
     except Exception as e:
         console.print(f"[red]Failed to fetch NASDAQ screener: {e}[/red]")
         return []
 
-    rows = data.get("data", {}).get("rows", [])
     if not rows:
         console.print("[red]NASDAQ screener returned no rows.[/red]")
         return []
@@ -390,17 +432,14 @@ def get_ticker_universe() -> list[tuple[str, float]]:
 # ── yfinance screening ──────────────────────────────────────────────────────
 
 
-def _screen_single_ticker(ticker: str) -> dict | None:
-    """Fetch yfinance info for a single ticker and return screening data.
+def _fetch_yf_info(ticker: str) -> dict | None:
+    """Fetch `yf.Ticker(ticker).info`, or None if every attempt fails.
 
     Rate-limited via a semaphore (max `_MAX_CONCURRENT_YF` concurrent calls),
     a small inter-request delay, and a shared `RateLimitGate`: a 429 on any
     thread pauses every worker, not just the one that hit it. Retries up to
     3 times, with a short per-attempt backoff on top for non-rate-limit
     transient errors.
-
-    Returns a dict with keys: symbol, market_cap, price, avg_volume,
-    dollar_volume, quote_type, or None if the ticker fails all retries.
     """
     sem = _get_semaphore()
     gate = _get_rate_limit_gate()
@@ -432,6 +471,16 @@ def _screen_single_ticker(ticker: str) -> dict | None:
             wait = 1.0 * (2**attempt)  # 1 s, then 2 s
             time.sleep(wait)
 
+    return info
+
+
+def _screen_single_ticker(ticker: str) -> dict | None:
+    """Fetch yfinance info for a single ticker (see `_fetch_yf_info`) and return screening data.
+
+    Returns a dict with keys: symbol, market_cap, price, avg_volume,
+    dollar_volume, quote_type, or None if the ticker fails all retries.
+    """
+    info = _fetch_yf_info(ticker)
     if not info or (info.get("trailingPegRatio") is None and info.get("marketCap") is None):
         return None
 
@@ -509,6 +558,512 @@ def screen_tickers(tickers: list[str], max_workers: int = 3) -> list[dict]:
     return passed
 
 
+# ── History pool ────────────────────────────────────────────────────────────
+# The candidate symbols for the point-in-time universe history (strategies/common/universe_history.py). Same
+# sources as the live batch, but no market-cap or price pre-filter (a stock that is large in 2024 may have been
+# small, or cheap, years before; the history ranks on traded dollar volume instead) and no tolerance for a failing
+# source (a silently smaller pool would bias every month of the history).
+
+
+# The most symbols (a share of the pool, or of the candidates) that may be unreadable before the history stops. yfinance
+# swallows rate limits and per-ticker failures instead of raising, so a partial outage looks like missing data; a
+# handful of symbols with no data are normal (a ticker delisted since the screener ran, a warrant), more means Yahoo is
+# failing. 1% is about 60 of 6,000: the floor is explicit, and the history file records the names and counts that fell
+# under it (`UniverseHistory.unanswered`, `bars_absent`), because a real stock left out of every month is a bias.
+_MAX_ABSENT_FRACTION = 0.01
+
+
+class HistoryPool(NamedTuple):
+    """The pool's common stocks, sorted, and the candidates whose common-stock check got no answer (left out), sorted."""
+
+    symbols: list[str]
+    unanswered: list[str]
+
+
+def parse_nasdaq_symbols(rows: list[dict]) -> list[str]:
+    """Every normalized NASDAQ screener symbol, with no market-cap or price pre-filter, deduplicated and sorted."""
+    symbols = {symbol for row in rows if (symbol := normalize_symbol(row.get("symbol", ""))) is not None}
+    return sorted(symbols)
+
+
+def _is_common_stock(symbol: str) -> bool | None:
+    """True if yfinance reports `quoteType == "EQUITY"` for `symbol`, False for any other quote type, None when it gave none.
+
+    Reuses the live batch's `info` fetch (rate-limit gate, semaphore, retries). A fetch that fails after the retries,
+    an empty `info` and an `info` with no `quoteType` (what a throttled lookup returns, as the live batch also
+    treats it) are all None (logged): no answer, counted apart from a genuine "not common" by `build_history_pool`,
+    which asks again once and stops when too many are still unanswered.
+    """
+    info = _fetch_yf_info(symbol)
+    if not info:
+        logger.warning("No yfinance info for %s after retries: no answer", symbol)
+        return None
+    quote_type = info.get("quoteType")
+    if not quote_type:
+        logger.warning("yfinance info for %s has no quoteType: no answer", symbol)
+        return None
+    return quote_type == "EQUITY"
+
+
+def _strict_etf_symbols(
+    fetch_ishares_csv: Callable[[str], str],
+    fetch_vanguard_holdings: Callable[[], dict],
+) -> set[str]:
+    """Union IWB, IWM and VTI holdings; unlike `get_extra_universe_symbols`, a source that fails or is empty raises."""
+    symbols: set[str] = set()
+    for name, url in _ISHARES_HOLDINGS_URLS.items():
+        try:
+            source_symbols = parse_ishares_csv(fetch_ishares_csv(url))
+        except Exception as e:
+            raise UniverseHistoryError(f"{name} holdings failed: {e}") from e
+        if not source_symbols:
+            raise UniverseHistoryError(f"{name} holdings returned no equity symbols")
+        console.print(f"  {name}: [green]{len(source_symbols)}[/green] equity holdings")
+        symbols |= source_symbols
+
+    try:
+        vti_symbols = parse_vanguard_holdings(fetch_vanguard_holdings())
+    except Exception as e:
+        raise UniverseHistoryError(f"VTI holdings failed: {e}") from e
+    if not vti_symbols:
+        raise UniverseHistoryError("VTI holdings returned no equity symbols")
+    console.print(f"  VTI (total market): [green]{len(vti_symbols)}[/green] equity holdings")
+    return symbols | vti_symbols
+
+
+def _filter_common_stocks(symbols: list[str], is_common_stock: Callable[[str], bool | None]) -> tuple[list[str], list[str]]:
+    """The symbols `is_common_stock` accepts, and those it could not answer (None), checked over `_MAX_CONCURRENT_YF`
+    workers like `screen_tickers`."""
+    kept: list[str] = []
+    failed: list[str] = []
+    rejected = 0
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task(f"Checking {len(symbols)} symbols...", total=len(symbols))
+        with ThreadPoolExecutor(max_workers=_MAX_CONCURRENT_YF) as executor:
+            futures = {executor.submit(is_common_stock, symbol): symbol for symbol in symbols}
+            for future in as_completed(futures):
+                answer = future.result()
+                if answer is None:
+                    failed.append(futures[future])
+                elif answer:
+                    kept.append(futures[future])
+                else:
+                    rejected += 1
+                progress.update(task, advance=1, description=f"Checking... {len(kept)} common, {rejected} not, {len(failed)} unanswered")
+    return kept, sorted(failed)
+
+
+def build_history_pool(
+    *,
+    fetch_nasdaq_rows: Callable[[], list[dict]] = _fetch_nasdaq_rows,
+    fetch_ishares_csv: Callable[[str], str] = _fetch_ishares_csv,
+    fetch_vanguard_holdings: Callable[[], dict] = _fetch_vanguard_holdings,
+    is_common_stock: Callable[[str], bool | None] = _is_common_stock,
+) -> HistoryPool:
+    """The candidate symbols for the universe history (NASDAQ screener plus IWB/IWM/VTI, common stocks only) and the
+    candidates left unanswered.
+
+    The candidates `is_common_stock` could not answer (None) are asked once more after a pause through the shared
+    rate-limit gate (a throttled lookup looks like no answer). Raises `UniverseHistoryError` if any source fails or
+    returns nothing, if more than `_MAX_ABSENT_FRACTION` of the candidates are still unanswered after that, or if no
+    common stock is left. The few unanswered are left out, logged and returned. All the fetchers and
+    `is_common_stock` are injectable so tests supply fakes without touching the network.
+    """
+    try:
+        rows = fetch_nasdaq_rows()
+    except Exception as e:
+        raise UniverseHistoryError(f"NASDAQ screener failed: {e}") from e
+    nasdaq_symbols = parse_nasdaq_symbols(rows)
+    if not nasdaq_symbols:
+        raise UniverseHistoryError("NASDAQ screener returned no symbols")
+    console.print(f"  NASDAQ screener: [green]{len(nasdaq_symbols)}[/green] listed symbols")
+
+    etf_symbols = _strict_etf_symbols(fetch_ishares_csv, fetch_vanguard_holdings)
+    candidates = sorted(set(nasdaq_symbols) | etf_symbols)
+    console.print(f"  Union: [green]{len(candidates)}[/green] candidates")
+
+    kept, unanswered = _filter_common_stocks(candidates, is_common_stock)
+    if unanswered:
+        console.print(f"  {len(unanswered)} candidate(s) with no answer: asking for them once more after a pause")
+        gate = _get_rate_limit_gate()
+        gate.on_rate_limited()
+        gate.wait()
+        recovered, unanswered = _filter_common_stocks(unanswered, is_common_stock)
+        kept = [*kept, *recovered]
+    if len(unanswered) > _MAX_ABSENT_FRACTION * len(candidates):
+        raise UniverseHistoryError(
+            f"yfinance gave no answer for {len(unanswered)} of {len(candidates)} candidates, above the {_MAX_ABSENT_FRACTION:.0%} limit: "
+            f"Yahoo is failing (e.g. {', '.join(unanswered[:20])})"
+        )
+    if unanswered:
+        logger.warning("yfinance gave no answer for %d candidates, left out of the history pool: %s", len(unanswered), ", ".join(unanswered))
+        console.print(f"  [yellow]{len(unanswered)} candidate(s) with no yfinance answer[/yellow] left out of the pool")
+    pool = sorted(kept)
+    if not pool:
+        raise UniverseHistoryError("the history pool is empty: no candidate is a common stock")
+    console.print(f"  History pool: [green]{len(pool)}[/green] common stocks")
+    return HistoryPool(pool, unanswered)
+
+
+def get_history_pool(**sources: Callable) -> list[str]:
+    """The sorted candidate symbols for the universe history; see `build_history_pool` (which also returns the unanswered)."""
+    return build_history_pool(**sources).symbols
+
+
+# ── History build ───────────────────────────────────────────────────────────
+# `ensure_universe_history`: the backtest pre-step. Cache layout: see the module docstring.
+
+_HISTORY_TOP_N = 1200
+_HISTORY_LOOKBACK = 63
+_HISTORY_BATCH_SIZE = 100  # symbols per Yahoo download
+# The bars start this many calendar days before the first needed month: 63 sessions are about 90 calendar days.
+_HISTORY_WARMUP_DAYS = 120
+_DOWNLOAD_ATTEMPTS = 3
+_DOWNLOAD_RETRY_BACKOFF = 2.0  # seconds, doubled per attempt, on a non-rate-limit error
+_DEFAULT_HISTORY_PATH = DEFAULT_OUTPUT_DIR / "us_stock_universe_history.json"
+_DEFAULT_HISTORY_CACHE = PROJECT_ROOT / "cache" / "universe_history"
+
+
+def _same_parameters(history: UniverseHistory) -> bool:
+    """True when `history` was built with the parameters this build would use (else its months are not comparable)."""
+    return (
+        history.top_n == _HISTORY_TOP_N
+        and history.lookback == _HISTORY_LOOKBACK
+        and history.min_price == float(CONFIG["min_price"])
+        and history.min_dollar_volume == float(CONFIG["min_dollar_volume"])
+    )
+
+
+def _load_pool(cache_dir: Path) -> tuple[date, HistoryPool] | None:
+    path = cache_dir / "pool.json"
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    return date.fromisoformat(data["date"]), HistoryPool(list(data["symbols"]), list(data.get("unanswered", ())))
+
+
+def _save_pool(cache_dir: Path, pool_date: date, pool: HistoryPool) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "pool.json").write_text(json.dumps({"date": pool_date.isoformat(), "symbols": pool.symbols, "unanswered": pool.unanswered}))
+
+
+def _resolve_pool(cache_dir: Path, last_month_start: date, today: date, pool: Callable[[], list[str] | HistoryPool] | None) -> tuple[date, HistoryPool]:
+    """The saved pool when it is dated in or after the last month needed; else a fresh one, saved.
+
+    An injected `pool` may return a plain symbol list (no unanswered candidates) or a `HistoryPool`."""
+    try:
+        saved = _load_pool(cache_dir)
+        if saved is not None and saved[0] >= last_month_start:
+            console.print(f"  Reusing the saved pool of {len(saved[1].symbols)} symbols (dated {saved[0]})")
+            return saved
+        fresh = build_history_pool() if pool is None else pool()
+        fresh = fresh if isinstance(fresh, HistoryPool) else HistoryPool(list(fresh), [])
+        resolved = HistoryPool(sorted(set(fresh.symbols)), sorted(set(fresh.unanswered)))
+    except UniverseHistoryError:
+        raise
+    except Exception as exc:
+        raise UniverseHistoryError(f"the history pool failed: {exc}") from exc
+    if not resolved.symbols:
+        raise UniverseHistoryError("the history pool is empty")
+    _save_pool(cache_dir, today, resolved)
+    return today, resolved
+
+
+def _download_batch(download: DownloadFn, symbols: list[str], start: date, end: date, *, empty_is_failure: bool) -> pd.DataFrame:
+    """One batched Yahoo download, through the live batch's rate-limit gate, retried.
+
+    `end` is inclusive here; Yahoo's is exclusive, so the call passes the day after. yfinance swallows a rate limit or
+    a per-ticker failure into an empty frame instead of raising, so with `empty_is_failure` a batch that came back
+    with no data at all counts as a failed attempt (retried with a backoff); when the last attempt is still empty
+    the empty frame is returned, and the caller treats its symbols as absent. An exception on every attempt raises
+    `UniverseHistoryError`.
+    """
+    gate = _get_rate_limit_gate()
+    failure: Exception | None = None
+    for attempt in range(_DOWNLOAD_ATTEMPTS):
+        gate.wait()
+        last = attempt == _DOWNLOAD_ATTEMPTS - 1
+        try:
+            time.sleep(_INTER_REQUEST_DELAY)
+            raw = download(
+                symbols,
+                start=start.isoformat(),
+                end=(end + timedelta(days=1)).isoformat(),
+                auto_adjust=False,
+                actions=True,
+                progress=False,
+                group_by="ticker",
+            )
+        except Exception as exc:
+            failure = exc
+            logger.warning("Yahoo download of %d symbols (from %s) failed, attempt %d: %s", len(symbols), symbols[0], attempt + 1, exc)
+            if is_rate_limit_error(exc):
+                gate.on_rate_limited()  # the next gate.wait() sleeps the shared cooldown
+            elif not last:
+                time.sleep(_DOWNLOAD_RETRY_BACKOFF * 2**attempt)
+            continue
+        if empty_is_failure and raw.dropna(how="all").empty:
+            failure = None
+            logger.warning("Yahoo returned no data for any of %d symbols (from %s), attempt %d", len(symbols), symbols[0], attempt + 1)
+            if not last:
+                time.sleep(_DOWNLOAD_RETRY_BACKOFF * 2**attempt)
+            continue
+        gate.on_success()
+        return raw
+    if failure is None:
+        return raw  # still empty on the last attempt: the symbols are absent
+    raise UniverseHistoryError(f"the Yahoo download of {len(symbols)} symbols (from {symbols[0]}) failed after {_DOWNLOAD_ATTEMPTS} attempts: {failure}") from failure
+
+
+def _load_bars_index(bars_dir: Path) -> dict[str, tuple[date, date]]:
+    path = bars_dir / "index.json"
+    if not path.exists():
+        return {}
+    return {symbol: (date.fromisoformat(window[0]), date.fromisoformat(window[1])) for symbol, window in json.loads(path.read_text()).items()}
+
+
+def _save_bars_index(bars_dir: Path, index: dict[str, tuple[date, date]]) -> None:
+    temporary = bars_dir / "index.json.tmp"
+    temporary.write_text(json.dumps({symbol: [window[0].isoformat(), window[1].isoformat()] for symbol, window in sorted(index.items())}))
+    temporary.replace(bars_dir / "index.json")
+
+
+def _write_frame(frame: pd.DataFrame, path: Path) -> None:
+    """Write `frame` to a temp file beside `path` and rename it over, so `path` is never half-written."""
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        frame.to_parquet(temporary)
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _download_symbols(
+    todo: list[str],
+    window_start: date,
+    download_end: date,
+    bars_dir: Path,
+    index: dict[str, tuple[date, date]],
+    download: DownloadFn,
+    *,
+    empty_is_failure: bool,
+) -> list[str]:
+    """Download `todo` in batches over [window_start, download_end] into the cache; returns the symbols with no data.
+
+    Per batch, the index entries of its symbols are dropped and saved BEFORE any file is overwritten or removed,
+    and re-added after the files are written: a crash leaves a file without an entry (downloaded again), never an
+    entry claiming a window its file does not hold.
+    """
+    absent: list[str] = []
+    for offset in range(0, len(todo), _HISTORY_BATCH_SIZE):
+        batch_symbols = todo[offset : offset + _HISTORY_BATCH_SIZE]
+        for symbol in batch_symbols:
+            index.pop(symbol, None)
+        _save_bars_index(bars_dir, index)
+        raw = _download_batch(download, batch_symbols, window_start, download_end, empty_is_failure=empty_is_failure)
+        for symbol in batch_symbols:
+            frame = extract_ticker_frame(raw, symbol)
+            frame = frame.dropna(how="all") if not frame.empty else frame
+            path = bars_dir / f"{symbol}.parquet"
+            if frame.empty:
+                absent.append(symbol)
+                path.unlink(missing_ok=True)  # never rank on an older download of it
+                continue
+            _write_frame(frame, path)
+            index[symbol] = (window_start, download_end)
+        _save_bars_index(bars_dir, index)
+        console.print(f"  Downloaded {min(offset + _HISTORY_BATCH_SIZE, len(todo))}/{len(todo)}")
+    return absent
+
+
+def _ensure_bars(
+    symbols: list[str],
+    window_start: date,
+    window_end: date,
+    download_end: date,
+    cache_dir: Path,
+    download: DownloadFn,
+) -> list[str]:
+    """Make every symbol's raw bars cached over [window_start, window_end]; returns the symbols Yahoo has no data for.
+
+    A symbol already cached over a window covering the request, with its file present, is skipped; the rest are
+    downloaded in batches over [window_start, download_end] (`download_end` is today, so the split data covers every
+    split since the window). A first pass counts an all-empty batch as a failed attempt; every symbol still without
+    data is then requested once more after a pause through the shared rate-limit gate, because yfinance reports a
+    rate limit as missing data. The index is saved after each batch, so a crash keeps the batches already paid for.
+    """
+    bars_dir = cache_dir / "bars"
+    bars_dir.mkdir(parents=True, exist_ok=True)
+    index = _load_bars_index(bars_dir)
+    todo = [
+        symbol
+        for symbol in symbols
+        if symbol not in index or index[symbol][0] > window_start or index[symbol][1] < window_end or not (bars_dir / f"{symbol}.parquet").exists()
+    ]
+    console.print(f"  Bars: {len(symbols) - len(todo)} symbols cached, {len(todo)} to download")
+    absent = _download_symbols(todo, window_start, download_end, bars_dir, index, download, empty_is_failure=True)
+    if absent:
+        console.print(f"  {len(absent)} symbol(s) without data: asking for them once more after a pause")
+        gate = _get_rate_limit_gate()
+        gate.on_rate_limited()
+        gate.wait()
+        absent = _download_symbols(absent, window_start, download_end, bars_dir, index, download, empty_is_failure=False)
+    return sorted(absent)
+
+
+def _load_traded_frames(symbols: list[str], bars_dir: Path) -> dict[str, pd.DataFrame]:
+    """Each symbol's `traded_close` and `traded_volume` (the only columns the ranking reads); a missing file is an error."""
+    frames: dict[str, pd.DataFrame] = {}
+    for symbol in symbols:
+        path = bars_dir / f"{symbol}.parquet"
+        if not path.exists():
+            raise UniverseHistoryError(f"the cached bars of {symbol} are missing: {path}")
+        frames[symbol] = parse_yahoo_frame(pd.read_parquet(path))[["traded_close", "traded_volume"]]
+    return frames
+
+
+@contextmanager
+def _build_lock(cache_dir: Path) -> Iterator[None]:
+    """An exclusive `flock` on `<cache_dir>/.lock`, held for the block: two processes building at once would share the
+    cache's temp files and each save its own bars index over the other's files. Released when the process exits.
+    A caller that finds it held logs a warning and prints a line saying it waits, then blocks until the other build ends."""
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    with (cache_dir / ".lock").open("w") as handle:
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            # A first build can take an hour: say so instead of looking hung, then wait for it.
+            message = f"another universe-history build holds the lock on {cache_dir}: waiting for it (a first build can take tens of minutes to over an hour)"
+            logger.warning(message)
+            console.print(f"[yellow]{message}[/yellow]")
+            waited_from = time.monotonic()
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            console.print(f"[green]Lock acquired after {time.monotonic() - waited_from:.0f}s[/green]")
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _load_usable(path: Path) -> UniverseHistory | None:
+    """The history saved at `path` when it was built with the current parameters, else None."""
+    try:
+        saved = UniverseHistory.load(path)
+    except Exception as exc:
+        raise UniverseHistoryError(f"the universe history at {path} is unreadable: {exc}") from exc
+    return saved if saved is not None and _same_parameters(saved) else None
+
+
+def ensure_universe_history(
+    start: date,
+    end: date,
+    *,
+    path: Path = _DEFAULT_HISTORY_PATH,
+    cache_dir: Path = _DEFAULT_HISTORY_CACHE,
+    today: Callable[[], date] = date.today,
+    download: DownloadFn | None = None,
+    pool: Callable[[], list[str] | HistoryPool] | None = None,
+) -> UniverseHistory:
+    """The point-in-time universe history covering every month from `start`'s to `end`'s, built or extended if needed.
+
+    A history file at `path` that covers the window (and was built with the current parameters) is returned as is,
+    with no download. Otherwise the missing months are computed from the pool's Yahoo daily bars (cached in
+    `cache_dir`) plus SPY's sessions, merged with the months already saved, and saved. The build holds an exclusive
+    lock on `cache_dir` and re-reads the history once it has it, so a second process starting at the same time waits and
+    then returns the first one's result without downloading. `download` (default `yfinance.download`) and `pool`
+    (default `build_history_pool`; a plain symbol list is accepted) are injectable for tests. Every failure raises
+    `UniverseHistoryError`: the pool, a download, a month with no session or no symbol, missing SPY sessions.
+    """
+    existing = _load_usable(path)
+    if existing is not None and existing.covers(start, end):
+        return existing
+    with _build_lock(cache_dir):
+        existing = _load_usable(path)  # another process may have finished while this one waited
+        if existing is not None and existing.covers(start, end):
+            return existing
+        return _build_history(start, end, existing, path, cache_dir, today, download, pool)
+
+
+def _build_history(
+    start: date,
+    end: date,
+    existing: UniverseHistory | None,
+    path: Path,
+    cache_dir: Path,
+    today: Callable[[], date],
+    download: DownloadFn | None,
+    pool: Callable[[], list[str] | HistoryPool] | None,
+) -> UniverseHistory:
+    """The build path of `ensure_universe_history`, run under the cache lock: compute the missing months and save."""
+    needed = _month_keys(start, end)
+    missing = [month for month in needed if existing is None or month not in existing.months]
+    console.print(f"[bold]Building the universe history for {', '.join(missing)}[/bold]")
+    first_missing = date.fromisoformat(f"{missing[0]}-01")
+    last_month_start = date(end.year, end.month, 1)
+    now = today()
+    window_start = first_missing - timedelta(days=_HISTORY_WARMUP_DAYS)
+    window_end = min(end, now)  # nothing later than today exists to cache
+
+    pool_date, history_pool = _resolve_pool(cache_dir, last_month_start, now, pool)
+    symbols = history_pool.symbols
+    try:
+        fetch = download if download is not None else yfinance_download()
+    except ImportError as exc:
+        raise UniverseHistoryError("yfinance is required to build the universe history") from exc
+    try:
+        absent = _ensure_bars([*symbols, CALENDAR_SYMBOL] if CALENDAR_SYMBOL not in symbols else symbols, window_start, window_end, now, cache_dir, fetch)
+        if CALENDAR_SYMBOL in absent:
+            raise UniverseHistoryError(f"Yahoo has no {CALENDAR_SYMBOL} bars: the market calendar for the universe history is missing")
+        spy = parse_yahoo_frame(pd.read_parquet(cache_dir / "bars" / f"{CALENDAR_SYMBOL}.parquet"))
+        sessions = [ts.date() for ts in spy.index]
+        pool_absent = [symbol for symbol in absent if symbol != CALENDAR_SYMBOL]
+        if len(pool_absent) > _MAX_ABSENT_FRACTION * len(symbols):
+            raise UniverseHistoryError(
+                f"Yahoo has no data for {len(pool_absent)} of {len(symbols)} pool symbols, above the {_MAX_ABSENT_FRACTION:.0%} limit: "
+                f"Yahoo is failing, no history saved (e.g. {', '.join(pool_absent[:20])})"
+            )
+        frames = _load_traded_frames([symbol for symbol in symbols if symbol != CALENDAR_SYMBOL and symbol not in pool_absent], cache_dir / "bars")
+    except UniverseHistoryError:
+        raise
+    except Exception as exc:
+        raise UniverseHistoryError(f"the universe history bars failed: {exc}") from exc
+    if pool_absent:
+        logger.warning("Yahoo has no data for %d pool symbols: %s", len(pool_absent), ", ".join(pool_absent))
+        console.print(f"  [yellow]{len(pool_absent)} symbol(s) with no Yahoo data[/yellow] left out of the history")
+
+    computed = monthly_lists(
+        frames,
+        sessions,
+        missing,
+        min_price=float(CONFIG["min_price"]),
+        min_dollar_volume=float(CONFIG["min_dollar_volume"]),
+        top_n=_HISTORY_TOP_N,
+        lookback=_HISTORY_LOOKBACK,
+    )
+    for month, listed in computed.items():
+        if not listed:
+            raise UniverseHistoryError(f"the universe of {month} is empty: no symbol passes the price and dollar-volume screens")
+
+    history = UniverseHistory(
+        built=now,
+        pool_date=pool_date,
+        top_n=_HISTORY_TOP_N,
+        min_price=float(CONFIG["min_price"]),
+        min_dollar_volume=float(CONFIG["min_dollar_volume"]),
+        lookback=_HISTORY_LOOKBACK,
+        months=dict(sorted({**(existing.months if existing is not None else {}), **computed}.items())),
+        pool_size=len(symbols),
+        unanswered=tuple(sorted(history_pool.unanswered)),
+        bars_absent=tuple(sorted(pool_absent)),
+    )
+    history.save(path)
+    return history
+
+
 # ── Output ──────────────────────────────────────────────────────────────────
 
 
@@ -552,6 +1107,26 @@ def save_universe(data: dict, output_dir: Path) -> Path:
 # ── Main ────────────────────────────────────────────────────────────────────
 
 
+def _parse_month(text: str) -> date:
+    """The first day of a "YYYY-MM" month."""
+    try:
+        return date.fromisoformat(f"{text}-01")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a month: expected YYYY-MM") from None
+
+
+def _main_history(start: date, end: date, output_dir: Path) -> None:
+    """The `--history` CLI: ensure the point-in-time history covers [start, end] and print the months and sizes."""
+    try:
+        history = ensure_universe_history(start, end, path=output_dir / _DEFAULT_HISTORY_PATH.name)
+    except UniverseHistoryError as exc:
+        console.print(f"[red]ERROR: {exc}[/red]")
+        sys.exit(1)
+    console.print(f"\n[bold green]Universe history: {len(history.months)} months (pool dated {history.pool_date}, built {history.built})[/bold green]")
+    for month, symbols in history.months.items():
+        console.print(f"  {month}: {len(symbols)} symbols")
+
+
 def main():
     """Entry point for the batch-universe CLI."""
     parser = argparse.ArgumentParser(
@@ -563,7 +1138,23 @@ def main():
         default=str(DEFAULT_OUTPUT_DIR),
         help=f"Output directory for universe JSON (default: {DEFAULT_OUTPUT_DIR})",
     )
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Build or extend the point-in-time universe history (one list per month) instead of the live universe",
+    )
+    parser.add_argument("--start", type=_parse_month, help="--history: first month, YYYY-MM")
+    parser.add_argument("--end", type=_parse_month, help="--history: last month, YYYY-MM (default: this month)")
     args = parser.parse_args()
+
+    if args.history:
+        if args.start is None:
+            parser.error("--history needs --start YYYY-MM")
+        end = args.end or date.today().replace(day=1)
+        if end < args.start:
+            parser.error("--end is before --start")
+        _main_history(args.start, end, Path(args.output_dir))
+        return
 
     console.print("[bold cyan]══════════════════════════════════════════[/bold cyan]")
     console.print("[bold cyan]  Batch Stock Universe Builder[/bold cyan]")

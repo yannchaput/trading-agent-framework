@@ -23,16 +23,18 @@ Implements:
 import calendar
 import logging
 import sys
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from decimal import Decimal
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData, traded_series
+from trading_agent_framework.backtesting.data.yahoo import traded_series
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.alpaca import AlpacaApiRateLimiter
 from trading_agent_framework.config import TradingMode
@@ -43,16 +45,19 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
 from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory
 from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, YahooDataError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, FatalStrategyError, UniverseHistoryError, YahooDataError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
 
+from .batch_us_stock_universe import ensure_universe_history
 from .log_diagnostics import DiagnosticLogger
 from .parameters import CONFIG
 from .portfolio_risk_overlay import compute_risk_overlay
+from .universe_backtest_data import UniverseBacktestData, universe_parameters
 from .utils import (
     breadth_exposure,
     breadth_share,
@@ -92,6 +97,11 @@ _MIN_YAHOO_COVERAGE = 0.5
 # Seconds before each new attempt at a failed or incomplete Yahoo batch: the rebalance runs once a week, so a transient
 # throttle is waited out (~4 minutes at most) rather than costing the week.
 _YAHOO_RETRY_DELAYS = (60.0, 180.0)
+
+
+def _market_day(moment: datetime) -> date:
+    """The market-time date of a backtest bound (bounds are timezone-aware by convention; a naive one is taken as is)."""
+    return moment.astimezone(MARKET_TZ).date() if moment.tzinfo is not None else moment.date()
 
 
 class CrossMomentumStrategy(Strategy):
@@ -134,12 +144,16 @@ class CrossMomentumStrategy(Strategy):
         super().__init__(broker, mode=mode, **kwargs)
         self.parameters = {**CONFIG, **self.parameters}
 
-        if not universe:
+        # Paper/live trade the universe file's list, so they need one. A backtest has none at construction: its lists
+        # come from the point-in-time history, loaded by `run_backtesting` and read month by month (`_use_month_universe`).
+        if not universe and self.trading_mode is not TradingMode.BACKTESTING:
             self.log_warning("No universe provided to the strategy, this is a mandatory parameter")
             sys.exit(1)
+        universe = universe or []
         # A sleeve asset (SHV, GLD, IEF) is never scored or bought as a stock, even if the universe file lists it
         sleeve = set(sleeve_symbols(self.parameters["parking"]))
         self.vars.universe = [symbol for symbol in universe if symbol not in sleeve]
+        self.vars.universe_history = None  # set by `run_backtesting`; None (paper/live) keeps `vars.universe` as built
 
         # Paper/live read every daily bar the decision uses from Yahoo (see `get_historical_prices`): Alpaca's IEX bars
         # carry ~5% of consolidated volume, skip a thin stock's quiet days and close at the last IEX trade, so the
@@ -862,6 +876,9 @@ class CrossMomentumStrategy(Strategy):
 
         self.log_info("Today is a rebalance day — computing target portfolio...")
 
+        # Backtests: the scan reads this month's list (no-op in paper/live)
+        self._use_month_universe()
+
         # Paper/live: this loads the scan's Yahoo bars into vars.yahoo_bars. Steps 3-9 read them through
         # get_historical_prices, and rebalance() releases them at the end, so nothing below may fetch a fresh batch.
         target, all_ranks = self.compute_target_portfolio()
@@ -911,13 +928,47 @@ class CrossMomentumStrategy(Strategy):
         # Step 9: Rebalance
         self.rebalance(target, all_ranks)
 
-    def _backtest_preload_assets(self) -> list[Asset]:
-        """The universe plus the sleeve symbols, each once: what a backtest loads up front."""
-        symbols = list(dict.fromkeys([*self.vars.universe, *sleeve_symbols(self.parameters["parking"])]))
+    def _use_month_universe(self) -> None:
+        """Backtests: make `vars.universe` the history's list for today's month, minus the sleeve assets.
+
+        Everything downstream (the scan, the Yahoo batch, the breadth) reads `vars.universe`. A holding that dropped out
+        of the list is not ranked and is sold by the existing rule. No history (paper/live) leaves the universe as built.
+        A month the history lacks ends the run: the executor would otherwise log the tick as a failure and carry on,
+        dropping the week's scan without a trace in the results.
+        """
+        history: UniverseHistory | None = self.vars.universe_history
+        if history is None:
+            return
+        try:
+            month_list = history.on(self._market_date())
+        except UniverseHistoryError as exc:
+            raise FatalStrategyError(str(exc)) from exc
+        sleeve = set(sleeve_symbols(self.parameters["parking"]))
+        self.vars.universe = [symbol for symbol in month_list if symbol not in sleeve]
+
+    def _backtest_preload_assets(self, stocks: Sequence[str] | None = None, benchmark: str | None = None) -> list[Asset]:
+        """The stocks (default `vars.universe`), the sleeve symbols and the benchmark, each once: what a backtest loads up front."""
+        symbols = list(dict.fromkeys([*(self.vars.universe if stocks is None else stocks), *sleeve_symbols(self.parameters["parking"]), *([benchmark] if benchmark else [])]))
         return [Asset(symbol=symbol) for symbol in symbols]
 
     def run_backtesting(self, **overrides: Any):
-        """Run the strategy in backtesting mode."""
+        """Run the strategy in backtesting mode, on the point-in-time universe history.
+
+        The history is the only universe of a backtest (never today's universe file, which holds today's winners). It is
+        ensured over the window first, so a failure (`UniverseHistoryError`) stops the run before it starts; the first
+        review date is inside the window, so its month is the first one needed.
+        """
+        start: datetime = overrides.get("start", self.parameters["backtesting_start"])
+        end: datetime = overrides.get("end", self.parameters["backtesting_end"])
+        history = ensure_universe_history(_market_day(start), _market_day(end))
+        self.vars.universe_history = history
+        # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)
+        universe = universe_parameters(history)
+        self.parameters["universe"] = universe
+        sleeve = set(sleeve_symbols(self.parameters["parking"]))
+        stocks = [symbol for symbol in history.union(_market_day(start), _market_day(end)) if symbol not in sleeve]
+        benchmark = overrides.get("benchmark", self.parameters["benchmark_symbol"])
+
         if self.vars.history_file_path.exists():
             self.log_info(f"Deleting previous equity history file for a clean backtest: {self.vars.history_file_path}")
             self.vars.history_file_path.unlink()
@@ -928,7 +979,7 @@ class CrossMomentumStrategy(Strategy):
             self.log_info(f"Deleting previous breadth step file for a clean backtest: {self.vars.breadth_file_path}")
             self.vars.breadth_file_path.unlink()
 
-        # Preloading the whole universe (via `preload_assets`) avoids
+        # Preloading every symbol any month's list holds (via `preload_assets`) avoids
         # `compute_target_portfolio`'s thread pool falling back to fetching it one
         # ticker at a time: hundreds of concurrent `yf.download` calls race
         # yfinance's shared session/crumb handling and trip Yahoo's rate limiting,
@@ -938,8 +989,9 @@ class CrossMomentumStrategy(Strategy):
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             budget=self.parameters["budget"],
-            data_source=YahooBacktestData,  # AlpacaBacktestData has no enough history, approximatively 6 year history
-            preload_assets=self._backtest_preload_assets(),  # preload the ticker universe and the sleeve ETFs in memory
+            # Yahoo (AlpacaBacktestData has not enough history, approximatively 6 years), loaded in batches, failing when Yahoo returns too little
+            data_source=partial(UniverseBacktestData, record=universe),
+            preload_assets=self._backtest_preload_assets(stocks, benchmark),  # the window's stocks, the sleeve ETFs and the benchmark, in memory
             benchmark=self.parameters["benchmark_symbol"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
             slippage=self.parameters["slippage"],

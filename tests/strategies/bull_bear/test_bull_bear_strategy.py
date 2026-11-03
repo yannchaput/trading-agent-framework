@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time
+from datetime import date, datetime, time
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
@@ -10,14 +10,15 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, FakeNewsProvider, et
 
 from trading_agent_framework.agents.manager import AgentManager
-from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.strategies.bull_bear import BullBearStrategy
+from trading_agent_framework.strategies.bull_bear import BullBearStrategy, agent_bull_bear
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore, state_path
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory
+from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
 from trading_agent_framework.utils.strategy_factory import Strategies
 
@@ -304,21 +305,29 @@ def test_paper_never_aborts_on_abandoned_reviews(tmp_path: Path) -> None:
     strategy.on_trading_iteration()  # logs and carries on
 
 
+def _history_of(*symbols: str) -> UniverseHistory:
+    months = {f"{year}-{month:02d}": tuple(symbols) for year in range(2024, 2028) for month in range(1, 13)}
+    return UniverseHistory(built=date(2026, 11, 3), pool_date=date(2026, 10, 30), top_n=1200, min_price=5.0, min_dollar_volume=20_000_000.0, lookback=63, months=months)
+
+
 def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_preloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
+    monkeypatch.setattr(agent_bull_bear, "ensure_universe_history", lambda start, end: _history_of("AAA", "BBB", "CCC", "SHV"))
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
     strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
 
     strategy.run_backtesting()
 
     assert captured["start"] == BullBearStrategy.parameters["backtesting_start"]
-    assert captured["data_source"] is YahooBacktestData and captured["timestep"] == "day"
+    assert isinstance(captured["data_source"](BullBearStrategy.parameters["backtesting_start"], BullBearStrategy.parameters["backtesting_end"]), UniverseBacktestData)
+    assert captured["timestep"] == "day"
     assert {asset.symbol for asset in captured["preload_assets"]} == {"AAA", "BBB", "CCC", "SHV", "SPY"}
     assert captured["budget"] == Decimal(10000) and captured["warmup_trading_days"] == 300
 
 
 def test_run_backtesting_charges_no_slippage_so_runs_compare_with_the_picker_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
+    monkeypatch.setattr(agent_bull_bear, "ensure_universe_history", lambda start, end: _history_of("AAA"))
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
     strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
 

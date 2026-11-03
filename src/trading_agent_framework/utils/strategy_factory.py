@@ -37,8 +37,15 @@ class Strategies(StrEnum):
     VWAP_PULLBACK_CONTINUATION = auto()
 
 
-def _build_with_universe(strategy_class: Callable[..., Strategy], broker: Broker, mode: TradingMode, **kwargs: Any) -> Strategy | None:
-    """Build a strategy that trades the shared stock universe; None (with a warning) when its file is missing."""
+def _build_with_universe(strategy_class: Callable[..., Strategy], broker: Broker, mode: TradingMode, *, point_in_time: bool = False, **kwargs: Any) -> Strategy | None:
+    """Build a strategy that trades the shared stock universe; None (with a warning) when its file is missing.
+
+    `point_in_time` opts a strategy in to the universe history: in a backtest it is built with no universe at all, and
+    its `run_backtesting` loads the history (today's file, which holds today's winners, is never read). Paper/live,
+    and every strategy that does not opt in, keep the file.
+    """
+    if point_in_time and mode is TradingMode.BACKTESTING:
+        return strategy_class(broker=broker, mode=mode, **kwargs)
     universe = load_cross_momentum_universe()
     if not universe:
         logger.warning("Universe file not found — run `uv run batch-universe` before executing this strategy.")
@@ -47,7 +54,7 @@ def _build_with_universe(strategy_class: Callable[..., Strategy], broker: Broker
 
 
 def _build_cross_momentum(broker: Broker, mode: TradingMode) -> Strategy | None:
-    return _build_with_universe(CrossMomentumStrategy, broker, mode)
+    return _build_with_universe(CrossMomentumStrategy, broker, mode, point_in_time=True)
 
 
 def _build_news_binary(broker: Broker, mode: TradingMode) -> Strategy | None:
@@ -63,7 +70,7 @@ def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
 
 
 def _build_bull_bear(broker: Broker, mode: TradingMode) -> Strategy | None:
-    return _build_with_universe(BullBearStrategy, broker, mode)
+    return _build_with_universe(BullBearStrategy, broker, mode, point_in_time=True)
 
 
 def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
