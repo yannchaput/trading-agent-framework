@@ -30,7 +30,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, OrderValidationError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, OrderValidationError, TradingFrameworkError
 
 if TYPE_CHECKING:
     from ib_async import Contract, Trade
@@ -182,7 +182,11 @@ class IbkrBroker(Broker):
             order.set_error(exc)
             logger.exception("Failed to submit order %s", order.identifier)
             self.tracker.untrack(order)
-            raise  # set_error BEFORE re-raising -- lumibot's contract
+            # set_error BEFORE raising -- lumibot's contract. Wrapped so callers catching BrokerError (the Rebalancer)
+            # don't abort half way; a framework error passes through as the same object.
+            if isinstance(exc, TradingFrameworkError):
+                raise
+            raise BrokerError(str(exc)) from exc
         rejection = orders.rejection_message(trade, ib_errors)
         if rejection is not None:
             order.set_error(rejection)

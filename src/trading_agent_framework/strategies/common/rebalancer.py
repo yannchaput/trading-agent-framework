@@ -8,18 +8,22 @@ cash), and quantities are floored (`fractional_qty`) so a cost never exceeds the
 Orders still open from an earlier review count: a pending buy counts toward the position and a pending sell is
 deducted, so a review never sends again what is already in flight. (A backtest fills an order on the next bar, so a
 review that follows closely finds the previous orders still pending; in paper/live a market order is normally filled by then.)
+
+An order whose outcome the broker could not tell (`BrokerUncertainError`) counts as sent, never as refused and never
+resent: a buy's cost stays deducted from the cash available, a sell's proceeds are never counted, and the order is
+reported with `confirmed=False`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 
 from trading_agent_framework.entities.enums import OrderSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.portfolio import TargetPortfolio
-from trading_agent_framework.utils.errors import TradingFrameworkError
+from trading_agent_framework.utils.errors import BrokerUncertainError, TradingFrameworkError
 from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power
 
 if TYPE_CHECKING:
@@ -47,6 +51,7 @@ class PlacedOrder:
     symbol: str
     side: str  # "buy" or "sell"
     quantity: float
+    confirmed: bool = True  # False: the broker could not say whether it took the order (it is kept, never resent)
 
 
 def in_flight_quantities(open_orders: Iterable[Order]) -> tuple[dict[str, float], dict[str, float]]:
@@ -62,6 +67,9 @@ def in_flight_quantities(open_orders: Iterable[Order]) -> tuple[dict[str, float]
     return buys, sells
 
 
+Outcome = Literal["accepted", "refused", "unknown"]
+
+
 def _estimated_pnl(price: float, cost: float, quantity: float) -> str:
     """The log suffix for a sell: its gain or loss against the position's average cost, at the quoted price."""
     pnl = (price - cost) * quantity
@@ -74,7 +82,7 @@ class Rebalancer:
         self._strategy = strategy
         self._params = params
         self._fill_wait_seconds = fill_wait_seconds  # how long the buys wait for this run's sells to fill (paper/live only)
-        self.placed: list[PlacedOrder] = []  # the orders accepted by the current/last `rebalance`, readable if it raises half way
+        self.placed: list[PlacedOrder] = []  # the orders sent by the current/last `rebalance` (accepted, or with an unknown outcome: `confirmed=False`), readable if it raises half way
 
     # --- what is held ----------------------------------------------------------------------------
 
@@ -116,7 +124,7 @@ class Rebalancer:
     # --- the rebalance -----------------------------------------------------------------------------
 
     def rebalance(self, target: TargetPortfolio, forced_exits: Collection[str] = ()) -> list[PlacedOrder]:
-        """Trade the book toward `target`; returns the orders that were accepted, in submission order.
+        """Trade the book toward `target`; returns the orders sent (accepted, or with an unknown outcome: `confirmed=False`), in submission order.
 
         Cash invariant (live fills must never be counted twice, cf. congress_trades 275c2f3): the account is read
         once, BEFORE any order and before positions and open orders, and `cash` is never read again in this call.
@@ -163,19 +171,23 @@ class Rebalancer:
 
         sells: list[Order] = []  # the stock sells of this run, whose fills the buys wait for
 
-        def submit(symbol: str, side: str, quantity: float, why: str) -> bool:
+        def submit(symbol: str, side: str, quantity: float, why: str) -> Outcome:
             try:
                 order = strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
+            except BrokerUncertainError as exc:  # the broker keeps the order tracked and resolves it later: never resend, never refund
+                strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
+                self.placed.append(PlacedOrder(symbol, side, quantity, confirmed=False))
+                return "unknown"
             except TradingFrameworkError as exc:
                 refusals[:] = [exc]
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
-                return False
+                return "refused"
             if side == "sell" and symbol != parking:
                 sells.append(order)
             note = _estimated_pnl(prices[symbol], costs[symbol], quantity) if side == "sell" and symbol in costs and prices[symbol] > 0 else ""
             strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why}{note})")
             self.placed.append(PlacedOrder(symbol, side, quantity))
-            return True
+            return "accepted"
 
         # 1. Sells: forced exits and dropped stocks in full, stocks above their band trimmed.
         proceeds = 0.0
@@ -190,7 +202,7 @@ class Rebalancer:
                 if price <= 0 or excess <= band or excess < min_trade:
                     continue
                 quantity, why = min(fractional_qty(excess / price), sellable(symbol)), "trim above target"
-            if quantity > 0 and submit(symbol, "sell", quantity, why):
+            if quantity > 0 and submit(symbol, "sell", quantity, why) == "accepted":
                 proceeds += quantity * price
 
         # A live broker credits buying power only when a sell FILLS (2026-10-27: read 350 ms before SYRE's fill, it still
@@ -230,7 +242,7 @@ class Rebalancer:
                 sell_value = max(sell_value, min(shortfall, parking_value))
             if sell_value >= min_trade or (sell_value > 0 and sell_value >= parking_value):
                 quantity = sellable(parking) if sell_value >= parking_value else min(fractional_qty(sell_value / parking_price), sellable(parking))
-                if quantity > 0 and submit(parking, "sell", quantity, "above target or funding the buys"):
+                if quantity > 0 and submit(parking, "sell", quantity, "above target or funding the buys") == "accepted":
                     available += quantity * parking_price
                     parking_value -= quantity * parking_price
 
@@ -243,7 +255,8 @@ class Rebalancer:
             quantity = fractional_qty(min(difference, available) / price)
             if quantity * price < min_trade:
                 continue
-            if submit(symbol, "buy", quantity, "toward target"):
+            outcome = submit(symbol, "buy", quantity, "toward target")
+            if outcome != "refused":  # an unknown outcome may have gone through: its cost stays spent
                 available -= quantity * price
             else:
                 # Refused for buying power: continue from the broker's own figure, not our (drifted) estimate.

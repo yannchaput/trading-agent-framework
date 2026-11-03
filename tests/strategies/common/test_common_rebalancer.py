@@ -18,7 +18,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
-from trading_agent_framework.utils.errors import BrokerError
+from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError
 
 # Portfolio value 10,000 in every test: the band is 500 (5%), the smallest order 50 (0.5%), the cash reserve 200 (2%).
 
@@ -170,6 +170,70 @@ def test_a_refused_sell_is_not_counted_as_proceeds(tmp_path: Path, monkeypatch: 
 
     # available = min(bp, 7,500 + 0) - 200 = 7,300: A takes 3,500, the parking buy gets the remaining 3,800
     assert _orders(broker) == [("A", "buy", 70.0), ("SHV", "buy", 38.0)]
+
+
+def _raising_for(strategy: Strategy, monkeypatch: pytest.MonkeyPatch, symbol: str, side: OrderSide, error: Exception) -> dict[str, int]:
+    """Make `symbol`'s `side` order raise `error`; returns how many times each symbol's orders were submitted."""
+    original = strategy.submit_order
+    calls: dict[str, int] = {}
+
+    def submit(order):
+        calls[order.asset.symbol] = calls.get(order.asset.symbol, 0) + 1
+        if order.asset.symbol == symbol and order.side is side:
+            raise error
+        return original(order)
+
+    monkeypatch.setattr(strategy, "submit_order", submit)
+    return calls
+
+
+def test_an_unknown_buy_counts_as_spent_for_the_buys_after_it(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=5200)
+    calls = _raising_for(strategy, monkeypatch, "A", OrderSide.BUY, BrokerUncertainError("timeout"))
+
+    with caplog.at_level(logging.WARNING):
+        placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.35}, cash_buffer=0.02))
+
+    # available 5,000 less A's 3,500 leaves 1,500 = 60 B (a refused A would have left B 140)
+    assert placed == [PlacedOrder("A", "buy", 70.0, confirmed=False), PlacedOrder("B", "buy", 60.0)]
+    assert calls["A"] == 1
+    assert "A" not in [symbol for symbol, _, _ in _orders(broker)]  # the fake never saw A: the broker owns its tracking
+    assert "buy 70 A (toward target): outcome unknown at the broker, not resent -- check the account: timeout" in caplog.text
+    assert "was refused" not in caplog.text
+
+
+def test_an_unknown_sell_brings_no_proceeds_and_is_not_waited_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500)
+    calls = _raising_for(strategy, monkeypatch, "B", OrderSide.SELL, BrokerUncertainError("timeout"))
+    waits: list[object] = []
+    monkeypatch.setattr(strategy, "wait_for_orders_execution", lambda *args, **kwargs: waits.append(args) or True)
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+
+    # no proceeds: available = 7,500 - 200 = 7,300, A takes 3,500 and the parking buy gets the remaining 3,800
+    assert placed == [PlacedOrder("B", "sell", 100.0, confirmed=False), PlacedOrder("A", "buy", 70.0), PlacedOrder("SHV", "buy", 38.0)]
+    assert calls["B"] == 1
+    assert waits == []
+
+
+def test_an_unknown_parking_sell_does_not_fund_the_buys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"SHV": 98}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    calls = _raising_for(strategy, monkeypatch, "SHV", OrderSide.SELL, BrokerUncertainError("timeout"))
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25}, cash_buffer=0.02))
+
+    assert placed == [PlacedOrder("SHV", "sell", 60.0, confirmed=False)]  # the available cash is still 0: no buy
+    assert calls == {"SHV": 1}
+
+
+def test_an_unknown_outcome_does_not_feed_the_buying_power_resync(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=5200)
+    message = json.dumps({"buying_power": "100000", "message": "insufficient buying power"})
+    _raising_for(strategy, monkeypatch, "A", OrderSide.BUY, BrokerUncertainError(message))
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.35}, cash_buffer=0.02))
+
+    assert placed == [PlacedOrder("A", "buy", 70.0, confirmed=False), PlacedOrder("B", "buy", 60.0)]  # not resynced up to 140
 
 
 def test_a_target_without_a_price_is_skipped_with_a_warning_and_the_others_proceed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

@@ -214,7 +214,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert line["allowed"] == ["AAA"]
     assert line["portfolio"] == [{"symbol": "AAA", "weight": 0.3, "reason": "best idea"}]
     assert line["targets"]["AAA"] == 0.3 and line["targets"]["SHV"] == pytest.approx(0.68)
-    assert line["orders"][0] == {"symbol": "AAA", "side": "buy", "quantity": 60.0}
+    assert line["orders"][0] == {"symbol": "AAA", "side": "buy", "quantity": 60.0, "confirmed": True}
     assert line["orders"][1]["symbol"] == "SHV" and line["orders"][1]["quantity"] == pytest.approx(68.0, abs=1e-5)
     assert line["forced_exits"] == [] and line["fail_counts_after"] == {}
 
@@ -802,7 +802,7 @@ def test_a_failure_after_a_sell_went_out_abandons_the_review_and_logs_the_orders
     assert h.store.load() == ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=2)  # the counters are not saved
     (line,) = h.log_lines()
     assert line["abandoned"] is True and line["stage"] == "execution" and line["abandoned_streak"] == 2
-    assert line["orders"] == [{"symbol": "HHH", "side": "sell", "quantity": 100.0}]
+    assert line["orders"] == [{"symbol": "HHH", "side": "sell", "quantity": 100.0, "confirmed": True}]
     assert "data gone" in line["error"]
 
 

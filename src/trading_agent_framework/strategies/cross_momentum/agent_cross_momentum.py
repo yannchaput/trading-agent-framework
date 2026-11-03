@@ -45,7 +45,7 @@ from trading_agent_framework.strategies.common.scoring import apply_filters, mom
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
 from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, YahooDataError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, YahooDataError
 from trading_agent_framework.utils.helpers import (
     get_thread_capacity,
 )
@@ -623,11 +623,16 @@ class CrossMomentumStrategy(Strategy):
         # The trend data is fetched before any order is sent: an unexpected fetch error then aborts the rebalance cleanly
         weights = self._sleeve_weights()
 
+        def log_unknown(side: str, quantity: float, symbol: str, why: str, exc: BrokerUncertainError) -> None:
+            """The order was sent but the broker could not confirm it: it stays tracked and is never resent here."""
+            self.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
+
         # Phase 1: Sell (exits, trims, excess parking)
         sells: list[tuple[Order, float]] = []  # each submitted sell with the price it is expected to fill at
         hysteresis_value = 0.0
         kept_count = 0
         sold_count = 0
+        unconfirmed_count = 0  # exits whose outcome the broker could not tell
         sleeve_positions = {}
         for pos in current_positions:
             symbol = pos.asset.symbol
@@ -651,6 +656,8 @@ class CrossMomentumStrategy(Strategy):
                         self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
                         try:
                             sells.append((self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day")), price))
+                        except BrokerUncertainError as exc:  # sent, outcome unknown: no proceeds counted
+                            log_unknown("sell", trim_qty, symbol, "trim above band", exc)
                         except Exception as e:
                             self.log_error(f"Failed to submit trim order for {symbol}: {e}")
                 continue
@@ -673,6 +680,10 @@ class CrossMomentumStrategy(Strategy):
                     sold_count += 1
                     last_price = self.get_last_price(symbol) or 0.0
                     sells.append((sell_order, float(last_price)))
+                except BrokerUncertainError as exc:  # sent, outcome unknown: counted as sold, no proceeds
+                    log_unknown("sell", exit_quantity, symbol, "exit", exc)
+                    sold_count += 1
+                    unconfirmed_count += 1
                 except Exception as e:
                     self.log_error(f"Failed to submit sell order for {symbol}: {e}")
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
@@ -703,6 +714,8 @@ class CrossMomentumStrategy(Strategy):
                     self.log_info(f"Selling {sell_qty} {symbol} @ ${price:.2f} (parking above target)")
                     try:
                         sells.append((self.submit_order(self.create_order(symbol, sell_qty, "sell", time_in_force="day")), price))
+                    except BrokerUncertainError as exc:  # sent, outcome unknown: no proceeds counted
+                        log_unknown("sell", sell_qty, symbol, "parking above target", exc)
                     except Exception as e:
                         self.log_error(f"Failed to submit parking sell order for {symbol}: {e}")
 
@@ -771,6 +784,8 @@ class CrossMomentumStrategy(Strategy):
             try:
                 buy_order = self.create_order(symbol, quantity, "buy", time_in_force="day")
                 self.submit_order(buy_order)
+            except BrokerUncertainError as exc:  # sent, outcome unknown: the cost stays deducted, no buying-power resync
+                log_unknown("buy", quantity, symbol, "toward target", exc)
             except Exception as e:
                 self.log_warning(f"Failed to submit buy order for {symbol}: {e}")
                 # The local available_cash estimate (get_cash() + estimated unfilled
@@ -798,12 +813,18 @@ class CrossMomentumStrategy(Strategy):
             self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (parking)")
             try:
                 self.submit_order(self.create_order(symbol, quantity, "buy", time_in_force="day"))
+            except BrokerUncertainError as exc:  # sent, outcome unknown: the cost stays deducted
+                log_unknown("buy", quantity, symbol, "parking", exc)
             except Exception as e:
                 self.log_warning(f"Failed to submit parking buy order for {symbol}: {e}")
 
         # The target positions never get a line unless they are bought, so say how the book is made up
         held_targets = sum(1 for pos in current_positions if pos.asset.symbol in target_symbols)
-        self.log_info(f"Rebalance summary: {len(target)} targets ({held_targets} already held, {len(target) - held_targets} not held), {kept_count} kept under hysteresis, {sold_count} sold")
+        unconfirmed_note = f" ({unconfirmed_count} unconfirmed)" if unconfirmed_count else ""
+        self.log_info(
+            f"Rebalance summary: {len(target)} targets ({held_targets} already held, {len(target) - held_targets} not held), "
+            f"{kept_count} kept under hysteresis, {sold_count} sold{unconfirmed_note}"
+        )
 
     # ── Main iteration ────────────────────────────────────────────────────────
 

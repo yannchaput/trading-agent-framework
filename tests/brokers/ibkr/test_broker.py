@@ -111,6 +111,64 @@ def test_a_rejection_sets_the_error_before_raising_and_untracks(broker: IbkrBrok
     assert broker.tracker.get_tracked_order(order.identifier) is None
 
 
+def test_a_raw_exception_from_placing_surfaces_as_broker_error(broker: IbkrBroker, ib: FakeIB) -> None:
+    """The shared `Rebalancer` catches `TradingFrameworkError` only: a raw error from the gateway
+    would abort a rebalance half way."""
+    boom = RuntimeError("boom")
+
+    def place_raises(contract, ib_order):
+        raise boom
+
+    ib.placeOrder = place_raises  # ty: ignore[invalid-assignment]
+    order = _buy()
+
+    with pytest.raises(BrokerError, match="boom") as raised:
+        broker.submit_order(order)
+
+    assert raised.value.__cause__ is boom
+    assert order.status is OrderStatus.ERROR
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+
+
+def test_an_exception_escaping_the_connection_raw_still_surfaces_as_broker_error(broker: IbkrBroker, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`IbkrConnection.call` already wraps what the loop thread raises, so `placeOrder` failures
+    reach `_submit_order` as `BrokerError`. This pins the broker's own guarantee on top of that:
+    whatever escapes `call` raw (a future connection change) is wrapped too."""
+    boom = RuntimeError("boom")
+
+    def call_raises(*args: object, **kwargs: object) -> object:
+        raise boom
+
+    monkeypatch.setattr(broker._connection, "call", call_raises)
+    order = _buy()
+    # `_qualified` also goes through `call`: pre-fill the contract cache so only the placing fails.
+    broker._contracts["AAPL"] = object()  # ty: ignore[invalid-assignment]
+
+    with pytest.raises(BrokerError, match="boom") as raised:
+        broker.submit_order(order)
+
+    assert raised.value.__cause__ is boom
+    assert order.status is OrderStatus.ERROR
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+
+
+def test_a_framework_error_from_placing_is_re_raised_unchanged(broker: IbkrBroker, ib: FakeIB) -> None:
+    err = BrokerError("gateway gone")
+
+    def place_raises(contract, ib_order):
+        raise err
+
+    ib.placeOrder = place_raises  # ty: ignore[invalid-assignment]
+    order = _buy()
+
+    with pytest.raises(BrokerError) as raised:
+        broker.submit_order(order)
+
+    assert raised.value is err
+    assert order.status is OrderStatus.ERROR
+    assert broker.tracker.get_tracked_order(order.identifier) is None
+
+
 def test_a_rejection_with_no_log_message_falls_back_to_the_error_event(broker: IbkrBroker, ib: FakeIB) -> None:
     """Reproduces a real IBKR rejection (a PRIIPs/KID regulatory block on SPY): `trade.log` never
     got a message, but IBKR's `errorEvent` carried the real reason -- that must not be lost as

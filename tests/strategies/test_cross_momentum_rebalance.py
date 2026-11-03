@@ -19,7 +19,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import unfilled_sell_proceeds
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestDataError, BrokerError
+from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError
 
 TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
@@ -51,6 +51,7 @@ class FakeStrategy:
         cash_buffer_pct=0.05,
         min_trade_pct=0.01,
         reject=(),
+        uncertain=(),
         price_errors=(),
         trend_assets=(),
         bars=None,
@@ -69,6 +70,8 @@ class FakeStrategy:
         self._positions = list(positions)
         self._last_prices = last_prices or {}
         self._reject = set(reject)
+        self._uncertain = set(uncertain)
+        self.attempts: dict[str, int] = {}  # submit_order calls per symbol, the failed ones included
         self._price_errors = set(price_errors)
         self._bars = bars or {}
         self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
@@ -107,6 +110,9 @@ class FakeStrategy:
         return FakeOrder(symbol, quantity, side)
 
     def submit_order(self, order):
+        self.attempts[order.symbol] = self.attempts.get(order.symbol, 0) + 1
+        if order.symbol in self._uncertain:
+            raise BrokerUncertainError(f"timeout {order.symbol}")
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
         self.orders.append(order)
@@ -383,6 +389,63 @@ def test_a_rejected_shv_buy_is_logged_and_does_not_raise():
 
     assert _orders(fake, "AAA", "buy") == [3.0]
     assert any("SHV" in message for message in fake.warnings)
+
+
+def test_an_unknown_buy_keeps_its_cost_and_is_logged_as_unknown():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 50.0}, uncertain={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert _orders(fake, "BBB", "buy") == [9.0]  # 950 less AAA's 500 leaves 450
+    assert fake.attempts["AAA"] == 1
+    assert any("outcome unknown at the broker, not resent" in message for message in fake.warnings)
+    assert not any("Failed to submit buy order for AAA" in message for message in fake.warnings)
+
+
+def test_an_unknown_exit_brings_no_proceeds_and_is_counted_unconfirmed():
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 10.0)], last_prices={"OLD": 100.0, "AAA": 50.0}, uncertain={"OLD"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 50.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == []
+    assert fake.attempts["OLD"] == 1
+    assert any("1 sold (1 unconfirmed)" in message for message in fake.infos)
+    assert any("outcome unknown at the broker, not resent" in message for message in fake.warnings)
+
+
+def test_an_unknown_trim_is_not_resent():
+    fake = FakeStrategy(cash=0.0, positions=[_held("AAA", 10.0)], last_prices={"AAA": 100.0}, uncertain={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1)], {"AAA": 1})
+
+    assert fake.attempts["AAA"] == 1
+    assert any("outcome unknown at the broker, not resent" in message for message in fake.warnings)
+
+
+def test_an_unknown_parking_sell_brings_no_proceeds_to_the_stock_buy():
+    fake = FakeStrategy(cash=0.0, positions=[_held("SHV", 20.0)], last_prices={"AAA": 100.0, "SHV": 50.0}, uncertain={"SHV"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 100.0, 1)], {"AAA": 1})
+
+    # Portfolio 20 x 50 = 1000; AAA target 0.9 -> 900, SHV target 950 - 900 = 50 (1 share), so 19 SHV are sold.
+    # Known outcome (test_an_exposure_rise_sells_shv_...): the 19 x 50 = 950 proceeds fund a 9-share AAA buy.
+    # Unknown outcome: the sell brings nothing, the budget stays at the cash of 0, so no AAA share is bought.
+    assert fake.attempts["SHV"] == 1
+    assert _orders(fake, "AAA", "buy") == []
+    assert any("sell 19 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
+    assert not any("Failed to submit parking sell order" in message for message in fake.warnings)
+
+
+def test_an_unknown_parking_buy_is_not_resent_nor_logged_as_failed():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, uncertain={"SHV"})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    # Same setup as test_idle_cash_is_swept_into_shv: AAA 3 shares, then 13 SHV; here the SHV buy is unknown
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert fake.attempts["SHV"] == 1
+    assert any("buy 13 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
+    assert not any("Failed to submit parking buy order" in message for message in fake.warnings)
 
 
 def test_backtests_preload_the_sleeve_symbols_once():

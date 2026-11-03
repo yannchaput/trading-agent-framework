@@ -724,7 +724,7 @@ def test_a_broker_error_during_the_rebalance_logs_the_orders_already_sent(tmp_pa
 
     assert not outcome.completed
     (line,) = h.log_lines()
-    assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0}]
+    assert line["stage"] == "execution" and line["orders"] == [{"symbol": "S00", "side": "buy", "quantity": 10.0, "confirmed": True}]
     # The decision that led to those orders is in the same line.
     assert line["book"] == UNIVERSE[:10] and line["verdict_counts"] == {"in": 10, "out": 5}
     assert len(line["verdicts"]) == 15
