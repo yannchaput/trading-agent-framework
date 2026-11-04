@@ -12,6 +12,7 @@
 * ~~Update pyproject.toml to make dashboard an "extra" dependency~~
 * ~~Add a gloabl factory/builder for strategy in main.py~~
 * Add a skill to review, challenge and validate the design of a strategy
+* Set the plugins claude-api and build-evals to enable evals
 
 ## BUGS
 
