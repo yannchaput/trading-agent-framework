@@ -13,6 +13,7 @@
 * ~~Add a gloabl factory/builder for strategy in main.py~~
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
+* Implement a skill scanning the auto memory and sessions to get a finding
 
 ## BUGS
 
