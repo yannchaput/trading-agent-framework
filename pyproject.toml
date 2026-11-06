@@ -1,6 +1,6 @@
 [project]
 name = "trading-agent-framework"
-version = "0.1.2"
+version = "0.1.3"
 description = "A trading agent harness managing runtime, the broker layer, agent layer, memory, tools etc."
 readme = "README.md"
 authors = [
