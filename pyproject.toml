@@ -50,6 +50,7 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
     "ruff>=0.6",
+    "interrogate>=1.6",
 ]
 #batch-universe =["alpaca-py>=0.43.5", "yfinance>=0.2"]
 #dashboard = ["streamlit>=1.40", "pandas>=2.0"]
@@ -60,7 +61,12 @@ target-version = "py314"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "D"] # D: Enables all pydocstyle rules
+
+# Optional: Choose a specific convention flavor
+[tool.ruff.lint.pydocstyle]
+convention = "google" # Options: "google", "numpy", or "pep257"
+
 
 [tool.pyright]
 include = ["src"]
