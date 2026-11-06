@@ -193,7 +193,7 @@ class EarningsDriftStrategy(Strategy):
             timestep="day",
             agent_telemetry=self.settings.agent_enabled,
         )
-        self._backtest_end = _run_end(overrides.get("end", self.parameters["backtesting_end"]))
+        self._backtest_end = _run_end(self.resolved_window(None, overrides.get("end"))[1])
         return super().run_backtesting(**{**defaults, **overrides})
 
 

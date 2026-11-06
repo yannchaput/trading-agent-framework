@@ -228,6 +228,21 @@ def test_intraday_contexts_matches_reference_on_gappy_data(name: str, bar_stamp:
     _assert_same_contexts(intraday_contexts(stock, bench, **kwargs), _reference_intraday_contexts(stock, bench, **kwargs))
 
 
+def test_a_bucket_whose_highs_are_all_missing_does_not_poison_the_running_session_high() -> None:
+    """The old loop kept the running max through a NaN high; a plain `np.maximum.accumulate` carried the NaN to every later bucket."""
+    stock = minute_ohlc(OPEN, _wavy(60))
+    stock.iloc[10:15, stock.columns.get_loc("high")] = float("nan")  # bucket 2 (09:40-09:44) has no usable high
+    bench = minute_ohlc(OPEN, _wavy(60, seed=2))
+    baseline = rvol_baseline([pd.Series([float(i * 150) for i in range(1, 61)], index=range(60))])
+    kwargs: dict[str, Any] = dict(session_open=OPEN, now=et(2026, 9, 1, 10, 30), bar_stamp="open", beta=0.8, baseline=baseline)
+
+    actual = [context.session_high for context in intraday_contexts(stock, bench, **kwargs)]
+    expected = [context.session_high for context in _reference_intraday_contexts(stock, bench, **kwargs)]
+
+    assert actual == expected
+    assert not any(math.isnan(value) for value in actual)
+
+
 def test_intraday_contexts_gappy_scenarios_cover_the_gates() -> None:
     """The scenarios above only mean something if they hit different gate outcomes."""
     counts = {}

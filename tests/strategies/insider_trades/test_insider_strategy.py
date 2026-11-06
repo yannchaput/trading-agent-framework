@@ -300,6 +300,17 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
     assert [asset.symbol for asset in seen["preload_assets"]] == [*strategy.settings.watchlist, "SPY"]
 
 
+def test_run_backtesting_with_an_explicit_none_bound_uses_the_parameters_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The base class reads `end=None` as "not given"; the Form 4 cutoffs must agree with the window it simulates."""
+    strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
+    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)
+
+    strategy.run_backtesting(start=None, end=None)
+
+    assert strategy._backtest_start == InsiderTradesStrategy.parameters["backtesting_start"]
+    assert strategy._backtest_end == InsiderTradesStrategy.parameters["backtesting_end"] + timedelta(days=1)
+
+
 def test_run_backtesting_records_the_merged_window_for_the_form_4_load(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: None)

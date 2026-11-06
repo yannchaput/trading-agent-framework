@@ -150,7 +150,7 @@ def intraday_contexts(
     # Session-level measures are read at the bucket's LAST row, i.e. as of the bar's close.
     vwaps = vwap_series(df).to_numpy()[last]
     cumulative = df["volume"].astype(float).cumsum().to_numpy()[last]
-    session_highs = np.maximum.accumulate(highs)
+    session_highs = np.fmax.accumulate(highs)  # fmax skips a NaN high (a bucket with none) as the old running max did
     open_price = float(df["open"].iloc[0])
     bench_closes, bench_open = _benchmark_closes(benchmark_df, session_open, bar_stamp, minutes)
     return [

@@ -275,7 +275,10 @@ class Desk:
         if order.identifier == trade.entry_order_id:
             self._settle_entry(trade, order)
         elif order.identifier == trade.stop_order_id:
-            self._strategy.log_warning(f"the stop for {trade.symbol} was cancelled outside the strategy; placing it again")
+            self._strategy.log_warning(
+                f"the stop for {trade.symbol} ended cancelled and the desk was not waiting for it "
+                "(an outside cancel, or a cancel of its own that confirmed late); placing it again"
+            )
             self._record_stop_partial(trade, order)
             trade.stop_order_id = None
             if trade.status is not TradeStatus.CLOSED:
@@ -324,6 +327,16 @@ class Desk:
 
     def _stop(self, trade: Trade) -> Order | None:
         return self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+
+    def _stop_for_flatten(self, trade: Trade) -> tuple[Order | None, bool]:
+        """The trade's stop and whether the lookup worked. A lookup that fails leaves the stop's state unknown: the flatten
+        must neither raise (the other trades would never be flattened) nor read it as "no stop" (that would sell shares a live
+        stop still covers)."""
+        try:
+            return self._stop(trade), True
+        except Exception as exc:  # noqa: BLE001 -- any broker failure: the state is unknown, not "gone"
+            self._strategy.log_error(f"flatten {trade.symbol}: could not look up the stop {trade.stop_order_id}: {exc}")
+            return None, False
 
     def _drop_ended_stop(self, trade: Trade, stop: Order) -> bool:
         """Book what an ended stop filled and forget it; True when that closed the trade."""
@@ -506,7 +519,7 @@ class Desk:
                 continue
             if released is not None:
                 self._strategy.log_error(f"flatten {trade.symbol}: {released}")
-                stop = self._stop(trade)
+                stop, _ = self._stop_for_flatten(trade)
                 if stop is not None:
                     if release.timed_out:
                         # Cancel sent, not confirmed: the flatten sells these shares itself, so its late CANCELED must not
@@ -531,7 +544,9 @@ class Desk:
     def _sell_unprotected(self, reason: str) -> None:
         """After the flatten: market-sell the free shares of every trade whose stop is gone (cancelled, expired) unfilled."""
         for trade in list(self.state.book.open_trades()):
-            stop = self._stop(trade)
+            stop, known = self._stop_for_flatten(trade)
+            if not known:
+                continue  # its stop may be live: selling its shares could oversell, and nothing else is flattened differently
             if stop is not None and (stop.is_active() or stop.is_filled()):
                 continue
             if stop is not None and self._drop_ended_stop(trade, stop):

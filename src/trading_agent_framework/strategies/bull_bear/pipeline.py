@@ -150,7 +150,8 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
 
     def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
         params, strategy = self._params, self._strategy
-        # Reset here, not in `run`: pyright keeps the `None` it narrowed `self._pending` to across the `_review` call.
+        # Reset at the start of every review, here and not in `_begin` (the base `run` leaves it the no-op default): pyright keeps
+        # the `None` it narrowed `self._pending` to across the `_review` call, which a reset in `run` would not survive.
         self._stage = "setup"
         self._pending = None
         today = now.date().isoformat()

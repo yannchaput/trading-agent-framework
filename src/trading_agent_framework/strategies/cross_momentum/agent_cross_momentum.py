@@ -969,8 +969,7 @@ class CrossMomentumStrategy(Strategy):
         ensured over the window first, so a failure (`UniverseHistoryError`) stops the run before it starts; the first
         review date is inside the window, so its month is the first one needed.
         """
-        start: datetime = overrides.get("start", self.parameters["backtesting_start"])
-        end: datetime = overrides.get("end", self.parameters["backtesting_end"])
+        start, end = self.resolved_window(overrides.get("start"), overrides.get("end"))
         history = ensure_universe_history(market_day(start), market_day(end))
         self.vars.universe_history = history
         # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)

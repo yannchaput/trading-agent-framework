@@ -186,11 +186,11 @@ class InsiderTradesStrategy(Strategy):
         # `start` anchors the Form 4 history (`load_window`): filings are read back from the year that covers
         # `signal_window_days` before it. A non-datetime start leaves this None, and `load_window` then asserts.
         # An override replaces the `parameters` window whole, so the cutoffs below and the simulated window agree.
-        start = overrides.get("start", self.parameters["backtesting_start"])
+        start, end = self.resolved_window(overrides.get("start"), overrides.get("end"))
         self._backtest_start = start if isinstance(start, datetime) else None
         # `end` is the no-look-ahead cutoff for filings (`_run_end`). A bare-midnight end is a date, so the cutoff
         # moves to the next midnight and the filings of the end day are kept.
-        self._backtest_end = _run_end(overrides.get("end", self.parameters["backtesting_end"]))
+        self._backtest_end = _run_end(end)
         return super().run_backtesting(**{**defaults, **overrides})
 
 

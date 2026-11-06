@@ -356,6 +356,23 @@ def test_run_backtesting_arguments_beat_parameters(monkeypatch: pytest.MonkeyPat
     assert (captured["start"], captured["end"], captured["budget"], captured["benchmark"], captured["slippage"]) == (start, end, Decimal(5), "IWM", Decimal(0))
 
 
+def test_resolved_window_falls_back_to_parameters_for_a_missing_or_none_bound() -> None:
+    start, end = et(2025, 1, 6, 9), et(2025, 3, 7, 16)
+    strategy = Strategy(_broker(), parameters={"backtesting_start": start, "backtesting_end": end})
+    other = et(2025, 2, 3, 9)
+
+    assert strategy.resolved_window() == (start, end)
+    assert strategy.resolved_window(None, None) == (start, end)  # an explicit None is "not given", as in run_backtesting
+    assert strategy.resolved_window(other, None) == (other, end)
+    assert strategy.resolved_window(end=other) == (start, other)
+
+
+def test_run_backtesting_treats_an_explicit_none_bound_as_not_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    start, end = et(2025, 1, 6, 9), et(2025, 3, 7, 16)
+    captured = _captured_run(monkeypatch, {"backtesting_start": start, "backtesting_end": end}, start=None, end=None)
+    assert (captured["start"], captured["end"]) == (start, end)
+
+
 def test_run_backtesting_default_slippage_5bps(monkeypatch: pytest.MonkeyPatch) -> None:
     captured = _captured_run(monkeypatch, {"backtesting_start": et(2025, 1, 6, 9), "backtesting_end": et(2025, 3, 7, 16)})
     assert Strategy.backtesting_slippage == Decimal("0.0005")

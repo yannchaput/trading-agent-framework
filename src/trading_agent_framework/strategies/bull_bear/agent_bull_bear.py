@@ -265,8 +265,7 @@ class BullBearStrategy(Strategy):
         The history is the only universe of a backtest (never today's universe file, which holds today's winners). It is
         ensured over the window first, so a failure (`UniverseHistoryError`) stops the run before it starts.
         """
-        start: datetime = overrides.get("start", self.parameters["backtesting_start"])
-        end: datetime = overrides.get("end", self.parameters["backtesting_end"])
+        start, end = self.resolved_window(overrides.get("start"), overrides.get("end"))
         history = ensure_universe_history(market_day(start), market_day(end))
         self._history = history
         # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)

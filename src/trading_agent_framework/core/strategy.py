@@ -539,6 +539,18 @@ class Strategy:
     def run_live_trading(self) -> None:
         self._run_trading(TradingMode.LIVE)
 
+    def resolved_window(self, start: datetime | None = None, end: datetime | None = None) -> tuple[datetime, datetime]:
+        """The backtest window: each bound as given, else `parameters["backtesting_start"/"backtesting_end"]`, else the class attribute.
+
+        A bound of `None` counts as not given. `run_backtesting` and the strategies that need the window before it runs (a
+        universe pre-step, a no-look-ahead cutoff) all read it here, so they cannot disagree about which window is simulated.
+        """
+        resolved_start = start if start is not None else self.parameters.get("backtesting_start", self.backtesting_start)
+        resolved_end = end if end is not None else self.parameters.get("backtesting_end", self.backtesting_end)
+        if resolved_start is None or resolved_end is None:
+            raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
+        return resolved_start, resolved_end
+
     def run_backtesting(
         self,
         *,
@@ -613,10 +625,7 @@ class Strategy:
         from trading_agent_framework.backtesting.runner import run_backtest
         from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
-        resolved_start = start if start is not None else self.parameters.get("backtesting_start", self.backtesting_start)
-        resolved_end = end if end is not None else self.parameters.get("backtesting_end", self.backtesting_end)
-        if resolved_start is None or resolved_end is None:
-            raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
+        resolved_start, resolved_end = self.resolved_window(start, end)
         resolved_budget = _to_decimal(budget if budget is not None else self.parameters.get("budget", self.budget))
         resolved_benchmark = benchmark or self.parameters.get("benchmark_symbol", self.benchmark_symbol)
         resolved_slippage = _to_decimal(slippage if slippage is not None else self.parameters.get("slippage", self.backtesting_slippage))

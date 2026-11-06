@@ -123,3 +123,44 @@ def test_a_stop_whose_cancel_was_refused_in_the_flatten_is_replaced_when_it_late
     rig.desk.on_order_canceled(stop)
     assert trade.stop_order_id is not None and trade.stop_order_id != stop.identifier
     assert rig.strategy.get_order(trade.stop_order_id).is_active()
+
+
+def test_a_stop_lookup_that_keeps_failing_neither_aborts_the_flatten_nor_sells_shares_a_live_stop_may_cover(tmp_path: Path) -> None:
+    # The state of the stop is unknown: the flatten must not raise out (the other trades would never be flattened) and must
+    # not assume "no stop" and sell shares a live stop still covers (that would oversell).
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    stop_id = trade.stop_order_id
+    errors: list[str] = []
+    rig.strategy.log_error = errors.append
+    attempts = _spy_sells(rig)
+
+    def failing_lookup(identifier: str):
+        raise RuntimeError("broker down")
+
+    rig.strategy.get_order = failing_lookup
+    rig.desk.flatten_all("end of day")  # must not raise
+
+    assert attempts == []
+    assert trade.stop_order_id == stop_id
+    assert any("could not look up the stop" in message for message in errors)
+
+
+def test_the_late_cancel_of_the_desks_own_timed_out_cancel_is_not_called_an_outside_cancel(tmp_path: Path) -> None:
+    # The stop is re-placed either way, but the log must not say "outside the strategy" for a cancel the desk itself sent.
+    rig = _open(tmp_path)
+    trade = rig.state.book.get("AAA")
+    stop = rig.strategy.get_order(trade.stop_order_id)
+    warnings: list[str] = []
+    rig.strategy.log_warning = warnings.append
+    rig.strategy.cancel_order = lambda order: None
+    rig.strategy.wait_for_order_execution = lambda order, timeout=None: False
+    rig.desk._release_stop(trade)
+    warnings.clear()
+    rig.broker.cancel_order(stop)  # the late confirmation of the desk's own cancel
+
+    rig.desk.on_order_canceled(stop)
+
+    message = next(text for text in warnings if "AAA" in text and "placing it again" in text)
+    assert "outside the strategy" not in message
+    assert "not waiting for" in message
