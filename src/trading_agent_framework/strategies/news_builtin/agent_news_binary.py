@@ -175,6 +175,7 @@ class NewsBinaryStrategy(Strategy):
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,  # No warmup needed (just in case)
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -332,6 +333,7 @@ class NewsBinaryStrategy(Strategy):
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
             benchmark=self.parameters["benchmark_symbol"],
             budget=Decimal(str(self.parameters["budget"])),
+            slippage=self.parameters["slippage"],
             warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )

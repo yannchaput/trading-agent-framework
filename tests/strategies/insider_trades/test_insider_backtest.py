@@ -170,7 +170,7 @@ def _run(tmp_path: Path, manager: _Manager, source: DatedSource) -> InsiderTrade
         source=source,
     )
     strategy._agents = cast(AgentManager, manager)
-    strategy.run_backtesting(start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=data, budget=Decimal(10000), benchmark="SPY")
+    strategy.run_backtesting(start=SESSIONS[0].open - timedelta(hours=1), end=SESSIONS[-1].close, data_source=data, budget=Decimal(10000), slippage=Decimal(0), benchmark="SPY")
     return strategy
 
 

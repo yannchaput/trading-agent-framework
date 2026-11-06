@@ -325,7 +325,7 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
     assert captured["budget"] == Decimal(10000) and captured["warmup_trading_days"] == 300
 
 
-def test_run_backtesting_charges_no_slippage_so_runs_compare_with_the_picker_baseline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_backtesting_charges_5_bps_of_slippage_like_the_other_strategies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
     monkeypatch.setattr(agent_bull_bear, "ensure_universe_history", lambda start, end: _history_of("AAA"))
     monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
@@ -333,7 +333,7 @@ def test_run_backtesting_charges_no_slippage_so_runs_compare_with_the_picker_bas
 
     strategy.run_backtesting()
 
-    assert captured["slippage"] == BullBearStrategy.parameters["slippage"] == Decimal(0)  # the picker run 2026-10-10_085928 had none
+    assert captured["slippage"] == BullBearStrategy.parameters["slippage"] == Decimal("0.0005")  # 5 bps per side, as cross_momentum
 
 
 # --- order-event logs (bull_bear only: the base hooks and the executor stay silent) ---------------------------------

@@ -50,6 +50,7 @@ class InsiderTradesStrategy(Strategy):
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -191,6 +192,7 @@ class InsiderTradesStrategy(Strategy):
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             budget=Decimal(str(self.parameters["budget"])),
+            slippage=self.parameters["slippage"],
             data_source=YahooBacktestData,
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
             benchmark=self.parameters["benchmark_symbol"],

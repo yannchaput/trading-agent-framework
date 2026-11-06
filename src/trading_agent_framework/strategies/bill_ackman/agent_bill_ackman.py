@@ -41,6 +41,7 @@ class BillAckmanStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # a year of daily bars before the first simulated day, so price_return_12m (TRADING_DAYS_PER_YEAR + 1 closes) exists from day one
         "warmup_trading_days": 260,
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -128,6 +129,7 @@ class BillAckmanStrategy(Strategy):
             start=self.parameters["backtesting_start"],
             end=self.parameters["backtesting_end"],
             budget=Decimal(str(self.parameters["budget"])),
+            slippage=self.parameters["slippage"],
             data_source=YahooBacktestData,  # years of daily history
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],  # the screen's daily price lookups hit the cache
             benchmark=self.parameters["benchmark_symbol"],

@@ -73,7 +73,7 @@ class BullBearStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # 300 completed sessions before the first review: the 12-1 month return needs 274 (as cross_momentum)
         "warmup_trading_days": 300,
-        "slippage": Decimal("0"),
+        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
