@@ -308,9 +308,6 @@ class FakeScanStrategy:
     def _load_yahoo_bars(self):
         return CrossMomentumStrategy._load_yahoo_bars(self)
 
-    def _fetch_yahoo_bars(self):
-        return CrossMomentumStrategy._fetch_yahoo_bars(self)
-
     def __init__(self, universe, bars_source, held=()):
         self.parameters = dict(CONFIG)
         self._held = list(held)

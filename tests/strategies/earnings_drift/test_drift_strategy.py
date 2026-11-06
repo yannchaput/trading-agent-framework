@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date, timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -292,13 +291,10 @@ def _captured_backtest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings
 @pytest.mark.parametrize("agent_enabled", [True, False])
 def test_run_backtesting_defaults(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, agent_enabled: bool) -> None:
     strategy, kwargs = _captured_backtest(tmp_path, monkeypatch, DriftParams(agent_enabled=agent_enabled))
-    assert kwargs["slippage"] == Decimal("0.0005") and kwargs["data_source"] is AlpacaBacktestData
+    assert kwargs["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in kwargs["preload_assets"]] == ["AAA", "BBB", "SPY"]
-    assert kwargs["timestep"] == "day" and kwargs["warmup_trading_days"] == 283 and kwargs["benchmark"] == "SPY"
-    assert kwargs["agent_telemetry"] is agent_enabled
-    assert kwargs["start"] == EarningsDriftStrategy.parameters["backtesting_start"] and kwargs["budget"] == Decimal(10000)
+    assert kwargs["timestep"] == "day" and kwargs["agent_telemetry"] is agent_enabled
     end = EarningsDriftStrategy.parameters["backtesting_end"]
-    assert kwargs["end"] == end
     assert strategy._backtest_end == end + timedelta(days=1)  # a bare-midnight end covers that whole day
 
 

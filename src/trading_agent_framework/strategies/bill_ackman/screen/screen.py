@@ -42,6 +42,8 @@ class SplitSource(Protocol):
 
     def splits(self, symbol: str, *, max_age_days: int) -> list[Split]: ...
 
+    def flush(self) -> None: ...
+
 
 class QualityScreen:
     def __init__(self, store: FiguresSource, splits: SplitSource, *, params: ScreenParams | None = None) -> None:
@@ -67,6 +69,12 @@ class QualityScreen:
         """
         if as_of.tzinfo is None:
             raise ValueError("as_of must be timezone-aware")
+        try:
+            return self._screen(symbols, as_of=as_of, price_of=price_of, top_n=top_n, label=label)
+        finally:
+            self._splits.flush()  # one cache write per run, kept even when the run aborts on a hollow screen
+
+    def _screen(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None, label: str) -> ScreenResult:
         params = self.params if top_n is None else replace(self.params, top_n=top_n)
         max_age_days = params.max_age_days
         unique = list(dict.fromkeys(symbols))

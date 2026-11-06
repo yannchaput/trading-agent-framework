@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +17,7 @@ from typing import Any
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
 from trading_agent_framework.fundamentals.freshness import is_stale
 from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import annual_figures, parse_sic
+from trading_agent_framework.strategies.common.json_state import atomic_write_json
 from trading_agent_framework.utils.errors import FundamentalsError, FundamentalsNotFoundError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -140,18 +139,7 @@ class AnnualFiguresStore:
         cik = record["cik"]
         self._records[cik] = record
         path = self._path(cik)
-        temporary: str | None = None
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            # A unique name per write: parallel runs sharing the cache must not share a temp file.
-            descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=f"CIK{cik}.", suffix=".tmp")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(record, handle)
-            os.replace(temporary, path)
-        except OSError as exc:
-            logger.log_warning(f"annual figures for CIK {cik} could not be saved to {path}: {exc}")
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
+        atomic_write_json(path, record, log=logger, what=f"annual figures for CIK {cik}")
 
 
 def _fetched_at(record: dict[str, Any]) -> datetime:

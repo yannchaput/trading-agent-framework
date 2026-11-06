@@ -1,11 +1,13 @@
 ### Cross Sectional Momentum Strategy Parameters
+from trading_agent_framework.strategies.common.universe_params import MIN_DOLLAR_VOLUME, MIN_MARKET_CAP, MIN_PRICE
+
 CONFIG = {
     # ── Liquidity / tradability filters ────────
-    "min_price": 10.0,
-    "min_dollar_volume": 20_000_000,
+    "min_price": MIN_PRICE,
+    "min_dollar_volume": MIN_DOLLAR_VOLUME,
     "max_volatility": 0.80,
     # Not enforced by apply_filters: the universe batch pre-filters on it. Adding a gate here is a decision (CLAUDE.md).
-    "min_market_cap": 2_000_000_000,
+    "min_market_cap": MIN_MARKET_CAP,
     "min_trading_days": 250,
     # ── Rebalance schedule ─────────────────────
     "rebalance_frequency": "weekly",

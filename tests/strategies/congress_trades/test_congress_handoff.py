@@ -361,3 +361,12 @@ def test_the_tools_call_the_recorder_and_have_one_line_docstrings_and_real_annot
     assert inspect.signature(tools["submit_target"]).parameters["positions"].annotation == list[dict[str, Any]]
     recorder.expect_target({})
     assert tools["submit_target"]([]) == {"status": "recorded"}
+
+
+def test_guard_messages_unchanged() -> None:
+    recorder = HandoffRecorder(PARAMS)
+    for stage, tool in (("holdings", "submit_holdings"), ("target", "submit_target"), ("report", "submit_trade_report")):
+        assert recorder.submit(stage, []) == {"error": f"{tool} is not expected at this point"}
+    recorder.expect_target({})
+    assert recorder.submit("target", []) == {"status": "recorded"}
+    assert recorder.submit("target", []) == {"error": "already recorded for this run"}

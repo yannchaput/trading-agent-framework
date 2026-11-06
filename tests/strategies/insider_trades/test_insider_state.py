@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.strategies.insider_trades.state import InsiderState, PendingTrade, StateStore, state_path
+from trading_agent_framework.strategies.common.pipeline import PendingTrade
+from trading_agent_framework.strategies.insider_trades.state import InsiderState, StateStore
 
 
 def _note(**changes: object) -> dict[str, object]:
@@ -31,11 +31,6 @@ def _state() -> InsiderState:
         abandoned_streak=2,
         last_run="2026-10-07",
     )
-
-
-def test_the_state_path_is_per_mode_under_the_projects_data_directory(tmp_path: Path) -> None:
-    assert state_path(tmp_path, TradingMode.PAPER) == tmp_path / "data" / "insider_trades_state_paper.json"
-    assert state_path(tmp_path, TradingMode.BACKTESTING).name == "insider_trades_state_backtesting.json"
 
 
 def test_the_empty_state_has_no_history() -> None:
@@ -143,3 +138,18 @@ def test_wipe_removes_the_file_and_is_safe_when_there_is_none(tmp_path: Path) ->
 
     assert not (tmp_path / "state.json").exists()
     assert store.load() == InsiderState()
+
+
+def test_old_files_load_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"version": 1, "processed": ["0001-26-000001", "0002-26-000002"], '
+        '"in_window": {"AAPL": ["0001-26-000001"], "BE": ["0001-26-000001", "0002-26-000002"]}, '
+        '"notes": {"AAPL": {"summary": "Three insiders bought on the open market.", "class": "buying", "overrides": '
+        '[{"insider_id": "0001234567", "from_label": "routine", "to_label": "opportunistic", "reason": "first buy in years"}], "as_of": "2026-10-07"}, '
+        '"BE": {"summary": "Three insiders bought on the open market.", "class": "none", "overrides": [], "as_of": "2026-10-07"}}, '
+        '"target": {"AAPL": 0.15, "BE": 0.05}, "traded": ["AAPL", "BE", "DIS"], '
+        '"pending_trade": {"target": {"AAPL": 0.15, "BE": 0.05}, "days": 1}, "abandoned_streak": 2, "last_run": "2026-10-07"}'
+    )
+
+    assert StateStore(path).load() == _state()

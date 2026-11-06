@@ -10,14 +10,13 @@ from __future__ import annotations
 import json
 import logging
 import math
-import os
-import tempfile
 from collections.abc import Callable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from trading_agent_framework.strategies.common.json_state import atomic_write_json
 from trading_agent_framework.utils.errors import FundamentalsError
 from trading_agent_framework.utils.log import ColorLogger
 
@@ -95,7 +94,7 @@ def _decode_split(row: object) -> Split | None:
 
 
 class SplitHistory:
-    """Split history per symbol, fetched lazily and cached in one JSON file.
+    """Split history per symbol, fetched lazily and cached in one JSON file (written by `flush`, which the screen calls once per run).
 
     Unlike the annual SEC figures, split history is not point-in-time data: it must match the basis
     of today's split-adjusted prices, which is a wall-clock fact. An entry is therefore stale when it
@@ -116,6 +115,7 @@ class SplitHistory:
         self._fetch = fetch or _fetch_from_yahoo
         self._wall_clock = wall_clock or (lambda: datetime.now(UTC))
         self._entries: dict[str, _Entry] | None = None
+        self._dirty = False
 
     def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
         """`symbol`'s splits, oldest first (empty when it never split).
@@ -136,7 +136,7 @@ class SplitHistory:
             logger.log_warning(f"split history for {symbol} could not be refreshed, using the copy fetched {entry.fetched_at.isoformat()}: {exc}")
             return list(entry.splits)
         entries[symbol] = _Entry(now, fetched)
-        self._save(entries)
+        self._dirty = True  # written by `flush`, once per run, not once per symbol
         return fetched
 
     def _load(self) -> dict[str, _Entry]:
@@ -149,18 +149,12 @@ class SplitHistory:
             self._entries = {symbol: entry for symbol, entry in decoded.items() if entry is not None}
         return self._entries
 
-    def _save(self, entries: dict[str, _Entry]) -> None:
-        """Try to persist `entries` (already held in memory); a failed write only costs a refetch next process."""
+    def flush(self) -> None:
+        """Write the cache file once if a lookup changed it since the last write (a no-op otherwise)."""
+        if self._dirty and self._entries is not None:
+            self._dirty = not self._save(self._entries)  # a failed write stays dirty, so the next flush retries
+
+    def _save(self, entries: dict[str, _Entry]) -> bool:
+        """Try to persist `entries` (already held in memory); a failed write only costs a refetch next process. True when written."""
         payload = {symbol: {"fetched_at": entry.fetched_at.isoformat(), "splits": [[split_date.isoformat(), ratio] for split_date, ratio in entry.splits]} for symbol, entry in entries.items()}
-        temporary: str | None = None
-        try:
-            self._cache_file.parent.mkdir(parents=True, exist_ok=True)
-            # A unique name per write: parallel runs sharing the cache must not share a temp file.
-            descriptor, temporary = tempfile.mkstemp(dir=self._cache_file.parent, prefix="splits.", suffix=".tmp")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(payload, handle)
-            os.replace(temporary, self._cache_file)
-        except OSError as exc:
-            logger.log_warning(f"split history could not be saved to {self._cache_file}: {exc}")
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
+        return atomic_write_json(self._cache_file, payload, log=logger, what="split history")

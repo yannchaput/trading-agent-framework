@@ -154,10 +154,11 @@ print(result.metrics["sharpe_strategy"], result.run_dir)
 timezone, so a naive bound cannot be compared against them) -- `datetime.now(ET)`,
 not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
 
-`start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
-`backtesting_end`/`budget`/`benchmark_symbol` class attributes when the matching
-keyword argument is omitted (`budget` defaults to `Decimal("10000")` and
-`benchmark_symbol` to `"SPY"` if neither is set). `run_backtesting` also accepts
+`start`/`end`/`budget`/`benchmark`/`slippage`/`warmup_trading_days` fall back to the matching
+`self.parameters` key (`backtesting_start`, `backtesting_end`, `budget`, `benchmark_symbol`, `slippage`,
+`warmup_trading_days`), then to the `backtesting_start`/`backtesting_end`/`budget`/`benchmark_symbol`/
+`backtesting_slippage` class attributes when the keyword argument is omitted (`budget` defaults to
+`Decimal("10000")`, `benchmark_symbol` to `"SPY"`, slippage to 5 bps per side, warmup to 0). `run_backtesting` also accepts
 `data_source`, `timestep` (`"day"` by default), `fees`, `slippage` and
 `risk_free_rate` keyword arguments.
 

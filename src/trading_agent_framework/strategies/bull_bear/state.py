@@ -1,4 +1,4 @@
-"""What bull_bear remembers between reviews, and the per-review log.
+"""What bull_bear remembers between reviews.
 
 `StateStore` keeps the date of the last completed review (a completed Tuesday is not reviewed again after a
 restart), the abandoned-review streak, the judge's latest verdict on every stock it judged and the re-entry
@@ -8,22 +8,19 @@ on an `in`), so the next review shows the previous strength of every stock. A mi
 state; a version-2 file (verdicts without strengths) still loads whole, its verdicts showing no strength until a
 review judges the stock again, and a save writes them back as they are (a version-3 entry may lack a strength; one
 that has a strength must hold a valid one); a version-1 file (the picker, the veto judge) keeps its review date and
-streak and nothing else. `ReviewLog` appends one JSON line per review to the
-run directory. Neither ever raises on an I/O problem: bookkeeping must not stop a review.
+streak and nothing else. It never raises on an I/O problem: bookkeeping must not stop a review (the per-review log is a
+`RunLog`, in `strategies/common/run_log.py`).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bull_bear.handoff import STRENGTHS
+from trading_agent_framework.strategies.common.json_state import InvalidState, JsonStateStore, is_int
 from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "BullBearState")
@@ -33,11 +30,6 @@ _UNRATED_VERSION = 2  # the file before strengths: a verdict is {verdict, reason
 _PICKER_VERSION = 1  # the picker's and the veto judge's file: a review date and a streak
 _VERDICT_KEYS = {"verdict", "reason", "date"}
 _VERDICTS = {"in", "out"}
-
-
-def state_path(project_root: Path, mode: TradingMode) -> Path:
-    """`<project_root>/data/bull_bear_state_<mode>.json`."""
-    return project_root / "data" / f"bull_bear_state_{mode.value}.json"
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,7 +44,7 @@ def _valid_dates(raw: dict[str, Any]) -> bool:
     """The review date (a string or None) and the abandoned streak (a non-negative integer) every version carries."""
     last = raw.get("last_completed_review")
     streak = raw.get("abandoned_streak", 0)
-    return (last is None or isinstance(last, str)) and isinstance(streak, int) and not isinstance(streak, bool) and streak >= 0
+    return (last is None or isinstance(last, str)) and is_int(streak) and streak >= 0
 
 
 def _valid_verdict(entry: Any, version: int) -> bool:
@@ -64,8 +56,8 @@ def _valid_verdict(entry: Any, version: int) -> bool:
     return "strength" not in entry or (entry["strength"] in STRENGTHS and not (entry["verdict"] == "in" and entry["strength"] == "weak"))
 
 
-def _valid(raw: Any) -> bool:
-    if not isinstance(raw, dict) or raw.get("version") not in (_UNRATED_VERSION, STATE_VERSION):
+def _valid(raw: dict[str, Any]) -> bool:
+    if raw["version"] not in (_UNRATED_VERSION, STATE_VERSION):
         return False
     verdicts = raw.get("verdicts", {})
     cooldowns = raw.get("cooldowns", {})
@@ -74,70 +66,26 @@ def _valid(raw: Any) -> bool:
         and isinstance(verdicts, dict)
         and all(_valid_verdict(entry, raw["version"]) for entry in verdicts.values())
         and isinstance(cooldowns, dict)
-        and all(isinstance(left, int) and not isinstance(left, bool) and left > 0 for left in cooldowns.values())
+        and all(is_int(left) and left > 0 for left in cooldowns.values())
     )
 
 
-class StateStore:
-    def __init__(self, path: Path) -> None:
-        self._path = path
+def _decode(raw: dict[str, Any]) -> BullBearState:
+    if raw["version"] == _PICKER_VERSION and _valid_dates(raw):
+        # The picker's file: nothing else of it applies, but a completed Tuesday is not reviewed again after the upgrade.
+        return BullBearState(last_completed_review=raw.get("last_completed_review"), abandoned_streak=raw.get("abandoned_streak", 0))
+    if not _valid(raw):
+        raise InvalidState
+    return BullBearState(
+        last_completed_review=raw.get("last_completed_review"),
+        abandoned_streak=raw.get("abandoned_streak", 0),
+        verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
+        cooldowns=dict(raw.get("cooldowns", {})),
+    )
 
-    def load(self) -> BullBearState:
-        """The saved state; an empty one when the file is missing, unreadable, or not a valid state (warned about)."""
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return BullBearState()
-        except (OSError, ValueError) as exc:
-            logger.log_warning(f"state file {self._path} is unreadable, starting from an empty state: {exc}")
-            return BullBearState()
-        if isinstance(raw, dict) and raw.get("version") == _PICKER_VERSION and _valid_dates(raw):
-            # The picker's file: nothing else of it applies, but a completed Tuesday is not reviewed again after the upgrade.
-            return BullBearState(last_completed_review=raw.get("last_completed_review"), abandoned_streak=raw.get("abandoned_streak", 0))
-        if not _valid(raw):
-            logger.log_warning(f"state file {self._path} is not a valid state, starting from an empty state")
-            return BullBearState()
-        return BullBearState(
-            last_completed_review=raw.get("last_completed_review"),
-            abandoned_streak=raw.get("abandoned_streak", 0),
-            verdicts={symbol: dict(entry) for symbol, entry in raw.get("verdicts", {}).items()},
-            cooldowns=dict(raw.get("cooldowns", {})),
+
+class StateStore(JsonStateStore[BullBearState]):
+    def __init__(self, path: Path, *, fresh: bool = False) -> None:
+        super().__init__(
+            path, version=STATE_VERSION, empty=BullBearState, decode=_decode, encode=asdict, log=logger, accepts={_PICKER_VERSION, _UNRATED_VERSION, STATE_VERSION}, fresh=fresh
         )
-
-    def save(self, state: BullBearState) -> None:
-        """Write the state atomically (temporary file in the same directory, then replace); an I/O error is logged."""
-        temporary: str | None = None
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary = tempfile.mkstemp(dir=self._path.parent, prefix=f"{self._path.name}.", suffix=".tmp")
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump({"version": STATE_VERSION, **asdict(state)}, handle)
-            os.replace(temporary, self._path)
-        except OSError as exc:
-            logger.log_warning(f"state could not be saved to {self._path}: {exc}")
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
-
-    def wipe(self) -> None:
-        """Delete the state file (a backtest starts clean); safe when there is none."""
-        try:
-            self._path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.log_warning(f"state file {self._path} could not be deleted: {exc}")
-
-
-class ReviewLog:
-    """`reviews.jsonl`: one JSON line per review. With no path (a strategy run outside a runner) it does nothing."""
-
-    def __init__(self, path: Path | None) -> None:
-        self._path = path
-
-    def append(self, record: dict[str, Any]) -> None:
-        if self._path is None:
-            return
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            with self._path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(record, default=str) + "\n")
-        except OSError as exc:
-            logger.log_warning(f"review log {self._path} could not be written: {exc}")

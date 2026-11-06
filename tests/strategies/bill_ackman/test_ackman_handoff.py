@@ -8,7 +8,6 @@ import pytest
 from langchain_core.tools import StructuredTool
 
 from trading_agent_framework.strategies.bill_ackman.handoff import (
-    HandoffError,
     HandoffRecorder,
     Idea,
     PortfolioPosition,
@@ -19,6 +18,7 @@ from trading_agent_framework.strategies.bill_ackman.handoff import (
     validate_verdicts,
 )
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
+from trading_agent_framework.strategies.common.handoff import HandoffError
 
 CANDIDATES = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
 
@@ -383,3 +383,13 @@ def test_langchain_builds_an_array_schema_from_each_tool(name: str, argument: st
     assert list(tool.args) == [argument]
     assert tool.args[argument]["type"] == "array"
     assert tool.name == name
+
+
+def test_guard_messages_unchanged() -> None:
+    recorder = _recorder()
+    assert recorder.submit("ranking", []) == {"error": "submit_ranking is not expected at this point of the review"}
+    assert recorder.submit("verdicts", []) == {"error": "submit_verdicts is not expected at this point of the review"}
+    assert recorder.submit("portfolio", []) == {"error": "submit_portfolio is not expected at this point of the review"}
+    recorder.expect_portfolio([])
+    assert recorder.submit("portfolio", []) == {"status": "recorded"}
+    assert recorder.submit("portfolio", []) == {"error": "already recorded for this review"}

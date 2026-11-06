@@ -22,10 +22,10 @@ from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bull_bear import agent_bull_bear
 from trading_agent_framework.strategies.bull_bear.agent_bull_bear import BullBearStrategy
+from trading_agent_framework.strategies.common import batch_us_stock_universe as batch
+from trading_agent_framework.strategies.common.batch_us_stock_universe import RateLimitGate
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.cross_momentum import batch_us_stock_universe as batch
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import RateLimitGate
-from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError, UniverseHistoryError
 
@@ -186,10 +186,10 @@ def test_bull_bear_backtest_preloads_through_the_checked_batch_source_and_record
     assert isinstance(source, UniverseBacktestData)
 
     # Yahoo drops B from every download; with the tolerance lifted for the test, the run goes on and says so.
-    monkeypatch.setattr(batch, "_MAX_ABSENT_FRACTION", 0.5)
+    monkeypatch.setattr(batch, "MAX_ABSENT_FRACTION", 0.5)
     monkeypatch.setattr(batch.time, "sleep", lambda seconds: None)
     now = [0.0]
-    monkeypatch.setattr(batch, "_rate_limit_gate", RateLimitGate(30.0, 300.0, now=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
+    monkeypatch.setattr(batch, "rate_limit_gate", RateLimitGate(30.0, 300.0, now=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
 
     def download(symbols: list[str], **kwargs: Any) -> pd.DataFrame:
         row = {"Open": 10.0, "High": 10.0, "Low": 10.0, "Close": 10.0, "Adj Close": 10.0, "Volume": 1e6, "Dividends": 0.0, "Stock Splits": 0.0}

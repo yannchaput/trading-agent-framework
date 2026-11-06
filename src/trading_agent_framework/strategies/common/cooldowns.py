@@ -1,4 +1,4 @@
-"""The re-entry cooldown: a stock the judge sold stays out of the candidates for a number of completed reviews (pure).
+"""The re-entry cooldown: a stock sold (bull_bear's judge, bill_ackman's forced exit) stays out of the candidates for a number of completed reviews (pure).
 
 The audit of 73 sells (spec 2026-10-11-bull-bear-debate-realignment-design.md) found half of them bought back, most
 within two weeks, and those re-entries then lagged the other candidates by 4.2 points over 4 weeks.

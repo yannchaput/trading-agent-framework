@@ -15,10 +15,10 @@ from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.bull_bear import BullBearStrategy, agent_bull_bear
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome
-from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore, state_path
+from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
+from trading_agent_framework.strategies.common.pipeline import RunOutcome
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
 from trading_agent_framework.utils.strategy_factory import Strategies
 
@@ -44,7 +44,7 @@ class _NoBars:
 
 
 class _FakePipeline:
-    def __init__(self, outcomes: list[ReviewOutcome], *, completed: bool = False) -> None:
+    def __init__(self, outcomes: list[RunOutcome], *, completed: bool = False) -> None:
         self.outcomes = list(outcomes)
         self.completed = completed
         self.runs = 0
@@ -52,7 +52,7 @@ class _FakePipeline:
     def completed_today(self) -> bool:
         return self.completed
 
-    def run(self) -> ReviewOutcome:
+    def run(self) -> RunOutcome:
         self.runs += 1
         return self.outcomes.pop(0)
 
@@ -211,7 +211,7 @@ def test_the_researcher_and_the_judge_end_with_a_budget_exempt_submit_and_every_
 
 def test_a_backtest_starts_with_no_saved_state_and_paper_keeps_it(tmp_path: Path) -> None:
     for mode, expected in [(TradingMode.BACKTESTING, BullBearState()), (TradingMode.PAPER, BullBearState(abandoned_streak=2))]:
-        store = StateStore(state_path(tmp_path, mode))
+        store = StateStore(tmp_path / "data" / f"bull_bear_state_{mode.value}.json")
         store.save(BullBearState(abandoned_streak=2))
         strategy, _ = _strategy(tmp_path, mode=mode)
 
@@ -254,7 +254,7 @@ def test_a_completed_review_of_another_day_does_not_block_todays(tmp_path: Path)
     strategy, _ = _strategy(tmp_path)
     strategy.initialize()
     assert strategy.pipeline is not None
-    store = StateStore(state_path(tmp_path, TradingMode.PAPER))
+    store = StateStore(tmp_path / "data" / f"bull_bear_state_{TradingMode.PAPER.value}.json")
     store.save(BullBearState(last_completed_review="2026-10-06"))
 
     assert strategy.pipeline.completed_today()  # TUESDAY is 2026-10-06
@@ -271,9 +271,9 @@ def test_an_iteration_before_initialize_raises_instead_of_asserting(tmp_path: Pa
 
 def test_the_review_runs_on_tuesdays_only(tmp_path: Path) -> None:
     monday, _ = _strategy(tmp_path, now=MONDAY)
-    monday.pipeline = _FakePipeline([ReviewOutcome(True, 0)])  # type: ignore[assignment]
+    monday.pipeline = _FakePipeline([RunOutcome(True, 0)])  # type: ignore[assignment]
     tuesday, _ = _strategy(tmp_path, now=TUESDAY)
-    tuesday.pipeline = _FakePipeline([ReviewOutcome(True, 0)])  # type: ignore[assignment]
+    tuesday.pipeline = _FakePipeline([RunOutcome(True, 0)])  # type: ignore[assignment]
 
     monday.on_trading_iteration()
     tuesday.on_trading_iteration()
@@ -292,7 +292,7 @@ def test_a_review_already_completed_today_is_not_run_again(tmp_path: Path) -> No
 
 def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
-    strategy.pipeline = _FakePipeline([ReviewOutcome(False, 3)])  # type: ignore[assignment]
+    strategy.pipeline = _FakePipeline([RunOutcome(False, 3)])  # type: ignore[assignment]
 
     with pytest.raises(FatalStrategyError, match="3 reviews abandoned in a row"):
         strategy.on_trading_iteration()
@@ -300,7 +300,7 @@ def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path
 
 def test_paper_never_aborts_on_abandoned_reviews(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
-    strategy.pipeline = _FakePipeline([ReviewOutcome(False, 5)])  # type: ignore[assignment]
+    strategy.pipeline = _FakePipeline([RunOutcome(False, 5)])  # type: ignore[assignment]
 
     strategy.on_trading_iteration()  # logs and carries on
 
@@ -318,22 +318,9 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
 
     strategy.run_backtesting()
 
-    assert captured["start"] == BullBearStrategy.parameters["backtesting_start"]
     assert isinstance(captured["data_source"](BullBearStrategy.parameters["backtesting_start"], BullBearStrategy.parameters["backtesting_end"]), UniverseBacktestData)
     assert captured["timestep"] == "day"
     assert {asset.symbol for asset in captured["preload_assets"]} == {"AAA", "BBB", "CCC", "SHV", "SPY"}
-    assert captured["budget"] == Decimal(10000) and captured["warmup_trading_days"] == 300
-
-
-def test_run_backtesting_charges_5_bps_of_slippage_like_the_other_strategies(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(agent_bull_bear, "ensure_universe_history", lambda start, end: _history_of("AAA"))
-    monkeypatch.setattr(Strategy, "run_backtesting", lambda self, **kwargs: captured.update(kwargs))
-    strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
-
-    strategy.run_backtesting()
-
-    assert captured["slippage"] == BullBearStrategy.parameters["slippage"] == Decimal("0.0005")  # 5 bps per side, as cross_momentum
 
 
 # --- order-event logs (bull_bear only: the base hooks and the executor stay silent) ---------------------------------

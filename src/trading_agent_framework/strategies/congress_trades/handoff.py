@@ -19,13 +19,12 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from trading_agent_framework.strategies.common import handoff as shared
-from trading_agent_framework.strategies.common.handoff import HandoffError, OrderView, validate_report
+from trading_agent_framework.strategies.common.handoff import HandoffError, OrderView, SubmitRecorder, validate_report
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 
 _EPS = 1e-9
 
 HOLDINGS, TARGET, REPORT = "holdings", "target", "report"
-_TOOL_NAMES = {HOLDINGS: "submit_holdings", TARGET: "submit_target", REPORT: "submit_trade_report"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,16 +180,14 @@ def _check_tier_order(kept: list[TargetPosition], tiers: Mapping[str, int]) -> N
 # --- the recorder -----------------------------------------------------------------------------------
 
 
-class HandoffRecorder:
+class HandoffRecorder(SubmitRecorder):
     """Holds what the current stage must validate against, and the first valid submission for it."""
 
+    TOOL_NAMES = {HOLDINGS: "submit_holdings", TARGET: "submit_target", REPORT: "submit_trade_report"}
+
     def __init__(self, params: CongressParams) -> None:
+        super().__init__()
         self._params = params
-        self._stage: str | None = None
-        self._context: dict[str, Any] = {}
-        self._submission: Any = None
-        self._submitted = False
-        self.last_error: str | None = None
 
     def expect_holdings(self, known_tickers: Collection[str], baseline: Mapping[str, tuple[Decimal, Decimal]]) -> None:
         self._arm(HOLDINGS, {"known_tickers": set(known_tickers), "baseline": dict(baseline)})
@@ -203,56 +200,27 @@ class HandoffRecorder:
         """`orders` returns the desk's orders as they are NOW (called at submission time)."""
         self._arm(REPORT, {"orders": orders})
 
-    def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        self._stage, self._context = stage, context
-        self._submission, self._submitted, self.last_error = None, False, None
-
-    @property
-    def submitted(self) -> bool:
-        """Whether the armed stage has a valid submission."""
-        return self._submitted
-
-    @property
-    def submission(self) -> Any:
-        """The armed stage's valid submission (a list of `HoldingSubmission`, `TargetPosition` or `OrderReport`), else None."""
-        return self._submission
-
-    def submit(self, stage: str, raw: Any) -> dict[str, Any]:
-        """What a submit tool returns: `{"status": "recorded"}` or `{"error": ...}` (recorded in `last_error`)."""
-        if self._stage != stage:
-            return self._fail(f"{_TOOL_NAMES[stage]} is not expected at this point")
-        if self._submitted:
-            return self._fail("already recorded for this run")
-        params = self._params
-        try:
-            if stage == HOLDINGS:
-                value = validate_holdings(
-                    raw,
-                    known_tickers=self._context["known_tickers"],
-                    baseline=self._context["baseline"],
-                    max_holdings=params.max_holdings,
-                    reason_max_chars=params.reason_max_chars,
-                )
-            elif stage == TARGET:
-                value = validate_target(
-                    raw,
-                    holdings=self._context["holdings"],
-                    max_positions=params.max_positions,
-                    min_weight=params.min_weight,
-                    max_weight=params.max_position_weight,
-                    max_total_weight=params.max_total_weight,
-                    reason_max_chars=params.reason_max_chars,
-                )
-            else:
-                value = validate_report(raw, orders=self._context["orders"](), reason_max_chars=params.reason_max_chars)
-        except HandoffError as exc:
-            return self._fail(str(exc))
-        self._submission, self._submitted, self.last_error = value, True, None
-        return {"status": "recorded"}
-
-    def _fail(self, message: str) -> dict[str, Any]:
-        self.last_error = message
-        return {"error": message}
+    def _validate(self, stage: str, *args: Any) -> Any:
+        raw, params = args[0], self._params
+        if stage == HOLDINGS:
+            return validate_holdings(
+                raw,
+                known_tickers=self._context["known_tickers"],
+                baseline=self._context["baseline"],
+                max_holdings=params.max_holdings,
+                reason_max_chars=params.reason_max_chars,
+            )
+        if stage == TARGET:
+            return validate_target(
+                raw,
+                holdings=self._context["holdings"],
+                max_positions=params.max_positions,
+                min_weight=params.min_weight,
+                max_weight=params.max_position_weight,
+                max_total_weight=params.max_total_weight,
+                reason_max_chars=params.reason_max_chars,
+            )
+        return validate_report(raw, orders=self._context["orders"](), reason_max_chars=params.reason_max_chars)
 
 
 # --- the tools --------------------------------------------------------------------------------------

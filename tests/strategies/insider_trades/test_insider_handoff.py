@@ -372,3 +372,15 @@ def test_the_tools_call_the_recorder_and_have_one_line_docstrings_and_real_annot
     recorder.facts_fetched("AAPL")
     assert tools["submit_note"]("a summary", []) == {"status": "recorded"}
     assert recorder.note is not None and recorder.note.summary == "a summary"
+
+
+def test_guard_messages_unchanged() -> None:
+    recorder = InsiderRecorder(PARAMS)
+    for stage, tool in (("note", "submit_note"), ("target", "submit_target"), ("report", "submit_trade_report")):
+        assert recorder.submit(stage, []) == {"error": f"{tool} is not expected at this point"}
+    recorder.expect_report(lambda: {})
+    assert recorder.submit("report", []) == {"status": "recorded"}
+    assert recorder.submit("report", []) == {"error": "already recorded for this run"}
+    trade = trade_recorder(classes_of(), [])
+    trade.submit("target", rows(even()))
+    assert trade.submit("target", []) == {"error": "target already recorded for this run"}

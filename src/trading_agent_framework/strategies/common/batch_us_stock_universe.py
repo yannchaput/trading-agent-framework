@@ -78,7 +78,7 @@ from trading_agent_framework.backtesting.data.yahoo import (
     yfinance_download,
 )
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory, _month_keys, monthly_lists
-from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
+from trading_agent_framework.strategies.common.universe_params import MIN_DOLLAR_VOLUME, MIN_MARKET_CAP, MIN_PRICE
 from trading_agent_framework.utils.errors import UniverseHistoryError
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
@@ -186,31 +186,17 @@ class RateLimitGate:
             self._backoff = self._initial_backoff
 
 
-_semaphore: threading.Semaphore | None = None
-_rate_limit_gate: RateLimitGate | None = None
-
-
-def _get_semaphore() -> threading.Semaphore:
-    global _semaphore
-    if _semaphore is None:
-        _semaphore = threading.Semaphore(_MAX_CONCURRENT_YF)
-    return _semaphore
-
-
-def _get_rate_limit_gate() -> RateLimitGate:
-    global _rate_limit_gate
-    if _rate_limit_gate is None:
-        _rate_limit_gate = RateLimitGate(_RATE_LIMIT_INITIAL_BACKOFF, _RATE_LIMIT_MAX_BACKOFF)
-    return _rate_limit_gate
+_semaphore = threading.Semaphore(_MAX_CONCURRENT_YF)
+rate_limit_gate = RateLimitGate(_RATE_LIMIT_INITIAL_BACKOFF, _RATE_LIMIT_MAX_BACKOFF)
 
 
 # ── Thresholds ──────────────────────────────────────────────────────────────
 
 # Gets the thresholds from strategy central config
 THRESHOLDS = {
-    "market_cap": CONFIG["min_market_cap"],
-    "price": CONFIG["min_price"],
-    "dollar_volume": CONFIG["min_dollar_volume"],
+    "market_cap": MIN_MARKET_CAP,
+    "price": MIN_PRICE,
+    "dollar_volume": MIN_DOLLAR_VOLUME,
 }
 
 # ── Ticker source ───────────────────────────────────────────────────────────
@@ -282,41 +268,6 @@ def _fetch_vanguard_holdings() -> dict:
     r = requests.get(_VANGUARD_VTI_HOLDINGS_URL, headers=_NASDAQ_HEADERS, timeout=60)
     r.raise_for_status()
     return r.json()
-
-
-def get_extra_universe_symbols(
-    fetch_ishares_csv=_fetch_ishares_csv,
-    fetch_vanguard_holdings=_fetch_vanguard_holdings,
-) -> set[str]:
-    """Union Russell 1000 (IWB), Russell 2000 (IWM), and total-market (VTI) holdings.
-
-    Each source is fetched independently; a failing source is logged and
-    skipped rather than aborting the others. `fetch_ishares_csv` and
-    `fetch_vanguard_holdings` are injectable so tests can supply fixtures
-    without touching the network.
-    """
-    symbols: set[str] = set()
-
-    for name, url in _ISHARES_HOLDINGS_URLS.items():
-        try:
-            text = fetch_ishares_csv(url)
-            source_symbols = parse_ishares_csv(text)
-        except Exception as e:
-            console.print(f"[yellow]Failed to fetch {name} holdings: {e}[/yellow]")
-            continue
-        console.print(f"  {name}: [green]{len(source_symbols)}[/green] equity holdings")
-        symbols |= source_symbols
-
-    try:
-        payload = fetch_vanguard_holdings()
-        vti_symbols = parse_vanguard_holdings(payload)
-    except Exception as e:
-        console.print(f"[yellow]Failed to fetch VTI holdings: {e}[/yellow]")
-    else:
-        console.print(f"  VTI (total market): [green]{len(vti_symbols)}[/green] equity holdings")
-        symbols |= vti_symbols
-
-    return symbols
 
 
 def _parse_nasdaq_market_cap(value: str) -> float:
@@ -392,7 +343,7 @@ def _fetch_nasdaq_rows() -> list[dict]:
     """The NASDAQ screener's rows for every US exchange; raises on any HTTP or parse failure.
 
     Shared by the live batch (`get_ticker_universe`, which logs and returns [] on failure) and the history pool
-    (`get_history_pool`, which raises).
+    (`build_history_pool`, which raises).
     """
     r = requests.get(_NASDAQ_SCREENER_URL, headers=_NASDAQ_HEADERS, timeout=60)
     r.raise_for_status()
@@ -441,8 +392,8 @@ def _fetch_yf_info(ticker: str) -> dict | None:
     3 times, with a short per-attempt backoff on top for non-rate-limit
     transient errors.
     """
-    sem = _get_semaphore()
-    gate = _get_rate_limit_gate()
+    sem = _semaphore
+    gate = rate_limit_gate
 
     info = None
     for attempt in range(3):
@@ -570,7 +521,7 @@ def screen_tickers(tickers: list[str], max_workers: int = 3) -> list[dict]:
 # handful of symbols with no data are normal (a ticker delisted since the screener ran, a warrant), more means Yahoo is
 # failing. 1% is about 60 of 6,000: the floor is explicit, and the history file records the names and counts that fell
 # under it (`UniverseHistory.unanswered`, `bars_absent`), because a real stock left out of every month is a bias.
-_MAX_ABSENT_FRACTION = 0.01
+MAX_ABSENT_FRACTION = 0.01
 
 
 class HistoryPool(NamedTuple):
@@ -605,30 +556,45 @@ def _is_common_stock(symbol: str) -> bool | None:
     return quote_type == "EQUITY"
 
 
-def _strict_etf_symbols(
+def _etf_symbols(
     fetch_ishares_csv: Callable[[str], str],
     fetch_vanguard_holdings: Callable[[], dict],
+    *,
+    strict: bool,
 ) -> set[str]:
-    """Union IWB, IWM and VTI holdings; unlike `get_extra_universe_symbols`, a source that fails or is empty raises."""
-    symbols: set[str] = set()
-    for name, url in _ISHARES_HOLDINGS_URLS.items():
-        try:
-            source_symbols = parse_ishares_csv(fetch_ishares_csv(url))
-        except Exception as e:
-            raise UniverseHistoryError(f"{name} holdings failed: {e}") from e
-        if not source_symbols:
-            raise UniverseHistoryError(f"{name} holdings returned no equity symbols")
-        console.print(f"  {name}: [green]{len(source_symbols)}[/green] equity holdings")
-        symbols |= source_symbols
+    """Union Russell 1000 (IWB), Russell 2000 (IWM) and total-market (VTI) holdings, each source fetched independently.
 
-    try:
-        vti_symbols = parse_vanguard_holdings(fetch_vanguard_holdings())
-    except Exception as e:
-        raise UniverseHistoryError(f"VTI holdings failed: {e}") from e
-    if not vti_symbols:
-        raise UniverseHistoryError("VTI holdings returned no equity symbols")
-    console.print(f"  VTI (total market): [green]{len(vti_symbols)}[/green] equity holdings")
-    return symbols | vti_symbols
+    Lenient (the live batch): a failing source is logged and skipped rather than aborting the others. Strict (the history
+    pool, where a silently smaller pool would bias every month): a source that fails or returns nothing raises
+    `UniverseHistoryError`."""
+    symbols: set[str] = set()
+
+    def take(name: str, load: Callable[[], set[str]], label: str | None = None) -> None:
+        # `name` is in the failure texts; `label` (default `name`) only in the count line
+        try:
+            source_symbols = load()
+        except Exception as e:
+            if strict:
+                raise UniverseHistoryError(f"{name} holdings failed: {e}") from e
+            console.print(f"[yellow]Failed to fetch {name} holdings: {e}[/yellow]")
+            return
+        if strict and not source_symbols:
+            raise UniverseHistoryError(f"{name} holdings returned no equity symbols")
+        console.print(f"  {label or name}: [green]{len(source_symbols)}[/green] equity holdings")
+        symbols.update(source_symbols)
+
+    for name, url in _ISHARES_HOLDINGS_URLS.items():
+        take(name, lambda url=url: parse_ishares_csv(fetch_ishares_csv(url)))
+    take("VTI", lambda: parse_vanguard_holdings(fetch_vanguard_holdings()), label="VTI (total market)")
+    return symbols
+
+
+def get_extra_universe_symbols(
+    fetch_ishares_csv=_fetch_ishares_csv,
+    fetch_vanguard_holdings=_fetch_vanguard_holdings,
+) -> set[str]:
+    """The ETF holdings union for the live batch (lenient); `fetch_*` are injectable so tests need no network."""
+    return _etf_symbols(fetch_ishares_csv, fetch_vanguard_holdings, strict=False)
 
 
 def _filter_common_stocks(symbols: list[str], is_common_stock: Callable[[str], bool | None]) -> tuple[list[str], list[str]]:
@@ -669,7 +635,7 @@ def build_history_pool(
 
     The candidates `is_common_stock` could not answer (None) are asked once more after a pause through the shared
     rate-limit gate (a throttled lookup looks like no answer). Raises `UniverseHistoryError` if any source fails or
-    returns nothing, if more than `_MAX_ABSENT_FRACTION` of the candidates are still unanswered after that, or if no
+    returns nothing, if more than `MAX_ABSENT_FRACTION` of the candidates are still unanswered after that, or if no
     common stock is left. The few unanswered are left out, logged and returned. All the fetchers and
     `is_common_stock` are injectable so tests supply fakes without touching the network.
     """
@@ -682,21 +648,21 @@ def build_history_pool(
         raise UniverseHistoryError("NASDAQ screener returned no symbols")
     console.print(f"  NASDAQ screener: [green]{len(nasdaq_symbols)}[/green] listed symbols")
 
-    etf_symbols = _strict_etf_symbols(fetch_ishares_csv, fetch_vanguard_holdings)
+    etf_symbols = _etf_symbols(fetch_ishares_csv, fetch_vanguard_holdings, strict=True)
     candidates = sorted(set(nasdaq_symbols) | etf_symbols)
     console.print(f"  Union: [green]{len(candidates)}[/green] candidates")
 
     kept, unanswered = _filter_common_stocks(candidates, is_common_stock)
     if unanswered:
         console.print(f"  {len(unanswered)} candidate(s) with no answer: asking for them once more after a pause")
-        gate = _get_rate_limit_gate()
+        gate = rate_limit_gate
         gate.on_rate_limited()
         gate.wait()
         recovered, unanswered = _filter_common_stocks(unanswered, is_common_stock)
         kept = [*kept, *recovered]
-    if len(unanswered) > _MAX_ABSENT_FRACTION * len(candidates):
+    if len(unanswered) > MAX_ABSENT_FRACTION * len(candidates):
         raise UniverseHistoryError(
-            f"yfinance gave no answer for {len(unanswered)} of {len(candidates)} candidates, above the {_MAX_ABSENT_FRACTION:.0%} limit: "
+            f"yfinance gave no answer for {len(unanswered)} of {len(candidates)} candidates, above the {MAX_ABSENT_FRACTION:.0%} limit: "
             f"Yahoo is failing (e.g. {', '.join(unanswered[:20])})"
         )
     if unanswered:
@@ -709,17 +675,12 @@ def build_history_pool(
     return HistoryPool(pool, unanswered)
 
 
-def get_history_pool(**sources: Callable) -> list[str]:
-    """The sorted candidate symbols for the universe history; see `build_history_pool` (which also returns the unanswered)."""
-    return build_history_pool(**sources).symbols
-
-
 # ── History build ───────────────────────────────────────────────────────────
 # `ensure_universe_history`: the backtest pre-step. Cache layout: see the module docstring.
 
 _HISTORY_TOP_N = 1200
 _HISTORY_LOOKBACK = 63
-_HISTORY_BATCH_SIZE = 100  # symbols per Yahoo download
+HISTORY_BATCH_SIZE = 100  # symbols per Yahoo download
 # The bars start this many calendar days before the first needed month: 63 sessions are about 90 calendar days.
 _HISTORY_WARMUP_DAYS = 120
 _DOWNLOAD_ATTEMPTS = 3
@@ -733,8 +694,8 @@ def _same_parameters(history: UniverseHistory) -> bool:
     return (
         history.top_n == _HISTORY_TOP_N
         and history.lookback == _HISTORY_LOOKBACK
-        and history.min_price == float(CONFIG["min_price"])
-        and history.min_dollar_volume == float(CONFIG["min_dollar_volume"])
+        and history.min_price == float(MIN_PRICE)
+        and history.min_dollar_volume == float(MIN_DOLLAR_VOLUME)
     )
 
 
@@ -751,17 +712,14 @@ def _save_pool(cache_dir: Path, pool_date: date, pool: HistoryPool) -> None:
     (cache_dir / "pool.json").write_text(json.dumps({"date": pool_date.isoformat(), "symbols": pool.symbols, "unanswered": pool.unanswered}))
 
 
-def _resolve_pool(cache_dir: Path, last_month_start: date, today: date, pool: Callable[[], list[str] | HistoryPool] | None) -> tuple[date, HistoryPool]:
-    """The saved pool when it is dated in or after the last month needed; else a fresh one, saved.
-
-    An injected `pool` may return a plain symbol list (no unanswered candidates) or a `HistoryPool`."""
+def _resolve_pool(cache_dir: Path, last_month_start: date, today: date, pool: Callable[[], HistoryPool] | None) -> tuple[date, HistoryPool]:
+    """The saved pool when it is dated in or after the last month needed; else a fresh one, saved."""
     try:
         saved = _load_pool(cache_dir)
         if saved is not None and saved[0] >= last_month_start:
             console.print(f"  Reusing the saved pool of {len(saved[1].symbols)} symbols (dated {saved[0]})")
             return saved
         fresh = build_history_pool() if pool is None else pool()
-        fresh = fresh if isinstance(fresh, HistoryPool) else HistoryPool(list(fresh), [])
         resolved = HistoryPool(sorted(set(fresh.symbols)), sorted(set(fresh.unanswered)))
     except UniverseHistoryError:
         raise
@@ -773,7 +731,7 @@ def _resolve_pool(cache_dir: Path, last_month_start: date, today: date, pool: Ca
     return today, resolved
 
 
-def _download_batch(download: DownloadFn, symbols: list[str], start: date, end: date, *, empty_is_failure: bool) -> pd.DataFrame:
+def download_batch(download: DownloadFn, symbols: list[str], start: date, end: date, *, empty_is_failure: bool) -> pd.DataFrame:
     """One batched Yahoo download, through the live batch's rate-limit gate, retried.
 
     `end` is inclusive here; Yahoo's is exclusive, so the call passes the day after. yfinance swallows a rate limit or
@@ -782,7 +740,7 @@ def _download_batch(download: DownloadFn, symbols: list[str], start: date, end: 
     the empty frame is returned, and the caller treats its symbols as absent. An exception on every attempt raises
     `UniverseHistoryError`.
     """
-    gate = _get_rate_limit_gate()
+    gate = rate_limit_gate
     failure: Exception | None = None
     for attempt in range(_DOWNLOAD_ATTEMPTS):
         gate.wait()
@@ -859,12 +817,12 @@ def _download_symbols(
     entry claiming a window its file does not hold.
     """
     absent: list[str] = []
-    for offset in range(0, len(todo), _HISTORY_BATCH_SIZE):
-        batch_symbols = todo[offset : offset + _HISTORY_BATCH_SIZE]
+    for offset in range(0, len(todo), HISTORY_BATCH_SIZE):
+        batch_symbols = todo[offset : offset + HISTORY_BATCH_SIZE]
         for symbol in batch_symbols:
             index.pop(symbol, None)
         _save_bars_index(bars_dir, index)
-        raw = _download_batch(download, batch_symbols, window_start, download_end, empty_is_failure=empty_is_failure)
+        raw = download_batch(download, batch_symbols, window_start, download_end, empty_is_failure=empty_is_failure)
         for symbol in batch_symbols:
             frame = extract_ticker_frame(raw, symbol)
             frame = frame.dropna(how="all") if not frame.empty else frame
@@ -876,7 +834,7 @@ def _download_symbols(
             _write_frame(frame, path)
             index[symbol] = (window_start, download_end)
         _save_bars_index(bars_dir, index)
-        console.print(f"  Downloaded {min(offset + _HISTORY_BATCH_SIZE, len(todo))}/{len(todo)}")
+        console.print(f"  Downloaded {min(offset + HISTORY_BATCH_SIZE, len(todo))}/{len(todo)}")
     return absent
 
 
@@ -908,7 +866,7 @@ def _ensure_bars(
     absent = _download_symbols(todo, window_start, download_end, bars_dir, index, download, empty_is_failure=True)
     if absent:
         console.print(f"  {len(absent)} symbol(s) without data: asking for them once more after a pause")
-        gate = _get_rate_limit_gate()
+        gate = rate_limit_gate
         gate.on_rate_limited()
         gate.wait()
         absent = _download_symbols(absent, window_start, download_end, bars_dir, index, download, empty_is_failure=False)
@@ -966,7 +924,7 @@ def ensure_universe_history(
     cache_dir: Path = _DEFAULT_HISTORY_CACHE,
     today: Callable[[], date] = date.today,
     download: DownloadFn | None = None,
-    pool: Callable[[], list[str] | HistoryPool] | None = None,
+    pool: Callable[[], HistoryPool] | None = None,
 ) -> UniverseHistory:
     """The point-in-time universe history covering every month from `start`'s to `end`'s, built or extended if needed.
 
@@ -975,7 +933,7 @@ def ensure_universe_history(
     `cache_dir`) plus SPY's sessions, merged with the months already saved, and saved. The build holds an exclusive
     lock on `cache_dir` and re-reads the history once it has it, so a second process starting at the same time waits and
     then returns the first one's result without downloading. `download` (default `yfinance.download`) and `pool`
-    (default `build_history_pool`; a plain symbol list is accepted) are injectable for tests. Every failure raises
+    (default `build_history_pool`) are injectable for tests. Every failure raises
     `UniverseHistoryError`: the pool, a download, a month with no session or no symbol, missing SPY sessions.
     """
     existing = _load_usable(path)
@@ -996,7 +954,7 @@ def _build_history(
     cache_dir: Path,
     today: Callable[[], date],
     download: DownloadFn | None,
-    pool: Callable[[], list[str] | HistoryPool] | None,
+    pool: Callable[[], HistoryPool] | None,
 ) -> UniverseHistory:
     """The build path of `ensure_universe_history`, run under the cache lock: compute the missing months and save."""
     needed = _month_keys(start, end)
@@ -1021,9 +979,9 @@ def _build_history(
         spy = parse_yahoo_frame(pd.read_parquet(cache_dir / "bars" / f"{CALENDAR_SYMBOL}.parquet"))
         sessions = [ts.date() for ts in spy.index]
         pool_absent = [symbol for symbol in absent if symbol != CALENDAR_SYMBOL]
-        if len(pool_absent) > _MAX_ABSENT_FRACTION * len(symbols):
+        if len(pool_absent) > MAX_ABSENT_FRACTION * len(symbols):
             raise UniverseHistoryError(
-                f"Yahoo has no data for {len(pool_absent)} of {len(symbols)} pool symbols, above the {_MAX_ABSENT_FRACTION:.0%} limit: "
+                f"Yahoo has no data for {len(pool_absent)} of {len(symbols)} pool symbols, above the {MAX_ABSENT_FRACTION:.0%} limit: "
                 f"Yahoo is failing, no history saved (e.g. {', '.join(pool_absent[:20])})"
             )
         frames = _load_traded_frames([symbol for symbol in symbols if symbol != CALENDAR_SYMBOL and symbol not in pool_absent], cache_dir / "bars")
@@ -1039,8 +997,8 @@ def _build_history(
         frames,
         sessions,
         missing,
-        min_price=float(CONFIG["min_price"]),
-        min_dollar_volume=float(CONFIG["min_dollar_volume"]),
+        min_price=float(MIN_PRICE),
+        min_dollar_volume=float(MIN_DOLLAR_VOLUME),
         top_n=_HISTORY_TOP_N,
         lookback=_HISTORY_LOOKBACK,
     )
@@ -1052,8 +1010,8 @@ def _build_history(
         built=now,
         pool_date=pool_date,
         top_n=_HISTORY_TOP_N,
-        min_price=float(CONFIG["min_price"]),
-        min_dollar_volume=float(CONFIG["min_dollar_volume"]),
+        min_price=float(MIN_PRICE),
+        min_dollar_volume=float(MIN_DOLLAR_VOLUME),
         lookback=_HISTORY_LOOKBACK,
         months=dict(sorted({**(existing.months if existing is not None else {}), **computed}.items())),
         pool_size=len(symbols),
@@ -1071,7 +1029,7 @@ def build_universe_json(results: list[dict], source: str) -> dict:
     """Sort results by market cap descending, take top 1200, build output dict."""
     results.sort(key=lambda x: x["market_cap"], reverse=True)
 
-    top = results[:1200]
+    top = results[:_HISTORY_TOP_N]
 
     return {
         "date": date.today().isoformat(),

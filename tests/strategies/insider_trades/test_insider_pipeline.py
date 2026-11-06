@@ -21,6 +21,7 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, OrderSide, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.strategies.common.pipeline import PendingTrade
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.trade_desk import TradeDesk
 from trading_agent_framework.strategies.insider_trades.facts import InsiderFacts
@@ -29,10 +30,10 @@ from trading_agent_framework.strategies.insider_trades.form4.source import Known
 from trading_agent_framework.strategies.insider_trades.handoff import InsiderRecorder, submit_tools
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
 from trading_agent_framework.strategies.insider_trades.pipeline import InsiderPipeline
-from trading_agent_framework.strategies.insider_trades.state import PendingTrade, StateStore
+from trading_agent_framework.strategies.insider_trades.state import InsiderState, StateStore
 from trading_agent_framework.strategies.insider_trades.tools import insider_research_tools
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, BrokerError
+from trading_agent_framework.utils.errors import AgentError, BrokerError, InsiderDataError
 
 NOW = et(2025, 10, 14, 10)
 WATCHLIST = ("AAA", "BBB", "CCC", "DDD", "EEE")
@@ -152,7 +153,7 @@ class Rig:
             agents=self.handles,
             recorder=self.recorder,
             state=self.state,
-            run_log=RunLog(self.log_path),
+            log=RunLog(self.log_path),
             desk=self.desk,
             load_window=lambda: (self.clock.now(), self.clock.now().date() - timedelta(days=365 * self.params.history_years + 31)),
             researcher_task=RESEARCHER_TASK,
@@ -1049,3 +1050,95 @@ def test_a_trader_target_line_without_a_reason_ends_at_the_weight(tmp_path: Path
 
     assert "[trader] stock: AAA; signal: no signal; weight: 19.0%" in caplog.text
     assert "weight: 19.0%; reason" not in caplog.text
+
+
+# --- the abandoned record, pinned across the pipeline refactor -------------------------------------------------------
+
+
+def _insider_abandon(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Rig:
+    rig = Rig(tmp_path)
+    if name == "stage":
+        rig.handles["trader"].script = no_submission
+    elif name == "data":
+
+        def broken(**kwargs: Any) -> LoadReport:
+            raise InsiderDataError("Form 4 0001 is not valid XML")
+
+        monkeypatch.setattr(rig.source, "load", broken)
+    elif name == "broker":
+
+        def account_down(tools: dict[str, Callable[..., dict[str, Any]]], context: dict[str, Any]) -> None:
+            raise BrokerError("account unavailable")
+
+        rig.handles["researcher"].script = account_down
+    elif name == "execution":
+
+        def trade_then_fail(tools: dict[str, Callable[..., dict[str, Any]]], context: dict[str, Any]) -> None:
+            classes = {s["ticker"]: s["class"] for s in context["stocks"]}
+            tools["submit_target"]([{"ticker": t, "weight": w, "reason": "tilt"} for t, w in rig.weights_for(classes).items()])
+            tools["place_order"]("AAA", "buy", 40)
+            raise BrokerError("the connection dropped")
+
+        rig.handles["trader"].script = trade_then_fail
+    else:  # a failed attempt on a pending trade
+        _unfilled_first_run(rig)
+        rig.cancel_all_open()
+        rig.handles["trader_retry"].script = no_submission
+        rig.day()
+        rig.log_path.unlink()
+    return rig
+
+
+@pytest.mark.parametrize("name", ["stage", "data", "broker", "execution", "pending"])
+def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = _insider_abandon(name, tmp_path, monkeypatch)
+
+    with caplog.at_level(logging.ERROR):
+        rig.pipeline.run()
+
+    (message,) = [record.getMessage() for record in caplog.records if "abandoned" in record.getMessage()]
+    (line,) = [json.loads(text, object_pairs_hook=lambda pairs: pairs) for text in rig.log_path.read_text(encoding="utf-8").splitlines()]
+    keys = [key for key, _ in line]
+    pairs = dict(line)
+    prefix = "[insider_trades] \x1b[31m[insider_trades] run abandoned at the "
+    base = [("date", "2025-10-14"), ("run_id", None), ("outcome", "abandoned")]
+    changed = [("failed", []), ("changed", ["AAA", "BBB", "CCC", "DDD", "EEE"])]
+    state = rig.state.load()
+    empty = InsiderState(abandoned_streak=1)
+    if name == "stage":
+        assert message == prefix + "trader stage (streak 1): the agent ended without calling submit_target\x1b[0m"
+        assert keys == ["date", "run_id", "outcome", "failed", "changed", "stocks", "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:5], *line[-4:]] == [*base, *changed, ("stage", "trader"), ("error", "the agent ended without calling submit_target"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "data":
+        assert message == prefix + "filings stage (streak 1): Form 4 0001 is not valid XML\x1b[0m"
+        assert line == [*base, ("stage", "filings"), ("error", "Form 4 0001 is not valid XML"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "broker":
+        assert message == prefix + "broker stage (streak 1): account unavailable\x1b[0m"
+        assert line == [*base, *changed, ("stage", "broker"), ("error", "account unavailable"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "execution":
+        assert message == prefix + "execution stage (streak 1): the connection dropped\x1b[0m"
+        assert keys == ["date", "run_id", "outcome", "failed", "changed", "stocks", "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:5], *line[-4:-1]] == [*base, *changed, ("stage", "execution"), ("error", "the connection dropped"), ("abandoned_streak", 1)]
+        (order,) = pairs["orders"]
+        assert [(k, v) for k, v in order if k != "order_id"] == [("symbol", "AAA"), ("side", "buy"), ("quantity", 40.0), ("status", "working"), ("filled_quantity", 0.0), ("checked", False)]
+        assert state == InsiderState(traded=["AAA"], abandoned_streak=1)
+    else:
+        assert message == prefix + "trader stage (streak 1): the agent ended without calling submit_trade_report\x1b[0m"
+        assert keys == ["date", "run_id", "outcome", "failed", "changed", "shortfalls_before", "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:5], *line[-4:]] == [
+            ("date", "2025-10-15"),
+            ("run_id", None),
+            ("outcome", "abandoned"),
+            ("failed", []),
+            ("changed", []),
+            ("stage", "trader"),
+            ("error", "the agent ended without calling submit_trade_report"),
+            ("abandoned_streak", 1),
+            ("orders", []),
+        ]
+        target = {"AAA": 0.2, "BBB": 0.05, "CCC": 0.15, "DDD": 0.15, "EEE": 0.15}
+        assert state.pending_trade == PendingTrade(target=target, days=1)  # the failed attempt used up a retry
+        assert (state.target, state.traded, state.abandoned_streak, state.last_run) == (target, list(WATCHLIST), 1, "2025-10-14")

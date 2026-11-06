@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore, state_path
+from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore
+from trading_agent_framework.strategies.common.run_log import RunLog
 
 
 def _state() -> ReviewState:
@@ -23,11 +23,6 @@ def _state() -> ReviewState:
         abandoned_streak=2,
         cooldowns={"OLD": 3},
     )
-
-
-def test_the_state_path_is_per_mode_under_the_projects_data_directory(tmp_path: Path) -> None:
-    assert state_path(tmp_path, TradingMode.PAPER) == tmp_path / "data" / "bill_ackman_state_paper.json"
-    assert state_path(tmp_path, TradingMode.BACKTESTING).name == "bill_ackman_state_backtesting.json"
 
 
 def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
@@ -113,7 +108,7 @@ def test_wipe_removes_the_file_and_is_safe_when_there_is_none(tmp_path: Path) ->
 
 
 def test_the_review_log_appends_one_json_line_per_review(tmp_path: Path) -> None:
-    log = ReviewLog(tmp_path / "logs" / "run" / "reviews.jsonl")
+    log = RunLog(tmp_path / "logs" / "run" / "reviews.jsonl")
 
     log.append({"date": "2026-09-14", "orders": [{"symbol": "AAA", "side": "buy", "quantity": 1.5}]})
     log.append({"date": "2026-09-15", "abandoned": True, "stage": "researcher", "error": "no submission"})
@@ -123,7 +118,7 @@ def test_the_review_log_appends_one_json_line_per_review(tmp_path: Path) -> None
 
 
 def test_the_review_log_writes_decimals_as_strings(tmp_path: Path) -> None:
-    log = ReviewLog(tmp_path / "reviews.jsonl")
+    log = RunLog(tmp_path / "reviews.jsonl")
 
     log.append({"market_cap": Decimal("123.45")})
 
@@ -131,7 +126,7 @@ def test_the_review_log_writes_decimals_as_strings(tmp_path: Path) -> None:
 
 
 def test_a_review_log_without_a_path_does_nothing(tmp_path: Path) -> None:
-    ReviewLog(None).append({"date": "2026-09-14"})
+    RunLog(None).append({"date": "2026-09-14"})
 
     assert list(tmp_path.iterdir()) == []
 
@@ -141,7 +136,7 @@ def test_a_review_log_that_cannot_be_written_is_logged_and_never_raises(tmp_path
     blocker.write_text("a file", encoding="utf-8")
 
     with caplog.at_level(logging.WARNING):
-        ReviewLog(blocker / "reviews.jsonl").append({"date": "2026-09-14"})
+        RunLog(blocker / "reviews.jsonl").append({"date": "2026-09-14"})
 
     assert "could not be written" in caplog.text
 
@@ -154,3 +149,15 @@ def test_a_file_written_by_the_previous_version_is_an_empty_state_with_a_warning
         assert StateStore(path).load() == ReviewState()
 
     assert "not a valid state" in caplog.text
+
+
+def test_old_files_load_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"version": 2, "last_review": "2026-09-14", "fail_counts": {"HLT": 1}, "last_ranking": ["AAA", "BBB"], '
+        '"last_verdicts": {"AAA": {"verdict": "survive", "reason": "cash rich", "concern": null, "date": "2026-09-14"}, '
+        '"HLT": {"verdict": "fail", "reason": "debt doubled", "concern": "debt", "date": "2026-09-14"}}, '
+        '"abandoned_streak": 2, "cooldowns": {"OLD": 3}}'
+    )
+
+    assert StateStore(path).load() == _state()

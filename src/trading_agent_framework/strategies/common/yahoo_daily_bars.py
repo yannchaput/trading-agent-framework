@@ -9,8 +9,9 @@ add the traded close and volume) and the same parse (`backtesting/data/yahoo.py`
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from datetime import date, timedelta
+from typing import Protocol
 
 import pandas as pd
 
@@ -25,6 +26,14 @@ HISTORY_BARS = 301  # the scan's 300 completed sessions plus the bar still formi
 _CALENDAR_DAYS_PER_BAR = 1.5  # 301 sessions span ~440 days; the slack covers holidays and missing bars
 
 DownloadFn = Callable[..., pd.DataFrame]
+
+
+class BarsSource(Protocol):
+    def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]: ...
+
+
+class UnusableBatch(Exception):
+    """The last batch was still unusable after every retry; the message is its problem."""
 
 
 class YahooDailyBars:
@@ -71,3 +80,43 @@ class YahooDailyBars:
             if not frame.empty:
                 result[symbol] = Bars(asset=Asset(symbol), timestep="day", df=frame)
         return result
+
+
+def fetch_usable_batch(
+    source: BarsSource,
+    universe: Sequence[str],
+    *,
+    extras: Sequence[str] = (),
+    today: Callable[[], date],
+    held: Callable[[], Collection[str]],
+    min_coverage: float,
+    retry_delays: Sequence[float],
+    sleep: Callable[[float], None],
+    on_retry: Callable[[str, float], None],
+) -> dict[str, Bars]:
+    """One batched download of `universe` plus `extras`, fetched again after each delay while it is unusable.
+
+    Unusable when Yahoo fails, covers less than `min_coverage` of the universe (extras are not counted), or misses a
+    held stock that is in the universe (it would be forced out as unranked; a holding outside the universe was never
+    requested and is sold as "not ranked" by design). Any other stock Yahoo lacks is simply absent from the result.
+    `on_retry(problem, delay)` is called before each `sleep(delay)`; `UnusableBatch(problem)` after the last attempt.
+    """
+    in_universe = set(universe)
+    problem = "no attempt made"
+    for delay in (*retry_delays, None):
+        try:
+            bars = source.bars([*universe, *extras], today())
+        except YahooDataError as exc:
+            problem = f"Yahoo lookup failed ({exc})"
+        else:
+            covered = sum(1 for symbol in universe if symbol in bars)
+            if covered < len(universe) * min_coverage:
+                problem = f"Yahoo covers only {covered}/{len(universe)} symbols"
+            elif missing_held := sorted((set(held()) & in_universe) - bars.keys()):  # read only once coverage passes
+                problem = f"Yahoo has no bars for held {', '.join(missing_held)}"
+            else:
+                return bars
+        if delay is not None:
+            on_retry(problem, delay)
+            sleep(delay)
+    raise UnusableBatch(problem)

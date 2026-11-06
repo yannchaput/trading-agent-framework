@@ -19,13 +19,12 @@ from dataclasses import dataclass
 from typing import Any
 
 from trading_agent_framework.strategies.common import handoff as shared
-from trading_agent_framework.strategies.common.handoff import HandoffError, OrderReport, OrderView, validate_report
+from trading_agent_framework.strategies.common.handoff import HandoffError, OrderReport, OrderView, SubmitRecorder, validate_report
 from trading_agent_framework.strategies.insider_trades.form4.classify import Label
 from trading_agent_framework.strategies.insider_trades.form4.signal import Override, SignalClass, StockFacts
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
 
 NOTE, TARGET, REPORT = "note", "target", "report"
-_TOOL_NAMES = {NOTE: "submit_note", TARGET: "submit_target", REPORT: "submit_trade_report"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +155,7 @@ def _check_signal_order(rows: Mapping[str, tuple[float, Mapping[str, Any]]], cla
 # --- the recorder -----------------------------------------------------------------------------------
 
 
-class InsiderRecorder:
+class InsiderRecorder(SubmitRecorder):
     """Holds what the current stage must validate against, and the first valid submission for it.
 
     `expect_note` arms the researcher's note for one stock; `expect_trade` arms the target, and a valid target arms the report
@@ -164,16 +163,15 @@ class InsiderRecorder:
     FINAL submission is in: the note, or the report. `target` stays readable after the report.
     """
 
+    TOOL_NAMES = {NOTE: "submit_note", TARGET: "submit_target", REPORT: "submit_trade_report"}
+
     def __init__(self, params: InsiderParams) -> None:
+        super().__init__()
         self._params = params
-        self._stage: str | None = None
-        self._context: dict[str, Any] = {}
-        self._submitted = False
         self._fetched: set[str] = set()
         self.note: Note | None = None
         self.target: list[TargetWeight] | None = None
         self.report: list[OrderReport] | None = None
-        self.last_error: str | None = None
 
     def expect_note(self, facts: StockFacts) -> None:
         self._fetched = set()
@@ -199,20 +197,6 @@ class InsiderRecorder:
         self.report = None
         self._arm(REPORT, {"orders": orders})
 
-    def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        self._stage, self._context = stage, context
-        self._submitted, self.last_error = False, None
-
-    @property
-    def submitted(self) -> bool:
-        """Whether the armed stage's final submission (the note, or the report) is in."""
-        return self._submitted
-
-    @property
-    def missing_tool(self) -> str:
-        """The tool the armed stage still waits for: what a forced retry forces."""
-        return _TOOL_NAMES.get(self._stage or "", "")
-
     def submit(self, stage: str, raw: Any) -> dict[str, Any]:
         """What a submit tool returns: `{"status": "recorded"}` or `{"error": ...}` (recorded in `last_error`).
 
@@ -221,9 +205,9 @@ class InsiderRecorder:
         if stage == TARGET and self.target is not None:
             return self._fail("target already recorded for this run")
         if self._stage != stage:
-            return self._fail(f"{_TOOL_NAMES[stage]} is not expected at this point")
+            return self._fail(f"{self.TOOL_NAMES[stage]} is not expected at this point")
         if self._submitted:
-            return self._fail("already recorded for this run")
+            return self._fail(self.ALREADY_RECORDED)
         try:
             if stage == NOTE:
                 return self._submit_note(raw)
@@ -251,10 +235,6 @@ class InsiderRecorder:
         self.target = target
         self._arm(REPORT, {"orders": self._context["orders"]})
         return {"status": "recorded", **extra}
-
-    def _fail(self, message: str) -> dict[str, Any]:
-        self.last_error = message
-        return {"error": message}
 
 
 # --- the tools --------------------------------------------------------------------------------------

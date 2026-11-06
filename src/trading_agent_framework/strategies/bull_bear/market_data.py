@@ -15,7 +15,8 @@ from typing import Protocol
 from trading_agent_framework.backtesting.data.yahoo import traded_series
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.strategies.common.sessions import completed_bars
-from trading_agent_framework.utils.errors import BrokerError, YahooDataError
+from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, UnusableBatch, fetch_usable_batch
+from trading_agent_framework.utils.errors import BrokerError
 
 HISTORY_BARS = 300  # completed sessions scored: cross_momentum's own window
 
@@ -34,10 +35,6 @@ class DailySeries:
 
 class DailyBars(Protocol):
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]: ...
-
-
-class BarsSource(Protocol):
-    def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]: ...
 
 
 def _series(bars: Bars, today: date) -> DailySeries | None:
@@ -78,36 +75,27 @@ class YahooBars:
         self._min_coverage = min_coverage
 
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
-        problem = "no attempt made"
-        for delay in (*self._retry_delays, None):
-            bars, found = self._attempt(universe, held)
-            if found is None:
-                today = self._today()
-                in_universe = set(universe)
-                result: dict[str, DailySeries] = {}
-                for symbol, symbol_bars in bars.items():
-                    series = _series(symbol_bars, today) if symbol in in_universe else None
-                    if series is not None:
-                        result[symbol] = series
-                return result
-            problem = found
-            if delay is not None:
-                self._warn(f"{problem}: retry in {delay:.0f}s")
-                self._sleep(delay)
-        raise DataUnavailable(problem)
-
-    def _attempt(self, universe: Sequence[str], held: Collection[str]) -> tuple[dict[str, Bars], str | None]:
         try:
-            bars = self._source.bars(list(universe), self._today())
-        except YahooDataError as exc:
-            return {}, f"Yahoo lookup failed ({exc})"
-        covered = sum(1 for symbol in universe if symbol in bars)
-        if covered < len(universe) * self._min_coverage:
-            return {}, f"Yahoo covers only {covered}/{len(universe)} symbols"
-        missing_held = sorted((set(held) & set(universe)) - bars.keys())
-        if missing_held:
-            return {}, f"Yahoo has no bars for held {', '.join(missing_held)}"
-        return bars, None
+            bars = fetch_usable_batch(
+                self._source,
+                universe,
+                today=self._today,
+                held=lambda: held,
+                min_coverage=self._min_coverage,
+                retry_delays=self._retry_delays,
+                sleep=self._sleep,
+                on_retry=lambda problem, delay: self._warn(f"{problem}: retry in {delay:.0f}s"),
+            )
+        except UnusableBatch as exc:
+            raise DataUnavailable(str(exc)) from exc
+        today = self._today()
+        in_universe = set(universe)
+        result: dict[str, DailySeries] = {}
+        for symbol, symbol_bars in bars.items():
+            series = _series(symbol_bars, today) if symbol in in_universe else None
+            if series is not None:
+                result[symbol] = series
+        return result
 
 
 class GateBars:

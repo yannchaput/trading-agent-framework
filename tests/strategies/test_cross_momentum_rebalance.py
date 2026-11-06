@@ -92,6 +92,10 @@ class FakeStrategy:
         return TODAY
 
     _rebalance_book = CrossMomentumStrategy._rebalance_book
+    _send = CrossMomentumStrategy._send
+    _sell_phase = CrossMomentumStrategy._sell_phase
+    _park_targets = CrossMomentumStrategy._park_targets
+    _buy_phase = CrossMomentumStrategy._buy_phase
     _sleeve_weights = CrossMomentumStrategy._sleeve_weights
     _trend_closes = CrossMomentumStrategy._trend_closes
 

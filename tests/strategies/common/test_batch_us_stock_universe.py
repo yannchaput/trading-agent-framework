@@ -12,13 +12,11 @@ import pytest
 from yfinance.exceptions import YFRateLimitError
 
 from trading_agent_framework.backtesting.data.yahoo import parse_yahoo_frame
-from trading_agent_framework.strategies.common.universe_history import UniverseHistory, monthly_lists
-from trading_agent_framework.strategies.cross_momentum import batch_us_stock_universe as batch
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import (
+from trading_agent_framework.strategies.common import batch_us_stock_universe as batch
+from trading_agent_framework.strategies.common.batch_us_stock_universe import (
     RateLimitGate,
     build_history_pool,
     get_extra_universe_symbols,
-    get_history_pool,
     is_rate_limit_error,
     merge_ticker_candidates,
     normalize_symbol,
@@ -27,6 +25,7 @@ from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe i
     parse_nasdaq_symbols,
     parse_vanguard_holdings,
 )
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory, monthly_lists
 from trading_agent_framework.utils.errors import UniverseHistoryError
 
 
@@ -238,6 +237,30 @@ def test_the_live_batch_still_skips_a_failing_etf_source() -> None:
     assert symbols == {"NVDA", "MOG-A"}
 
 
+def _vti_fetchers(fetch_vanguard_holdings):
+    return {"fetch_ishares_csv": lambda url: _ISHARES_CSV, "fetch_vanguard_holdings": fetch_vanguard_holdings}
+
+
+def test_the_vti_texts_are_pinned(capsys: pytest.CaptureFixture[str]) -> None:
+    def boom() -> dict:
+        raise RuntimeError("down")
+
+    batch._etf_symbols(**_vti_fetchers(boom), strict=False)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "Failed to fetch VTI holdings: down" in out
+
+    with pytest.raises(UniverseHistoryError) as failed:
+        batch._etf_symbols(**_vti_fetchers(boom), strict=True)
+    assert str(failed.value) == "VTI holdings failed: down"
+
+    with pytest.raises(UniverseHistoryError) as empty:
+        batch._etf_symbols(**_vti_fetchers(lambda: {"data": []}), strict=True)
+    assert str(empty.value) == "VTI holdings returned no equity symbols"
+
+    batch._etf_symbols(**_vti_fetchers(lambda: _VANGUARD_PAYLOAD), strict=True)
+    assert "VTI (total market): 2 equity holdings" in " ".join(capsys.readouterr().out.split())
+
+
 # ── history pool ────────────────────────────────────────────────────────────
 
 
@@ -296,14 +319,14 @@ def test_history_pool_keeps_small_and_cheap_listings() -> None:
     fetchers = _pool_fetchers()
     fetchers["fetch_nasdaq_rows"] = lambda: rows
 
-    pool = get_history_pool(**fetchers, is_common_stock=lambda symbol: True)
+    pool = build_history_pool(**fetchers, is_common_stock=lambda symbol: True).symbols
 
     assert "TINY" in pool
     assert parse_nasdaq_rows(rows) == []
 
 
 def test_history_pool_unions_the_sources_and_keeps_common_stocks_only() -> None:
-    pool = get_history_pool(**_pool_fetchers(), is_common_stock=lambda symbol: symbol != "C")
+    pool = build_history_pool(**_pool_fetchers(), is_common_stock=lambda symbol: symbol != "C").symbols
 
     assert pool == ["A", "B", "D"]
 
@@ -323,14 +346,14 @@ def test_history_pool_stops_when_over_1_percent_of_the_info_fetches_fail() -> No
     failed = set(_names(3))  # 3 of 200 candidates = 1.5%
 
     with pytest.raises(UniverseHistoryError, match="3 of 200"):
-        get_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: None if symbol in failed else True)
+        build_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: None if symbol in failed else True)
 
 
 @pytest.mark.usefixtures("no_sleep")
 def test_history_pool_tolerates_exactly_the_limit_of_failed_info_fetches() -> None:
     failed = set(_names(2))  # 2 of 200 candidates = 1%, not above the limit
 
-    pool = get_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: None if symbol in failed else True)
+    pool = build_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: None if symbol in failed else True).symbols
 
     assert pool == sorted(set(_names(200)) - failed)
 
@@ -339,7 +362,7 @@ def test_history_pool_tolerates_exactly_the_limit_of_failed_info_fetches() -> No
 def test_history_pool_counts_a_genuine_non_equity_answer_apart_from_a_failure() -> None:
     not_equity = set(_names(50))  # 25% answered "not common": legitimate, never an error
 
-    pool = get_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: symbol not in not_equity)
+    pool = build_history_pool(**_two_hundred_candidates(), is_common_stock=lambda symbol: symbol not in not_equity).symbols
 
     assert len(pool) == 150
 
@@ -385,7 +408,7 @@ def test_the_retry_pass_counts_only_the_still_unanswered_against_the_limit() -> 
         return None if symbol in set(_names(10)) and (asked.count(symbol) == 1 or symbol in set(_names(4))) else True
 
     with pytest.raises(UniverseHistoryError, match="4 of 200"):
-        get_history_pool(**_two_hundred_candidates(), is_common_stock=is_common_stock)
+        build_history_pool(**_two_hundred_candidates(), is_common_stock=is_common_stock)
 
 
 @pytest.mark.parametrize(
@@ -419,7 +442,7 @@ def test_a_failing_source_stops_the_history_pool(failing: str, named: str) -> No
         fetchers["fetch_ishares_csv"] = fetch_ishares_csv
 
     with pytest.raises(UniverseHistoryError, match=named):
-        get_history_pool(**fetchers, is_common_stock=lambda symbol: True)
+        build_history_pool(**fetchers, is_common_stock=lambda symbol: True)
 
 
 @pytest.mark.parametrize(
@@ -433,12 +456,12 @@ def test_a_failing_source_stops_the_history_pool(failing: str, named: str) -> No
 )
 def test_a_source_returning_nothing_stops_the_history_pool(kwargs: dict, named: str) -> None:
     with pytest.raises(UniverseHistoryError, match=named):
-        get_history_pool(**_pool_fetchers(**kwargs), is_common_stock=lambda symbol: True)
+        build_history_pool(**_pool_fetchers(**kwargs), is_common_stock=lambda symbol: True)
 
 
 def test_an_empty_history_pool_raises() -> None:
     with pytest.raises(UniverseHistoryError, match="empty"):
-        get_history_pool(**_pool_fetchers(), is_common_stock=lambda symbol: False)
+        build_history_pool(**_pool_fetchers(), is_common_stock=lambda symbol: False)
 
 
 class _FakeTicker:
@@ -503,7 +526,7 @@ def test_the_real_common_stock_check_reports_a_failed_fetch_as_unknown(fake_yf: 
 def test_the_history_pool_default_check_runs_the_real_filter(fake_yf: type[_FakeTicker]) -> None:
     fake_yf.infos = {"A": {"quoteType": "EQUITY"}, "B": {"quoteType": "ETF"}, "D": {"quoteType": "EQUITY"}, "C": {"quoteType": "EQUITY"}}
 
-    assert get_history_pool(**_pool_fetchers()) == ["A", "C", "D"]
+    assert build_history_pool(**_pool_fetchers()).symbols == ["A", "C", "D"]
 
 
 # ── ensure_universe_history ─────────────────────────────────────────────────
@@ -580,19 +603,23 @@ def _big_pool() -> list[str]:
     return sorted([*_CORE_POOL, *_FILLERS])
 
 
+def _big_history_pool() -> batch.HistoryPool:
+    return batch.HistoryPool(_big_pool(), [])
+
+
 @pytest.fixture
 def no_sleep(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
     """No real waiting: time.sleep does nothing and the shared rate-limit gate runs on a fake clock."""
     clock = FakeClock()
     monkeypatch.setattr(batch.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(batch, "_rate_limit_gate", RateLimitGate(30.0, 300.0, now=clock.now, sleep=clock.sleep))
+    monkeypatch.setattr(batch, "rate_limit_gate", RateLimitGate(30.0, 300.0, now=clock.now, sleep=clock.sleep))
     return clock
 
 
 def _ensure(tmp_path: Path, start: date, end: date, download: _FakeDownload, **kwargs: object) -> UniverseHistory:
     options = {
         "path": tmp_path / "history.json", "cache_dir": tmp_path / "cache", "today": lambda: _TODAY,
-        "download": download, "pool": _pool,
+        "download": download, "pool": lambda: batch.HistoryPool(_pool(), []),
     }
     return batch.ensure_universe_history(start, end, **{**options, **kwargs})
 
@@ -645,7 +672,7 @@ def test_each_month_matches_monthly_lists_on_the_same_data(tmp_path: Path) -> No
 
 @pytest.mark.usefixtures("no_sleep")
 def test_the_pool_is_downloaded_in_batches(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(batch, "_HISTORY_BATCH_SIZE", 2)
+    monkeypatch.setattr(batch, "HISTORY_BATCH_SIZE", 2)
     download = _FakeDownload()
 
     history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download)
@@ -693,9 +720,9 @@ def test_cached_bars_are_not_downloaded_again(tmp_path: Path) -> None:
 def test_a_pool_older_than_the_last_month_needed_is_fetched_again(tmp_path: Path) -> None:
     pools: list[str] = []
 
-    def pool() -> list[str]:
+    def pool() -> batch.HistoryPool:
         pools.append("fetched")
-        return _pool()
+        return batch.HistoryPool(_pool(), [])
 
     _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(), pool=pool)
     _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(), path=tmp_path / "b.json", pool=pool)  # pool dated 2024-04-30, reused
@@ -723,7 +750,7 @@ def test_a_few_absent_symbols_are_left_out_and_counted(tmp_path: Path, caplog: p
     download = _FakeDownload(missing=("BBB",))  # 1 of 200 pool symbols = 0.5%, under the 1% limit
 
     with caplog.at_level(logging.WARNING):
-        history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)
+        history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)
 
     assert history.months == {"2024-02": ("AAA",)}
     assert history.bars_absent == ("BBB",)
@@ -735,7 +762,7 @@ def test_a_few_absent_symbols_are_left_out_and_counted(tmp_path: Path, caplog: p
 def test_exactly_the_limit_of_absent_symbols_proceeds_and_is_recorded(tmp_path: Path) -> None:
     download = _FakeDownload(missing=("ZF000", "BBB"))  # 2 of 200 = exactly 1%, not above it
 
-    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)
+    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)
 
     assert history.bars_absent == ("BBB", "ZF000")  # sorted
     assert UniverseHistory.load(tmp_path / "history.json").bars_absent == ("BBB", "ZF000")
@@ -780,7 +807,7 @@ def test_too_many_absent_symbols_raise_and_save_no_history(tmp_path: Path) -> No
     download = _FakeDownload(missing=("AAA", "BBB", "ZF000"))  # 3 of 200 = 1.5%, above the 1% limit
 
     with pytest.raises(UniverseHistoryError, match=r"3 of 200.*AAA.*BBB.*ZF000"):
-        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)
+        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)
 
     assert not (tmp_path / "history.json").exists()
 
@@ -790,7 +817,7 @@ def test_the_error_samples_at_most_20_absent_symbols(tmp_path: Path) -> None:
     download = _FakeDownload(missing=tuple(_FILLERS))  # 195 of 200 absent
 
     with pytest.raises(UniverseHistoryError) as raised:
-        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)
+        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)
 
     assert "195 of 200" in str(raised.value)
     assert "ZF019" in str(raised.value)
@@ -840,7 +867,7 @@ def test_the_second_pass_recovers_a_symbol_that_was_absent_the_first_time(tmp_pa
             return real([symbol for symbol in symbols if symbol != "BBB"], **kwargs)
         return real(symbols, **kwargs)
 
-    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)  # type: ignore[arg-type]
+    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)  # type: ignore[arg-type]
 
     assert history.months == {"2024-02": _FEB_LIST}  # BBB is back
     assert len(asked) == 4  # three batches of the 201 symbols, then BBB once more, alone
@@ -852,17 +879,17 @@ def test_the_second_pass_recovers_a_symbol_that_was_absent_the_first_time(tmp_pa
 def test_a_symbol_still_absent_is_asked_for_only_once_more(tmp_path: Path) -> None:
     download = _FakeDownload(missing=("BBB",))
 
-    _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_pool)
+    _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), download, pool=_big_history_pool)
 
     assert [call["symbols"] for call in download.calls].count(["BBB"]) == 1
 
 
 @pytest.mark.usefixtures("no_sleep")
 def test_a_symbol_that_loses_its_data_on_a_new_download_is_not_ranked_on_the_old_one(tmp_path: Path) -> None:
-    _ensure(tmp_path, date(2024, 3, 4), date(2024, 3, 28), _FakeDownload(), pool=_big_pool)
+    _ensure(tmp_path, date(2024, 3, 4), date(2024, 3, 28), _FakeDownload(), pool=_big_history_pool)
 
     # February needs an earlier window, so every symbol is downloaded again; Yahoo now has nothing for BBB.
-    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(missing=("BBB",)), path=tmp_path / "other.json", pool=_big_pool)
+    history = _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(missing=("BBB",)), path=tmp_path / "other.json", pool=_big_history_pool)
 
     assert history.months == {"2024-02": ("AAA",)}
 
@@ -917,7 +944,7 @@ def test_a_download_failure_raises_universe_history_error(tmp_path: Path) -> Non
 
 def test_a_rate_limited_download_waits_on_the_shared_gate_then_succeeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     clock = FakeClock()
-    monkeypatch.setattr(batch, "_rate_limit_gate", RateLimitGate(30.0, 300.0, now=clock.now, sleep=clock.sleep))
+    monkeypatch.setattr(batch, "rate_limit_gate", RateLimitGate(30.0, 300.0, now=clock.now, sleep=clock.sleep))
     monkeypatch.setattr(batch.time, "sleep", lambda seconds: None)
     real = _FakeDownload()
     attempts: list[int] = []
@@ -936,7 +963,7 @@ def test_a_rate_limited_download_waits_on_the_shared_gate_then_succeeds(tmp_path
 
 @pytest.mark.usefixtures("no_sleep")
 def test_a_pool_failure_raises_universe_history_error(tmp_path: Path) -> None:
-    def pool() -> list[str]:
+    def pool() -> batch.HistoryPool:
         raise RuntimeError("nasdaq down")
 
     with pytest.raises(UniverseHistoryError, match="nasdaq down"):
@@ -947,7 +974,7 @@ def test_a_pool_failure_raises_universe_history_error(tmp_path: Path) -> None:
 def test_an_empty_month_raises_universe_history_error(tmp_path: Path) -> None:
     # CCC trades under $10 and DDD under $20M a day: nothing is listable.
     with pytest.raises(UniverseHistoryError, match="2024-02"):
-        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(), pool=lambda: ["CCC", "DDD"])
+        _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(), pool=lambda: batch.HistoryPool(["CCC", "DDD"], []))
 
     assert not (tmp_path / "history.json").exists()
 
@@ -996,7 +1023,7 @@ def test_a_build_waits_for_the_lock_then_finds_the_other_builds_history(tmp_path
 def test_a_build_runs_under_an_exclusive_lock_on_the_cache_directory(tmp_path: Path) -> None:
     held: list[bool] = []
 
-    def pool() -> list[str]:
+    def pool() -> batch.HistoryPool:
         with (tmp_path / "cache" / ".lock").open("w") as other:
             try:
                 fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1004,7 +1031,7 @@ def test_a_build_runs_under_an_exclusive_lock_on_the_cache_directory(tmp_path: P
                 held.append(True)
             else:
                 held.append(False)
-        return _pool()
+        return batch.HistoryPool(_pool(), [])
 
     _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload(), pool=pool)
 

@@ -55,6 +55,10 @@ class FakeSplits:
         self.failing = failing
         self.calls: list[str] = []
         self.max_ages: list[int] = []
+        self.flushes = 0
+
+    def flush(self) -> None:
+        self.flushes += 1
 
     def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
         self.calls.append(symbol)
@@ -408,8 +412,10 @@ SIX = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 def test_a_screen_whose_split_lookups_all_failed_raises_and_names_the_gate() -> None:
     store = FakeStore({name: healthy_figures() for name in SIX}, ciks={name: name for name in SIX})
 
+    splits = FakeSplits(failing=set(SIX))
     with pytest.raises(FundamentalsError, match=r"split.*6 of 6"):
-        _run(store, SIX, splits=FakeSplits(failing=set(SIX)))
+        _run(store, SIX, splits=splits)
+    assert splits.flushes == 1  # the cache is still written when the run aborts
 
 
 def test_one_failed_split_lookup_among_six_survivors_does_not_raise() -> None:

@@ -3,9 +3,7 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-import pytest
-
-from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, price_return, unavailable_fact_sheet
+from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, unavailable_fact_sheet
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate
 
 
@@ -69,22 +67,3 @@ def test_a_holding_the_screen_could_not_describe_carries_only_price_facts_and_th
     sheet = unavailable_fact_sheet("hlt", reason="no_data", price=150.5, price_return_12m=-0.05)
 
     assert sheet == {"symbol": "HLT", "screen_unavailable": "no_data", "price": 150.5, "price_return_12m": -0.05}
-
-
-def test_price_return_compares_the_last_close_with_the_close_a_year_earlier() -> None:
-    closes = [100.0] + [110.0] * 251 + [120.0]  # 253 closes: 252 bars back is the first one
-
-    assert price_return(closes) == pytest.approx(0.2)
-
-
-@pytest.mark.parametrize("closes", [[], [100.0] * 252])
-def test_price_return_is_none_without_enough_history(closes: list[float]) -> None:
-    assert price_return(closes) is None
-
-
-def test_price_return_is_none_when_the_starting_close_is_not_positive() -> None:
-    assert price_return([0.0] + [10.0] * 252) is None
-
-
-def test_price_return_takes_a_shorter_lookback() -> None:
-    assert price_return([10.0, 11.0, 12.0, 15.0], lookback=3) == pytest.approx(0.5)

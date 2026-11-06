@@ -4,7 +4,7 @@
 an empty column, which `load` only warns about; `bars()` then returns None for that symbol for the whole run. With the
 point-in-time universe's thousands of tickers that silently shrinks the universe. `UniverseBacktestData` loads in
 batches through the history build's rate-limit gate and retries, asks once more for the symbols still empty, and
-raises `UniverseHistoryError` when more than `_MAX_ABSENT_FRACTION` of what it loaded stays empty: every symbol in the
+raises `UniverseHistoryError` when more than `MAX_ABSENT_FRACTION` of what it loaded stays empty: every symbol in the
 union had bars when it was ranked, so an empty frame is a failed download. The few left (a ticker Yahoo has since
 dropped) are counted in `missing` and, when the strategy passes `record`, in `record["preload_missing"]`.
 """
@@ -27,8 +27,8 @@ from trading_agent_framework.backtesting.data.yahoo import (
     parse_yahoo_frame,
 )
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.common import batch_us_stock_universe as batch
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.cross_momentum import batch_us_stock_universe as batch
 from trading_agent_framework.utils.errors import UniverseHistoryError
 
 logger = logging.getLogger(__name__)
@@ -84,13 +84,13 @@ class UniverseBacktestData(YahooBacktestData):
             empty = self._pass(todo, download, start, end, loaded, empty_is_failure=True)
             if empty:
                 batch.console.print(f"  {len(empty)} symbol(s) without bars: asking for them once more after a pause")
-                gate = batch._get_rate_limit_gate()
+                gate = batch.rate_limit_gate
                 gate.on_rate_limited()
                 gate.wait()
                 empty = self._pass(empty, download, start, end, loaded, empty_is_failure=False)
-        if len(empty) > batch._MAX_ABSENT_FRACTION * len(todo):
+        if len(empty) > batch.MAX_ABSENT_FRACTION * len(todo):
             raise UniverseHistoryError(
-                f"Yahoo returned no bars for {len(empty)} of {len(todo)} backtest symbols, above the {batch._MAX_ABSENT_FRACTION:.0%} limit: "
+                f"Yahoo returned no bars for {len(empty)} of {len(todo)} backtest symbols, above the {batch.MAX_ABSENT_FRACTION:.0%} limit: "
                 f"Yahoo is failing, the backtest would trade a shrunken universe (e.g. {', '.join(empty[:20])})"
             )
         for symbol in todo:  # an empty frame is kept, so `bars()` never falls back to a lazy per-ticker download
@@ -113,9 +113,9 @@ class UniverseBacktestData(YahooBacktestData):
     ) -> list[str]:
         """Download `symbols` in batches into `loaded`; returns those that came back with no rows."""
         empty: list[str] = []
-        for offset in range(0, len(symbols), batch._HISTORY_BATCH_SIZE):
-            group = symbols[offset : offset + batch._HISTORY_BATCH_SIZE]
-            raw = batch._download_batch(download, group, start.date(), self._today(), empty_is_failure=empty_is_failure)
+        for offset in range(0, len(symbols), batch.HISTORY_BATCH_SIZE):
+            group = symbols[offset : offset + batch.HISTORY_BATCH_SIZE]
+            raw = batch.download_batch(download, group, start.date(), self._today(), empty_is_failure=empty_is_failure)
             for symbol in group:
                 frame = _trim_to_window(parse_yahoo_frame(extract_ticker_frame(raw, symbol)), end)
                 if frame.empty:

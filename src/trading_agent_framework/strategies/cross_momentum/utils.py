@@ -12,27 +12,22 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import numpy as np
 import pandas as pd
 
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.helpers import fractional_qty, parse_insufficient_buying_power  # noqa: F401  (moved to utils/helpers.py; re-exported)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from trading_agent_framework.entities.order import Order
 
-    from .risk_diagnostics import PortfolioRiskDiagnostics
-
 logger = logging.getLogger(__name__)
 
-# Path and pruning window for persisted equity history. Both load and save prune to it; 70 leaves slack over the
+# Pruning window for persisted equity history. Both load and save prune to it; 70 leaves slack over the
 # 64 values the fast/slow volatility targeting needs (`_compute_realized_volatility` in the strategy).
-_EQUITY_HISTORY_FILE = Path("data/cross_momentum_ptf_history.json")
 _MAX_HISTORY_ENTRIES = 70
 
-# Path to the pre-computed US stock universe (produced by batch_us_stock_universe.py)
+# Path to the pre-computed US stock universe (produced by strategies/common/batch_us_stock_universe.py)
 _UNIVERSE_FILE = Path("data/universe/us_stock_universe.json")
 
 
@@ -114,26 +109,6 @@ def unfilled_sell_proceeds(sells: Iterable[tuple[Order, float]]) -> float:
     return sum(float(order.quantity - order.filled_quantity) * price for order, price in sells if order.is_active() and order.quantity is not None)
 
 
-def compute_atr_from_df(df: pd.DataFrame, period: int = 14) -> float | None:
-    """Compute Average True Range over `period` days from a DataFrame with OHLC columns."""
-    if len(df) < period + 1:
-        return None
-    highs = df["high"].tolist()
-    lows = df["low"].tolist()
-    closes = df["close"].tolist()
-    tr_values = []
-    for i in range(1, len(highs)):
-        tr = max(
-            highs[i] - lows[i],
-            abs(highs[i] - closes[i - 1]),
-            abs(lows[i] - closes[i - 1]),
-        )
-        tr_values.append(tr)
-    if len(tr_values) < period:
-        return None
-    return sum(tr_values[-period:]) / period
-
-
 def close_series(df: pd.DataFrame) -> pd.Series:
     """Closes indexed by session date in market time, one per date (the last), oldest first.
 
@@ -143,27 +118,6 @@ def close_series(df: pd.DataFrame) -> pd.Series:
     dates = [ts.date() for ts in pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)]
     series = pd.Series(df["close"].to_numpy(dtype=float), index=pd.Index(dates))
     return series.loc[~series.index.duplicated(keep="last")].sort_index()
-
-
-def diagnostics_to_dict(diag: PortfolioRiskDiagnostics) -> dict:
-    """Convert a PortfolioRiskDiagnostics instance to a plain dict for serialization."""
-    return {
-        "date": diag.date,
-        "portfolio_volatility_20d": diag.portfolio_volatility_20d,
-        "portfolio_volatility_63d": diag.portfolio_volatility_63d,
-        "average_correlation_20d": diag.average_correlation_20d,
-        "average_correlation_63d": diag.average_correlation_63d,
-        "weighted_correlation_63d": diag.weighted_correlation_63d,
-        "portfolio_beta_63d": diag.portfolio_beta_63d,
-        "largest_sector": diag.largest_sector,
-        "largest_sector_exposure": diag.largest_sector_exposure,
-        "unknown_sector_exposure": diag.unknown_sector_exposure,
-        "herfindahl_index": diag.herfindahl_index,
-        "effective_number_positions": diag.effective_number_positions,
-        "portfolio_equity": diag.portfolio_equity,
-        "rolling_peak": diag.rolling_peak,
-        "drawdown": diag.drawdown,
-    }
 
 
 def compute_volatility_exposure(
@@ -324,124 +278,6 @@ def save_breadth_step(path: Path, step: int, breadth: float, today_str: str) -> 
             pass
 
 
-def _percentile_rank(values: list[float]) -> list[float]:
-    """Return cross-sectional percentile ranks (0 to 1) for each value.
-
-    Higher input values get higher ranks (1 = best/highest momentum).
-    Ties receive the average rank.
-
-    Not called by the strategy (no caller in src): kept with `compute_residual_momentum` for the beta experiments.
-    """
-    n = len(values)
-    if n <= 1:
-        return [0.5] * n
-
-    arr = np.array(values, dtype=float)
-
-    # argsort twice gives ranks: 0 = smallest, n-1 = largest
-    order = np.argsort(arr)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(n, dtype=float)
-
-    # Handle ties: average rank within tied groups
-    sorted_arr = arr[order]
-    i = 0
-    while i < n:
-        j = i
-        while j < n and sorted_arr[j] == sorted_arr[i]:
-            j += 1
-        if j > i + 1:
-            mean_rank = float(np.mean(ranks[order[i:j]]))
-            ranks[order[i:j]] = mean_rank
-        i = j
-
-    # Normalize to [0, 1]
-    return (ranks / (n - 1)).tolist()
-
-
-def compute_residual_momentum(
-    stock_closes: list[float],
-    spy_closes: list[float],
-    lookback_days: int,
-    skip_days: int = 0,
-) -> float | None:
-    """Compute cumulative residual return after regressing out market beta.
-
-    Not called by the strategy: residual (beta-adjusted) momentum was tested twice in the beta experiments and dropped.
-    Kept so those experiments can be re-run.
-
-    For each trading day t in the lookback window:
-
-        stock_return_t = alpha + beta * SPY_return_t + epsilon_t
-
-    Then the cumulative residual return is prod(1 + epsilon_t) - 1,
-    optionally skipping the most recent *skip_days* residuals
-    (e.g. skip_days=21 for "12-1 month").
-
-    Args:
-        stock_closes: List of daily close prices for the stock.
-        spy_closes: List of daily close prices for SPY (same length).
-        lookback_days: Number of trading days in the lookback window.
-        skip_days: Number of most recent days to exclude (e.g. 21 for 1-month gap).
-
-    Returns:
-        Cumulative residual return as a float, or None if data is insufficient.
-    """
-    needed = lookback_days + skip_days + 1
-
-    # Truncate both series to the shortest common usable length
-    usable = min(len(stock_closes), len(spy_closes))
-    if usable < needed:
-        return None
-
-    stock_window = stock_closes[-usable:]
-    spy_window = spy_closes[-usable:]
-
-    # Build daily simple returns for the full usable window
-    stock_returns: list[float] = []
-    spy_returns: list[float] = []
-    for i in range(1, len(stock_window)):
-        if stock_window[i - 1] <= 0 or stock_window[i] <= 0:
-            return None
-        if spy_window[i - 1] <= 0 or spy_window[i] <= 0:
-            return None
-        stock_returns.append(stock_window[i] / stock_window[i - 1] - 1)
-        spy_returns.append(spy_window[i] / spy_window[i - 1] - 1)
-
-    # We need at least the regression window worth of returns
-    min_obs = max(lookback_days // 2, 20)
-    if len(stock_returns) < min_obs:
-        return None
-
-    # OLS regression: stock_return = alpha + beta * spy_return + epsilon
-    X = np.column_stack([np.ones(len(spy_returns)), spy_returns])
-    y = np.array(stock_returns, dtype=float)
-
-    try:
-        coeffs, _residuals, _rank, _singular = np.linalg.lstsq(X, y, rcond=None)
-    except np.linalg.LinAlgError:
-        return None
-
-    alpha = float(coeffs[0])
-    beta = float(coeffs[1])
-
-    # Residual returns: epsilon_t = stock_return_t - (alpha + beta * SPY_return_t)
-    epsilon = y - (alpha + beta * np.array(spy_returns, dtype=float))
-
-    # Extract the lookback window, applying skip
-    end = len(epsilon) - skip_days
-    start = end - lookback_days
-    if start < 0:
-        return None
-
-    window_epsilon = epsilon[start:end]
-
-    # Cumulative residual return
-    residual_cumulative = float(np.prod(1 + window_epsilon) - 1)
-
-    return residual_cumulative
-
-
 def _read_raw_entries(path: Path) -> list[dict]:
     """Read the raw list of {date, ptf_value} dicts from a JSON file.
 
@@ -458,7 +294,7 @@ def _read_raw_entries(path: Path) -> list[dict]:
     return [e for e in data if isinstance(e, dict)]
 
 
-def load_equity_history(filepath: Path | None = None) -> list[float]:
+def load_equity_history(filepath: Path) -> list[float]:
     """Load persisted portfolio equity history from JSON.
 
     Returns the last ``MAX_HISTORY_ENTRIES`` values as a flat list of floats.
@@ -466,23 +302,22 @@ def load_equity_history(filepath: Path | None = None) -> list[float]:
     unexpected schema.
 
     Args:
-        filepath: Path to the JSON file. Defaults to ``data/cross_momentum_ptf_history.json``.
+        filepath: Path to the JSON file.
 
     Returns:
         List of portfolio values (floats), most recent last.
     """
-    path = filepath or _EQUITY_HISTORY_FILE
-    if not path.exists():
+    if not filepath.exists():
         return []
 
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(filepath.read_text())
     except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to load equity history from %s: %s", path, exc)
+        logger.warning("Failed to load equity history from %s: %s", filepath, exc)
         return []
 
     if not isinstance(data, list):
-        logger.warning("Equity history file %s has unexpected format (not a list)", path)
+        logger.warning("Equity history file %s has unexpected format (not a list)", filepath)
         return []
 
     values: list[float] = []
@@ -500,50 +335,35 @@ def load_equity_history(filepath: Path | None = None) -> list[float]:
     return values
 
 
-def save_equity_history(
-    history: list[float],
-    today_str: str,
-    filepath: Path | None = None,
-) -> None:
+def save_equity_history(value: float, today_str: str, filepath: Path) -> None:
     """Persist the latest portfolio value to a JSON equity history file.
 
-    The file is the authoritative source of historical dates — only
-    ``history[-1]`` (today's value) is persisted. The full list is accepted
-    as a parameter for ergonomic call sites (pass ``self._equity_history``).
+    The file is the authoritative source of historical dates; only ``value`` (today's value) is persisted.
 
     The file is written atomically (temp file + rename) to avoid corruption
     on crash mid-write. If the last entry already has the same date as
     ``today_str``, it is overwritten rather than creating a duplicate.
     Entries are pruned to the last ``_MAX_HISTORY_ENTRIES``.
-
-    Args:
-        history: List of portfolio values (floats), most recent last. Only
-            ``history[-1]`` (today's latest value) is persisted — the file
-            is the authoritative source for all historical dates.
-        today_str: ISO date string (``YYYY-MM-DD``) for today's entry.
-        filepath: Path to the JSON file. Defaults to ``data/cross_momentum_ptf_history.json``.
     """
-    path = filepath or _EQUITY_HISTORY_FILE
-
     # Load existing entries to preserve their dates across restarts
-    existing = _read_raw_entries(path)
+    existing = _read_raw_entries(filepath)
     # Remove any existing entry for today (dedup on restart)
     existing = [e for e in existing if e.get("date") != today_str]
     # Append today's latest value
-    existing.append({"date": today_str, "ptf_value": float(history[-1]) if history else 0.0})
+    existing.append({"date": today_str, "ptf_value": float(value)})
 
     # Prune
     if len(existing) > _MAX_HISTORY_ENTRIES:
         existing = existing[-_MAX_HISTORY_ENTRIES:]
 
     # Atomic write: tmp file then rename
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".json.tmp")
+    filepath.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = filepath.with_suffix(".json.tmp")
     try:
         tmp_path.write_text(json.dumps(existing, indent=2))
-        os.replace(tmp_path, path)
+        os.replace(tmp_path, filepath)
     except OSError as exc:
-        logger.warning("Failed to save equity history to %s: %s", path, exc)
+        logger.warning("Failed to save equity history to %s: %s", filepath, exc)
         # Clean up tmp file if it exists
         try:
             tmp_path.unlink(missing_ok=True)
@@ -554,7 +374,7 @@ def save_equity_history(
 def load_cross_momentum_universe() -> list[str]:
     """Load the pre-computed universe for cross-sectional momentum.
 
-    Reads data/universe/us_stock_universe.json (produced by batch_us_stock_universe.py).
+    Reads data/universe/us_stock_universe.json (produced by strategies/common/batch_us_stock_universe.py).
     Falls back to an empty list if the file doesn't exist.
 
     Returns:
@@ -574,7 +394,7 @@ def load_cross_momentum_universe() -> list[str]:
 def get_cross_momentum_universe_last_date() -> datetime | None:
     """Get the last date of the pre-computed universe for cross-sectional momentum.
 
-    Reads data/universe/us_stock_universe.json (produced by batch_us_stock_universe.py).
+    Reads data/universe/us_stock_universe.json (produced by strategies/common/batch_us_stock_universe.py).
     Returns None if the file doesn't exist or if the date is not found.
 
     Returns:

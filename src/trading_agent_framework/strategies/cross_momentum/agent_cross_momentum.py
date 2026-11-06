@@ -25,6 +25,7 @@ import logging
 import sys
 from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
 from functools import partial
@@ -42,35 +43,31 @@ from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.entities.position import Position
+from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
 from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
 from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
-from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData, universe_parameters
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory, market_day, month_universe, window_symbols
+from trading_agent_framework.strategies.common.yahoo_daily_bars import UnusableBatch, YahooDailyBars, fetch_usable_batch
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, FatalStrategyError, UniverseHistoryError, YahooDataError
-from trading_agent_framework.utils.helpers import (
-    get_thread_capacity,
-)
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, YahooDataError
+from trading_agent_framework.utils.helpers import fractional_qty, get_thread_capacity, parse_insufficient_buying_power
 
-from .batch_us_stock_universe import ensure_universe_history
 from .log_diagnostics import DiagnosticLogger
 from .parameters import CONFIG
 from .portfolio_risk_overlay import compute_risk_overlay
-from .universe_backtest_data import UniverseBacktestData, universe_parameters
 from .utils import (
     breadth_exposure,
     breadth_share,
     close_series,
-    compute_atr_from_df,
     compute_volatility_exposure,
-    fractional_qty,
     get_cross_momentum_universe_last_date,
     inverse_volatility_weights,
     load_breadth_step,
     load_equity_history,
     next_breadth_step,
-    parse_insufficient_buying_power,
     save_breadth_step,
     save_equity_history,
     sleeve_symbols,
@@ -99,9 +96,37 @@ _MIN_YAHOO_COVERAGE = 0.5
 _YAHOO_RETRY_DELAYS = (60.0, 180.0)
 
 
-def _market_day(moment: datetime) -> date:
-    """The market-time date of a backtest bound (bounds are timezone-aware by convention; a naive one is taken as is)."""
-    return moment.astimezone(MARKET_TZ).date() if moment.tzinfo is not None else moment.date()
+@dataclass(frozen=True)
+class _Book:
+    """What one rebalance sizes against: open orders, the portfolio value, the minimum trade and the sizing prices."""
+
+    incoming: dict[str, float]  # buys still open, by symbol
+    outgoing: dict[str, float]  # sells still open, by symbol
+    portfolio_value: float
+    min_trade_value: float
+    prices: dict[str, float]  # last trade of each target, 0.0 when unavailable
+
+    def held_quantity(self, position) -> float:
+        """The position counting open orders: held, plus buys in flight, minus sells in flight."""
+        symbol = position.asset.symbol
+        return max(0.0, float(position.quantity) + self.incoming.get(symbol, 0.0) - self.outgoing.get(symbol, 0.0))
+
+    def sellable(self, position):
+        """What is held and not already being sold; the exact position when nothing is."""
+        pending_sell = self.outgoing.get(position.asset.symbol, 0.0)
+        return position.quantity if pending_sell == 0 else max(0.0, fractional_qty(float(position.quantity) - pending_sell))
+
+
+@dataclass
+class _Sold:
+    """The outcome of the sell phase."""
+
+    sells: list[tuple[Order, float]] = field(default_factory=list)  # each submitted sell with the price it is expected to fill at
+    hysteresis_value: float = 0.0
+    kept_count: int = 0
+    sold_count: int = 0
+    unconfirmed_count: int = 0  # exits whose outcome the broker could not tell
+    sleeve_positions: dict[str, Position] = field(default_factory=dict)
 
 
 class CrossMomentumStrategy(Strategy):
@@ -127,7 +152,6 @@ class CrossMomentumStrategy(Strategy):
         # day one. Without it, every ticker trips min_trading_days=250 and the
         # first ~year of the backtest can never pass filters.
         "warmup_trading_days": 300,
-        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -151,7 +175,7 @@ class CrossMomentumStrategy(Strategy):
             sys.exit(1)
         universe = universe or []
         # A sleeve asset (SHV, GLD, IEF) is never scored or bought as a stock, even if the universe file lists it
-        sleeve = set(sleeve_symbols(self.parameters["parking"]))
+        sleeve = self._sleeve_symbols()
         self.vars.universe = [symbol for symbol in universe if symbol not in sleeve]
         self.vars.universe_history = None  # set by `run_backtesting`; None (paper/live) keeps `vars.universe` as built
 
@@ -306,10 +330,7 @@ class CrossMomentumStrategy(Strategy):
         if bars is None or bars.empty:
             return None
 
-        df = bars.pandas_df if hasattr(bars, "pandas_df") else bars
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            self.log_error("The Bars instance has not the right type: consider using a pandas Dataframe.")
-            return None
+        df = bars.pandas_df
 
         # Completed sessions only: today's bar is partial, and it made the same Tuesday's decision depend on the
         # hour it ran (2026-10-06). One extra bar is fetched so the window stays _HISTORY_BARS long.
@@ -330,8 +351,6 @@ class CrossMomentumStrategy(Strategy):
         if inputs is None:
             return None
 
-        atr = compute_atr_from_df(df) if inputs.trading_days >= 15 else None
-
         return {
             "symbol": ticker,
             "price": inputs.price,
@@ -341,9 +360,8 @@ class CrossMomentumStrategy(Strategy):
             "volatility": inputs.volatility,
             "avg_dollar_volume": inputs.avg_dollar_volume,
             "trading_days": inputs.trading_days,
-            "atr": atr,
             "closes": closes,
-            "close_series": close_series(df),
+            "frame": df,
         }
 
     def _load_yahoo_bars(self) -> bool:
@@ -353,41 +371,26 @@ class CrossMomentumStrategy(Strategy):
         the week's only rebalance). False (logged) when the last attempt still fails: the caller then skips the scan
         and holds the book.
         """
-        for delay in (*_YAHOO_RETRY_DELAYS, None):
-            bars, problem = self._fetch_yahoo_bars()
-            if problem is None:
-                self.vars.yahoo_bars = bars
-                covered = sum(1 for symbol in self.vars.universe if symbol in bars)
-                self.log_info(f"Yahoo bars: {covered}/{len(self.vars.universe)} symbols")
-                return True
-            if delay is None:
-                self.log_error(f"{problem} — holding current positions.")
-                return False
-            self.log_warning(f"{problem} — retry in {delay:.0f}s")
-            self.sleep(delay)  # clock time, so order hooks still fire meanwhile
-        return False  # unreachable: the last delay is None
-
-    def _fetch_yahoo_bars(self) -> tuple[dict[str, Bars], str | None]:
-        """One attempt: the bars, and None when they are usable, else a description of the problem.
-
-        Unusable when Yahoo fails, has bars for too few stocks, or misses a held stock (an unranked holding would be
-        sold). Any other stock Yahoo has no bars for is simply filtered out, like any other ticker without data.
-        """
         universe = self.vars.universe
-        extras = ["SPY", *self.parameters["parking"]["trend_assets"]]
         try:
-            bars = self.vars.bars_source.bars([*universe, *extras], self._market_date())
-        except YahooDataError as exc:
-            return {}, f"Yahoo lookup failed ({exc})"
+            bars = fetch_usable_batch(
+                self.vars.bars_source,
+                universe,
+                extras=["SPY", *self.parameters["parking"]["trend_assets"]],
+                today=self._market_date,
+                held=lambda: {pos.asset.symbol for pos in self.get_positions()},
+                min_coverage=_MIN_YAHOO_COVERAGE,
+                retry_delays=_YAHOO_RETRY_DELAYS,
+                sleep=self.sleep,  # clock time, so order hooks still fire meanwhile
+                on_retry=lambda problem, delay: self.log_warning(f"{problem} — retry in {delay:.0f}s"),
+            )
+        except UnusableBatch as exc:
+            self.log_error(f"{exc} — holding current positions.")
+            return False
+        self.vars.yahoo_bars = bars
         covered = sum(1 for symbol in universe if symbol in bars)
-        if covered < len(universe) * _MIN_YAHOO_COVERAGE:
-            return {}, f"Yahoo covers only {covered}/{len(universe)} symbols"
-        # A holding outside the universe was never requested: the rebalance sells it as "not ranked" by design
-        in_universe = set(universe)
-        missing_held = sorted(({pos.asset.symbol for pos in self.get_positions()} & in_universe) - bars.keys())
-        if missing_held:
-            return {}, f"Yahoo has no bars for held {', '.join(missing_held)}"
-        return bars, None
+        self.log_info(f"Yahoo bars: {covered}/{len(universe)} symbols")
+        return True
 
     def compute_target_portfolio(self) -> tuple[list[dict], dict[str, int]]:
         """Run the full pipeline: indicators → score → filter → rank → select → weight.
@@ -419,7 +422,7 @@ class CrossMomentumStrategy(Strategy):
                 result["avg_dollar_volume"],
                 result["volatility"],
                 result["trading_days"],
-                dict(self.parameters),
+                self.parameters,
             ):
                 self.log_debug(f"Skipping {ticker}: failed filters")
                 return None
@@ -470,7 +473,7 @@ class CrossMomentumStrategy(Strategy):
         selected = scored[:top_n]
 
         # Store closes for the selected stocks (consumed by portfolio risk overlay)
-        self.vars.target_closes = {entry["symbol"]: entry["close_series"] for entry in selected}
+        self.vars.target_closes = {entry["symbol"]: close_series(entry["frame"]) for entry in selected}
 
         selected = inverse_volatility_weights(
             selected,
@@ -589,6 +592,20 @@ class CrossMomentumStrategy(Strategy):
         finally:
             self.vars.yahoo_bars = {}
 
+    def _send(self, side: str, quantity: float | Decimal, symbol: str, why: str) -> tuple[Order | None, Exception | None, bool]:
+        """Create and submit one day order: (the submitted order or None, the exception raised or None, unknown).
+
+        `unknown` is True on `BrokerUncertainError`: the order was sent but the broker could not confirm it. It stays
+        tracked and is never resent here (logged with `why`); the caller adds no proceeds and keeps any cost deducted.
+        """
+        try:
+            return self.submit_order(self.create_order(symbol, quantity, side, time_in_force="day")), None, False
+        except BrokerUncertainError as exc:
+            self.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
+            return None, exc, True
+        except Exception as exc:
+            return None, exc, False
+
     def _rebalance_book(self, target: list[dict], all_ranks: dict[str, int]) -> None:
         """Compare holdings to target, apply hysteresis, trim, submit orders, and park the rest in the sleeve.
 
@@ -599,15 +616,10 @@ class CrossMomentumStrategy(Strategy):
         if not target:
             return
 
-        target_symbols = {entry["symbol"] for entry in target}
-        target_by_symbol = {entry["symbol"]: entry for entry in target}
         parking = self.parameters["parking"]
         # Trend assets first, SHV last: the order of the sleeve buys once the stock buys are funded
         sleeve_order = (*parking["trend_assets"], parking["symbol"])
-
-        sell_threshold = self.parameters["sell_rank_threshold"]
         portfolio_value = float(self.portfolio_value or 1.0)
-        min_trade_value = portfolio_value * parking["min_trade_pct"]
 
         current_positions = self.get_positions()
         # Orders still open from an earlier rebalance (a restart on a rebalance day sends this one again), read before
@@ -618,67 +630,64 @@ class CrossMomentumStrategy(Strategy):
             pending = [f"buy {q:g} {s}" for s, q in incoming.items()] + [f"sell {q:g} {s}" for s, q in outgoing.items()]
             self.log_warning(f"Counting orders still open from an earlier rebalance: {', '.join(pending)}")
 
-        def held_quantity(position) -> float:
-            """The position counting open orders: held, plus buys in flight, minus sells in flight."""
-            symbol = position.asset.symbol
-            return max(0.0, float(position.quantity) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0))
-
-        def sellable(position):
-            """What is held and not already being sold; the exact position when nothing is."""
-            pending_sell = outgoing.get(position.asset.symbol, 0.0)
-            return position.quantity if pending_sell == 0 else max(0.0, fractional_qty(float(position.quantity) - pending_sell))
-
         # Size at the last trade: an entry's "price" is the traded close of the last completed session, a session old by now.
         prices = {entry["symbol"]: self._price_or_zero(entry["symbol"]) for entry in target}
         for symbol, price in prices.items():
             if price <= 0:
                 self.log_warning(f"No price for {symbol}: no buy or trim this week")
+        book = _Book(incoming, outgoing, portfolio_value, portfolio_value * parking["min_trade_pct"], prices)
 
         # The trend data is fetched before any order is sent: an unexpected fetch error then aborts the rebalance cleanly
         weights = self._sleeve_weights()
 
-        def log_unknown(side: str, quantity: float, symbol: str, why: str, exc: BrokerUncertainError) -> None:
-            """The order was sent but the broker could not confirm it: it stays tracked and is never resent here."""
-            self.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
+        sold = self._sell_phase(target, all_ranks, current_positions, book, sleeve_order)
+        sleeve = self._park_targets(target, book, sold, weights, sleeve_order)
+        self._buy_phase(target, book, current_positions, sold.sells, sleeve)
 
-        # Phase 1: Sell (exits, trims, excess parking)
-        sells: list[tuple[Order, float]] = []  # each submitted sell with the price it is expected to fill at
-        hysteresis_value = 0.0
-        kept_count = 0
-        sold_count = 0
-        unconfirmed_count = 0  # exits whose outcome the broker could not tell
-        sleeve_positions = {}
+        # The target positions never get a line unless they are bought, so say how the book is made up
+        target_symbols = {entry["symbol"] for entry in target}
+        held_targets = sum(1 for pos in current_positions if pos.asset.symbol in target_symbols)
+        unconfirmed_note = f" ({sold.unconfirmed_count} unconfirmed)" if sold.unconfirmed_count else ""
+        self.log_info(
+            f"Rebalance summary: {len(target)} targets ({held_targets} already held, {len(target) - held_targets} not held), "
+            f"{sold.kept_count} kept under hysteresis, {sold.sold_count} sold{unconfirmed_note}"
+        )
+
+    def _sell_phase(self, target: list[dict], all_ranks: dict[str, int], current_positions: list, book: _Book, sleeve_order: tuple[str, ...]) -> _Sold:
+        """Phase 1: exits (not ranked or outside the hysteresis band) and trims of target positions above their band."""
+        target_by_symbol = {entry["symbol"]: entry for entry in target}
+        sell_threshold = self.parameters["sell_rank_threshold"]
+        sold = _Sold()
         for pos in current_positions:
             symbol = pos.asset.symbol
             if symbol in sleeve_order:
                 # The parking sleeve is never ranked: it must not be exited as "not ranked" below
-                sleeve_positions[symbol] = pos
+                sold.sleeve_positions[symbol] = pos
                 continue
-            if symbol in target_symbols:
+            if symbol in target_by_symbol:
                 # Trim a target position that sits above its band, so an exposure cut lowers the held book
                 # too, not just new buys; the proceeds are parked or fund this week's buys.
                 entry = target_by_symbol[symbol]
-                price = prices[symbol]
+                price = book.prices[symbol]
                 if price <= 0:
                     continue
-                target_value = portfolio_value * entry["target_weight"]
-                current_value = held_quantity(pos) * price
+                target_value = book.portfolio_value * entry["target_weight"]
+                current_value = book.held_quantity(pos) * price
                 trim_value = current_value - target_value
-                if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= min_trade_value:
-                    trim_qty = min(fractional_qty(trim_value / price), float(sellable(pos)))
+                if current_value > target_value * (1 + _REBALANCE_BAND) and trim_value >= book.min_trade_value:
+                    trim_qty = min(fractional_qty(trim_value / price), float(book.sellable(pos)))
                     if trim_qty > 0:
                         self.log_info(f"Trimming {trim_qty} {symbol} @ ${price:.2f} (value ${current_value:,.0f} > target ${target_value:,.0f})")
-                        try:
-                            sells.append((self.submit_order(self.create_order(symbol, trim_qty, "sell", time_in_force="day")), price))
-                        except BrokerUncertainError as exc:  # sent, outcome unknown: no proceeds counted
-                            log_unknown("sell", trim_qty, symbol, "trim above band", exc)
-                        except Exception as e:
-                            self.log_error(f"Failed to submit trim order for {symbol}: {e}")
+                        order, exc, _ = self._send("sell", trim_qty, symbol, "trim above band")
+                        if order is not None:
+                            sold.sells.append((order, price))
+                        elif exc is not None and not isinstance(exc, BrokerUncertainError):
+                            self.log_error(f"Failed to submit trim order for {symbol}: {exc}")
                 continue
 
             rank = all_ranks.get(symbol)
             if rank is None or rank > sell_threshold:
-                exit_quantity = sellable(pos)
+                exit_quantity = book.sellable(pos)
                 if exit_quantity <= 0:
                     self.log_info(f"{symbol} is already being sold by an open order: not selling it again")
                     continue
@@ -688,52 +697,59 @@ class CrossMomentumStrategy(Strategy):
                 else:
                     # The position is ranked but outside the sell threshold (hysteresis band)
                     self.log_warning(f"Selling {symbol} (rank {rank} > {sell_threshold}) - outside hysteresis band")
-                try:
-                    sell_order = self.create_order(symbol, exit_quantity, "sell", time_in_force="day")
-                    sell_order = self.submit_order(sell_order)
-                    sold_count += 1
-                    last_price = self.get_last_price(symbol) or 0.0
-                    sells.append((sell_order, float(last_price)))
-                except BrokerUncertainError as exc:  # sent, outcome unknown: counted as sold, no proceeds
-                    log_unknown("sell", exit_quantity, symbol, "exit", exc)
-                    sold_count += 1
-                    unconfirmed_count += 1
-                except Exception as e:
-                    self.log_error(f"Failed to submit sell order for {symbol}: {e}")
+                order, exc, unknown = self._send("sell", exit_quantity, symbol, "exit")
+                if unknown:  # sent, outcome unknown: counted as sold, no proceeds
+                    sold.sold_count += 1
+                    sold.unconfirmed_count += 1
+                elif order is not None:
+                    sold.sold_count += 1
+                    try:
+                        sold.sells.append((order, float(self.get_last_price(symbol) or 0.0)))
+                    except Exception as e:
+                        self.log_error(f"Failed to submit sell order for {symbol}: {e}")
+                else:
+                    self.log_error(f"Failed to submit sell order for {symbol}: {exc}")
             # Rank <= sell_threshold means keep the position inside the histeresis band (do not sell)
             else:
                 self.log_info(f"Keeping {symbol} (rank {rank} ≤ {sell_threshold}, within hysteresis band)")
-                hysteresis_value += held_quantity(pos) * self._price_or_zero(symbol)
-                kept_count += 1
+                sold.hysteresis_value += book.held_quantity(pos) * self._price_or_zero(symbol)
+                sold.kept_count += 1
+        return sold
 
+    def _park_targets(self, target: list[dict], book: _Book, sold: _Sold, weights: dict[str, float], sleeve_order: tuple[str, ...]) -> list[tuple[str, float, float, float]]:
+        """Size the parking sleeve and sell its excess (added to `sold.sells`).
+
+        Returns (symbol, price, current value, target value) per priced sleeve symbol, for the parking buys.
+        """
         # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
-        stock_target_value = portfolio_value * sum(entry["target_weight"] for entry in target)
-        parking_target = max(0.0, portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - hysteresis_value)
-        sleeve: list[tuple[str, float, float, float]] = []  # (symbol, price, current value, target value), priced only
+        stock_target_value = book.portfolio_value * sum(entry["target_weight"] for entry in target)
+        parking_target = max(0.0, book.portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - sold.hysteresis_value)
+        sleeve: list[tuple[str, float, float, float]] = []
         for symbol in sleeve_order:
-            position = sleeve_positions.get(symbol)
+            position = sold.sleeve_positions.get(symbol)
             price = self._price_or_zero(symbol)
             if price <= 0:
                 self.log_warning(f"Parking: no price for {symbol} — no {symbol} order this week")
                 continue
-            value = (held_quantity(position) if position else incoming.get(symbol, 0.0)) * price
+            value = (book.held_quantity(position) if position else book.incoming.get(symbol, 0.0)) * price
             symbol_target = parking_target * weights.get(symbol, 0.0)
             sleeve.append((symbol, price, value, symbol_target))
             self.log_info(f"Parking: {symbol} target ${symbol_target:,.0f} (current ${value:,.0f})")
             excess = value - symbol_target
-            if position is not None and value > symbol_target * (1 + _REBALANCE_BAND) and excess >= min_trade_value:
+            if position is not None and value > symbol_target * (1 + _REBALANCE_BAND) and excess >= book.min_trade_value:
                 # A zero target sells the exact holding (less what is already being sold), so float flooring leaves no dust behind.
-                sell_qty = float(sellable(position)) if symbol_target == 0 else min(fractional_qty(excess / price), float(sellable(position)))
+                sell_qty = float(book.sellable(position)) if symbol_target == 0 else min(fractional_qty(excess / price), float(book.sellable(position)))
                 if sell_qty > 0:
                     self.log_info(f"Selling {sell_qty} {symbol} @ ${price:.2f} (parking above target)")
-                    try:
-                        sells.append((self.submit_order(self.create_order(symbol, sell_qty, "sell", time_in_force="day")), price))
-                    except BrokerUncertainError as exc:  # sent, outcome unknown: no proceeds counted
-                        log_unknown("sell", sell_qty, symbol, "parking above target", exc)
-                    except Exception as e:
-                        self.log_error(f"Failed to submit parking sell order for {symbol}: {e}")
+                    order, exc, _ = self._send("sell", sell_qty, symbol, "parking above target")
+                    if order is not None:
+                        sold.sells.append((order, price))
+                    elif exc is not None and not isinstance(exc, BrokerUncertainError):
+                        self.log_error(f"Failed to submit parking sell order for {symbol}: {exc}")
+        return sleeve
 
-        # Phase 2: Buy
+    def _buy_phase(self, target: list[dict], book: _Book, current_positions: list, sells: list[tuple[Order, float]], sleeve: list[tuple[str, float, float, float]]) -> None:
+        """Phases 2 and 3: buy the targets within the budget, then park what is left up to each sleeve target."""
         # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
         # bar's open in a backtest) plus fees, so hold a fixed reserve back: it is what lets the last buys land
         # when prices move or sells fill lower.
@@ -741,6 +757,7 @@ class CrossMomentumStrategy(Strategy):
         # only the part still to fill is added. The cash is read BEFORE the sell states, so a sell filling in between
         # is counted nowhere (a slightly smaller budget), never twice. In a backtest no sell fills before the next
         # session, so all of them are added, as before.
+        incoming, outgoing = book.incoming, book.outgoing
         cash = float(self.get_cash())
         pending_proceeds = unfilled_sell_proceeds(sells)
         filled_sells = sum(1 for order, _ in sells if not order.is_active())
@@ -751,6 +768,7 @@ class CrossMomentumStrategy(Strategy):
         spendable = cash + pending_proceeds + earlier_credit
         cash_reserve = spendable * self.parameters["cash_buffer_pct"]
         available_cash = spendable - cash_reserve
+        positions_by_symbol = {p.asset.symbol: p for p in current_positions}
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
             if available_cash <= 0:
@@ -758,14 +776,14 @@ class CrossMomentumStrategy(Strategy):
                 break
 
             symbol = entry["symbol"]
-            price = prices[symbol]
+            price = book.prices[symbol]
             if price <= 0:
                 continue
             target_weight = entry["target_weight"]
-            target_value = portfolio_value * target_weight
+            target_value = book.portfolio_value * target_weight
 
-            current_pos = next((p for p in current_positions if p.asset.symbol == symbol), None)
-            current_value = (held_quantity(current_pos) if current_pos else incoming.get(symbol, 0.0)) * price
+            current_pos = positions_by_symbol.get(symbol)
+            current_value = (book.held_quantity(current_pos) if current_pos else incoming.get(symbol, 0.0)) * price
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value
@@ -795,50 +813,36 @@ class CrossMomentumStrategy(Strategy):
             available_cash -= cost
 
             self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
-            try:
-                buy_order = self.create_order(symbol, quantity, "buy", time_in_force="day")
-                self.submit_order(buy_order)
-            except BrokerUncertainError as exc:  # sent, outcome unknown: the cost stays deducted, no buying-power resync
-                log_unknown("buy", quantity, symbol, "toward target", exc)
-            except Exception as e:
-                self.log_warning(f"Failed to submit buy order for {symbol}: {e}")
+            _, exc, unknown = self._send("buy", quantity, symbol, "toward target")
+            if exc is not None and not unknown:
+                self.log_warning(f"Failed to submit buy order for {symbol}: {exc}")
                 # The local available_cash estimate (get_cash() + estimated unfilled
                 # sell proceeds) can drift from the broker's real buying power —
                 # e.g. this iteration's sells hadn't settled yet. Resync to the
                 # broker's own reported value so the remaining targets in this loop
                 # aren't sized against a number already proven wrong, instead of
                 # repeating the same rejection down the list.
-                real_buying_power = parse_insufficient_buying_power(e)
+                real_buying_power = parse_insufficient_buying_power(exc)
                 if real_buying_power is not None:
                     self.log_warning(f"Resyncing available cash to broker-reported buying power: ${real_buying_power:.2f}")
                     available_cash = real_buying_power * (1 - self.parameters["cash_buffer_pct"])
+            # An unknown outcome keeps the cost deducted, with no buying-power resync
 
         # Phase 3: Park what the stock buys left, up to each sleeve target (the trend assets first, SHV last)
         for symbol, price, value, symbol_target in sleeve:
             if value >= symbol_target * (1 - _REBALANCE_BAND):
                 continue
             buy_value = min(symbol_target - value, available_cash)
-            if buy_value < min_trade_value:
+            if buy_value < book.min_trade_value:
                 continue
             quantity = fractional_qty(buy_value / price)
             if quantity <= 0:
                 continue
             available_cash -= quantity * price
             self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (parking)")
-            try:
-                self.submit_order(self.create_order(symbol, quantity, "buy", time_in_force="day"))
-            except BrokerUncertainError as exc:  # sent, outcome unknown: the cost stays deducted
-                log_unknown("buy", quantity, symbol, "parking", exc)
-            except Exception as e:
-                self.log_warning(f"Failed to submit parking buy order for {symbol}: {e}")
-
-        # The target positions never get a line unless they are bought, so say how the book is made up
-        held_targets = sum(1 for pos in current_positions if pos.asset.symbol in target_symbols)
-        unconfirmed_note = f" ({unconfirmed_count} unconfirmed)" if unconfirmed_count else ""
-        self.log_info(
-            f"Rebalance summary: {len(target)} targets ({held_targets} already held, {len(target) - held_targets} not held), "
-            f"{kept_count} kept under hysteresis, {sold_count} sold{unconfirmed_note}"
-        )
+            _, exc, unknown = self._send("buy", quantity, symbol, "parking")
+            if exc is not None and not unknown:
+                self.log_warning(f"Failed to submit parking buy order for {symbol}: {exc}")
 
     # ── Main iteration ────────────────────────────────────────────────────────
 
@@ -851,12 +855,12 @@ class CrossMomentumStrategy(Strategy):
             # Compute history file name based on trading mode
             self.vars.equity_history.append(float(equity))
             today_str = self.get_datetime().strftime("%Y-%m-%d")
-            save_equity_history(self.vars.equity_history, today_str, self.vars.history_file_path)
+            save_equity_history(self.vars.equity_history[-1], today_str, self.vars.history_file_path)
 
         today: datetime = self.get_datetime()
-        last_universe_date = get_cross_momentum_universe_last_date()
 
         if self.trading_mode is not TradingMode.BACKTESTING:
+            last_universe_date = get_cross_momentum_universe_last_date()
             if not last_universe_date:
                 self.log_warning("No universe date found — universe file missing or empty.")
                 return
@@ -893,17 +897,17 @@ class CrossMomentumStrategy(Strategy):
 
         # Step 5: Fast/Slow Volatility Targeting — compute realized vol
         # from actual equity curve using max(vol_20d, 0.75 * vol_63d).
-        vt_config = self.parameters.get("volatility_targeting", {})
+        vt_config = self.parameters["volatility_targeting"]
         vol_exposure = 1.0
         realized_vol = None
-        if vt_config.get("enabled", False):
+        if vt_config["enabled"]:
             realized_vol = self._compute_realized_volatility()
             if realized_vol is not None:
                 vol_exposure = compute_volatility_exposure(
                     portfolio_volatility=realized_vol,
-                    target_volatility=vt_config.get("target_volatility", 0.20),
-                    min_exposure=vt_config.get("min_exposure", 0.40),
-                    max_exposure=vt_config.get("max_exposure", 1.00),
+                    target_volatility=vt_config["target_volatility"],
+                    min_exposure=vt_config["min_exposure"],
+                    max_exposure=vt_config["max_exposure"],
                 )
                 self.log_info(f"Vol targeting (fast/slow): risk_vol={realized_vol:.1%}, target={vt_config['target_volatility']:.0%}, vol_exposure={vol_exposure:.0%}")
             else:
@@ -939,12 +943,11 @@ class CrossMomentumStrategy(Strategy):
         history: UniverseHistory | None = self.vars.universe_history
         if history is None:
             return
-        try:
-            month_list = history.on(self._market_date())
-        except UniverseHistoryError as exc:
-            raise FatalStrategyError(str(exc)) from exc
-        sleeve = set(sleeve_symbols(self.parameters["parking"]))
-        self.vars.universe = [symbol for symbol in month_list if symbol not in sleeve]
+        self.vars.universe = month_universe(history, self._market_date(), exclude=self._sleeve_symbols())
+
+    def _sleeve_symbols(self) -> set[str]:
+        """The parking sleeve's symbols (parking, trend assets): never ranked, never part of the stock universe."""
+        return set(sleeve_symbols(self.parameters["parking"]))
 
     def _backtest_preload_assets(self, stocks: Sequence[str] | None = None, benchmark: str | None = None) -> list[Asset]:
         """The stocks (default `vars.universe`), the sleeve symbols and the benchmark, each once: what a backtest loads up front."""
@@ -960,13 +963,13 @@ class CrossMomentumStrategy(Strategy):
         """
         start: datetime = overrides.get("start", self.parameters["backtesting_start"])
         end: datetime = overrides.get("end", self.parameters["backtesting_end"])
-        history = ensure_universe_history(_market_day(start), _market_day(end))
+        history = ensure_universe_history(market_day(start), market_day(end))
         self.vars.universe_history = history
         # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)
         universe = universe_parameters(history)
         self.parameters["universe"] = universe
-        sleeve = set(sleeve_symbols(self.parameters["parking"]))
-        stocks = [symbol for symbol in history.union(_market_day(start), _market_day(end)) if symbol not in sleeve]
+        sleeve = self._sleeve_symbols()
+        stocks = window_symbols(history, start, end, exclude=sleeve)
         benchmark = overrides.get("benchmark", self.parameters["benchmark_symbol"])
 
         if self.vars.history_file_path.exists():
@@ -986,14 +989,8 @@ class CrossMomentumStrategy(Strategy):
         # which surfaces as the backtest stalling partway through the universe
         # instead of a clean error.
         defaults: dict[str, Any] = dict(
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            budget=self.parameters["budget"],
             # Yahoo (AlpacaBacktestData has not enough history, approximatively 6 years), loaded in batches, failing when Yahoo returns too little
             data_source=partial(UniverseBacktestData, record=universe),
             preload_assets=self._backtest_preload_assets(stocks, benchmark),  # the window's stocks, the sleeve ETFs and the benchmark, in memory
-            benchmark=self.parameters["benchmark_symbol"],
-            warmup_trading_days=self.parameters["warmup_trading_days"],
-            slippage=self.parameters["slippage"],
         )
         return super().run_backtesting(**{**defaults, **overrides})

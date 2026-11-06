@@ -16,12 +16,12 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.common import batch_us_stock_universe as batch
+from trading_agent_framework.strategies.common.batch_us_stock_universe import RateLimitGate
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
 from trading_agent_framework.strategies.cross_momentum import agent_cross_momentum
-from trading_agent_framework.strategies.cross_momentum import batch_us_stock_universe as batch
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import RateLimitGate
-from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import FatalStrategyError, UniverseHistoryError
 
@@ -68,6 +68,7 @@ def _backtest(now: datetime, history: UniverseHistory | None = HISTORY) -> Cross
 def test_backtest_scans_the_month_list_of_each_review_date(review_date: date, expected: list[str]):
     fake = SimpleNamespace(vars=SimpleNamespace(universe_history=HISTORY, universe=["TODAY"]), parameters={"parking": PARKING}, _market_date=lambda: review_date)
 
+    fake._sleeve_symbols = lambda: CrossMomentumStrategy._sleeve_symbols(fake)
     CrossMomentumStrategy._use_month_universe(fake)
 
     assert fake.vars.universe == expected
@@ -224,10 +225,10 @@ def test_backtest_preloads_through_the_checked_batch_source_and_records_what_it_
     assert isinstance(source, UniverseBacktestData)
 
     # Yahoo drops B from every download; with the tolerance lifted for the test, the run goes on and says so.
-    monkeypatch.setattr(batch, "_MAX_ABSENT_FRACTION", 0.5)
+    monkeypatch.setattr(batch, "MAX_ABSENT_FRACTION", 0.5)
     monkeypatch.setattr(batch.time, "sleep", lambda seconds: None)
     now = [0.0]
-    monkeypatch.setattr(batch, "_rate_limit_gate", RateLimitGate(30.0, 300.0, now=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
+    monkeypatch.setattr(batch, "rate_limit_gate", RateLimitGate(30.0, 300.0, now=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds)))
     monkeypatch.setattr(UniverseBacktestData, "_real_download", lambda self: _download_without("B"))
     source.load(recorder.runs[0]["preload_assets"], datetime(2023, 1, 1, tzinfo=MARKET_TZ), datetime(2024, 3, 29, tzinfo=MARKET_TZ), "day")
 

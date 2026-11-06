@@ -12,15 +12,16 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from trading_agent_framework.utils.errors import UniverseHistoryError
+from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import FatalStrategyError, UniverseHistoryError
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -135,6 +136,28 @@ class UniverseHistory:
         if not path.exists():
             return None
         return cls.from_json(json.loads(path.read_text()))
+
+
+def market_day(moment: datetime) -> date:
+    """The market-time date of a backtest bound (bounds are timezone-aware by convention; a naive one is taken as is)."""
+    return moment.astimezone(MARKET_TZ).date() if moment.tzinfo is not None else moment.date()
+
+
+def window_symbols(history: UniverseHistory, start: datetime, end: datetime, *, exclude: Collection[str]) -> list[str]:
+    """Every symbol the history lists in any month of the backtest window, sorted, minus `exclude` (the sleeve symbols)."""
+    return [symbol for symbol in history.union(market_day(start), market_day(end)) if symbol not in exclude]
+
+
+def month_universe(history: UniverseHistory, day: date, *, exclude: Collection[str]) -> list[str]:
+    """The history's list for `day`'s month, minus `exclude`, in rank order.
+
+    A month the history lacks raises `FatalStrategyError`: the executor would swallow anything else as a failed tick and
+    drop the review without a trace in the results."""
+    try:
+        month_list = history.on(day)
+    except UniverseHistoryError as exc:
+        raise FatalStrategyError(str(exc)) from exc
+    return [symbol for symbol in month_list if symbol not in exclude]
 
 
 def monthly_lists(

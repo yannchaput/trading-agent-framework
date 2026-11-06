@@ -23,10 +23,12 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools, trim_note
 from trading_agent_framework.strategies.bull_bear.market_data import DailySeries, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.bull_bear.pipeline import ReviewOutcome, ReviewPipeline
+from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE
-from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
+from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
+from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
+from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.errors import AgentError, AgentLoopError, BrokerError, ConfigurationError
 
@@ -126,7 +128,7 @@ def long_note(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None
 
 @dataclass
 class Harness:
-    pipeline: ReviewPipeline
+    pipeline: BullBearPipeline
     broker: FakeBroker
     bars: FakeBars
     agents: dict[str, FakeAgent]
@@ -135,7 +137,7 @@ class Harness:
     log_path: Path
     orders: list[tuple[str, str, float]] = field(default_factory=list)
 
-    def run(self) -> ReviewOutcome:
+    def run(self) -> RunOutcome:
         self.broker.submitted.clear()
         outcome = self.pipeline.run()
         self.orders = [(order.asset.symbol, order.side.value, float(order.quantity or 0)) for order in self.broker.submitted]
@@ -174,13 +176,13 @@ def _harness(
     bars = FakeBars(series if series is not None else _default_series())
     rebalancer = Rebalancer(strategy, params)
     log_path = tmp_path / "logs" / "reviews.jsonl"
-    pipeline = ReviewPipeline(
+    pipeline = BullBearPipeline(
         strategy=strategy,
         params=params,
         agents=agents,
         recorder=recorder,
         state=store,
-        review_log=ReviewLog(log_path),
+        log=RunLog(log_path),
         rebalancer=rebalancer,
         universe_on=universe_on or (lambda day: UNIVERSE),
         bars=bars,
@@ -217,7 +219,7 @@ def test_a_review_debates_the_top_15_and_buys_what_the_judge_puts_in(tmp_path: P
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=True, abandoned_streak=0)
+    assert outcome == RunOutcome(completed=True, abandoned_streak=0)
     research = h.agents["researcher"].calls
     assert [call["context"]["fact_sheet"]["symbol"] for call in research] == UNIVERSE[:15]
     assert all(call["tool_budget"] == 3 for call in research)
@@ -549,7 +551,7 @@ def test_a_debater_without_a_valid_submission_abandons_the_review_with_no_order(
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=1)
     assert h.orders == []  # not even the forced exit of OLD
     assert len(h.agents[agent].calls) == 2 and h.agents[agent].calls[1]["force_tool"] == tool
     state = h.store.load()
@@ -571,7 +573,7 @@ def test_an_agent_that_loops_abandons_the_review_at_once_with_an_error_log_and_n
     with caplog.at_level(logging.INFO):
         outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=1)
     assert h.orders == []
     assert len(h.agents[agent].calls) == 1  # no forced retry: a run that looped once would only loop again
     errors = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.ERROR]
@@ -770,7 +772,7 @@ def test_an_execution_abandonment_after_a_sell_stores_the_verdicts_and_the_sold_
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=1)
     state = h.store.load()
     assert state.verdicts["S03"] == {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"}  # the stored "in" is replaced
     assert state.verdicts["S00"] == {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"}
@@ -851,7 +853,7 @@ def test_an_abandoned_review_leaves_the_day_open_so_a_restart_reviews_again(tmp_
     assert not h.run().completed
     assert not h.pipeline.completed_today()
 
-    assert h.run() == ReviewOutcome(completed=True, abandoned_streak=0)
+    assert h.run() == RunOutcome(completed=True, abandoned_streak=0)
     assert len(h.agents["judge"].calls) == 3
 
 
@@ -1420,3 +1422,91 @@ def test_a_rejected_submission_warning_says_how_the_run_ended(tmp_path: Path, ca
     rejected = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING and "submission rejected" in r.getMessage()]
     assert len(rejected) == 1
     assert rejected[0].endswith("(finish_reason=length, 10069 input, 22699 output, 22699 reasoning, 32768 total tokens)")
+
+
+# --- the abandoned record, pinned across the pipeline refactor -------------------------------------------------------
+
+
+def _sells_s03(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+    symbols = [s["fact_sheet"]["symbol"] for s in ctx["stocks"]]
+    put_in = set(symbols[:10]) - {"S03"}
+    tools["submit_verdicts"](
+        [
+            {
+                "symbol": s,
+                "verdict": "in" if s in put_in else "out",
+                "reason": "bull wins" if s in put_in else "bear wins",
+                "strength": "standard" if s in put_in else "weak",
+                **({"what_changed": "guidance cut"} if s == "S03" else {}),
+            }
+            for s in symbols
+        ]
+    )
+
+
+def _bull_bear_abandon(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    earlier = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29", "strength": "standard"}}
+    h = _harness(tmp_path, held={"S03": 20}, state=BullBearState(verdicts=earlier, cooldowns={"S05": 2}, abandoned_streak=1))
+    if name == "stage":
+        h.agents["judge"].script = does_nothing
+    elif name == "broker":
+        monkeypatch.setattr(h.rebalancer, "holdings", lambda: (_ for _ in ()).throw(BrokerError("positions unavailable")))
+    else:
+        h.agents["judge"].script = _sells_s03
+        _raises_after(h, monkeypatch, [PlacedOrder("S03", "sell", 20.0), PlacedOrder("S00", "buy", 10.0)])
+    return h
+
+
+@pytest.mark.parametrize("name", ["stage", "broker", "execution"])
+def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    h = _bull_bear_abandon(name, tmp_path, monkeypatch)
+
+    with caplog.at_level(logging.ERROR):
+        h.run()
+
+    (message,) = [record.getMessage() for record in caplog.records if "abandoned" in record.getMessage()]
+    (line,) = [json.loads(text, object_pairs_hook=lambda pairs: pairs) for text in h.log_path.read_text(encoding="utf-8").splitlines()]
+    head = ["date", "run_id", "abandoned"]
+    review = ["ranked", "debate_set", "forced_exits", "cooldowns_active", "notes", "bull_conviction", "bear_risk", "memory"]
+    tail = ["stage", "error", "abandoned_streak"]
+    prefix = "[bull_bear] \x1b[31m[bull_bear] review abandoned at the "
+    verdicts_state = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29", "strength": "standard"}}
+    if name == "execution":
+        decided = {s: {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "standard"} for s in ["S00", "S01", "S02", "S04", "S06", "S07", "S08", "S09", "S10"]}
+        decided |= {s: {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"} for s in ["S03", "S11", "S12", "S13", "S14"]}
+        assert message == prefix + "execution stage (streak 2): connection reset\x1b[0m"
+        assert [key for key, _ in line] == [*head, *review, "verdicts", "verdict_counts", "strength_counts", "book", "cooldowns_started", "targets", *tail, "orders"]
+        assert list(line)[:3] + [line[-4], line[-3], line[-2], line[-1]] == [
+            ("date", "2026-10-06"),
+            ("run_id", None),
+            ("abandoned", True),
+            ("stage", "execution"),
+            ("error", "connection reset"),
+            ("abandoned_streak", 2),
+            ("orders", [[("symbol", "S03"), ("side", "sell"), ("quantity", 20.0), ("confirmed", True)], [("symbol", "S00"), ("side", "buy"), ("quantity", 10.0), ("confirmed", True)]]),
+        ]
+        assert dict(line)["cooldowns_started"] == ["S03"] and dict(line)["verdict_counts"] == [("in", 9), ("out", 5)]
+        assert h.store.load() == BullBearState(abandoned_streak=2, verdicts={**verdicts_state, **decided}, cooldowns={"S05": 2, "S03": 4})
+    elif name == "stage":
+        assert message == prefix + "judge stage (streak 2): the agent ended without calling submit_verdicts\x1b[0m"
+        assert [key for key, _ in line] == [*head, *review, *tail]
+        assert list(line)[:3] + list(line)[-3:] == [
+            ("date", "2026-10-06"),
+            ("run_id", None),
+            ("abandoned", True),
+            ("stage", "judge"),
+            ("error", "the agent ended without calling submit_verdicts"),
+            ("abandoned_streak", 2),
+        ]
+        assert h.store.load() == BullBearState(abandoned_streak=2, verdicts=verdicts_state, cooldowns={"S05": 2})
+    else:
+        assert message == prefix + "broker stage (streak 2): positions unavailable\x1b[0m"
+        assert line == [
+            ("date", "2026-10-06"),
+            ("run_id", None),
+            ("abandoned", True),
+            ("stage", "broker"),
+            ("error", "positions unavailable"),
+            ("abandoned_streak", 2),
+        ]
+        assert h.store.load() == BullBearState(abandoned_streak=2, verdicts=verdicts_state, cooldowns={"S05": 2})

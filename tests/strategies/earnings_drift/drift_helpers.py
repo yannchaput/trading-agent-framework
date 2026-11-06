@@ -15,7 +15,8 @@ from tests.fakes import FakeClock, FrameDataSource, et, weekday_sessions
 from trading_agent_framework.backtesting.broker import BacktestBroker
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
-from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.earnings_drift.book import DriftState
 from trading_agent_framework.strategies.earnings_drift.desk import Desk
 from trading_agent_framework.strategies.earnings_drift.events import EarningsEvent
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
@@ -86,7 +87,7 @@ class DeskRig:
         self.state = DriftState()
         self.trades_path, self.decisions_path = tmp_path / "trades.jsonl", tmp_path / "decisions.jsonl"
         self.desk = Desk(
-            self.strategy, params or DriftParams(), self.state, save=save or (lambda: None), trade_log=JsonlLog(lambda: self.trades_path), decision_log=JsonlLog(lambda: self.decisions_path)
+            self.strategy, params or DriftParams(), self.state, save=save or (lambda: None), trade_log=RunLog(lambda: self.trades_path), decision_log=RunLog(lambda: self.decisions_path)
         )
         self.day = 0
         self.delivered: set[str] = set()

@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
+from trading_agent_framework.strategies.common.handoff import HandoffError, SubmitRecorder, covering, required_text
 
 LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")
@@ -20,11 +21,6 @@ VERDICTS = ("in", "out")
 STRENGTHS = ("strong", "standard", "weak")
 
 NOTE, BULL, BEAR, VERDICT = "note", "bull", "bear", "verdict"
-_TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", VERDICT: "submit_verdicts"}
-
-
-class HandoffError(ValueError):
-    """A submission that breaks a rule; the message tells the model what is wrong and what is allowed."""
 
 
 class NoteTooLong(HandoffError):
@@ -78,34 +74,6 @@ class Verdicts:
 # --- validation (pure) --------------------------------------------------------------------------
 
 
-def _items(raw: Any, what: str) -> list[Mapping[str, Any]]:
-    if not isinstance(raw, list | tuple):
-        raise HandoffError(f"{what} must be a list of objects")
-    items = []
-    for index, item in enumerate(raw, start=1):
-        if not isinstance(item, Mapping):
-            raise HandoffError(f"{what} item {index} must be an object, got {type(item).__name__}")
-        items.append(item)
-    return items
-
-
-def _symbol(item: Mapping[str, Any], index: int) -> str:
-    value = item.get("symbol")
-    if not isinstance(value, str) or not value.strip():
-        raise HandoffError(f"item {index} has no symbol")
-    return value.strip().upper()
-
-
-def _text(item: Mapping[str, Any], key: str, symbol: str, max_chars: int) -> str:
-    value = item.get(key)
-    if not isinstance(value, str) or not value.strip():
-        raise HandoffError(f"{symbol} has no {key}: give one short sentence")
-    text = value.strip()
-    if len(text) > max_chars:
-        raise HandoffError(f"the {key} for {symbol} is {len(text)} characters: keep it under {max_chars}")
-    return text
-
-
 def _one_of(item: Mapping[str, Any], key: str, symbol: str, allowed: Sequence[str]) -> str:
     value = item.get(key)
     choice = value.strip().lower() if isinstance(value, str) else None
@@ -116,22 +84,13 @@ def _one_of(item: Mapping[str, Any], key: str, symbol: str, allowed: Sequence[st
 
 def _covering(raw: Any, expected: Sequence[str], what: str = "cases") -> list[tuple[str, Mapping[str, Any]]]:
     """(symbol, item) for exactly one item per symbol in `expected`, in submission order."""
-    items = _items(raw, what)
-    wanted = set(expected)
-    seen: set[str] = set()
-    covered = []
-    for index, item in enumerate(items, start=1):
-        symbol = _symbol(item, index)
-        if symbol not in wanted:
-            raise HandoffError(f"{symbol} is not in the debate: give cases only for {', '.join(expected)}")
-        if symbol in seen:
-            raise HandoffError(f"{symbol} appears twice")
-        seen.add(symbol)
-        covered.append((symbol, item))
-    missing = [symbol for symbol in expected if symbol not in seen]
-    if missing:
-        raise HandoffError(f"no case for {', '.join(missing)}: give exactly one case per stock")
-    return covered
+    return covering(
+        raw,
+        expected,
+        what=what,
+        unknown=lambda symbol: f"{symbol} is not in the debate: give cases only for {', '.join(expected)}",
+        missing=lambda symbols: f"no case for {', '.join(symbols)}: give exactly one case per stock",
+    )
 
 
 def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_chars: int) -> Note:
@@ -171,12 +130,12 @@ def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
 
 
 def validate_bull_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BullCase]:
-    return [BullCase(symbol, _one_of(item, "conviction", symbol, LEVELS), _text(item, "argument", symbol, max_chars)) for symbol, item in _covering(raw, expected)]
+    return [BullCase(symbol, _one_of(item, "conviction", symbol, LEVELS), required_text(item, "argument", symbol, max_chars)) for symbol, item in _covering(raw, expected)]
 
 
 def validate_bear_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BearCase]:
     return [
-        BearCase(symbol, _one_of(item, "risk", symbol, LEVELS), _one_of(item, "concern", symbol, CONCERNS), _text(item, "argument", symbol, max_chars))
+        BearCase(symbol, _one_of(item, "risk", symbol, LEVELS), _one_of(item, "concern", symbol, CONCERNS), required_text(item, "argument", symbol, max_chars))
         for symbol, item in _covering(raw, expected)
     ]
 
@@ -187,7 +146,7 @@ def _what_changed(item: Mapping[str, Any], symbol: str, verdict: str, before: st
     given = isinstance(value, str) and bool(value.strip())
     if before is not None and before != verdict and not given:
         raise HandoffError(f"your previous verdict on {symbol} was {before}: to put it {verdict}, give what_changed, the new and material fact")
-    return _text(item, "what_changed", symbol, max_chars) if given else None
+    return required_text(item, "what_changed", symbol, max_chars) if given else None
 
 
 def _strength(item: Mapping[str, Any], symbol: str, verdict: str) -> str:
@@ -204,7 +163,7 @@ def validate_verdicts(raw: Any, *, expected: Sequence[str], max_in: int, max_cha
     verdicts = []
     for symbol, item in _covering(raw, expected, "verdicts"):
         verdict = _one_of(item, "verdict", symbol, VERDICTS)
-        reason = _text(item, "reason", symbol, max_chars)
+        reason = required_text(item, "reason", symbol, max_chars)
         changed = _what_changed(item, symbol, verdict, before.get(symbol), max_chars)
         verdicts.append(Verdict(symbol, verdict, reason, changed, _strength(item, symbol, verdict)))
     chosen = sum(1 for verdict in verdicts if verdict.verdict == "in")
@@ -216,17 +175,17 @@ def validate_verdicts(raw: Any, *, expected: Sequence[str], max_in: int, max_cha
 # --- the recorder ---------------------------------------------------------------------------------
 
 
-class HandoffRecorder:
+class HandoffRecorder(SubmitRecorder):
     """Holds what the current stage must validate against, and the first valid submission for it."""
 
+    TOOL_NAMES = {NOTE: "submit_note", BULL: "submit_bull_case", BEAR: "submit_bear_case", VERDICT: "submit_verdicts"}
+    NOT_EXPECTED_SUFFIX = " of the review"
+    ALREADY_RECORDED = "already recorded for this stage"
+
     def __init__(self, params: BullBearParams) -> None:
+        super().__init__()
         self._params = params
-        self._stage: str | None = None
-        self._context: dict[str, Any] = {}
-        self._submission: Any = None
-        self._submitted = False
         self._refused_note: str | None = None
-        self.last_error: str | None = None
 
     def expect_note(self, symbol: str) -> None:
         self._arm(NOTE, {"expected": symbol})
@@ -246,8 +205,7 @@ class HandoffRecorder:
         self._arm(VERDICT, {"expected": list(symbols), "max_in": max_in, "previous": dict(previous or {})})
 
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        self._stage, self._context = stage, context
-        self._submission, self._submitted, self.last_error = None, False, None
+        super()._arm(stage, context)
         self._refused_note = None
 
     @property
@@ -255,44 +213,20 @@ class HandoffRecorder:
         """The most recent note refused for length since the stage was armed (kept across other refusals), else None."""
         return self._refused_note
 
-    @property
-    def submitted(self) -> bool:
-        """Whether the armed stage has a valid submission."""
-        return self._submitted
-
-    @property
-    def submission(self) -> Any:
-        """The armed stage's valid submission (`Note`, `list[BullCase]`, `list[BearCase]` or `Verdicts`), else None."""
-        return self._submission
-
-    def submit(self, stage: str, *args: Any) -> dict[str, Any]:
-        """What a submit tool returns: `{"status": "recorded"}` or `{"error": ...}` (recorded in `last_error`)."""
-        if self._stage != stage:
-            return self._fail(f"{_TOOL_NAMES[stage]} is not expected at this point of the review")
-        if self._submitted:
-            return self._fail("already recorded for this stage")
+    def _validate(self, stage: str, *args: Any) -> Any:
         params, context = self._params, self._context
-        try:
-            if stage == NOTE:
-                value: Any = validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars, ask_chars=params.note_max_chars)
-            elif stage == BULL:
-                value = validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
-            elif stage == BEAR:
-                value = validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
-            else:
-                value = validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_max_chars, previous=context["previous"])
-        except NoteTooLong as exc:
-            message = f"this is the same text you sent before: {exc}" if exc.note == self._refused_note else str(exc)
-            self._refused_note = exc.note
-            return self._fail(message)
-        except HandoffError as exc:
-            return self._fail(str(exc))
-        self._submission, self._submitted, self.last_error = value, True, None
-        return {"status": "recorded"}
-
-    def _fail(self, message: str) -> dict[str, Any]:
-        self.last_error = message
-        return {"error": message}
+        if stage == NOTE:
+            try:
+                return validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars, ask_chars=params.note_max_chars)
+            except NoteTooLong as exc:
+                message = f"this is the same text you sent before: {exc}" if exc.note == self._refused_note else str(exc)
+                self._refused_note = exc.note
+                raise HandoffError(message) from None
+        if stage == BULL:
+            return validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
+        if stage == BEAR:
+            return validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
+        return validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_max_chars, previous=context["previous"])
 
 
 # --- the tools ------------------------------------------------------------------------------------

@@ -14,10 +14,10 @@ import pandas as pd
 import pytest
 
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.strategies.common import batch_us_stock_universe as batch
+from trading_agent_framework.strategies.common.batch_us_stock_universe import RateLimitGate
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData, universe_parameters
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.cross_momentum import batch_us_stock_universe as batch
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import RateLimitGate
-from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData, universe_parameters
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import UniverseHistoryError
 
@@ -43,7 +43,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     """No real waiting: time.sleep does nothing and the shared rate-limit gate runs on a fake clock."""
     fake = _Clock()
     monkeypatch.setattr(batch.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(batch, "_rate_limit_gate", RateLimitGate(30.0, 300.0, now=fake.now, sleep=fake.sleep))
+    monkeypatch.setattr(batch, "rate_limit_gate", RateLimitGate(30.0, 300.0, now=fake.now, sleep=fake.sleep))
     return fake
 
 
@@ -81,7 +81,7 @@ def _names(count: int) -> list[str]:
 
 @pytest.mark.usefixtures("clock")
 def test_the_assets_are_downloaded_in_batches_and_served(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(batch, "_HISTORY_BATCH_SIZE", 2)
+    monkeypatch.setattr(batch, "HISTORY_BATCH_SIZE", 2)
     download = _Download()
     source = _source(download)
 

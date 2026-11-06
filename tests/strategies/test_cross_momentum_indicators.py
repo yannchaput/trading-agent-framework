@@ -17,6 +17,7 @@ import pytest
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
+from trading_agent_framework.strategies.cross_momentum.utils import close_series
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError
 
@@ -86,7 +87,7 @@ def test_the_scan_ignores_todays_partial_bar():
     assert result is not None
     assert result["trading_days"] == 300
     assert result["price"] == bars.df["close"].iloc[-2]  # Monday's close, not the crash
-    assert result["close_series"].index[-1] == date(2026, 10, 5)
+    assert close_series(result["frame"]).index[-1] == date(2026, 10, 5)
 
 
 def test_the_scan_keeps_300_bars_when_today_has_no_bar_yet():
@@ -96,7 +97,7 @@ def test_the_scan_keeps_300_bars_when_today_has_no_bar_yet():
 
     assert result is not None
     assert result["trading_days"] == 300
-    assert result["close_series"].index[-1] == date(2026, 10, 5)
+    assert close_series(result["frame"]).index[-1] == date(2026, 10, 5)
 
 
 def test_the_scan_computes_cross_momentums_inputs_on_completed_sessions():

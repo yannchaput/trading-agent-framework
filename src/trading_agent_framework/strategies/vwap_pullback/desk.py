@@ -17,7 +17,6 @@ shares no unbooked exit sell covers, which is what any new stop or exit sell may
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
@@ -26,6 +25,8 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.stops import Release, StopRelease, release_stop
 from trading_agent_framework.strategies.vwap_pullback import risk
 from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPullbackParameters
 from trading_agent_framework.strategies.vwap_pullback.setups import SetupState, back_to_pullback, mark_done, mark_in_trade
@@ -51,7 +52,7 @@ class Desk:
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, *, trade_log: Callable[[], Path | None] = lambda: None) -> None:
         self._strategy = strategy
         self._params = params
-        self._trade_log = trade_log  # where closed trades are appended as JSON lines (None: not logged)
+        self._trade_log = RunLog(trade_log, what="trade log")  # where closed trades are appended as JSON lines (no path: not logged)
         # Stops this desk cancelled itself (hand-offs, flatten): their CANCELED hook must not be taken for an
         # outside cancel, which would place the stop again right after the desk removed it on purpose.
         self._expected_cancels: set[str] = set()
@@ -294,15 +295,14 @@ class Desk:
 
     def _reprotect(self, trade: Trade) -> None:
         """Cover every free share of an open trade: after the flatten sell what no stop covers, otherwise make the stop as big as the free shares."""
-        stop = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+        stop = self._stop(trade)
         if stop is not None and stop.is_filled():
             return  # its fill hook books the trade out
         if stop is not None and not stop.is_active():
-            self._record_stop_partial(trade, stop)  # cancelled/expired/errored without a hook reaching us
-            trade.stop_order_id = None
-            stop = None
-            if trade.status is TradeStatus.CLOSED:
+            # cancelled/expired/errored without a hook reaching us
+            if self._drop_ended_stop(trade, stop):
                 return
+            stop = None
         free = self._free_quantity(trade)
         # The whole quantity: the stop's filled-but-unbooked shares are still inside trade.quantity (and so inside `free`).
         stop_qty = stop.quantity if stop is not None and stop.quantity is not None else Decimal(0)
@@ -321,6 +321,15 @@ class Desk:
                 return
         self._strategy.log_warning(f"{trade.symbol}: {free} free shares, stop covers {stop_qty}; placing the stop again")
         self._submit_stop(trade, self._free_quantity(trade))
+
+    def _stop(self, trade: Trade) -> Order | None:
+        return self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+
+    def _drop_ended_stop(self, trade: Trade, stop: Order) -> bool:
+        """Book what an ended stop filled and forget it; True when that closed the trade."""
+        self._record_stop_partial(trade, stop)
+        trade.stop_order_id = None
+        return trade.status is TradeStatus.CLOSED
 
     def _record_stop_partial(self, trade: Trade, order: Order) -> None:
         """A stop that partly filled before ending cancelled/errored: book the filled part, archive the trade if that closed it."""
@@ -360,11 +369,10 @@ class Desk:
             if trade.status is TradeStatus.PENDING:
                 order = self._strategy.get_order(trade.entry_order_id)
                 # Entry ended (rejected/errored/cancelled) without a hook reaching us: keep what filled, or drop it.
-                if order is None or (not order.is_active() and not order.is_filled()):
-                    if order is None:
-                        self.state.book.discard(trade.symbol)
-                    else:
-                        self._settle_entry(trade, order)
+                if order is None:
+                    self.state.book.discard(trade.symbol)
+                elif not order.is_active() and not order.is_filled():
+                    self._settle_entry(trade, order)
                 # Entry still working from an earlier tick: the trigger is stale, cancel it (the hook settles it).
                 elif order.is_active() and trade.entered_at < now:
                     self._cancel(order)
@@ -431,38 +439,34 @@ class Desk:
             self._strategy.log_warning(f"cancel of {order.identifier} ({order.asset.symbol}) failed: {exc}")
 
     def _release_stop(self, trade: Trade) -> str | None:
+        """`_release`'s legacy answer alone: None once released, `STOPPED_OUT`, or an error message."""
+        return self._release(trade)[0]
+
+    def _release(self, trade: Trade) -> tuple[str | None, Release]:
         """Cancel the trade's working stop and wait for it: None once released, `STOPPED_OUT`, or an error message.
 
         Alpaca and `BacktestBroker` refuse a sell above held minus pending sells, so the stop must go before
         any other exit sell. If the stop filled while the cancel was on its way, the trade is already out.
         """
-        if trade.stop_order_id is None:
-            return None
-        order = self._strategy.get_order(trade.stop_order_id)
-        if order is None:
+        release = release_stop(
+            self._strategy,
+            trade.stop_order_id,
+            expected_cancels=self._expected_cancels,
+            wait_seconds=self._params.cancel_wait_seconds,
+            warn_prefix=trade.symbol,
+        )
+        if release.status is StopRelease.GONE:
             trade.stop_order_id = None
-            return None
-        if order.is_filled():
-            return STOPPED_OUT
-        if order.is_active():
-            self._expected_cancels.add(order.identifier)  # so its CANCELED hook is not read as an outside cancel
-            try:
-                self._strategy.cancel_order(order)
-            except BrokerError as exc:
-                self._expected_cancels.discard(order.identifier)
-                if order.is_filled():  # Alpaca raises when cancelling an already-filled order
-                    return STOPPED_OUT
-                return f"could not cancel the stop: {exc}"
-            # Waits on the strategy clock and dispatches order hooks meanwhile (instant in a backtest: cancels are synchronous).
-            self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
-            if order.is_filled():
-                return STOPPED_OUT
-            if order.is_active():
-                return "the stop cancel was not confirmed in time; nothing else was changed"
+            return None, release
+        if release.status is StopRelease.FILLED:
+            return STOPPED_OUT, release
+        if release.status is StopRelease.FAILED:
+            return release.error, release
+        assert release.order is not None  # RELEASED always carries the order
         # Cancelled just now, or already inactive and unfilled (cancelled/expired, its hook not yet seen): book any partial fill.
-        self._record_stop_partial(trade, order)
+        self._record_stop_partial(trade, release.order)
         trade.stop_order_id = None
-        return STOPPED_OUT if trade.status is TradeStatus.CLOSED else None
+        return (STOPPED_OUT if trade.status is TradeStatus.CLOSED else None), release
 
     def _archive(self, trade: Trade) -> None:
         """A trade closed: move it out of the book, mark its setup DONE, append it to `trades.jsonl`."""
@@ -471,12 +475,7 @@ class Desk:
         if setup is not None:
             self.state.setups[trade.symbol] = mark_done(setup)
         self._strategy.log_info(f"trade {trade.symbol} closed ({trade.exit_reason}): P&L {trade.realised_pnl}")
-        path = self._trade_log()
-        if path is None:
-            return
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(trade.to_json()) + "\n")
+        self._trade_log.append(trade.to_json())
 
     # --- session boundaries --------------------------------------------------------------
 
@@ -502,13 +501,17 @@ class Desk:
                 if order is not None and order.is_active():
                     self._cancel(order)
                 continue
-            released = self._release_stop(trade)
+            released, release = self._release(trade)
             if released == STOPPED_OUT:
                 continue
             if released is not None:
                 self._strategy.log_error(f"flatten {trade.symbol}: {released}")
-                stop = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+                stop = self._stop(trade)
                 if stop is not None:
+                    if release.timed_out:
+                        # Cancel sent, not confirmed: the flatten sells these shares itself, so its late CANCELED must not
+                        # re-place the stop (`release_stop` un-expected it). Any other refusal leaves the old behavior.
+                        self._expected_cancels.add(stop.identifier)
                     unconfirmed.append(stop)
                 continue
             trade.exit_reason = reason
@@ -528,13 +531,11 @@ class Desk:
     def _sell_unprotected(self, reason: str) -> None:
         """After the flatten: market-sell the free shares of every trade whose stop is gone (cancelled, expired) unfilled."""
         for trade in list(self.state.book.open_trades()):
-            stop = self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
+            stop = self._stop(trade)
             if stop is not None and (stop.is_active() or stop.is_filled()):
                 continue
-            if stop is not None:
-                self._record_stop_partial(trade, stop)
-                if trade.status is TradeStatus.CLOSED:
-                    continue
+            if stop is not None and self._drop_ended_stop(trade, stop):
+                continue
             trade.stop_order_id = None
             free = self._free_quantity(trade)
             if free <= 0:

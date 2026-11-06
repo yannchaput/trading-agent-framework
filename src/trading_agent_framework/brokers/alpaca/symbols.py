@@ -1,6 +1,6 @@
 """Pure Alpaca symbol translation.
 
-`batch_us_stock_universe.normalize_symbol` folds share-class separators
+`strategies/common/batch_us_stock_universe.normalize_symbol` folds share-class separators
 (space/dot/slash) onto yfinance's dash form (``"BRK-B"``), since the universe
 file is also read by the yfinance-backed backtest data source. Alpaca's own
 API uses dot notation instead (``"BRK.B"``) and rejects the dash form as an

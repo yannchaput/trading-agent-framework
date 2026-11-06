@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
-from decimal import Decimal
 from typing import Any
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
@@ -175,7 +174,6 @@ class NewsBinaryStrategy(Strategy):
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,  # No warmup needed (just in case)
-        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -192,14 +190,13 @@ class NewsBinaryStrategy(Strategy):
         # self.agent_telemetry = True
         self.vars.iteration_count = 0
         self.vars.consecutive_agent_errors = 0
-        self.vars.strategy_parameters = self.strategy_parameters
         self.vars.regime = None
         self.vars.sessions_in_regime = 0
         self.vars.regime_last_date = None
         system_prompt = _build_system_prompt(
-            symbols=self.vars.strategy_parameters["symbols"],
-            defensive_symbol=self.vars.strategy_parameters["defensive_symbol"],
-            news_symbols=self.vars.strategy_parameters["news_symbols"],
+            symbols=self.strategy_parameters["symbols"],
+            defensive_symbol=self.strategy_parameters["defensive_symbol"],
+            news_symbols=self.strategy_parameters["news_symbols"],
         )
         self.agents.create(
             name=self.AGENT_NAME,
@@ -301,7 +298,7 @@ class NewsBinaryStrategy(Strategy):
         positions = snapshot.get("positions")
         if positions is None:
             return
-        parameters = self.vars.strategy_parameters
+        parameters = self.strategy_parameters
         held = {position["symbol"] for position in positions if position["quantity"] > 0}  # type: ignore # ty: ignore[not-iterable, invalid-argument-type]
         risky = bool(held & set(parameters["symbols"]))
         defensive = parameters["defensive_symbol"] in held
@@ -320,7 +317,7 @@ class NewsBinaryStrategy(Strategy):
         Set the interval of iterations for backtesting (not to trade every day)
         """
         count = self.vars.iteration_count
-        return count == 1 or count % self.vars.strategy_parameters["backtest_every_n_iterations"] == 0
+        return count == 1 or count % self.strategy_parameters["backtest_every_n_iterations"] == 0
 
     def run_backtesting(self, **overrides: Any):
         # use class strategy parameters as the strategy constructor is not run yet
@@ -328,13 +325,7 @@ class NewsBinaryStrategy(Strategy):
         defaults: dict[str, Any] = dict(
             data_source=AlpacaBacktestData,  # Use alpaca broker for intraday quotes (> 6 year history)
             timestep="minute",
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
-            benchmark=self.parameters["benchmark_symbol"],
-            budget=Decimal(str(self.parameters["budget"])),
-            slippage=self.parameters["slippage"],
-            warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
         return super().run_backtesting(**{**defaults, **overrides})

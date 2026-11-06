@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import os
 from datetime import time
-from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.agents.tools import only
@@ -31,7 +29,7 @@ from trading_agent_framework.strategies.congress_trades.handoff import HandoffRe
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.pipeline import AGENT_PORTFOLIO, AGENT_RESEARCHER, AGENT_TRADER, CongressPipeline, SourceLike
 from trading_agent_framework.strategies.congress_trades.prompts import portfolio_system, researcher_system, trader_system
-from trading_agent_framework.strategies.congress_trades.state import StateStore, state_path
+from trading_agent_framework.strategies.congress_trades.state import StateStore
 from trading_agent_framework.strategies.congress_trades.tools import congress_research_tools
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
 
@@ -47,7 +45,6 @@ class CongressTradesStrategy(Strategy):
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,
-        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -70,9 +67,7 @@ class CongressTradesStrategy(Strategy):
     def initialize(self) -> None:
         """Build the source, the three agents, the desk and the pipeline (once per run)."""
         params = self.settings
-        state_store = StateStore(state_path(self.project_root, self.trading_mode))
-        if self.is_backtesting:
-            state_store.wipe()  # one run's history must not leak into the next; paper and live state is never wiped
+        state_store = StateStore(self.state_file("congress_trades"), fresh=self.is_backtesting)  # one run's history must not leak into the next; paper and live state is never wiped
         try:
             source = self._source if self._source is not None else self._build_source()
             recorder = HandoffRecorder(params)
@@ -103,7 +98,7 @@ class CongressTradesStrategy(Strategy):
             agents=self.agents,
             recorder=recorder,
             state=state_store,
-            run_log=RunLog(self._run_log_path()),
+            log=RunLog(self.run_file("runs.jsonl")),
             desk=desk,
         )
         self.log_info(f"CongressTradesStrategy initialized: following {params.politician}, sleeptime {self.sleeptime}, first check at {self.iteration_start_time}")
@@ -120,12 +115,6 @@ class CongressTradesStrategy(Strategy):
         if not outcome.completed and self.is_backtesting and outcome.abandoned_streak >= self.settings.max_consecutive_abandoned:
             raise FatalStrategyError(f"{outcome.abandoned_streak} runs abandoned in a row, aborting the backtest (see the log for the stage and the error)")
 
-    def _run_log_path(self) -> Path | None:
-        """`runs.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
-        if self.run_id is None:
-            return None
-        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / "runs.jsonl"
-
     # --- backtesting -------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any):
@@ -135,15 +124,9 @@ class CongressTradesStrategy(Strategy):
         any other ticker lazily, once, the first time the desk asks for its price.
         """
         defaults: dict[str, Any] = dict(
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            budget=Decimal(str(self.parameters["budget"])),
-            slippage=self.parameters["slippage"],
             data_source=YahooBacktestData,
             preload_assets=[Asset(symbol=self.parameters["benchmark_symbol"])],
-            benchmark=self.parameters["benchmark_symbol"],
             timestep="day",
-            warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
         return super().run_backtesting(**{**defaults, **overrides})

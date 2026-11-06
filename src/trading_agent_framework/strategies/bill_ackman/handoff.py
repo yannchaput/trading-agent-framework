@@ -8,12 +8,20 @@ This module deliberately has NO `from __future__ import annotations`: the agent 
 schema from the function's real annotations (as `memory/tools.py` does).
 """
 
-import math
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
+from trading_agent_framework.strategies.common.handoff import (
+    HandoffError,
+    SubmitRecorder,
+    items,
+    key,
+    optional_text,
+    required_text,
+)
+from trading_agent_framework.strategies.common.handoff import weight as shared_weight
 
 SURVIVE = "survive"
 FAIL = "fail"
@@ -22,11 +30,6 @@ CONCERNS = ("debt", "margin", "competition", "management", "accounting", "valuat
 _EPS = 1e-9
 
 RANKING, VERDICTS_STAGE, PORTFOLIO = "ranking", "verdicts", "portfolio"
-_TOOL_NAMES = {RANKING: "submit_ranking", VERDICTS_STAGE: "submit_verdicts", PORTFOLIO: "submit_portfolio"}
-
-
-class HandoffError(ValueError):
-    """A submission that breaks a rule; the message tells the model what is wrong and what is allowed."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,46 +57,6 @@ class PortfolioPosition:
 # --- validation (pure) --------------------------------------------------------------------------
 
 
-def _items(raw: Any, what: str) -> list[Mapping[str, Any]]:
-    if not isinstance(raw, list | tuple):
-        raise HandoffError(f"{what} must be a list of objects")
-    items = []
-    for index, item in enumerate(raw, start=1):
-        if not isinstance(item, Mapping):
-            raise HandoffError(f"{what} item {index} must be an object, got {type(item).__name__}")
-        items.append(item)
-    return items
-
-
-def _symbol(item: Mapping[str, Any], index: int) -> str:
-    value = item.get("symbol")
-    if not isinstance(value, str) or not value.strip():
-        raise HandoffError(f"item {index} has no symbol")
-    return value.strip().upper()
-
-
-def _reason(item: Mapping[str, Any], symbol: str, max_chars: int) -> str:
-    value = item.get("reason")
-    if not isinstance(value, str) or not value.strip():
-        raise HandoffError(f"{symbol} has no reason: give one short sentence")
-    text = value.strip()
-    if len(text) > max_chars:
-        raise HandoffError(f"the reason for {symbol} is {len(text)} characters: keep it under {max_chars}")
-    return text
-
-
-def _optional_text(item: Mapping[str, Any], key: str, symbol: str, max_chars: int) -> str | None:
-    value = item.get(key)
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return None
-    if not isinstance(value, str):
-        raise HandoffError(f"the {key} for {symbol} must be text")
-    text = value.strip()
-    if len(text) > max_chars:
-        raise HandoffError(f"the {key} for {symbol} is {len(text)} characters: keep it under {max_chars}")
-    return text
-
-
 def _concern(item: Mapping[str, Any], symbol: str, verdict: str) -> str | None:
     if verdict != FAIL:
         return None
@@ -104,38 +67,25 @@ def _concern(item: Mapping[str, Any], symbol: str, verdict: str) -> str | None:
     return concern
 
 
-def _weight(item: Mapping[str, Any], symbol: str) -> float:
-    value = item.get("weight")
-    if isinstance(value, bool):
-        raise HandoffError(f"the weight for {symbol} must be a number")
-    try:
-        weight = float(value)  # type: ignore[arg-type]  # an int, a float or a numeric string
-    except TypeError, ValueError, OverflowError:
-        raise HandoffError(f"the weight for {symbol} must be a number, a fraction of portfolio value such as 0.25") from None
-    if not math.isfinite(weight):
-        raise HandoffError(f"the weight for {symbol} must be a finite number")
-    return weight
-
-
 def validate_ranking(raw: Any, *, candidates: Sequence[str], top_n: int, reason_max_chars: int) -> list[Idea]:
     """1 to `top_n` unique ideas (or all candidates if fewer), each from `candidates`, best first."""
-    items = _items(raw, "ideas")
+    entries = items(raw, "ideas")
     limit = min(top_n, len(candidates))
-    if not items:
+    if not entries:
         raise HandoffError("ideas is empty: submit at least one idea chosen from the candidates")
-    if len(items) > limit:
-        raise HandoffError(f"submit at most {limit} ideas, got {len(items)}")
+    if len(entries) > limit:
+        raise HandoffError(f"submit at most {limit} ideas, got {len(entries)}")
     allowed = set(candidates)
     seen: set[str] = set()
     ideas = []
-    for index, item in enumerate(items, start=1):
-        symbol = _symbol(item, index)
+    for index, item in enumerate(entries, start=1):
+        symbol = key(item, "symbol", index)
         if symbol not in allowed:
             raise HandoffError(f"{symbol} is not one of the candidates ({', '.join(candidates)})")
         if symbol in seen:
             raise HandoffError(f"{symbol} appears twice")
         seen.add(symbol)
-        ideas.append(Idea(symbol, _reason(item, symbol, reason_max_chars)))
+        ideas.append(Idea(symbol, required_text(item, "reason", symbol, reason_max_chars)))
     return ideas
 
 
@@ -145,13 +95,13 @@ def validate_verdicts(raw: Any, *, expected: Collection[str], reason_max_chars: 
     A `fail` names its `concern` (one of `CONCERNS`); a verdict that differs from `previous` (symbol -> the last
     review's verdict) says `what_changed`.
     """
-    items = _items(raw, "verdicts")
+    entries = items(raw, "verdicts")
     wanted = set(expected)
     before = previous or {}
     seen: set[str] = set()
     verdicts = []
-    for index, item in enumerate(items, start=1):
-        symbol = _symbol(item, index)
+    for index, item in enumerate(entries, start=1):
+        symbol = key(item, "symbol", index)
         if symbol not in wanted:
             raise HandoffError(f"{symbol} was not asked about: judge only {', '.join(sorted(wanted))}")
         if symbol in seen:
@@ -161,9 +111,9 @@ def validate_verdicts(raw: Any, *, expected: Collection[str], reason_max_chars: 
         verdict = verdict.strip().lower() if isinstance(verdict, str) else verdict
         if verdict not in VERDICTS:
             raise HandoffError(f"the verdict for {symbol} must be 'survive' or 'fail'")
-        reason = _reason(item, symbol, reason_max_chars)
+        reason = required_text(item, "reason", symbol, reason_max_chars)
         concern = _concern(item, symbol, verdict)
-        what_changed = _optional_text(item, "what_changed", symbol, reason_max_chars)
+        what_changed = optional_text(item, "what_changed", symbol, reason_max_chars)
         if before.get(symbol, verdict) != verdict and what_changed is None:
             raise HandoffError(f"{symbol} was '{before[symbol]}' at the previous review: say in what_changed what changed since then")
         verdicts.append(Verdict(symbol, verdict, reason, concern, what_changed))
@@ -189,23 +139,23 @@ def validate_portfolio(
     An empty list is valid: it means everything goes to the parking instrument. Every symbol in `required` (a holding that
     has not failed twice) must be held.
     """
-    items = _items(raw, "positions")
-    if len(items) > max_positions:
-        raise HandoffError(f"submit at most {max_positions} positions, got {len(items)}")
+    entries = items(raw, "positions")
+    if len(entries) > max_positions:
+        raise HandoffError(f"submit at most {max_positions} positions, got {len(entries)}")
     allowed_set = set(allowed)
     seen: set[str] = set()
     positions = []
-    for index, item in enumerate(items, start=1):
-        symbol = _symbol(item, index)
+    for index, item in enumerate(entries, start=1):
+        symbol = key(item, "symbol", index)
         if symbol not in allowed_set:
             raise HandoffError(f"{symbol} is not allowed (choose from {', '.join(sorted(allowed_set)) or 'nothing: submit an empty list'})")
         if symbol in seen:
             raise HandoffError(f"{symbol} appears twice")
         seen.add(symbol)
-        weight = _weight(item, symbol)
+        weight = shared_weight(item, symbol, example="0.25")
         if not min_weight - _EPS <= weight <= max_weight + _EPS:
             raise HandoffError(f"the weight for {symbol} is {weight:.4f}: it must be between {min_weight} and {max_weight}")
-        positions.append(PortfolioPosition(symbol, weight, _reason(item, symbol, reason_max_chars)))
+        positions.append(PortfolioPosition(symbol, weight, required_text(item, "reason", symbol, reason_max_chars)))
     held = {position.symbol for position in positions}
     missing = [symbol for symbol in required if symbol not in held]
     if len(missing) == 1:
@@ -221,16 +171,16 @@ def validate_portfolio(
 # --- the recorder ---------------------------------------------------------------------------------
 
 
-class HandoffRecorder:
+class HandoffRecorder(SubmitRecorder):
     """Holds what the current stage must validate against, and the first valid submission for it."""
 
+    TOOL_NAMES = {RANKING: "submit_ranking", VERDICTS_STAGE: "submit_verdicts", PORTFOLIO: "submit_portfolio"}
+    NOT_EXPECTED_SUFFIX = " of the review"
+    ALREADY_RECORDED = "already recorded for this review"
+
     def __init__(self, params: AckmanParams) -> None:
+        super().__init__()
         self._params = params
-        self._stage: str | None = None
-        self._context: dict[str, Any] = {}
-        self._submission: Any = None
-        self._submitted = False
-        self.last_error: str | None = None
 
     def expect_ranking(self, candidates: Sequence[str]) -> None:
         self._arm(RANKING, {"candidates": list(candidates)})
@@ -241,51 +191,22 @@ class HandoffRecorder:
     def expect_portfolio(self, allowed: Sequence[str], required: Sequence[str] = ()) -> None:
         self._arm(PORTFOLIO, {"allowed": list(allowed), "required": list(required)})
 
-    def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        self._stage, self._context = stage, context
-        self._submission, self._submitted, self.last_error = None, False, None
-
-    @property
-    def submitted(self) -> bool:
-        """Whether the armed stage has a valid submission."""
-        return self._submitted
-
-    @property
-    def submission(self) -> Any:
-        """The armed stage's valid submission (a list of `Idea`, `Verdict` or `PortfolioPosition`), else None."""
-        return self._submission
-
-    def submit(self, stage: str, raw: Any) -> dict[str, Any]:
-        """What a submit tool returns: `{"status": "recorded"}` or `{"error": ...}` (recorded in `last_error`)."""
-        if self._stage != stage:
-            return self._fail(f"{_TOOL_NAMES[stage]} is not expected at this point of the review")
-        if self._submitted:
-            return self._fail("already recorded for this review")
-        params = self._params
-        try:
-            if stage == RANKING:
-                value = validate_ranking(raw, candidates=self._context["candidates"], top_n=params.research_top_n, reason_max_chars=params.reason_max_chars)
-            elif stage == VERDICTS_STAGE:
-                value = validate_verdicts(raw, expected=self._context["expected"], reason_max_chars=params.reason_max_chars, previous=self._context["previous"])
-            else:
-                value = validate_portfolio(
-                    raw,
-                    allowed=self._context["allowed"],
-                    max_positions=params.max_positions,
-                    min_weight=params.min_weight,
-                    max_weight=params.max_weight,
-                    max_total_weight=params.max_total_weight,
-                    reason_max_chars=params.reason_max_chars,
-                    required=self._context["required"],
-                )
-        except HandoffError as exc:
-            return self._fail(str(exc))
-        self._submission, self._submitted, self.last_error = value, True, None
-        return {"status": "recorded"}
-
-    def _fail(self, message: str) -> dict[str, Any]:
-        self.last_error = message
-        return {"error": message}
+    def _validate(self, stage: str, *args: Any) -> Any:
+        raw, params, context = args[0], self._params, self._context
+        if stage == RANKING:
+            return validate_ranking(raw, candidates=context["candidates"], top_n=params.research_top_n, reason_max_chars=params.reason_max_chars)
+        if stage == VERDICTS_STAGE:
+            return validate_verdicts(raw, expected=context["expected"], reason_max_chars=params.reason_max_chars, previous=context["previous"])
+        return validate_portfolio(
+            raw,
+            allowed=context["allowed"],
+            max_positions=params.max_positions,
+            min_weight=params.min_weight,
+            max_weight=params.max_weight,
+            max_total_weight=params.max_total_weight,
+            reason_max_chars=params.reason_max_chars,
+            required=context["required"],
+        )
 
 
 # --- the tools ------------------------------------------------------------------------------------

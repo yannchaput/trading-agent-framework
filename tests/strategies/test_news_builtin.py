@@ -469,7 +469,7 @@ def test_run_backtesting_wires_alpaca_data_and_preload(tmp_path: Path, monkeypat
     assert captured["data_source"] is AlpacaBacktestData
     assert [asset.symbol for asset in captured["preload_assets"]] == ["SPY", "QQQ", "SHV"]  # ty: ignore[not-iterable]
     assert "fees" not in captured  # left to Strategy.run_backtesting, which reads BROKER
-    assert captured["warmup_trading_days"] == 10
+    assert captured["timestep"] == "minute"
 
 
 def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:

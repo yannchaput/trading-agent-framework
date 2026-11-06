@@ -12,7 +12,7 @@ trading modes: `live`, `paper`, `backtesting`.
 uv sync                                   # install/update dependencies
 uv run agent <strategy_name> <live|paper|backtesting>  # run a strategy (see `Strategies` in `utils/strategy_factory.py`)
 uv run dashboard [--benchmark-dir PATH]   # Streamlit dashboard: Live and Paper tabs (P&L per day from the strategy's Alpaca account), Backtesting tab (logs/ and memory/ run history) and Models tab (vLLM benchmark results)
-uv run batch-universe                     # rebuild the cross_momentum stock universe file
+uv run batch-universe                     # rebuild the stock universe file (`strategies/common/batch_us_stock_universe.py`)
 uv run batch-universe --history --start YYYY-MM [--end YYYY-MM]  # build or extend the point-in-time universe history (one top-1,200 list per month) that cross_momentum and bull_bear backtests trade; a backtest does this itself as a pre-step
 uv run bull-bear-scores <run_dir> [<run_dir>...]  # score bull_bear's bull/bear/judge calls and the judge's strengths against forward returns, runs side by side (fetches Yahoo opens; read-only)
 uv run pytest                             # run the full test suite

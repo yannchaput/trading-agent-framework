@@ -161,17 +161,12 @@ def compute_weighted_pairwise_correlation(
 
     corr = recent.corr().values
 
-    numerator = 0.0
-    denominator = 0.0
-    for i in range(n):
-        for j in range(i + 1, n):
-            w_prod = w[i] * w[j]
-            numerator += w_prod * corr[i, j]
-            denominator += w_prod
-
+    iu = np.triu_indices(n, 1)
+    pair_weights = np.outer(w, w)[iu]
+    denominator = pair_weights.sum()
     if denominator == 0.0:
         return None
-    return float(numerator / denominator)
+    return float((pair_weights * corr[iu]).sum() / denominator)
 
 
 def compute_portfolio_beta(
@@ -229,30 +224,6 @@ def compute_effective_n(weights: np.ndarray) -> float:
     if hhi == 0.0:
         return 0.0
     return float(1.0 / hhi)
-
-
-def compute_drawdown(equity_series: pd.Series) -> tuple[float, float]:
-    """Compute drawdown and rolling peak from an equity curve.
-
-    drawdown = equity[-1] / rolling_peak - 1  (negative value when below peak)
-
-    Args:
-        equity_series: Series of portfolio equity values ordered chronologically.
-
-    Returns:
-        (drawdown, rolling_peak) tuple.
-    """
-    if equity_series.empty:
-        return (0.0, 0.0)
-
-    rolling_peak = equity_series.cummax().iloc[-1]
-    current = equity_series.iloc[-1]
-
-    if rolling_peak <= 0:
-        return (0.0, float(rolling_peak))
-
-    drawdown = current / rolling_peak - 1.0
-    return (float(drawdown), float(rolling_peak))
 
 
 # ── Drawdown precursor analytics (post-hoc) ────────────────────────────────────
@@ -441,10 +412,7 @@ def _normalize_weights(
     """
     w = np.asarray(weights, dtype=float)
     if column_names is not None and len(w) != len(column_names):
-        if len(w) > len(column_names):
-            w = w[: len(column_names)]
-        else:
-            return None
+        return None
 
     w = np.abs(w)
     total = np.sum(w)

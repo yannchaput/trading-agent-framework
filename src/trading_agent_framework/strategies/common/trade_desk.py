@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.handoff import OrderView
+from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, TradingFrameworkError
 from trading_agent_framework.utils.helpers import fractional_qty
 
@@ -95,8 +96,7 @@ class TradeDesk:
         self._params = params
         self._log_tag = log_tag
         self._lock = threading.RLock()
-        self._target: dict[str, float] = {}
-        self._has_target = False
+        self._target: dict[str, float] | None = None  # `None` until a target is set
         self._traded: set[str] = set()
         self._orders: dict[str, Order] = {}
         self._checked: set[str] = set()
@@ -108,8 +108,7 @@ class TradeDesk:
     def begin_run(self, target: Mapping[str, float] | None, traded: Iterable[str]) -> None:
         """Start a trading stage: the target weights (ticker -> fraction of portfolio value, `None` until `set_target`) and the tickers ordered in earlier runs."""
         with self._lock:
-            self._target = {} if target is None else self._normalised(target)
-            self._has_target = target is not None
+            self._target = None if target is None else self._normalised(target)
             self._traded = {symbol.upper() for symbol in traded}
             self._orders = {}
             self._checked = set()
@@ -120,12 +119,15 @@ class TradeDesk:
         """Install the target weights mid-run, keeping the orders already placed and the tickers traded."""
         with self._lock:
             self._target = self._normalised(target)
-            self._has_target = True
 
     @property
     def has_target(self) -> bool:
         with self._lock:
-            return self._has_target
+            return self._target is not None
+
+    @property
+    def _weights(self) -> dict[str, float]:
+        return self._target or {}
 
     @staticmethod
     def _normalised(target: Mapping[str, float]) -> dict[str, float]:
@@ -178,13 +180,7 @@ class TradeDesk:
         strategy = self._strategy
         account = strategy.broker.get_account()
         held = {p.asset.symbol: float(p.quantity) for p in strategy.get_positions() if p.side is PositionSide.LONG and p.quantity > 0}
-        incoming: dict[str, float] = {}
-        outgoing: dict[str, float] = {}
-        for order in strategy.broker.tracker.get_active_orders():
-            if order.quantity is None:
-                continue
-            book = incoming if order.side is OrderSide.BUY else outgoing
-            book[order.asset.symbol] = book.get(order.asset.symbol, 0.0) + float(order.quantity - order.filled_quantity)
+        incoming, outgoing = in_flight_quantities(strategy.broker.tracker.get_active_orders())
         return float(account.portfolio_value), float(account.cash), float(account.buying_power), held, incoming, outgoing
 
     def _unfilled_value(self, side: OrderSide) -> float:
@@ -225,7 +221,7 @@ class TradeDesk:
         if quantity <= 0:
             return self._refuse(f"quantity must be above 0 shares, got {raw_quantity!r}")
         with self._lock:
-            if not self._has_target:
+            if self._target is None:
                 return self._refuse("no target yet: call submit_target first")
             try:
                 portfolio_value, cash, buying_power, held, incoming, outgoing = self._book()
@@ -252,9 +248,9 @@ class TradeDesk:
     def _check_buy(
         self, symbol: str, quantity: float, price: float, cost: float, effective: float, portfolio_value: float, band: float, min_trade: float, cash: float, buying_power: float
     ) -> str | None:
-        weight = self._target.get(symbol)
+        weight = self._weights.get(symbol)
         if weight is None:
-            return f"{symbol} is not in the target portfolio ({', '.join(sorted(self._target)) or 'it is empty'}): do not buy it"
+            return f"{symbol} is not in the target portfolio ({', '.join(sorted(self._weights)) or 'it is empty'}): do not buy it"
         if cost < min_trade:
             return f"buy {quantity:g} {symbol} is ${cost:,.2f}, below the minimum order of ${min_trade:,.2f}"
         room = weight * portfolio_value + band - effective
@@ -284,7 +280,7 @@ class TradeDesk:
         band: float,
         min_trade: float,
     ) -> str | None:
-        if symbol not in self._target and symbol not in self._traded:
+        if symbol not in self._weights and symbol not in self._traded:
             return f"{symbol} is not a position of this strategy (not in the target and never ordered by it): do not touch it"
         if self._buys_placed:
             return "sell orders go out before the first buy of a run: this run has already placed a buy"
@@ -294,7 +290,7 @@ class TradeDesk:
         closing = quantity >= sellable - _EPS
         if cost < min_trade and not closing:
             return f"sell {quantity:g} {symbol} is ${cost:,.2f}, below the minimum order of ${min_trade:,.2f}"
-        weight = self._target.get(symbol)
+        weight = self._weights.get(symbol)
         if weight is not None:
             floor = weight * portfolio_value - band
             if effective - cost < floor - _EPS:
@@ -358,7 +354,7 @@ class TradeDesk:
         unfilled = [view for view in self.orders_view().values() if not view.filled]
         shortfalls: list[Shortfall] = []
         with self._lock:
-            if not self._has_target:
+            if self._target is None:
                 return Audit(unfilled, shortfalls)
             try:
                 portfolio_value, _cash, _bp, held, incoming, outgoing = self._book()
@@ -369,7 +365,7 @@ class TradeDesk:
                 return Audit(unfilled, shortfalls)
             band = self._params.rebalance_band * portfolio_value
             min_trade = self._params.min_trade_pct * portfolio_value
-            owned = set(self._target) | self._traded
+            owned = set(self._weights) | self._traded
             in_flight = sorted(symbol for symbol in owned if incoming.get(symbol, 0.0) > _EPS or outgoing.get(symbol, 0.0) > _EPS)
             for symbol in sorted(owned):
                 try:
@@ -380,7 +376,7 @@ class TradeDesk:
                 if price is None:
                     continue
                 effective = (held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0)) * price
-                wanted = self._target.get(symbol, 0.0) * portfolio_value
+                wanted = self._weights.get(symbol, 0.0) * portfolio_value
                 gap = wanted - effective
                 if abs(gap) <= band or abs(gap) < min_trade:
                     continue

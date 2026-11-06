@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 from collections.abc import Callable
 from datetime import date
@@ -8,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.results import AgentRunResult
@@ -18,6 +20,7 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderEvent, OrderSide, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.strategies.common.pipeline import PendingTrade
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.trade_desk import TradeDesk
 from trading_agent_framework.strategies.congress_trades.congress.annual import AssetHolding, tier_of
@@ -26,7 +29,7 @@ from trading_agent_framework.strategies.congress_trades.congress.source import C
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.pipeline import CongressPipeline
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore
+from trading_agent_framework.strategies.congress_trades.state import CongressState, StateStore
 from trading_agent_framework.utils.errors import AgentError, BrokerError, CongressDataError
 
 NOW = et(2026, 9, 14, 10)
@@ -125,7 +128,7 @@ class Rig:
             agents=self.handles,
             recorder=self.recorder,
             state=self.state,
-            run_log=RunLog(self.log_path),
+            log=RunLog(self.log_path),
             desk=self.desk,
         )
 
@@ -583,3 +586,85 @@ def test_state_is_not_saved_when_nothing_changed(tmp_path: Path) -> None:
     rig.pipeline.run()
 
     assert path.stat().st_mtime_ns == before
+
+
+# --- the abandoned record, pinned across the pipeline refactor -------------------------------------------------------
+
+
+def _fails_with(error: Exception) -> Script:
+    def script(tools: dict[str, Callable[..., dict[str, Any]]], context: dict[str, Any]) -> None:
+        raise error
+
+    return script
+
+
+def _congress_abandon(name: str, tmp_path: Path) -> Rig:
+    rig = Rig(tmp_path)
+    if name == "stage":
+        rig.handles["researcher"].script = no_submission
+    elif name == "data":
+        rig.source.error = CongressDataError("No readable yearly report")
+    elif name == "broker":
+        rig.handles["portfolio_manager"].script = _fails_with(BrokerError("account unavailable"))
+    elif name == "execution":
+
+        def trade_then_fail(tools: dict[str, Callable[..., dict[str, Any]]], context: dict[str, Any]) -> None:
+            tools["place_order"]("AAA", "buy", 30)
+            raise BrokerError("the connection dropped")
+
+        rig.handles["trader"].script = trade_then_fail
+    else:  # a failed attempt on a pending trade
+        _unfilled_first_run(rig)
+        for order in list(rig.broker.tracker.get_active_orders()):
+            rig.broker.tracker.process_trade_event(order, OrderEvent.CANCELED)
+        rig.handles["trader"].script = no_submission
+        rig.log_path.unlink()
+    return rig
+
+
+@pytest.mark.parametrize("name", ["stage", "data", "broker", "execution", "pending"])
+def test_abandoned_record_unchanged(name: str, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    rig = _congress_abandon(name, tmp_path)
+
+    with caplog.at_level(logging.ERROR):
+        rig.pipeline.run()
+
+    (message,) = [record.getMessage() for record in caplog.records if "abandoned" in record.getMessage()]
+    (line,) = [json.loads(text, object_pairs_hook=lambda pairs: pairs) for text in rig.log_path.read_text(encoding="utf-8").splitlines()]
+    keys = [key for key, _ in line]
+    pairs = dict(line)
+    head = ["date", "run_id", "outcome"]
+    filings = ["new_filings", "baseline"]
+    holdings = [*filings, "holdings"]
+    prefix = "[congress_trades] \x1b[31m[congress_trades] run abandoned at the "
+    base = [("date", "2026-09-14"), ("run_id", None), ("outcome", "abandoned")]
+    state = rig.state.load()
+    empty = CongressState(abandoned_streak=1)
+    if name == "stage":
+        assert message == prefix + "researcher stage (streak 1): the agent ended without calling submit_holdings\x1b[0m"
+        assert keys == [*head, *filings, "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:3], *line[-4:]] == [*base, ("stage", "researcher"), ("error", "the agent ended without calling submit_holdings"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "data":
+        assert message == prefix + "filings stage (streak 1): No readable yearly report\x1b[0m"
+        assert line == [*base, ("stage", "filings"), ("error", "No readable yearly report"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "broker":
+        assert message == prefix + "broker stage (streak 1): account unavailable\x1b[0m"
+        assert keys == [*head, *holdings, "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:3], *line[-4:]] == [*base, ("stage", "broker"), ("error", "account unavailable"), ("abandoned_streak", 1), ("orders", [])]
+        assert state == empty
+    elif name == "execution":
+        assert message == prefix + "execution stage (streak 1): the connection dropped\x1b[0m"
+        assert keys == [*head, *holdings, "target", "shortfalls_before", "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:3], *line[-4:-1]] == [*base, ("stage", "execution"), ("error", "the connection dropped"), ("abandoned_streak", 1)]
+        (order,) = pairs["orders"]
+        assert [(k, v) for k, v in order if k != "order_id"] == [("symbol", "AAA"), ("side", "buy"), ("quantity", 30.0), ("status", "working"), ("filled_quantity", 0.0), ("checked", False)]
+        assert state == CongressState(traded=["AAA"], abandoned_streak=1)
+    else:
+        assert message == prefix + "trader stage (streak 1): the agent ended without calling submit_trade_report\x1b[0m"
+        assert keys == [*head, "new_filings", "shortfalls_before", "stage", "error", "abandoned_streak", "orders"]
+        assert [*line[:4], *line[-4:]] == [*base, ("new_filings", []), ("stage", "trader"), ("error", "the agent ended without calling submit_trade_report"), ("abandoned_streak", 1), ("orders", [])]
+        target = {"AAA": 0.15, "BBB": 0.15, "CCC": 0.1433}
+        assert state.pending_trade == PendingTrade(target=target, days=1)  # the failed attempt used up a retry
+        assert (state.processed, state.target, state.traded, state.abandoned_streak, state.last_run) == (["P1", "A1"], target, ["AAA", "BBB", "CCC"], 1, "2026-09-14")

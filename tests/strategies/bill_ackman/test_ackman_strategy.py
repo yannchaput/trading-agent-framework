@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,8 +13,8 @@ from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.bill_ackman.fact_sheet import TRADING_DAYS_PER_YEAR
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
-from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewOutcome
-from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore, state_path
+from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore
+from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.utils.errors import FatalStrategyError
 
 UNIVERSE = ["AAA", "BBB", "CCC"]
@@ -39,11 +38,11 @@ class _FakeScreen:
 
 
 class _FakePipeline:
-    def __init__(self, outcomes: list[ReviewOutcome]) -> None:
+    def __init__(self, outcomes: list[RunOutcome]) -> None:
         self.outcomes = list(outcomes)
         self.runs = 0
 
-    def run(self) -> ReviewOutcome:
+    def run(self) -> RunOutcome:
         self.runs += 1
         return self.outcomes.pop(0)
 
@@ -120,12 +119,12 @@ def test_every_prompt_requires_english_and_names_its_submit_tool(tmp_path: Path)
 
 def test_a_backtest_starts_with_no_saved_state_and_paper_keeps_it(tmp_path: Path) -> None:
     for mode, kept in ((TradingMode.BACKTESTING, False), (TradingMode.PAPER, True)):
-        StateStore(state_path(tmp_path, mode)).save(ReviewState(fail_counts={"HHH": 1}))
+        StateStore(tmp_path / "data" / f"bill_ackman_state_{mode.value}.json").save(ReviewState(fail_counts={"HHH": 1}))
         strategy, _ = _strategy(tmp_path, mode)
 
         strategy.initialize()
 
-        assert state_path(tmp_path, mode).exists() is kept
+        assert (tmp_path / "data" / f"bill_ackman_state_{mode.value}.json").exists() is kept
 
 
 def test_a_missing_sec_user_agent_refuses_to_start(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -148,7 +147,7 @@ def test_without_an_injected_screen_the_real_one_is_built_and_needs_the_user_age
 def test_a_review_runs_on_every_iteration(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
     strategy.initialize()
-    pipeline = _FakePipeline([ReviewOutcome(True, 0)] * 3)
+    pipeline = _FakePipeline([RunOutcome(True, 0)] * 3)
     strategy.pipeline = pipeline  # type: ignore[assignment]
 
     for _ in range(3):
@@ -160,7 +159,7 @@ def test_a_review_runs_on_every_iteration(tmp_path: Path) -> None:
 def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
     strategy.initialize()
-    strategy.pipeline = _FakePipeline([ReviewOutcome(False, 1), ReviewOutcome(False, 2), ReviewOutcome(False, 3)])  # type: ignore[assignment]
+    strategy.pipeline = _FakePipeline([RunOutcome(False, 1), RunOutcome(False, 2), RunOutcome(False, 3)])  # type: ignore[assignment]
 
     strategy.on_trading_iteration()
     strategy.on_trading_iteration()
@@ -171,7 +170,7 @@ def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path
 def test_the_abort_threshold_comes_from_the_parameters(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING, settings=AckmanParams(max_consecutive_abandoned=1))
     strategy.initialize()
-    strategy.pipeline = _FakePipeline([ReviewOutcome(False, 1)])  # type: ignore[assignment]
+    strategy.pipeline = _FakePipeline([RunOutcome(False, 1)])  # type: ignore[assignment]
 
     with pytest.raises(FatalStrategyError):
         strategy.on_trading_iteration()
@@ -181,7 +180,7 @@ def test_the_abort_threshold_comes_from_the_parameters(tmp_path: Path) -> None:
 def test_paper_and_live_never_abort_on_abandoned_reviews(tmp_path: Path, mode: TradingMode) -> None:
     strategy, _ = _strategy(tmp_path, mode)
     strategy.initialize()
-    strategy.pipeline = _FakePipeline([ReviewOutcome(False, streak) for streak in range(1, 8)])  # type: ignore[assignment]
+    strategy.pipeline = _FakePipeline([RunOutcome(False, streak) for streak in range(1, 8)])  # type: ignore[assignment]
 
     for _ in range(7):
         strategy.on_trading_iteration()
@@ -190,10 +189,10 @@ def test_paper_and_live_never_abort_on_abandoned_reviews(tmp_path: Path, mode: T
 def test_the_review_log_lives_in_the_run_directory_once_there_is_a_run_id(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
 
-    assert strategy._review_log_path() is None
+    assert strategy.run_file("reviews.jsonl") is None
     strategy.run_id = "2026-09-14_100000_backtesting"
 
-    assert strategy._review_log_path() == tmp_path / "logs" / "bill_ackman" / "backtesting" / "2026-09-14_100000_backtesting" / "reviews.jsonl"
+    assert strategy.run_file("reviews.jsonl") == tmp_path / "logs" / "bill_ackman" / "backtesting" / "2026-09-14_100000_backtesting" / "reviews.jsonl"
 
 
 def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_preloads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -203,11 +202,8 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
 
     strategy.run_backtesting()
 
-    parameters = BillAckmanStrategy.parameters
-    assert (seen["start"], seen["end"]) == (parameters["backtesting_start"], parameters["backtesting_end"])
-    assert seen["data_source"] is YahooBacktestData
-    assert seen["timestep"] == "day" and seen["benchmark"] == "SPY" and seen["warmup_trading_days"] == 260
-    assert seen["budget"] == Decimal(str(parameters["budget"])) and seen["agent_telemetry"] is True
+    assert seen["data_source"] is YahooBacktestData  # the window, budget, benchmark, slippage and warmup come from `parameters` (test_backtest_defaults.py)
+    assert seen["timestep"] == "day" and seen["agent_telemetry"] is True
     assert [asset.symbol for asset in seen["preload_assets"]] == ["AAA", "BBB", "CCC", "SHV", "SPY"]
 
 

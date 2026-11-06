@@ -26,7 +26,8 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog, StateStore, state_path
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.earnings_drift.book import DriftState, StateStore
 from trading_agent_framework.strategies.earnings_drift.desk import Desk
 from trading_agent_framework.strategies.earnings_drift.event_source import EventProvider, EventSource
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
@@ -48,7 +49,6 @@ class EarningsDriftStrategy(Strategy):
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 283,  # the regime minimum; also covers the 60-session run-up and the 20-session baselines
         "budget": 10000,
-        "slippage": Decimal("0.0005"),
     }
 
     def __init__(
@@ -74,9 +74,7 @@ class EarningsDriftStrategy(Strategy):
     # --- lifecycle --------------------------------------------------------------------------------
 
     def initialize(self) -> None:
-        store = StateStore(state_path(self.project_root, self.trading_mode, self.name))
-        if self.is_backtesting:
-            store.wipe()  # one run's trades must not leak into the next; paper and live state is never wiped
+        store = StateStore(self.state_file(), fresh=self.is_backtesting)  # one run's trades must not leak into the next; paper and live state is never wiped
         self._state = store.load()
         state = self._state
         try:
@@ -86,8 +84,8 @@ class EarningsDriftStrategy(Strategy):
                 self.settings,
                 state,
                 save=lambda: store.save(state),
-                trade_log=JsonlLog(lambda: self._run_file("trades.jsonl")),
-                decision_log=JsonlLog(lambda: self._run_file("decisions.jsonl")),
+                trade_log=RunLog(lambda: self.run_file("trades.jsonl"), what="trade log"),
+                decision_log=RunLog(lambda: self.run_file("decisions.jsonl"), what="decision log"),
             )
             if self.settings.agent_enabled:
                 self.agents.create(
@@ -184,32 +182,19 @@ class EarningsDriftStrategy(Strategy):
         state.agent_failure_streak = 0
         self.log_info(f"[earnings_drift] agent: {len(candidates)} candidates, {len(holdings)} holdings, {len(result.tool_calls)} tool calls")
 
-    def _run_file(self, name: str) -> Path | None:
-        """`<name>` in this run's log directory; None outside a runner (no run id), which disables the log."""
-        if self.run_id is None:
-            return None
-        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / name
-
     # --- backtesting --------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any):
         """Backtest over the `parameters` window on Alpaca SIP daily bars, the universe preloaded."""
         symbols = list(dict.fromkeys([*self.universe, self.parameters["benchmark_symbol"]]))
         defaults: dict[str, Any] = dict(
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            budget=Decimal(str(self.parameters["budget"])),
             data_source=AlpacaBacktestData,
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
-            benchmark=self.parameters["benchmark_symbol"],
             timestep="day",
-            slippage=self.parameters["slippage"],
-            warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=self.settings.agent_enabled,
         )
-        arguments = {**defaults, **overrides}
-        self._backtest_end = _run_end(arguments["end"])
-        return super().run_backtesting(**arguments)
+        self._backtest_end = _run_end(overrides.get("end", self.parameters["backtesting_end"]))
+        return super().run_backtesting(**{**defaults, **overrides})
 
 
 def _run_end(end: Any) -> datetime | None:

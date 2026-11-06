@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.common.pipeline import PendingTrade
 from trading_agent_framework.strategies.common.run_log import RunLog
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore, state_path
+from trading_agent_framework.strategies.congress_trades.state import CongressState, StateStore
 
 
 def _state() -> CongressState:
@@ -22,11 +22,6 @@ def _state() -> CongressState:
         abandoned_streak=2,
         last_run="2026-10-07",
     )
-
-
-def test_the_state_path_is_per_mode_under_the_projects_data_directory(tmp_path: Path) -> None:
-    assert state_path(tmp_path, TradingMode.PAPER) == tmp_path / "data" / "congress_trades_state_paper.json"
-    assert state_path(tmp_path, TradingMode.BACKTESTING).name == "congress_trades_state_backtesting.json"
 
 
 def test_the_empty_state_has_no_history() -> None:
@@ -161,3 +156,14 @@ def test_a_run_log_that_cannot_be_written_is_logged_and_never_raises(tmp_path: P
         RunLog(blocker / "runs.jsonl").append({"date": "2026-10-07"})
 
     assert "could not be written" in caplog.text
+
+
+def test_old_files_load_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"version": 1, "processed": ["10075701", "20035553"], "holdings": {"AAPL": {"tier": 8, "value_low": 5000001, "value_high": 25000000}, '
+        '"BE": {"tier": 7, "value_low": 1500002, "value_high": 6000000}}, "target": {"AAPL": 0.15, "BE": 0.05}, "traded": ["AAPL", "BE", "DIS"], '
+        '"pending_trade": {"target": {"AAPL": 0.15, "BE": 0.05}, "days": 1}, "abandoned_streak": 2, "last_run": "2026-10-07"}'
+    )
+
+    assert StateStore(path).load() == _state()

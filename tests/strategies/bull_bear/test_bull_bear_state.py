@@ -6,12 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.strategies.bull_bear.state import STATE_VERSION, BullBearState, ReviewLog, StateStore, state_path
-
-
-def test_the_state_file_is_per_mode_under_data(tmp_path: Path) -> None:
-    assert state_path(tmp_path, TradingMode.PAPER) == tmp_path / "data" / "bull_bear_state_paper.json"
+from trading_agent_framework.strategies.bull_bear.state import STATE_VERSION, BullBearState, StateStore
+from trading_agent_framework.strategies.common.run_log import RunLog
 
 
 def test_a_missing_file_is_an_empty_state(tmp_path: Path) -> None:
@@ -214,7 +210,7 @@ def test_wipe_deletes_the_file_and_is_safe_without_one(tmp_path: Path) -> None:
 
 
 def test_the_review_log_appends_one_json_line_per_review(tmp_path: Path) -> None:
-    log = ReviewLog(tmp_path / "run" / "reviews.jsonl")
+    log = RunLog(tmp_path / "run" / "reviews.jsonl")
 
     log.append({"date": "2026-10-06", "abandoned": False})
     log.append({"date": "2026-10-13", "abandoned": True})
@@ -224,7 +220,7 @@ def test_the_review_log_appends_one_json_line_per_review(tmp_path: Path) -> None
 
 
 def test_a_review_log_without_a_path_does_nothing(tmp_path: Path) -> None:
-    ReviewLog(None).append({"date": "2026-10-06"})
+    RunLog(None).append({"date": "2026-10-06"})
 
     assert list(tmp_path.iterdir()) == []
 
@@ -244,6 +240,33 @@ def test_a_review_log_that_cannot_be_written_is_logged_and_never_raises(tmp_path
     blocker.write_text("a file", encoding="utf-8")
 
     with caplog.at_level(logging.WARNING):
-        ReviewLog(blocker / "reviews.jsonl").append({"date": "2026-10-06"})
+        RunLog(blocker / "reviews.jsonl").append({"date": "2026-10-06"})
 
     assert "could not be written" in caplog.text
+
+
+def test_old_files_load_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"version": 3, "last_completed_review": "2026-10-06", "abandoned_streak": 1, '
+        '"verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"}, '
+        '"BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"}}, "cooldowns": {"BBB": 3}}'
+    )
+    assert StateStore(path).load() == BullBearState(
+        last_completed_review="2026-10-06",
+        abandoned_streak=1,
+        verdicts={
+            "AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06", "strength": "strong"},
+            "BBB": {"verdict": "out", "reason": "bear wins", "date": "2026-10-06", "strength": "weak"},
+        },
+        cooldowns={"BBB": 3},
+    )
+    path.write_text(
+        '{"version": 2, "last_completed_review": "2026-10-06", "abandoned_streak": 1, '
+        '"verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, "cooldowns": {"BBB": 3}}'
+    )
+    assert StateStore(path).load() == BullBearState(
+        last_completed_review="2026-10-06", abandoned_streak=1, verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, cooldowns={"BBB": 3}
+    )
+    path.write_text('{"version": 1, "last_completed_review": "2026-10-06", "abandoned_streak": 2, "picks": ["AAA"]}')
+    assert StateStore(path).load() == BullBearState(last_completed_review="2026-10-06", abandoned_streak=2)

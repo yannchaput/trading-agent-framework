@@ -7,8 +7,8 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import pytest
 
-from trading_agent_framework.strategies.common.universe_history import UniverseHistory, monthly_lists
-from trading_agent_framework.utils.errors import BacktestError, UniverseHistoryError
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory, market_day, month_universe, monthly_lists, window_symbols
+from trading_agent_framework.utils.errors import BacktestError, FatalStrategyError, UniverseHistoryError
 
 MARKET_TZ = ZoneInfo("America/New_York")
 
@@ -264,3 +264,34 @@ def test_save_leaves_no_temp_file_and_never_a_partial_one(tmp_path: Path, monkey
 
     assert UniverseHistory.load(path) == _history()  # the earlier file is whole and untouched
     assert sorted(entry.name for entry in tmp_path.iterdir()) == ["universe_history.json"]  # no .tmp left behind
+
+
+def _two_month_history() -> UniverseHistory:
+    return UniverseHistory(
+        built=date(2024, 3, 1), pool_date=date(2024, 3, 1), top_n=3, min_price=10.0, min_dollar_volume=1.0, lookback=63,
+        months={"2024-01": ("AAA", "SHV"), "2024-02": ("BBB", "AAA", "SPY")},
+    )
+
+
+def test_market_day_aware_and_naive() -> None:
+    late_utc = datetime(2024, 2, 1, 2, 0, tzinfo=ZoneInfo("UTC"))  # still Jan 31 in New York
+
+    assert market_day(late_utc) == date(2024, 1, 31)
+    assert market_day(datetime(2024, 2, 1, 2, 0)) == date(2024, 2, 1)  # a naive bound is taken as is
+
+
+def test_window_symbols_excludes() -> None:
+    history = _two_month_history()
+    start, end = datetime(2024, 1, 15, tzinfo=MARKET_TZ), datetime(2024, 2, 20, tzinfo=MARKET_TZ)
+
+    assert window_symbols(history, start, end, exclude={"SHV", "SPY"}) == ["AAA", "BBB"]
+    assert window_symbols(history, start, end, exclude=()) == ["AAA", "BBB", "SHV", "SPY"]
+
+
+def test_month_universe_excludes_and_keeps_the_order() -> None:
+    assert month_universe(_two_month_history(), date(2024, 2, 9), exclude=["SPY"]) == ["BBB", "AAA"]
+
+
+def test_month_universe_missing_month_is_fatal() -> None:
+    with pytest.raises(FatalStrategyError, match="2024-03"):
+        month_universe(_two_month_history(), date(2024, 3, 4), exclude=())

@@ -17,11 +17,10 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.strategies.bull_bear.book import build_book
-from trading_agent_framework.strategies.bull_bear.cooldown import advance_cooldowns
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.fundamentals import unavailable_fundamentals
@@ -30,18 +29,22 @@ from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, 
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
 from trading_agent_framework.strategies.bull_bear.sizing import equal_weights
-from trading_agent_framework.strategies.bull_bear.state import BullBearState, ReviewLog, StateStore
+from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
+from trading_agent_framework.strategies.common.cooldowns import advance_cooldowns
+from trading_agent_framework.strategies.common.pipeline import AgentLike as CommonAgentLike
+from trading_agent_framework.strategies.common.pipeline import ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
-from trading_agent_framework.strategies.common.scoring import MomentumRow, rank, score_stock
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.scoring import MomentumRow, RankedRow, rank, score_stock
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, AgentLoopError, BacktestError, BrokerError
+from trading_agent_framework.utils.errors import AgentError, AgentLoopError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
 
 
-class AgentLike(Protocol):
+class AgentLike(CommonAgentLike, Protocol):
     def run(
         self,
         task_prompt: str,
@@ -60,15 +63,7 @@ class AgentLookup(Protocol):
     def __getitem__(self, name: str, /) -> AgentLike: ...
 
 
-class ReviewAbandoned(Exception):
-    """A stage could not produce what the review needs; the review ends with nothing traded."""
-
-    def __init__(self, stage: str, message: str) -> None:
-        super().__init__(message)
-        self.stage = stage
-
-
-class AgentLooped(ReviewAbandoned):
+class AgentLooped(StageAbandoned):
     """An agent run used up its step limit: raised at once, with no forced retry. The review is abandoned, except for the researcher, whose stock only loses its note."""
 
 
@@ -80,13 +75,10 @@ class _Pending:
     sold: list[str]  # the held stocks the judge put out
 
 
-@dataclass(frozen=True, slots=True)
-class ReviewOutcome:
-    completed: bool
-    abandoned_streak: int  # abandoned reviews in a row after this one (0 after a completed review)
+class BullBearPipeline(ReviewPipeline[BullBearState]):
+    LOG_PREFIX: ClassVar[str] = "[bull_bear] "
+    _agents: AgentLookup  # the narrower lookup: its agents also take `max_steps`
 
-
-class ReviewPipeline:
     def __init__(
         self,
         *,
@@ -95,7 +87,7 @@ class ReviewPipeline:
         agents: AgentLookup,
         recorder: HandoffRecorder,
         state: StateStore,
-        review_log: ReviewLog,
+        log: RunLog,
         rebalancer: Rebalancer,
         universe_on: Callable[[date], Sequence[str]],
         bars: DailyBars,
@@ -103,12 +95,8 @@ class ReviewPipeline:
         fundamentals_of: Callable[[str, datetime], Mapping[str, Any]],
         momentum: Mapping[str, Any],
     ) -> None:
-        self._strategy = strategy
+        super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
-        self._agents = agents
-        self._recorder = recorder
-        self._state = state
-        self._log = review_log
         self._rebalancer = rebalancer
         self._universe_on = universe_on  # the stocks to rank on a market date: a constant list in paper/live, the month's list in a backtest
         self._bars = bars
@@ -137,24 +125,17 @@ class ReviewPipeline:
 
     # --- one review --------------------------------------------------------------------------------
 
-    def run(self) -> ReviewOutcome:
-        state = self._state.load()
-        now = self._now()
-        record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
+    def _run(self, now: datetime, state: BullBearState, record: dict[str, Any]) -> RunOutcome:
+        self._review(now, record, state)
+        return RunOutcome(completed=True, abandoned_streak=0)
+
+    def _executing(self) -> bool:
+        return self._stage == "execution"
+
+    def _on_abandoned(self, state: BullBearState, streak: int, stage: str) -> tuple[BullBearState, dict[str, Any]]:
         extra: dict[str, Any] = {}
-        try:
-            self._review(now, record, state)
-        except ReviewAbandoned as exc:
-            stage, error = exc.stage, exc
-        except (BrokerError, BacktestError) as exc:
-            # A broker or data failure anywhere in the review (ConfigurationError is not one: it propagates).
-            stage, error = ("execution" if self._stage == "execution" else "broker"), exc
-            if stage == "execution":
-                extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
-        else:
-            return ReviewOutcome(completed=True, abandoned_streak=0)
-        streak = state.abandoned_streak + 1
-        self._strategy.log_error(f"[bull_bear] review abandoned at the {stage} stage (streak {streak}): {error}")
+        if stage == "execution":
+            extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
         if stage == "execution" and self._pending is not None:
             # The judge decided and orders may be out: remember its verdicts and the cooldown of each sell actually placed,
             # so a stock sold today is not bought back next week. Running cooldowns are not counted down and the day stays open.
@@ -165,9 +146,7 @@ class ReviewPipeline:
             saved = replace(state, abandoned_streak=streak, verdicts={**state.verdicts, **self._pending.decided}, cooldowns={**state.cooldowns, **{symbol: length for symbol in started}})
         else:
             saved = replace(state, abandoned_streak=streak)
-        self._state.save(saved)
-        self._log.append({**record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
-        return ReviewOutcome(completed=False, abandoned_streak=streak)
+        return saved, extra
 
     def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
         params, strategy = self._params, self._strategy
@@ -179,31 +158,7 @@ class ReviewPipeline:
 
         # 1. Data and ranking.
         holdings = self._rebalancer.holdings()
-        universe = list(self._universe_on(now.date()))
-        try:
-            series = self._bars.load(universe, holdings)
-        except DataUnavailable as exc:
-            raise ReviewAbandoned("data", str(exc)) from exc
-        held_now = set(holdings)
-        max_volatility = self._momentum["max_volatility"]
-        rows: list[MomentumRow] = []
-        for symbol in universe:
-            if symbol not in series:
-                continue
-            daily = series[symbol]
-            closes, volumes = daily.closes, daily.volumes
-            if symbol in held_now:
-                # A holding: every filter but max_volatility. A volatility spike after a crash must not force it out
-                # near its low; at or below the cap this is the very row the full filters would give.
-                row = score_stock(symbol, closes, volumes, self._holding_momentum, traded_closes=daily.traded_closes, traded_volumes=daily.traded_volumes)
-                if row is not None and row.volatility > max_volatility:
-                    strategy.log_info(f"[bull_bear] {symbol} is held at a volatility of {row.volatility:.0%}, above max_volatility ({max_volatility:.0%}): kept in the ranking")
-            else:
-                # A possible new entry: cross_momentum's filters in full, max_volatility included.
-                row = score_stock(symbol, closes, volumes, self._momentum, traded_closes=daily.traded_closes, traded_volumes=daily.traded_volumes)
-            if row is not None:
-                rows.append(row)
-        ranked = rank(rows)
+        ranked = self._rank(now, holdings)
 
         # 2. The debate set, and the holdings code sells without asking the agents.
         debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state.cooldowns)
@@ -219,84 +174,17 @@ class ReviewPipeline:
             f"forced exits: {', '.join(f'{e.symbol} ({e.reason})' for e in debate.forced_exits) or 'none'}"
         )
         if not symbols:
-            raise ReviewAbandoned("data", "no stock to debate")
+            raise StageAbandoned("data", "no stock to debate")
 
         # 3. Fact sheet.
-        now = strategy.clock.now()
-        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), fundamentals=self._fundamentals(stock.symbol, now)) for stock in debate.stocks}
+        as_of = strategy.clock.now()
+        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), fundamentals=self._fundamentals(stock.symbol, as_of)) for stock in debate.stocks}
 
         # 4. Researcher: one short run per stock, so one failure costs one note, not the review.
-        notes: dict[str, str] = {}
-        trimmed: list[str] = []
-        for symbol in symbols:
-            self._recorder.expect_note(symbol)
-            try:
-                self._run_stage(
-                    "researcher",
-                    "submit_note",
-                    researcher_task(symbol, params.note_max_chars),
-                    {"current_datetime": moment, "fact_sheet": sheets[symbol]},
-                    tool_budget=params.research_tool_budget,
-                    skip_retry=lambda: self._recorder.refused_note is not None,  # a note refused for length is kept (trimmed) below, not rewritten from the fact sheet alone
-                )
-            except ReviewAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
-                refused = self._recorder.refused_note
-                if refused is None:
-                    strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
-                    notes[symbol] = UNAVAILABLE_NOTE
-                    continue
-                # The last note refused for length still carries the research: keep it, cut at a sentence, never reworded.
-                kept = trim_note(refused, max_chars=params.note_hard_max_chars, min_chars=params.note_max_chars // 2)
-                strategy.log_warning(f"[researcher] note for {symbol} trimmed from {len(refused)} to {len(kept)} characters: the last refused note is kept with its research")
-                strategy.log_info(f"[researcher] {symbol}: {kept}")
-                notes[symbol] = kept
-                trimmed.append(symbol)
-                continue
-            note: Note = self._recorder.submission
-            notes[symbol] = note.note
-        failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
-        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed, "trimmed": trimmed}
-        evidence = [{"fact_sheet": sheets[symbol], "note": notes[symbol]} for symbol in symbols]
+        notes = self._research_notes(symbols, sheets, moment, record)
 
-        # 5. Bull, then bear: the same evidence; neither sees the other's case.
-        limits = {"argument_max_chars": params.argument_max_chars}
-        self._recorder.expect_bull(symbols)
-        self._run_stage("bull", "submit_bull_case", bull_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
-        bull: dict[str, BullCase] = {case.symbol: case for case in self._recorder.submission}
-        self._recorder.expect_bear(symbols)
-        self._run_stage("bear", "submit_bear_case", bear_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
-        bear: dict[str, BearCase] = {case.symbol: case for case in self._recorder.submission}
-        record.update(bull_conviction=dict(Counter(case.conviction for case in bull.values())), bear_risk=dict(Counter(case.risk for case in bear.values())))
-        for symbol in symbols:
-            strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
-
-        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
-        previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
-        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
-
-        context = {
-            "current_datetime": moment,
-            "stocks": [
-                {
-                    "fact_sheet": sheets[symbol],
-                    "note": notes[symbol],
-                    "bull": {"conviction": bull[symbol].conviction, "argument": bull[symbol].argument},
-                    "bear": {"risk": bear[symbol].risk, "concern": bear[symbol].concern, "argument": bear[symbol].argument},
-                    **({"previous_verdict": previous[symbol]} if symbol in previous else {}),
-                }
-                for symbol in symbols
-            ],
-            "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
-        }
-        judge_calls: list[ToolCallRecord] = []
-        try:
-            self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget, calls_out=judge_calls)
-        finally:
-            record["memory"] = _memory_record(judge_calls)  # lessons may be stored even when the stage then abandons the review
-        verdicts: Verdicts = self._recorder.submission
-        outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
-        ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
-        strategy.log_info(f"[judge] in: {ins or 'none'}; out: {outs or 'none'}")
+        # 5-6. Bull, then bear, then the judge.
+        bull, bear, verdicts, previous = self._debate_and_judge(symbols, sheets, notes, state, moment, record)
 
         # 7. The book: every stock the judge put in, in rank order.
         book = build_book(debate, verdicts.chosen)
@@ -338,6 +226,113 @@ class ReviewPipeline:
             }
         )
 
+    def _rank(self, now: datetime, holdings: Sequence[str]) -> list[RankedRow]:
+        """Score the universe (the bars come from `self._bars`) and rank it; a holding keeps every filter but max_volatility."""
+        universe = list(self._universe_on(now.date()))
+        try:
+            series = self._bars.load(universe, holdings)
+        except DataUnavailable as exc:
+            raise StageAbandoned("data", str(exc)) from exc
+        held_now = set(holdings)
+        max_volatility = self._momentum["max_volatility"]
+        rows: list[MomentumRow] = []
+        for symbol in universe:
+            if symbol not in series:
+                continue
+            daily = series[symbol]
+            closes, volumes = daily.closes, daily.volumes
+            held = symbol in held_now
+            # A holding: every filter but max_volatility. A volatility spike after a crash must not force it out
+            # near its low; at or below the cap this is the very row the full filters would give. A possible new
+            # entry: cross_momentum's filters in full, max_volatility included.
+            row = score_stock(symbol, closes, volumes, self._holding_momentum if held else self._momentum, traded_closes=daily.traded_closes, traded_volumes=daily.traded_volumes)
+            if held and row is not None and row.volatility > max_volatility:
+                self._strategy.log_info(f"[bull_bear] {symbol} is held at a volatility of {row.volatility:.0%}, above max_volatility ({max_volatility:.0%}): kept in the ranking")
+            if row is not None:
+                rows.append(row)
+        return rank(rows)
+
+    def _research_notes(self, symbols: Sequence[str], sheets: Mapping[str, Any], moment: str, record: dict[str, Any]) -> dict[str, str]:
+        """The researcher stage: one note per stock (`UNAVAILABLE_NOTE` where its run failed); `notes` goes into the record."""
+        params, strategy = self._params, self._strategy
+        notes: dict[str, str] = {}
+        trimmed: list[str] = []
+        for symbol in symbols:
+            self._recorder.expect_note(symbol)
+            try:
+                self._run_stage(
+                    "researcher",
+                    "submit_note",
+                    researcher_task(symbol, params.note_max_chars),
+                    {"current_datetime": moment, "fact_sheet": sheets[symbol]},
+                    tool_budget=params.research_tool_budget,
+                    skip_retry=lambda: self._recorder.refused_note is not None,  # a note refused for length is kept (trimmed) below, not rewritten from the fact sheet alone
+                )
+            except StageAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
+                refused = self._recorder.refused_note
+                if refused is None:
+                    strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
+                    notes[symbol] = UNAVAILABLE_NOTE
+                    continue
+                # The last note refused for length still carries the research: keep it, cut at a sentence, never reworded.
+                kept = trim_note(refused, max_chars=params.note_hard_max_chars, min_chars=params.note_max_chars // 2)
+                strategy.log_warning(f"[researcher] note for {symbol} trimmed from {len(refused)} to {len(kept)} characters: the last refused note is kept with its research")
+                strategy.log_info(f"[researcher] {symbol}: {kept}")
+                notes[symbol] = kept
+                trimmed.append(symbol)
+                continue
+            note: Note = self._recorder.submission
+            notes[symbol] = note.note
+        failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
+        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed, "trimmed": trimmed}
+        return notes
+
+    def _debate_and_judge(
+        self, symbols: Sequence[str], sheets: Mapping[str, Any], notes: Mapping[str, str], state: BullBearState, moment: str, record: dict[str, Any]
+    ) -> tuple[dict[str, BullCase], dict[str, BearCase], Verdicts, dict[str, dict[str, str]]]:
+        """The bull and the bear (same evidence, neither sees the other's case), then the judge: (bull, bear, verdicts, previous verdicts)."""
+        params, strategy = self._params, self._strategy
+        evidence = [{"fact_sheet": sheets[symbol], "note": notes[symbol]} for symbol in symbols]
+        limits = {"argument_max_chars": params.argument_max_chars}
+        self._recorder.expect_bull(symbols)
+        self._run_stage("bull", "submit_bull_case", bull_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
+        bull: dict[str, BullCase] = {case.symbol: case for case in self._recorder.submission}
+        self._recorder.expect_bear(symbols)
+        self._run_stage("bear", "submit_bear_case", bear_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
+        bear: dict[str, BearCase] = {case.symbol: case for case in self._recorder.submission}
+        record.update(bull_conviction=dict(Counter(case.conviction for case in bull.values())), bear_risk=dict(Counter(case.risk for case in bear.values())))
+        for symbol in symbols:
+            strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
+
+        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
+        previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
+        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
+
+        context = {
+            "current_datetime": moment,
+            "stocks": [
+                {
+                    "fact_sheet": sheets[symbol],
+                    "note": notes[symbol],
+                    "bull": {"conviction": bull[symbol].conviction, "argument": bull[symbol].argument},
+                    "bear": {"risk": bear[symbol].risk, "concern": bear[symbol].concern, "argument": bear[symbol].argument},
+                    **({"previous_verdict": previous[symbol]} if symbol in previous else {}),
+                }
+                for symbol in symbols
+            ],
+            "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
+        }
+        judge_calls: list[ToolCallRecord] = []
+        try:
+            self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget, calls_out=judge_calls)
+        finally:
+            record["memory"] = _memory_record(judge_calls)  # lessons may be stored even when the stage then abandons the review
+        verdicts: Verdicts = self._recorder.submission
+        outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
+        ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
+        strategy.log_info(f"[judge] in: {ins or 'none'}; out: {outs or 'none'}")
+        return bull, bear, verdicts, previous
+
     # --- helpers -----------------------------------------------------------------------------------
 
     def _run_stage(
@@ -368,7 +363,7 @@ class ReviewPipeline:
                 (`AgentError`, `AgentLoopError`) returns no result, so its calls are not added. The judge reads it
                 in a `finally` to build the `memory` record in `reviews.jsonl` (`_memory_record`), so lessons it
                 stored are logged even when the review is abandoned.
-            skip_retry: called after a first attempt that recorded nothing; `True` raises `ReviewAbandoned` at once,
+            skip_retry: called after a first attempt that recorded nothing; `True` raises `StageAbandoned` at once,
                 with no forced retry (the researcher, when its note was refused for length: the caller keeps that note).
 
         Returns:
@@ -376,7 +371,7 @@ class ReviewPipeline:
 
         Raises:
             AgentLooped: the run hit the step limit (`AgentLoopError`); no retry.
-            ReviewAbandoned: neither attempt recorded a valid `tool` call, or the first attempt alone did when `skip_retry()` is true.
+            StageAbandoned: neither attempt recorded a valid `tool` call, or the first attempt alone did when `skip_retry()` is true.
         """
         agent = self._agents[agent_name]
         # Both attempts share one run_id, so the first run and its forced retry are recorded under the same id.
@@ -418,10 +413,10 @@ class ReviewPipeline:
             # The retry prompt names the most specific reason: the rejection, else the run's failure, else "no call".
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             if not attempt and skip_retry is not None and skip_retry():
-                raise ReviewAbandoned(agent_name, error)
+                raise StageAbandoned(agent_name, error)
             prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
             self._strategy.log_debug(f"[{agent_name}] retry with prompt: {prompt}")
-        raise ReviewAbandoned(agent_name, error)
+        raise StageAbandoned(agent_name, error)
 
 
 def _stop_detail(result: AgentRunResult) -> str:

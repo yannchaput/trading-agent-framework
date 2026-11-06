@@ -9,12 +9,12 @@ code serves live trading and backtests and is unit-tested on synthetic bars.
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
+import numpy as np
 import pandas as pd
 
 # How a minute bar is timestamped by its source. Live Alpaca bars carry their OPEN time (the 09:30 bar
@@ -127,48 +127,51 @@ def intraday_contexts(
     if df.empty:
         return []
     mos = minute_of_session(df, session_open, bar_stamp)
-    buckets = mos // minutes  # bucket 0 = minutes 0-4 of the session, bucket 1 = 5-9, ...
-    vwaps = vwap_series(df)
-    cumulative = df["volume"].astype(float).cumsum()
+    bucket_of_row = (mos // minutes).to_numpy()  # bucket 0 = minutes 0-4 of the session, bucket 1 = 5-9, ...
+    rows = np.arange(len(df))
+    grouped = pd.DataFrame({"high": df["high"].to_numpy(), "low": df["low"].to_numpy(), "volume": df["volume"].to_numpy(), "row": rows}).groupby(bucket_of_row, sort=True)
+    per_bucket = grouped.agg(high=("high", "max"), low=("low", "min"), volume=("volume", "sum"), first=("row", "first"), last=("row", "last"))
+    buckets = per_bucket.index.to_numpy()
+    first, last = per_bucket["first"].to_numpy(), per_bucket["last"].to_numpy()  # row positions: exact even where a price is NaN
+    # Completeness gate (plan deviation 7). Stop at the first bucket that is still forming, or that closed
+    # less than a minute ago without its last minute bar: live data may simply not have arrived yet.
+    # Later buckets are necessarily not complete either, hence the cut at the first failure.
+    close_offsets = pd.to_timedelta((buckets + 1) * minutes, unit="min")
+    elapsed = pd.Timedelta(now - session_open)
+    has_last_minute = mos.to_numpy()[last] == (buckets + 1) * minutes - 1
+    unfinished = (close_offsets > elapsed) | (~has_last_minute & (elapsed - close_offsets < _MINUTE))
+    complete = int(unfinished.argmax()) if unfinished.any() else len(buckets)
+    buckets, first, last = buckets[:complete], first[:complete], last[:complete]
+    highs = per_bucket["high"].to_numpy()[:complete].astype(float)
+    lows = per_bucket["low"].to_numpy()[:complete].astype(float)
+    volumes = per_bucket["volume"].to_numpy()[:complete].astype(float)
+    opens = df["open"].to_numpy()[first].astype(float)
+    closes = df["close"].to_numpy()[last].astype(float)
+    # Session-level measures are read at the bucket's LAST row, i.e. as of the bar's close.
+    vwaps = vwap_series(df).to_numpy()[last]
+    cumulative = df["volume"].astype(float).cumsum().to_numpy()[last]
+    session_highs = np.maximum.accumulate(highs)
     open_price = float(df["open"].iloc[0])
     bench_closes, bench_open = _benchmark_closes(benchmark_df, session_open, bar_stamp, minutes)
-    contexts: list[BarContext] = []
-    session_high = -math.inf
-    for bucket_value, rows in cast(Any, df.groupby(buckets.to_numpy(), sort=True)):
-        bucket = int(bucket_value)
-        close_time = session_open + timedelta(minutes=(bucket + 1) * minutes)
-        last_minute = (bucket + 1) * minutes - 1
-        label = rows.index[-1]
-        has_last_minute = int(mos.loc[label]) == last_minute
-        # Completeness gate (plan deviation 7). Stop at the first bucket that is still forming, or that
-        # closed less than a minute ago without its last minute bar: live data may simply not have
-        # arrived yet. Later buckets are necessarily not complete either, hence `break`.
-        if close_time > now or (not has_last_minute and now - close_time < timedelta(minutes=1)):
-            break
-        high = float(rows["high"].max())
-        session_high = max(session_high, high)
-        close = float(rows["close"].iloc[-1])
-        bench_return = _benchmark_return(bench_closes, bench_open, bucket)
-        contexts.append(
-            BarContext(
-                time=close_time,
-                open=float(rows["open"].iloc[0]),
-                high=high,
-                low=float(rows["low"].min()),
-                close=close,
-                volume=float(rows["volume"].sum()),
-                # Session-level measures are read at the bucket's LAST row, i.e. as of the bar's close.
-                vwap=float(vwaps.loc[label]),
-                # Beta-adjusted relative strength: the stock's own move once the market's share of it is removed.
-                rs=(close / open_price - 1) - beta * bench_return,
-                # RVOL is measured at the bucket's last minute even if that minute had no trade, so a gap
-                # in today's data does not shift which baseline minute it is compared with.
-                rvol=rvol_at(float(cumulative.loc[label]), last_minute, baseline),
-                session_open=open_price,
-                session_high=session_high,
-            )
+    return [
+        BarContext(
+            time=session_open + timedelta(minutes=(int(bucket) + 1) * minutes),
+            open=float(opens[i]),
+            high=float(highs[i]),
+            low=float(lows[i]),
+            close=float(closes[i]),
+            volume=float(volumes[i]),
+            vwap=float(vwaps[i]),
+            # Beta-adjusted relative strength: the stock's own move once the market's share of it is removed.
+            rs=(float(closes[i]) / open_price - 1) - beta * _benchmark_return(bench_closes, bench_open, int(bucket)),
+            # RVOL is measured at the bucket's last minute even if that minute had no trade, so a gap
+            # in today's data does not shift which baseline minute it is compared with.
+            rvol=rvol_at(float(cumulative[i]), (int(bucket) + 1) * minutes - 1, baseline),
+            session_open=open_price,
+            session_high=float(session_highs[i]),
         )
-    return contexts
+        for i, bucket in enumerate(buckets)
+    ]
 
 
 def _benchmark_closes(benchmark_df: pd.DataFrame, session_open: datetime, bar_stamp: BarStamp, minutes: int) -> tuple[pd.Series, float | None]:

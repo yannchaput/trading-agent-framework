@@ -21,10 +21,12 @@ from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
-from trading_agent_framework.strategies.bill_ackman.pipeline import ReviewOutcome, ReviewPipeline
+from trading_agent_framework.strategies.bill_ackman.pipeline import AckmanPipeline
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
-from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore
+from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore
+from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
+from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, ConfigurationError, FundamentalsError
 
 Step = Callable[[dict[str, Callable[..., dict[str, Any]]], Any], None]
@@ -113,7 +115,7 @@ def crashes(message: str) -> Step:
 
 @dataclass
 class Harness:
-    pipeline: ReviewPipeline
+    pipeline: AckmanPipeline
     broker: FakeBroker
     screen: FakeScreen
     researcher: FakeAgent
@@ -123,7 +125,7 @@ class Harness:
     log_path: Path
     orders: list[tuple[str, str, float]] = field(default_factory=list)
 
-    def run(self) -> ReviewOutcome:
+    def run(self) -> RunOutcome:
         self.broker.submitted.clear()
         outcome = self.pipeline.run()
         self.orders = [(order.asset.symbol, order.side.value, float(order.quantity)) for order in self.broker.submitted]
@@ -159,14 +161,14 @@ def _harness(
     for agent in agents.values():
         agent.tools = submit_tools(recorder)
     log_path = tmp_path / "logs" / "reviews.jsonl"
-    pipeline = ReviewPipeline(
+    pipeline = AckmanPipeline(
         strategy=strategy,
         params=params,
         screen=screen,
         agents=agents,
         recorder=recorder,
         state=store,
-        review_log=ReviewLog(log_path),
+        log=RunLog(log_path),
         rebalancer=Rebalancer(strategy, params),
         universe=["AAA", "BBB", "CCC"],
     )
@@ -184,7 +186,7 @@ def test_a_review_runs_the_three_agents_in_order_and_places_the_orders(tmp_path:
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=True, abandoned_streak=0)
+    assert outcome == RunOutcome(completed=True, abandoned_streak=0)
     # 30% in AAA, the rest but the 2% buffer parked (a floating-point weight of 0.68 floors to 67.999999 shares)
     assert h.orders[0] == ("AAA", "buy", 60.0)
     assert h.orders[1][:2] == ("SHV", "buy") and h.orders[1][2] == pytest.approx(68.0, abs=1e-5)
@@ -603,7 +605,7 @@ def test_a_stage_with_no_valid_submission_after_the_retry_abandons_the_review_an
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=2)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=2)
     assert h.orders == []
     assert h.short_seller.calls == [] and h.trader.calls == []
     assert h.store.load() == ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, last_ranking=["OLD"], abandoned_streak=2)
@@ -640,7 +642,7 @@ def test_a_screen_outage_abandons_the_review_before_any_agent_runs(tmp_path: Pat
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=1)
     assert h.researcher.calls == []
     assert h.log_lines()[0]["stage"] == "screen"
 
@@ -779,7 +781,7 @@ def test_a_broker_failure_before_the_rebalance_abandons_the_review(tmp_path: Pat
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=1)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=1)
     assert h.orders == []
     assert h.store.load().abandoned_streak == 1
     (line,) = h.log_lines()
@@ -797,7 +799,7 @@ def test_a_failure_after_a_sell_went_out_abandons_the_review_and_logs_the_orders
 
     outcome = h.run()
 
-    assert outcome == ReviewOutcome(completed=False, abandoned_streak=2)
+    assert outcome == RunOutcome(completed=False, abandoned_streak=2)
     assert h.orders == [("HHH", "sell", 100.0)]
     assert h.store.load() == ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=2)  # the counters are not saved
     (line,) = h.log_lines()
@@ -925,3 +927,59 @@ def test_a_cooling_holding_is_judged_but_not_allowed_and_is_sold(tmp_path: Path)
     assert [entry["symbol"] for entry in h.trader.calls[0]["context"]["allowed"]] == ["AAA"]
     assert h.trader.calls[0]["context"]["required"] == []  # cooling: not allowed, so not required
     assert ("HHH", "sell", 100.0) in h.orders
+
+
+# --- the abandoned record, pinned across the pipeline refactor -------------------------------------------------------
+
+
+def _abandon_scenario(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Harness:
+    before = ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=1)
+    if name == "stage":
+        h = _harness(tmp_path, FakeScreen([_candidate("AAA")]), state=before)
+        h.researcher.steps = [does_nothing, does_nothing]
+    elif name == "broker":
+        h = _harness(tmp_path, FakeScreen([_candidate("AAA")]), state=before)
+        _account_fails_on_call(h, monkeypatch, 1, BrokerError("down"))
+    else:
+        h = _harness(tmp_path, FakeScreen([_candidate("AAA")], holdings=[_candidate("HHH")]), held={"HHH": 100}, state=before)
+        h.researcher.steps = [ranks("AAA")]
+        h.short_seller.steps = [judges(AAA="survive", HHH="fail")]
+        h.trader.steps = [holds(AAA=0.3)]
+        _account_fails_on_call(h, monkeypatch, 3, BacktestError("data gone"))
+    return h
+
+
+@pytest.mark.parametrize("name", ["stage", "broker", "execution"])
+def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    h = _abandon_scenario(name, tmp_path, monkeypatch)
+
+    with caplog.at_level(logging.ERROR):
+        h.run()
+
+    (message,) = [record.getMessage() for record in caplog.records if "abandoned" in record.getMessage()]
+    (line,) = [json.loads(text, object_pairs_hook=lambda pairs: pairs) for text in h.log_path.read_text(encoding="utf-8").splitlines()]
+    prefix = "[bill_ackman] \x1b[31mreview abandoned at the "
+    cands = [("date", "2026-09-14"), ("run_id", None), ("abandoned", True), ("candidates", [[("symbol", "AAA"), ("rank", 1), ("fcf_yield", 0.05)]])]
+    expected = {
+        "stage": (
+            prefix + "researcher stage (streak 2): the agent ended without calling submit_ranking\x1b[0m",
+            [*cands, ("holdings", []), ("stage", "researcher"), ("error", "the agent ended without calling submit_ranking"), ("abandoned_streak", 2)],
+        ),
+        "broker": (
+            prefix + "broker stage (streak 2): down\x1b[0m",
+            [("date", "2026-09-14"), ("run_id", None), ("abandoned", True), ("stage", "broker"), ("error", "down"), ("abandoned_streak", 2)],
+        ),
+        "execution": (
+            prefix + "execution stage (streak 2): data gone\x1b[0m",
+            [
+                *cands,
+                ("holdings", ["HHH"]),
+                ("stage", "execution"),
+                ("error", "data gone"),
+                ("abandoned_streak", 2),
+                ("orders", [[("symbol", "HHH"), ("side", "sell"), ("quantity", 100.0), ("confirmed", True)]]),
+            ],
+        ),
+    }
+    assert (message, line) == expected[name]
+    assert h.store.load() == ReviewState(last_review="2026-09-11", fail_counts={"HHH": 1}, abandoned_streak=2)

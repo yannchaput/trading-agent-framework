@@ -10,7 +10,8 @@ from tests.strategies.earnings_drift.drift_helpers import RIG_DATES, DeskRig
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.earnings_drift.book import DriftState, JsonlLog, TradeState
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.earnings_drift.book import DriftState, TradeState
 from trading_agent_framework.strategies.earnings_drift.desk import Desk
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.utils.errors import BrokerError
@@ -29,7 +30,7 @@ def test_an_empty_date_list_keeps_the_known_dates_so_max_hold_still_fires(tmp_pa
 
 def test_a_first_session_with_no_dates_knows_today(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path)
-    fresh = Desk(rig.strategy, DriftParams(), DriftState(), trade_log=JsonlLog(lambda: None), decision_log=JsonlLog(lambda: None))
+    fresh = Desk(rig.strategy, DriftParams(), DriftState(), trade_log=RunLog(lambda: None), decision_log=RunLog(lambda: None))
     fresh.begin_session(RIG_DATES[0], [], [], {})
     assert fresh._trading_dates == [RIG_DATES[0]]
 

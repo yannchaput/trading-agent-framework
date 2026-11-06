@@ -283,9 +283,8 @@ def _indicator(symbol, closes):
         "ret_12_1m": 0.2,
         "ret_6_1m": 0.1,
         "ret_3m": 0.05,
-        "atr": None,
         "closes": closes,
-        "close_series": pd.Series(closes),
+        "frame": pd.DataFrame({"close": closes}, index=pd.date_range("2025-01-01", periods=len(closes), freq="D", tz="America/New_York")),
     }
 
 

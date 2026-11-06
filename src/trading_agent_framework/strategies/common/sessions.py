@@ -43,5 +43,5 @@ def completed_bars(df: pd.DataFrame, today: date) -> pd.DataFrame:
     The strategy only iterates between its start time and the close, so a bar dated today is always partial
     there. In backtests the data gate already hides it and this is a no-op.
     """
-    dates = [ts.date() for ts in pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ)]
-    return df.loc[[d != today for d in dates]]
+    days = pd.DatetimeIndex(df.index).tz_convert(MARKET_TZ).normalize()
+    return df.loc[days != pd.Timestamp(today, tz=MARKET_TZ)]

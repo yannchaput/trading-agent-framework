@@ -4,8 +4,9 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffError, HandoffRecorder, Note, Verdict, submit_tools, trim_note, validate_verdicts
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, trim_note, validate_verdicts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
+from trading_agent_framework.strategies.common.handoff import HandoffError
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 
@@ -359,3 +360,12 @@ def test_the_recorder_names_the_stock_whose_note_is_expected_only_during_the_not
 
     recorder.expect_bull(["AAA", "BBB"])
     assert recorder.note_symbol is None
+
+
+def test_guard_messages_unchanged() -> None:
+    recorder, _ = _tools()
+    for stage, tool in (("note", "submit_note"), ("bull", "submit_bull_case"), ("bear", "submit_bear_case"), ("verdict", "submit_verdicts")):
+        assert recorder.submit(stage, "AAA", "x") == {"error": f"{tool} is not expected at this point of the review"}
+    recorder.expect_verdicts([], max_in=1)
+    assert recorder.submit("verdict", []) == {"status": "recorded"}
+    assert recorder.submit("verdict", []) == {"error": "already recorded for this stage"}

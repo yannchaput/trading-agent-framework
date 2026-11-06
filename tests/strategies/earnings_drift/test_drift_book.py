@@ -9,16 +9,14 @@ from pathlib import Path
 
 import pytest
 
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.earnings_drift.book import (
     STATE_VERSION,
     DriftState,
-    JsonlLog,
     StateStore,
     Trade,
     TradeState,
     sessions_held,
-    state_path,
 )
 
 
@@ -43,14 +41,8 @@ def test_a_trade_round_trips_through_json() -> None:
     assert Trade.from_json(json.loads(json.dumps(trade.to_json()))) == trade
 
 
-def test_the_state_file_is_named_after_the_strategy(tmp_path: Path) -> None:
-    assert state_path(tmp_path, TradingMode.LIVE, name="earnings_drift") == tmp_path / "data" / "earnings_drift_state_live.json"
-    assert state_path(tmp_path, TradingMode.PAPER, name="earnings_drift_baseline") == tmp_path / "data" / "earnings_drift_baseline_state_paper.json"
-
-
 def test_state_round_trips_and_is_versioned(tmp_path: Path) -> None:
-    path = state_path(tmp_path, TradingMode.PAPER)
-    assert path == tmp_path / "data" / "earnings_drift_state_paper.json"
+    path = tmp_path / "data" / "earnings_drift_state_paper.json"
     store = StateStore(path)
     state = DriftState(trades={"AAA": _trade()}, agent_failure_streak=2, hollow_scan_streak=1, traded_symbols={"AAA", "BBB"})
     store.save(state)
@@ -78,11 +70,11 @@ def test_a_missing_file_is_an_empty_state_and_wipe_is_safe(tmp_path: Path) -> No
 
 def test_jsonl_log_appends_and_does_nothing_without_a_path(tmp_path: Path) -> None:
     path = tmp_path / "run" / "trades.jsonl"
-    log = JsonlLog(lambda: path)
+    log = RunLog(lambda: path)
     log.append({"a": D("1.5")})
     log.append({"b": 2})
     assert [json.loads(line) for line in path.read_text().splitlines()] == [{"a": "1.5"}, {"b": 2}]
-    JsonlLog(lambda: None).append({"ignored": True})
+    RunLog(lambda: None).append({"ignored": True})
 
 
 def test_sessions_held_counts_both_ends() -> None:
@@ -122,8 +114,8 @@ def test_save_that_cannot_serialise_warns_and_leaves_no_temporary_file(tmp_path:
 def test_jsonl_log_append_of_an_unserialisable_record_warns_and_does_not_raise(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     path = tmp_path / "trades.jsonl"
     with caplog.at_level(logging.WARNING):
-        JsonlLog(lambda: path).append({("a", "b"): 1})
-    assert "could not append" in caplog.text
+        RunLog(lambda: path).append({("a", "b"): 1})
+    assert "could not be written" in caplog.text
     assert not path.exists() or path.read_text() == ""
 
 
@@ -175,3 +167,17 @@ def test_a_missing_backstop_flag_is_false(tmp_path: Path) -> None:
     data = _trade().to_json()
     del data["backstop"]
     assert Trade.from_json(data).backstop is False
+
+
+def test_old_files_load_unchanged(tmp_path: Path) -> None:
+    path = tmp_path / "state.json"
+    path.write_text(
+        '{"version": 1, "trades": {"AAA": {"symbol": "AAA", "entry_order_id": "e1", "trail_percent": "8.0", "thesis": "beat and raise", '
+        '"accession_number": "acc", "state": "open", "quantity": "11", "entry_price": "109.5", "opened_on": "2026-09-02", "stop_order_id": "s1", '
+        '"exit_order_id": null, "exit_reason": null, "backstop": false, "reaction_low": "105"}}, '
+        '"agent_failure_streak": 2, "hollow_scan_streak": 1, "traded_symbols": ["AAA", "BBB"]}'
+    )
+
+    state = StateStore(path).load()
+
+    assert state == DriftState(trades={"AAA": _trade()}, agent_failure_streak=2, hollow_scan_streak=1, traded_symbols={"AAA", "BBB"})

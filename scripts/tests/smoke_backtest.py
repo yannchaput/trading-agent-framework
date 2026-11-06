@@ -62,6 +62,7 @@ def main() -> int:
         start = end - timedelta(days=120)
         print(f"Running BuyAndHold backtest from {start.date()} to {end.date()}...")
 
+        # the base run_backtesting now defaults to 5 bps slippage (Strategy.backtesting_slippage)
         result = strategy.run_backtesting(start=start, end=end)
 
         print(f"\nRun directory: {result.run_dir}")

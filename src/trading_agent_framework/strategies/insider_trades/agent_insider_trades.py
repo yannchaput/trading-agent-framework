@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import os
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
-from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.agents.tools import only
@@ -33,7 +31,7 @@ from trading_agent_framework.strategies.insider_trades.handoff import InsiderRec
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
 from trading_agent_framework.strategies.insider_trades.pipeline import AGENT_RESEARCHER, AGENT_TRADER, AGENT_TRADER_RETRY, InsiderPipeline, SourceLike
 from trading_agent_framework.strategies.insider_trades.prompts import RESEARCHER_TASK, TRADER_RETRY_TASK, TRADER_TASK, researcher_system, retry_prompt, trader_retry_system, trader_system
-from trading_agent_framework.strategies.insider_trades.state import StateStore, state_path
+from trading_agent_framework.strategies.insider_trades.state import StateStore
 from trading_agent_framework.strategies.insider_trades.tools import insider_research_tools
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
@@ -50,7 +48,6 @@ class InsiderTradesStrategy(Strategy):
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,
-        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -75,9 +72,7 @@ class InsiderTradesStrategy(Strategy):
     def initialize(self) -> None:
         """Build the source, the agents, the desk and the pipeline (once per run). Nothing here reads the filings: the pipeline loads them first."""
         params = self.settings
-        state_store = StateStore(state_path(self.project_root, self.trading_mode))
-        if self.is_backtesting:
-            state_store.wipe()  # one run's history must not leak into the next; paper and live state is never wiped
+        state_store = StateStore(self.state_file("insider_trades"), fresh=self.is_backtesting)  # one run's history must not leak into the next; paper and live state is never wiped
         try:
             source = self._source if self._source is not None else self._build_source()
             facts = InsiderFacts(self, source, params)
@@ -116,7 +111,7 @@ class InsiderTradesStrategy(Strategy):
             agents=self.agents,
             recorder=recorder,
             state=state_store,
-            run_log=RunLog(self._run_log_path()),
+            log=RunLog(self.run_file("runs.jsonl")),
             desk=desk,
             load_window=self.load_window,
             researcher_task=RESEARCHER_TASK,
@@ -167,12 +162,6 @@ class InsiderTradesStrategy(Strategy):
         if not outcome.completed and self.is_backtesting and outcome.abandoned_streak >= self.settings.max_consecutive_abandoned:
             raise FatalStrategyError(f"{outcome.abandoned_streak} runs abandoned in a row, aborting the backtest (see the log for the stage and the error)")
 
-    def _run_log_path(self) -> Path | None:
-        """`runs.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
-        if self.run_id is None:
-            return None
-        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / "runs.jsonl"
-
     # --- backtesting -------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any):
@@ -189,28 +178,20 @@ class InsiderTradesStrategy(Strategy):
         """
         symbols = list(dict.fromkeys([*self.settings.watchlist, self.parameters["benchmark_symbol"]]))
         defaults: dict[str, Any] = dict(
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            budget=Decimal(str(self.parameters["budget"])),
-            slippage=self.parameters["slippage"],
             data_source=YahooBacktestData,
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],
-            benchmark=self.parameters["benchmark_symbol"],
             timestep="day",
-            warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=True,
         )
-        # An override replaces a default whole: `start=` or `end=` here wins over the class window, and the
-        # merged `arguments` is what the base class receives, so the simulated window and the cutoffs below agree.
-        arguments = {**defaults, **overrides}
         # `start` anchors the Form 4 history (`load_window`): filings are read back from the year that covers
         # `signal_window_days` before it. A non-datetime start leaves this None, and `load_window` then asserts.
-        start = arguments["start"]
+        # An override replaces the `parameters` window whole, so the cutoffs below and the simulated window agree.
+        start = overrides.get("start", self.parameters["backtesting_start"])
         self._backtest_start = start if isinstance(start, datetime) else None
         # `end` is the no-look-ahead cutoff for filings (`_run_end`). A bare-midnight end is a date, so the cutoff
         # moves to the next midnight and the filings of the end day are kept.
-        self._backtest_end = _run_end(arguments["end"])
-        return super().run_backtesting(**arguments)
+        self._backtest_end = _run_end(overrides.get("end", self.parameters["backtesting_end"]))
+        return super().run_backtesting(**{**defaults, **overrides})
 
 
 def _run_end(end: Any) -> datetime | None:

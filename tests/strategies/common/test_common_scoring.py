@@ -5,7 +5,7 @@ import statistics
 
 import pytest
 
-from trading_agent_framework.strategies.common.scoring import MomentumRow, RankedRow, momentum_inputs, rank, score_stock
+from trading_agent_framework.strategies.common.scoring import MomentumRow, RankedRow, compute_return_from_prices, momentum_inputs, rank, score_stock
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 
 CLOSES = [100.0 + i for i in range(300)]
@@ -124,3 +124,22 @@ def test_the_dollar_volume_averages_each_sessions_traded_dollars_across_a_split(
     assert inputs is not None
     assert inputs.price == 50.0
     assert inputs.avg_dollar_volume == pytest.approx(30e6)
+
+
+def test_a_12_month_return_compares_the_last_close_with_the_close_a_year_earlier() -> None:
+    closes = [100.0] + [110.0] * 251 + [120.0]  # 253 closes: 252 bars back is the first one
+
+    assert compute_return_from_prices(closes, 252, 0) == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize("closes", [[], [100.0] * 252])
+def test_a_12_month_return_is_none_without_enough_history(closes: list[float]) -> None:
+    assert compute_return_from_prices(closes, 252, 0) is None
+
+
+def test_a_return_is_none_when_the_starting_close_is_not_positive() -> None:
+    assert compute_return_from_prices([0.0] + [10.0] * 252, 252, 0) is None
+
+
+def test_a_return_takes_a_shorter_lookback() -> None:
+    assert compute_return_from_prices([10.0, 11.0, 12.0, 15.0], 3, 0) == pytest.approx(0.5)

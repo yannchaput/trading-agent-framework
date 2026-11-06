@@ -13,7 +13,6 @@ from collections.abc import Sequence
 from datetime import timedelta
 from decimal import Decimal
 from functools import partial
-from pathlib import Path
 from typing import Any
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
@@ -50,7 +49,6 @@ class VwapPullbackStrategy(Strategy):
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 75,  # 70 daily bars for stage 1, plus the RVOL baseline sessions
         "budget": 10000,
-        "slippage": Decimal("0.0005"),
     }
 
     def __init__(
@@ -84,7 +82,7 @@ class VwapPullbackStrategy(Strategy):
 
     def _build_components(self) -> None:
         """Create the desk and the scanner (separate from `initialize` so tests can build them on their own)."""
-        self.desk = Desk(self, self.settings, trade_log=self._trade_log_path)
+        self.desk = Desk(self, self.settings, trade_log=lambda: self.run_file("trades.jsonl"))
         self.scanner = Scanner(self, self.settings, self.universe, benchmark=self.parameters["benchmark_symbol"], preload=self._preload if self.is_backtesting else None)
 
     def before_market_opens(self) -> None:
@@ -138,12 +136,6 @@ class VwapPullbackStrategy(Strategy):
 
     # --- backtesting ---------------------------------------------------------------------
 
-    def _trade_log_path(self) -> Path | None:
-        """`trades.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
-        if self.run_id is None:
-            return None
-        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / "trades.jsonl"
-
     def _preload(self, assets: Sequence[Asset], timestep: str) -> None:
         """Backtests only: batch-load `assets` over the data source's own window before the scanner reads them.
 
@@ -166,12 +158,6 @@ class VwapPullbackStrategy(Strategy):
             # (a 5Y window of minutes for 150 symbols in one fetch was OOM-killed at 58 GB)
             data_source=partial(YearChunkedData, inner=AlpacaBacktestData),
             timestep="minute",
-            slippage=self.parameters["slippage"],
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            benchmark=self.parameters["benchmark_symbol"],
-            budget=Decimal(str(self.parameters["budget"])),
-            warmup_trading_days=self.parameters["warmup_trading_days"],
             agent_telemetry=False,  # no agent runs: nothing to record
         )
         return super().run_backtesting(**{**defaults, **overrides})

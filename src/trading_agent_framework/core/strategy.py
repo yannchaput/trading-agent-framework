@@ -95,11 +95,15 @@ class Strategy:
     # per-instance copy, so the class-level dict is never mutated.
     parameters: dict[str, Any] = {}
 
-    # backtesting defaults (Strategy.run_backtesting()), overridable per call
+    # backtesting defaults (Strategy.run_backtesting()), overridable per call. The call's argument wins, then
+    # `parameters["backtesting_start"|"backtesting_end"|"budget"|"benchmark_symbol"|"slippage"|"warmup_trading_days"]`,
+    # then these. Strategies set their window, budget and warmup in `parameters`; slippage is 5 bps per side unless
+    # a strategy sets `backtesting_slippage` (or a test sets it to 0).
     backtesting_start: datetime | None = None
     backtesting_end: datetime | None = None
     budget: Decimal = Decimal("10000")
     benchmark_symbol: str = "SPY"
+    backtesting_slippage: Decimal = Decimal("0.0005")
 
     # Agent call telemetry (tokens, latency, tool calls per model call) -> `memory/<strategy>/<mode>/llm_stats.sqlite`.
     # Off here for paper/live (opt in with `agent_telemetry = True`); `run_backtesting(agent_telemetry=True)` turns it on per run.
@@ -519,6 +523,16 @@ class Strategy:
         else:
             self.run_backtesting()
 
+    def run_file(self, name: str) -> Path | None:
+        """`<name>` in this run's log directory (`logs/<strategy>/<mode>/<run_id>/`); None outside a runner (no run id), which disables the log."""
+        if self.run_id is None:
+            return None
+        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / name
+
+    def state_file(self, name: str | None = None) -> Path:
+        """`data/<name or strategy>_state_<mode>.json`: the strategy's persisted state, one file per mode."""
+        return self.project_root / "data" / f"{name or self.name}_state_{self.trading_mode.value}.json"
+
     def run_paper_trading(self) -> None:
         self._run_trading(TradingMode.PAPER)
 
@@ -536,16 +550,18 @@ class Strategy:
         benchmark: str | None = None,
         timestep: str = "day",
         fees: TradingFeeFactory | None = None,
-        slippage: Number = Decimal(0),
+        slippage: Number | None = None,
         risk_free_rate: float = 0.0,
-        warmup_trading_days: int = 0,
+        warmup_trading_days: int | None = None,
         news_source: NewsProvider | None = None,
         agent_telemetry: bool = True,
     ) -> BacktestResult:
         """Run this strategy against simulated time and simulated fills.
 
-        `start`/`end`/`budget`/`benchmark` fall back to the `backtesting_start`/
-        `backtesting_end`/`budget`/`benchmark_symbol` class attributes when omitted.
+        `start`, `end`, `budget`, `benchmark`, `slippage` and `warmup_trading_days` resolve as: the argument, then
+        `self.parameters` (`backtesting_start`, `backtesting_end`, `budget`, `benchmark_symbol`, `slippage`,
+        `warmup_trading_days`), then the class attributes `backtesting_start`/`backtesting_end`/`budget`/
+        `benchmark_symbol`/`backtesting_slippage` (warmup: 0).
 
         Args:
             start: first simulated datetime (inclusive)
@@ -573,9 +589,9 @@ class Strategy:
             fees: the broker fee model (`brokers/fees.py`) charged on every fill -- different
                 for buys and sells, per order. Defaults to `TradingFeeFactory.from_env()`: the
                 broker named by `BROKER` in the backtest env file (Alpaca when unset).
-            slippage: per-trade slippage (default 0)
+            slippage: per-trade slippage (default 5 bps, `backtesting_slippage`)
             risk_free_rate: annualized risk-free rate (default 0.0) for Sharpe ratio calculation. The annual rate we get by placing the money.
-            warmup_trading_days: extra trading days of history to make available before
+            warmup_trading_days: (default `parameters["warmup_trading_days"]`, else 0) extra trading days of history to make available before
                 `start` so a strategy's indicators aren't starved near `backtesting_start`.
                 Computed once, here, via `backtesting.warmup.warmup_calendar_days`, and used both
                 to construct a `data_source` class/callable and to widen `run_backtest`'s own eager
@@ -597,11 +613,14 @@ class Strategy:
         from trading_agent_framework.backtesting.runner import run_backtest
         from trading_agent_framework.backtesting.warmup import warmup_calendar_days
 
-        resolved_start = start if start is not None else self.backtesting_start
-        resolved_end = end if end is not None else self.backtesting_end
+        resolved_start = start if start is not None else self.parameters.get("backtesting_start", self.backtesting_start)
+        resolved_end = end if end is not None else self.parameters.get("backtesting_end", self.backtesting_end)
         if resolved_start is None or resolved_end is None:
             raise ConfigurationError("run_backtesting needs start/end, either as arguments or as backtesting_start/backtesting_end class attributes")
-        resolved_budget = _to_decimal(budget) if budget is not None else self.budget
+        resolved_budget = _to_decimal(budget if budget is not None else self.parameters.get("budget", self.budget))
+        resolved_benchmark = benchmark or self.parameters.get("benchmark_symbol", self.benchmark_symbol)
+        resolved_slippage = _to_decimal(slippage if slippage is not None else self.parameters.get("slippage", self.backtesting_slippage))
+        warmup = warmup_trading_days if warmup_trading_days is not None else self.parameters.get("warmup_trading_days", 0)
         resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
         # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session.
         # Daily runs: the benchmark's daily frame is the strategy's own, so the warmup itself is raised (the
@@ -609,7 +628,7 @@ class Strategy:
         # raising it would widen every minute download, so the warmup stays as asked and only the benchmark's
         # daily frame is preloaded over the regime window below.
         regime_warmup = self.regime_params.min_bars + REGIME_WARMUP_SLACK
-        resolved_warmup = max(warmup_trading_days, regime_warmup) if timestep == "day" else warmup_trading_days
+        resolved_warmup = max(warmup, regime_warmup) if timestep == "day" else warmup
         warmup_start = resolved_start - timedelta(days=warmup_calendar_days(resolved_warmup))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)
@@ -627,10 +646,10 @@ class Strategy:
             budget=resolved_budget,
             data_source=resolved_source,
             preload_assets=preload_assets,
-            benchmark=benchmark or self.benchmark_symbol,
+            benchmark=resolved_benchmark,
             timestep=timestep,
             fees=resolved_fees,
-            slippage=_to_decimal(slippage),
+            slippage=resolved_slippage,
             risk_free_rate=risk_free_rate,
             warmup_trading_days=resolved_warmup,
             news_source=news_source,

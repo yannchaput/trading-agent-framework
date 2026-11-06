@@ -13,6 +13,7 @@ module free of circular imports.
 """
 
 import logging
+from dataclasses import asdict
 from typing import Any
 
 import numpy as np
@@ -31,7 +32,6 @@ from .risk_diagnostics import (
     compute_portfolio_volatility,
     compute_weighted_pairwise_correlation,
 )
-from .utils import diagnostics_to_dict
 
 logger = logging.getLogger(__name__)
 
@@ -254,13 +254,7 @@ class DiagnosticLogger:
             return None
         if len(weights) != returns_df.shape[1]:
             return None
-        w = np.asarray(weights, dtype=float)
-        total = np.sum(w)
-        if total <= 0:
-            return None
-        w = w / total
-        portfolio_returns = returns_df.values @ w
-        return pd.Series(portfolio_returns, index=returns_df.index)
+        return pd.Series(returns_df.to_numpy() @ weights, index=returns_df.index)
 
     def _compute_sector_exposure(
         self,
@@ -298,7 +292,7 @@ class DiagnosticLogger:
         if not self._diagnostics_file_path:
             return
 
-        row = diagnostics_to_dict(diag)
+        row = asdict(diag)
         df = pd.DataFrame([row])
 
         try:

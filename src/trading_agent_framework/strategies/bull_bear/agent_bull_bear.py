@@ -2,7 +2,7 @@
 
 Port of lumibot's "Bull vs Bear AI Stock Trading Bot", hardened for a local model: code ranks the universe with
 cross_momentum's own score and filters, builds the fact sheets, builds the book from the stocks the judge puts in,
-sizes it with equal weights and places every order (`ReviewPipeline`, `Rebalancer`). No agent has an order tool.
+sizes it with equal weights and places every order (`BullBearPipeline`, `Rebalancer`). No agent has an order tool.
 One review a week, on Tuesday at 12:00 ET, as cross_momentum. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
 and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
@@ -14,7 +14,6 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
 from decimal import Decimal
 from functools import partial
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.tools import only
@@ -28,22 +27,23 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.fundamentals.edgar_client import default_client
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
-from trading_agent_framework.strategies.bull_bear.market_data import BarsSource, DailyBars, GateBars, YahooBars
+from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pinned_news import pin_search_news
-from trading_agent_framework.strategies.bull_bear.pipeline import ReviewPipeline
+from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
-from trading_agent_framework.strategies.bull_bear.state import ReviewLog, StateStore, state_path
+from trading_agent_framework.strategies.bull_bear.state import StateStore
+from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
+from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
-from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.common.yahoo_daily_bars import YahooDailyBars
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import ensure_universe_history
+from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData, universe_parameters
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory, market_day, month_universe, window_symbols
+from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
-from trading_agent_framework.strategies.cross_momentum.universe_backtest_data import UniverseBacktestData, universe_parameters
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError, UniverseHistoryError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError
 
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
@@ -57,13 +57,8 @@ def _size(quantity: Decimal | None) -> str:
     return "?" if quantity is None else f"{quantity.normalize():f}"
 
 
-def _market_day(moment: datetime) -> date:
-    """The market-time date of a backtest bound (bounds are timezone-aware by convention; a naive one is taken as is)."""
-    return moment.astimezone(MARKET_TZ).date() if moment.tzinfo is not None else moment.date()
-
-
 class BullBearStrategy(Strategy):
-    """One review a week (see `ReviewPipeline`); every other session's iteration returns at once."""
+    """One review a week (see `BullBearPipeline`); every other session's iteration returns at once."""
 
     sleeptime = "1D"
 
@@ -73,7 +68,6 @@ class BullBearStrategy(Strategy):
         "benchmark_symbol": "SPY",
         # 300 completed sessions before the first review: the 12-1 month return needs 274 (as cross_momentum)
         "warmup_trading_days": 300,
-        "slippage": Decimal("0.0005"),
         "budget": 10000,
     }
 
@@ -114,15 +108,13 @@ class BullBearStrategy(Strategy):
         self._bars_source = bars_source
         self._sector_of = sector_of  # injected in tests; yfinance's sectors otherwise
         self._fundamentals_of = fundamentals_of  # injected in tests; the SEC otherwise
-        self.pipeline: ReviewPipeline | None = None
+        self.pipeline: BullBearPipeline | None = None
 
     # --- lifecycle ------------------------------------------------------------------------------------
 
     def initialize(self) -> None:
         """Build the four agents and the pipeline (once per run)."""
-        state_store = StateStore(state_path(self.project_root, self.trading_mode))
-        if self.is_backtesting:
-            state_store.wipe()  # one run's streak and date must not leak into the next; paper and live state is never wiped
+        state_store = StateStore(self.state_file("bull_bear"), fresh=self.is_backtesting)  # one run's streak and date must not leak into the next; paper and live state is never wiped
         try:
             news = self.settings.research_news
             if news:
@@ -177,13 +169,13 @@ class BullBearStrategy(Strategy):
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc
-        self.pipeline = ReviewPipeline(
+        self.pipeline = BullBearPipeline(
             strategy=self,
             params=self.settings,
             agents=self.agents,
             recorder=recorder,
             state=state_store,
-            review_log=ReviewLog(self._review_log_path()),
+            log=RunLog(self.run_file("reviews.jsonl"), what="review log"),
             rebalancer=Rebalancer(self, self.settings),
             universe_on=self._universe_on,
             bars=self._daily_bars(),
@@ -248,11 +240,7 @@ class BullBearStrategy(Strategy):
         """
         if self._history is None:
             return self.universe
-        try:
-            month_list = self._history.on(day)
-        except UniverseHistoryError as exc:
-            raise FatalStrategyError(str(exc)) from exc
-        return [symbol for symbol in month_list if symbol != self.settings.parking_symbol]
+        return month_universe(self._history, day, exclude={self.settings.parking_symbol})
 
     def _warn(self, message: str) -> None:
         self.log_warning(message)
@@ -269,12 +257,6 @@ class BullBearStrategy(Strategy):
             min_coverage=self.settings.min_yahoo_coverage,
         )
 
-    def _review_log_path(self) -> Path | None:
-        """`reviews.jsonl` in this run's log directory; None outside a runner (no run id), which disables the log."""
-        if self.run_id is None:
-            return None
-        return self.project_root / "logs" / self.name / self.trading_mode.value / self.run_id / "reviews.jsonl"
-
     # --- backtesting ------------------------------------------------------------------------------------
 
     def run_backtesting(self, **overrides: Any) -> BacktestResult:
@@ -285,24 +267,18 @@ class BullBearStrategy(Strategy):
         """
         start: datetime = overrides.get("start", self.parameters["backtesting_start"])
         end: datetime = overrides.get("end", self.parameters["backtesting_end"])
-        history = ensure_universe_history(_market_day(start), _market_day(end))
+        history = ensure_universe_history(market_day(start), market_day(end))
         self._history = history
         # Recorded in settings.json (the runner writes `dict(strategy.parameters)`)
         universe = universe_parameters(history)
         self.parameters["universe"] = universe
         benchmark = overrides.get("benchmark", self.parameters["benchmark_symbol"])
-        stocks = [symbol for symbol in history.union(_market_day(start), _market_day(end)) if symbol != self.settings.parking_symbol]
+        stocks = window_symbols(history, start, end, exclude={self.settings.parking_symbol})
         symbols = list(dict.fromkeys([*stocks, self.settings.parking_symbol, benchmark]))
         defaults: dict[str, Any] = dict(
-            start=self.parameters["backtesting_start"],
-            end=self.parameters["backtesting_end"],
-            budget=Decimal(str(self.parameters["budget"])),
             data_source=partial(UniverseBacktestData, record=universe),  # Yahoo in batches, failing when Yahoo returns too little
             preload_assets=[Asset(symbol=symbol) for symbol in symbols],  # one Yahoo download, not 1,200 per review
-            benchmark=self.parameters["benchmark_symbol"],
             timestep="day",
-            warmup_trading_days=self.parameters["warmup_trading_days"],
-            slippage=self.parameters["slippage"],
             agent_telemetry=True,
         )
         return super().run_backtesting(**{**defaults, **overrides})

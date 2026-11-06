@@ -7,20 +7,11 @@ strategy (clock-gated in a backtest), so they are passed in.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate
 
 TRADING_DAYS_PER_YEAR = 252
-
-
-def price_return(closes: Sequence[float], lookback: int = TRADING_DAYS_PER_YEAR) -> float | None:
-    """The last close over the close `lookback` bars earlier, minus 1; None without that much history."""
-    if len(closes) <= lookback:
-        return None
-    start = closes[-1 - lookback]
-    return None if start <= 0 else closes[-1] / start - 1
 
 
 def _rounded(value: float | None, digits: int) -> float | None:

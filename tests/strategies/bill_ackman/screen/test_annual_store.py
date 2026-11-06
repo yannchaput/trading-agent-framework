@@ -304,7 +304,7 @@ def test_a_failed_replace_never_escapes_and_leaves_no_temp_file(tmp_path: Path, 
             raise FileNotFoundError("the temporary file is already gone")
         real_replace(source, destination)
 
-    monkeypatch.setattr(annual_store.os, "replace", failing_replace)
+    monkeypatch.setattr(os, "replace", failing_replace)
 
     with caplog.at_level(logging.WARNING):
         record = _figures(store)
@@ -346,7 +346,7 @@ def test_a_successful_write_leaves_no_temp_file_and_uses_no_fixed_temp_name(tmp_
             sources.append(str(source))
         real_replace(source, destination)
 
-    monkeypatch.setattr(annual_store.os, "replace", recording_replace)
+    monkeypatch.setattr(os, "replace", recording_replace)
 
     _figures(store)
     _sic(store)  # a second write for the same CIK

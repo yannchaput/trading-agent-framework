@@ -13,12 +13,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.strategies.common.pipeline import AgentLookup, PendingTrade, ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.trade_desk import Audit, TradeDesk
 from trading_agent_framework.strategies.congress_trades.congress import holdings as holdings_module
@@ -29,9 +29,9 @@ from trading_agent_framework.strategies.congress_trades.congress.source import K
 from trading_agent_framework.strategies.congress_trades.handoff import HandoffRecorder, HoldingSubmission, TargetPosition
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 from trading_agent_framework.strategies.congress_trades.prompts import PORTFOLIO_TASK, RESEARCHER_TASK, TRADER_TASK, retry_prompt
-from trading_agent_framework.strategies.congress_trades.state import CongressState, PendingTrade, StateStore
+from trading_agent_framework.strategies.congress_trades.state import CongressState, StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, CongressDataError
+from trading_agent_framework.utils.errors import AgentError, CongressDataError
 
 if TYPE_CHECKING:
     from collections.abc import Collection
@@ -49,31 +49,12 @@ class SourceLike(Protocol):
     def new_since(self, known: KnownFilings, processed: Collection[str]) -> list[FilingRef]: ...
 
 
-class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
+class CongressPipeline(ReviewPipeline[CongressState]):
+    LOG_PREFIX: ClassVar[str] = "[congress_trades] "
+    WHAT: ClassVar[str] = "run"
+    RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")
+    DATA_ERRORS: ClassVar[tuple[type[Exception], ...]] = (CongressDataError,)
 
-
-class AgentLookup(Protocol):
-    """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
-
-    def __getitem__(self, name: str, /) -> AgentLike: ...
-
-
-class RunAbandoned(Exception):
-    """A stage could not produce what the run needs; the run ends with nothing traded."""
-
-    def __init__(self, stage: str, message: str) -> None:
-        super().__init__(message)
-        self.stage = stage
-
-
-@dataclass(frozen=True, slots=True)
-class RunOutcome:
-    completed: bool
-    abandoned_streak: int  # abandoned runs in a row after this one (unchanged by a quiet day, 0 after a completed run)
-
-
-class CongressPipeline:
     def __init__(
         self,
         *,
@@ -83,45 +64,26 @@ class CongressPipeline:
         agents: AgentLookup,
         recorder: HandoffRecorder,
         state: StateStore,
-        run_log: RunLog,
+        log: RunLog,
         desk: TradeDesk,
     ) -> None:
-        self._strategy = strategy
+        super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._source = source
-        self._agents = agents
-        self._recorder = recorder
-        self._state = state
-        self._log = run_log
         self._desk = desk
         self._phase = "filings"  # where a failure is attributed: filings, researcher, portfolio, trading
         self._pending_retry = False
 
     # --- one daily check ---------------------------------------------------------------------------
 
-    def run(self) -> RunOutcome:
-        state = self._state.load()
-        now = self._strategy.clock.now().astimezone(MARKET_TZ)
-        record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "outcome": None}
+    def _begin(self) -> None:
         self._phase, self._pending_retry = "filings", False
-        try:
-            return self._run(now, state, record)
-        except RunAbandoned as exc:
-            stage, error = exc.stage, exc
-        except CongressDataError as exc:
-            stage, error = "filings", exc
-        except (BrokerError, BacktestError) as exc:
-            stage, error = ("execution" if self._phase == "trading" else "broker"), exc
-        streak = state.abandoned_streak + 1
-        self._strategy.log_error(f"[congress_trades] run abandoned at the {stage} stage (streak {streak}): {error}")
-        pending = state.pending_trade
-        if self._pending_retry and pending is not None:
-            pending = replace(pending, days=pending.days + 1)  # an attempt that fails still uses up one of the retries
-        traded = sorted({*state.traded, *self._desk.traded})
-        self._state.save(replace(state, abandoned_streak=streak, pending_trade=pending, traded=traded))
-        orders = self._orders_record() if self._phase == "trading" else []
-        self._log.append({**record, "outcome": "abandoned", "stage": stage, "error": str(error), "abandoned_streak": streak, "orders": orders})
-        return RunOutcome(completed=False, abandoned_streak=streak)
+
+    def _executing(self) -> bool:
+        return self._phase == "trading"
+
+    def _on_abandoned(self, state: CongressState, streak: int, stage: str) -> tuple[CongressState, dict[str, Any]]:
+        return self._abandoned_with_pending(self._desk, state, streak, pending_retry=self._pending_retry, trading=self._executing())
 
     def _run(self, now: datetime, state: CongressState, record: dict[str, Any]) -> RunOutcome:
         strategy = self._strategy
@@ -140,18 +102,12 @@ class CongressPipeline:
 
     def _retry_pending(self, now: datetime, state: CongressState, pending: PendingTrade, record: dict[str, Any]) -> RunOutcome:
         strategy, params = self._strategy, self._params
-        if pending.days >= params.max_trade_retries:
-            strategy.log_warning(f"[congress_trades] giving up on the unfinished trade after {pending.days} later checks: the target was not reached")
-            self._state.save(replace(state, pending_trade=None))
-            self._log.append({**record, "outcome": "pending_gave_up", "target": pending.target})
-            return RunOutcome(completed=True, abandoned_streak=state.abandoned_streak)
+        if (gave_up := self._give_up_pending(state, pending, record, max_retries=params.max_trade_retries)) is not None:
+            return gave_up
         strategy.log_info(f"[trader] checking the unfinished trade again (check {pending.days + 1} of {params.max_trade_retries})")
         self._phase, self._pending_retry = "trading", True
         audit = self._trade(pending.target, state, record)
-        remaining = None if audit.complete else PendingTrade(target=pending.target, days=pending.days + 1)
-        self._state.save(replace(state, traded=self._desk.traded, pending_trade=remaining, abandoned_streak=0, last_run=now.date().isoformat()))
-        self._log.append({**record, "outcome": "pending_complete" if audit.complete else "pending_retry", "target": pending.target})
-        return RunOutcome(completed=True, abandoned_streak=0)
+        return self._finish_pending(self._desk, state, pending, audit, record, now)
 
     # --- a new filing: research, portfolio, trading ------------------------------------------------------
 
@@ -243,11 +199,7 @@ class CongressPipeline:
         desk.begin_run(target, state.traded)
         before = desk.audit()
         record["shortfalls_before"] = [asdict(s) for s in before.shortfalls]
-        if not before.shortfalls:
-            if before.in_flight:
-                strategy.log_info(f"[trader] the account is at the target counting orders still working ({', '.join(before.in_flight)}): no new order, checked again later")
-            else:
-                strategy.log_info("[trader] the account is already at the target: no order needed")
+        if self._at_target(before):
             return before
         self._recorder.expect_report(desk.orders_view)
         context = {
@@ -257,19 +209,12 @@ class CongressPipeline:
         }
         try:
             self._run_stage(AGENT_TRADER, "submit_trade_report", TRADER_TASK, context)
-        except RunAbandoned as exc:
+        except StageAbandoned as exc:
             if not desk.orders:
                 raise  # nothing was sent: abandon the whole run
             # Orders went out but were never reported: do not discard the research; they are checked again on later days.
             strategy.log_error(f"[trader] no valid trade report, but {len(desk.orders)} order(s) were sent and will be checked again later: {exc}")
-        after = desk.audit()
-        record["orders"] = self._orders_record()
-        record["shortfalls_after"] = [asdict(s) for s in after.shortfalls]
-        for view in after.unfilled:
-            strategy.log_warning(f"[trader] {view.side} {view.quantity:g} {view.symbol} is {view.status}: it will be checked again")
-        for shortfall in after.shortfalls:
-            strategy.log_warning(f"[trader] off target: {shortfall.detail}")
-        return after
+        return self._audited(desk, record)
 
     # --- helpers -------------------------------------------------------------------------------------------
 
@@ -292,7 +237,7 @@ class CongressPipeline:
                 return
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(tool, error), tool
-        raise RunAbandoned(agent_name, error)
+        raise StageAbandoned(agent_name, error)
 
     def _weights(self, holdings: list[Holding]) -> dict[str, Decimal]:
         params = self._params
@@ -326,9 +271,6 @@ class CongressPipeline:
                 )
             )
         return sorted(final, key=lambda h: h.ticker)
-
-    def _orders_record(self) -> list[dict[str, Any]]:
-        return [asdict(view) for view in self._desk.orders_view().values()]
 
 
 def _holding_context(holding: Holding) -> dict[str, Any]:

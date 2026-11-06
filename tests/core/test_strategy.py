@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config.env import TradingMode
@@ -307,3 +309,55 @@ def test_close_positions_defaults_to_every_held_position() -> None:
     strategy.close_positions(["MSFT"])
 
     assert [asset.symbol for asset, _ in broker.closed] == ["AAPL", "TSLA", "MSFT"]
+
+
+# --- run_file / state_file -----------------------------------------------------------
+
+
+def test_run_file_none_without_run_id(tmp_path: Path) -> None:
+    assert Strategy(_broker(), project_root=tmp_path).run_file("trades.jsonl") is None
+
+
+def test_run_file_path(tmp_path: Path) -> None:
+    strategy = Strategy(_broker(strategy_name="momo"), mode=TradingMode.BACKTESTING, project_root=tmp_path)
+    strategy.run_id = "2026-09-14_100000_backtesting"
+    assert strategy.run_file("trades.jsonl") == tmp_path / "logs" / "momo" / "backtesting" / "2026-09-14_100000_backtesting" / "trades.jsonl"
+
+
+def test_state_file_default_and_named(tmp_path: Path) -> None:
+    strategy = Strategy(_broker(strategy_name="momo"), mode=TradingMode.PAPER, project_root=tmp_path)
+    assert strategy.state_file() == tmp_path / "data" / "momo_state_paper.json"
+    assert strategy.state_file("momo_baseline") == tmp_path / "data" / "momo_baseline_state_paper.json"
+
+
+# --- run_backtesting resolution ------------------------------------------------------
+
+
+def _captured_run(monkeypatch: pytest.MonkeyPatch, parameters: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr("trading_agent_framework.backtesting.runner.run_backtest", lambda strategy, **kw: captured.update(kw))
+    strategy = Strategy(_broker(), parameters=parameters)
+    strategy.run_backtesting(data_source=FakeBacktestDataSource(), **kwargs)
+    return captured
+
+
+def test_run_backtesting_reads_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
+    start, end = et(2025, 1, 6, 9), et(2025, 3, 7, 16)
+    parameters = {"backtesting_start": start, "backtesting_end": end, "budget": 2500, "benchmark_symbol": "QQQ", "slippage": Decimal("0.001"), "warmup_trading_days": 400}
+    captured = _captured_run(monkeypatch, parameters)
+    assert (captured["start"], captured["end"], captured["budget"]) == (start, end, Decimal(2500))
+    assert captured["benchmark"] == "QQQ" and captured["slippage"] == Decimal("0.001") and captured["warmup_trading_days"] == 400
+
+
+def test_run_backtesting_arguments_beat_parameters(monkeypatch: pytest.MonkeyPatch) -> None:
+    parameters = {"backtesting_start": et(2025, 1, 6, 9), "backtesting_end": et(2025, 3, 7, 16), "budget": 2500, "benchmark_symbol": "QQQ", "slippage": Decimal("0.001")}
+    start, end = et(2025, 2, 3, 9), et(2025, 2, 28, 16)
+    captured = _captured_run(monkeypatch, parameters, start=start, end=end, budget=5, benchmark="IWM", slippage=0)
+    assert (captured["start"], captured["end"], captured["budget"], captured["benchmark"], captured["slippage"]) == (start, end, Decimal(5), "IWM", Decimal(0))
+
+
+def test_run_backtesting_default_slippage_5bps(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured = _captured_run(monkeypatch, {"backtesting_start": et(2025, 1, 6, 9), "backtesting_end": et(2025, 3, 7, 16)})
+    assert Strategy.backtesting_slippage == Decimal("0.0005")
+    assert captured["slippage"] == Decimal("0.0005")
+    assert captured["benchmark"] == "SPY" and captured["budget"] == Decimal(10000)

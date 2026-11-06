@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,10 +11,10 @@ from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
-from trading_agent_framework.strategies.insider_trades.pipeline import RunOutcome
-from trading_agent_framework.strategies.insider_trades.state import InsiderState, StateStore, state_path
+from trading_agent_framework.strategies.insider_trades.state import InsiderState, StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
 
@@ -180,12 +179,12 @@ def test_no_llm_model_configured_refuses_to_start(tmp_path: Path) -> None:
 
 def test_a_backtest_starts_with_no_saved_state_and_paper_keeps_it(tmp_path: Path) -> None:
     for mode, kept in ((TradingMode.BACKTESTING, False), (TradingMode.PAPER, True)):
-        StateStore(state_path(tmp_path, mode)).save(InsiderState(processed=["0000000000-26-000001"]))
+        StateStore(tmp_path / "data" / f"insider_trades_state_{mode.value}.json").save(InsiderState(processed=["0000000000-26-000001"]))
         strategy, _ = _strategy(tmp_path, mode)
 
         strategy.initialize()
 
-        assert state_path(tmp_path, mode).exists() is kept
+        assert (tmp_path / "data" / f"insider_trades_state_{mode.value}.json").exists() is kept
 
 
 # --- the daily check -------------------------------------------------------------------------------------
@@ -236,10 +235,10 @@ def test_paper_and_live_never_abort_on_abandoned_runs(tmp_path: Path, mode: Trad
 def test_the_run_log_lives_in_the_run_directory_once_there_is_a_run_id(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, TradingMode.BACKTESTING)
 
-    assert strategy._run_log_path() is None
+    assert strategy.run_file("runs.jsonl") is None
     strategy.run_id = "2026-09-14_100000_backtesting"
 
-    assert strategy._run_log_path() == tmp_path / "logs" / "insider_trades" / "backtesting" / "2026-09-14_100000_backtesting" / "runs.jsonl"
+    assert strategy.run_file("runs.jsonl") == tmp_path / "logs" / "insider_trades" / "backtesting" / "2026-09-14_100000_backtesting" / "runs.jsonl"
 
 
 # --- the Form 4 load window ----------------------------------------------------------------------------------
@@ -296,11 +295,8 @@ def test_run_backtesting_passes_the_class_window_the_daily_yahoo_source_and_the_
 
     strategy.run_backtesting()
 
-    parameters = InsiderTradesStrategy.parameters
-    assert (seen["start"], seen["end"]) == (parameters["backtesting_start"], parameters["backtesting_end"])
-    assert seen["data_source"] is YahooBacktestData
-    assert seen["timestep"] == "day" and seen["benchmark"] == "SPY" and seen["warmup_trading_days"] == 10
-    assert seen["budget"] == Decimal(str(parameters["budget"])) and seen["agent_telemetry"] is True
+    assert seen["data_source"] is YahooBacktestData  # the window, budget, benchmark, slippage and warmup come from `parameters` (test_backtest_defaults.py)
+    assert seen["timestep"] == "day" and seen["agent_telemetry"] is True
     assert [asset.symbol for asset in seen["preload_assets"]] == [*strategy.settings.watchlist, "SPY"]
 
 

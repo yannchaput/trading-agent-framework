@@ -75,6 +75,10 @@ def _sec_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SEC_EDGAR_USER_AGENT", "TestApp test@example.com")
 
 
+class _NoSlippage(EarningsDriftStrategy):
+    backtesting_slippage = Decimal(0)  # the expected fills below are exact prices
+
+
 def _run(tmp_path: Path, settings: DriftParams) -> tuple[EarningsDriftStrategy, _Manager]:
     source = FakeBacktestDataSource()
     source.set_sessions(WINDOW)
@@ -84,7 +88,7 @@ def _run(tmp_path: Path, settings: DriftParams) -> tuple[EarningsDriftStrategy, 
         {"AAA": [{"headline": "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", "created_at": (RELEASE + timedelta(minutes=1)).isoformat(), "symbols": ["AAA"]}]}
     )
     events = StaticEvents([EarningsEvent("AAA", RELEASE, "acc-AAA", "aaa.htm")])
-    strategy = EarningsDriftStrategy(
+    strategy = _NoSlippage(
         FakeBroker(FakeClock(WINDOW[0].open - timedelta(hours=1)), strategy_name="earnings_drift"),
         mode=TradingMode.BACKTESTING,
         universe=["AAA", "BBB"],

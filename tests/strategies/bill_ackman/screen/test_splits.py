@@ -103,7 +103,9 @@ def test_split_history_fetches_once_and_caches_on_disk(tmp_path: Path) -> None:
     fetch = FakeFetch(FOUR_FOR_ONE)
     cache_file = tmp_path / "splits.json"
 
-    assert _splits(_history(cache_file, fetch)) == FOUR_FOR_ONE
+    first = _history(cache_file, fetch)
+    assert _splits(first) == FOUR_FOR_ONE
+    first.flush()
     assert _splits(_history(cache_file, fetch)) == FOUR_FOR_ONE  # a new instance reads the file
     assert fetch.calls == ["AAPL"]
 
@@ -292,7 +294,9 @@ def test_a_save_uses_a_unique_temp_file_and_leaves_no_temp_behind(tmp_path: Path
     history = _history(cache_file, FakeFetch(FOUR_FOR_ONE))
 
     history.splits("AAPL", max_age_days=30)
+    history.flush()
     history.splits("MSFT", max_age_days=30)
+    history.flush()
 
     assert len(set(replaced)) == 2  # a fresh name per write, not a fixed splits.tmp
     assert all(Path(name).name.startswith("splits.") and name.endswith(".tmp") for name in replaced)
@@ -312,6 +316,7 @@ def test_a_failed_save_warns_and_still_serves_the_fetched_value(tmp_path: Path, 
 
     with caplog.at_level(logging.WARNING):
         assert _splits(history) == FOUR_FOR_ONE
+        history.flush()
         assert _splits(history) == FOUR_FOR_ONE  # kept in memory: no second fetch
 
     assert fetch.calls == ["AAPL"]
@@ -327,5 +332,49 @@ def test_an_unwritable_cache_directory_never_escapes(tmp_path: Path, caplog: pyt
 
     with caplog.at_level(logging.WARNING):
         assert _splits(history) == FOUR_FOR_ONE
+        history.flush()
 
     assert "could not be saved" in caplog.text
+
+
+def test_splits_written_once_per_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache_file = tmp_path / "splits.json"
+    replaced: list[str] = []
+    real_replace = os.replace
+
+    def spy(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        replaced.append(os.fspath(source))
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", spy)
+    history = _history(cache_file, FakeFetch(FOUR_FOR_ONE))
+
+    for symbol in ("AAPL", "MSFT", "NVDA"):
+        history.splits(symbol, max_age_days=30)
+    history.flush()
+    history.flush()  # nothing changed since: no second write
+
+    assert len(replaced) == 1
+    assert set(json.loads(cache_file.read_text())) == {"AAPL", "MSFT", "NVDA"}
+
+
+def test_a_failed_flush_is_retried_on_the_next_flush(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cache_file = tmp_path / "splits.json"
+    real_replace = os.replace
+    failing = True
+
+    def flaky(source: str | os.PathLike[str], target: str | os.PathLike[str]) -> None:
+        if failing:
+            raise OSError("disk full")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    history = _history(cache_file, FakeFetch(FOUR_FOR_ONE))
+    history.splits("AAPL", max_age_days=30)
+
+    history.flush()
+    assert not cache_file.exists()
+
+    failing = False
+    history.flush()
+    assert set(json.loads(cache_file.read_text())) == {"AAPL"}

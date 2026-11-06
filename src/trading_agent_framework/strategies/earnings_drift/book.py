@@ -1,18 +1,15 @@
-"""What earnings_drift remembers between cycles, and its two run logs (spec §8).
+"""What earnings_drift remembers between cycles (spec §8).
 
 `StateStore` keeps the open trades, the failure streaks and the symbols this strategy has ever traded (the orphan
 rule) in one small JSON file per strategy name and mode, written atomically. A missing, unreadable or invalid file is an empty state
-(with a warning). `JsonlLog` appends JSON lines to the run directory. Neither raises on an I/O problem: bookkeeping
-must not stop a cycle.
+(with a warning). It never raises on an I/O problem: bookkeeping must not stop a cycle (the two run logs are `RunLog`s, in
+`strategies/common/run_log.py`).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal, InvalidOperation
@@ -20,7 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.strategies.common.json_state import InvalidState, JsonStateStore
 from trading_agent_framework.utils.log import ColorLogger
 
 logger = ColorLogger(logging.getLogger(__name__), "EarningsDriftState")
@@ -117,99 +114,39 @@ class DriftState:
     traded_symbols: set[str] = field(default_factory=set)  # every symbol this strategy has bought (orphan adoption)
 
 
-def state_path(project_root: Path, mode: TradingMode, name: str = "earnings_drift") -> Path:
-    """`<project_root>/data/<name>_state_<mode>.json`: one file per strategy name, so the agent and the baseline never share one."""
-    return project_root / "data" / f"{name}_state_{mode.value}.json"
-
-
 def _streak(value: Any) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"invalid streak {value!r}")
     return value
 
 
-class StateStore:
-    def __init__(self, path: Path) -> None:
-        self._path = path
-
-    def load(self) -> DriftState:
-        try:
-            raw = json.loads(self._path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return DriftState()
-        except (OSError, ValueError) as exc:
-            logger.log_warning(f"state file {self._path} is unreadable, starting from an empty state: {exc}")
-            return DriftState()
-        try:
-            if not isinstance(raw, dict) or raw.get("version") != STATE_VERSION:
-                raise ValueError("missing or other version")
-            trades = {symbol: Trade.from_json(data) for symbol, data in raw.get("trades", {}).items()}
-            if any(symbol != trade.symbol for symbol, trade in trades.items()):
-                raise ValueError("a trade is filed under another symbol")
-            traded = raw.get("traded_symbols", [])
-            if not isinstance(traded, list) or not all(isinstance(s, str) for s in traded):
-                raise ValueError("invalid traded_symbols")
-            return DriftState(
-                trades=trades,
-                agent_failure_streak=_streak(raw.get("agent_failure_streak", 0)),
-                hollow_scan_streak=_streak(raw.get("hollow_scan_streak", 0)),
-                traded_symbols=set(traded),
-            )
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
-            logger.log_warning(f"state file {self._path} is not a valid state, starting from an empty state: {exc}")
-            return DriftState()
-
-    def save(self, state: DriftState) -> None:
-        """Write the state atomically (temporary file in the same directory, then replace); an I/O error is logged."""
-        payload = {
-            "version": STATE_VERSION,
-            "trades": {symbol: trade.to_json() for symbol, trade in state.trades.items()},
-            "agent_failure_streak": state.agent_failure_streak,
-            "hollow_scan_streak": state.hollow_scan_streak,
-            "traded_symbols": sorted(state.traded_symbols),
-        }
-        temporary: str | None = None
-        try:
-            text = json.dumps(payload, default=str)
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary = tempfile.mkstemp(dir=self._path.parent, prefix=f"{self._path.name}.", suffix=".tmp")
-            try:
-                handle = os.fdopen(descriptor, "w", encoding="utf-8")
-            except BaseException:
-                os.close(descriptor)
-                raise
-            with handle:
-                handle.write(text)
-            os.replace(temporary, self._path)
-        except (OSError, TypeError, ValueError) as exc:
-            logger.log_warning(f"state could not be saved to {self._path}: {exc}")
-            if temporary is not None:
-                Path(temporary).unlink(missing_ok=True)
-
-    def wipe(self) -> None:
-        try:
-            self._path.unlink(missing_ok=True)
-        except OSError as exc:
-            logger.log_warning(f"state file {self._path} could not be deleted: {exc}")
+def _decode(raw: dict[str, Any]) -> DriftState:
+    trades = {symbol: Trade.from_json(data) for symbol, data in raw.get("trades", {}).items()}
+    if any(symbol != trade.symbol for symbol, trade in trades.items()):
+        raise InvalidState("a trade is filed under another symbol")
+    traded = raw.get("traded_symbols", [])
+    if not isinstance(traded, list) or not all(isinstance(s, str) for s in traded):
+        raise InvalidState("invalid traded_symbols")
+    return DriftState(
+        trades=trades,
+        agent_failure_streak=_streak(raw.get("agent_failure_streak", 0)),
+        hollow_scan_streak=_streak(raw.get("hollow_scan_streak", 0)),
+        traded_symbols=set(traded),
+    )
 
 
-class JsonlLog:
-    """One JSON line per record in the run directory; with no path (outside a runner) it does nothing."""
+def _encode(state: DriftState) -> dict[str, Any]:
+    return {
+        "trades": {symbol: trade.to_json() for symbol, trade in state.trades.items()},
+        "agent_failure_streak": state.agent_failure_streak,
+        "hollow_scan_streak": state.hollow_scan_streak,
+        "traded_symbols": sorted(state.traded_symbols),
+    }
 
-    def __init__(self, path: Callable[[], Path | None]) -> None:
-        self._path = path
 
-    def append(self, record: dict[str, Any]) -> None:
-        path = self._path()
-        if path is None:
-            return
-        try:
-            line = json.dumps(record, default=str) + "\n"
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with path.open("a", encoding="utf-8") as handle:
-                handle.write(line)
-        except (OSError, TypeError, ValueError) as exc:
-            logger.log_warning(f"could not append to {path}: {exc}")
+class StateStore(JsonStateStore[DriftState]):
+    def __init__(self, path: Path, *, fresh: bool = False) -> None:
+        super().__init__(path, version=STATE_VERSION, empty=DriftState, decode=_decode, encode=_encode, log=logger, fresh=fresh)
 
 
 def sessions_held(opened_on: date, today: date, trading_dates: Sequence[date]) -> int:

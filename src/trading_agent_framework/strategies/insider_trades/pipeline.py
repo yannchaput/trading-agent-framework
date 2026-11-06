@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.entities.enums import PositionSide
+from trading_agent_framework.strategies.common.pipeline import AgentLookup, PendingTrade, ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.trade_desk import Audit, TradeDesk
 from trading_agent_framework.strategies.insider_trades.facts import InsiderFacts
@@ -31,7 +31,7 @@ from trading_agent_framework.strategies.insider_trades.form4.signal import Insid
 from trading_agent_framework.strategies.insider_trades.form4.source import KnownInsiderData, LoadReport
 from trading_agent_framework.strategies.insider_trades.handoff import InsiderRecorder
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
-from trading_agent_framework.strategies.insider_trades.state import InsiderState, PendingTrade, StateStore
+from trading_agent_framework.strategies.insider_trades.state import InsiderState, StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, InsiderDataError
 
@@ -57,30 +57,6 @@ class SourceLike(Protocol):
     def known(self, as_of: datetime) -> KnownInsiderData: ...
 
 
-class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
-
-
-class AgentLookup(Protocol):
-    """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
-
-    def __getitem__(self, name: str, /) -> AgentLike: ...
-
-
-class RunAbandoned(Exception):
-    """A stage could not produce what the run needs; the run ends with nothing traded."""
-
-    def __init__(self, stage: str, message: str) -> None:
-        super().__init__(message)
-        self.stage = stage
-
-
-@dataclass(frozen=True, slots=True)
-class RunOutcome:
-    completed: bool
-    abandoned_streak: int  # abandoned runs in a row after this one (unchanged by a quiet day, 0 after a completed run)
-
-
 @dataclass(frozen=True, slots=True)
 class _Stock:
     """One watchlist stock as the trader sees it: its note (researched, stored or written by code) and the class that follows from it."""
@@ -94,7 +70,12 @@ class _Stock:
     stored: bool = True  # False for the placeholder of a stock that failed to load and has no note yet: it is not kept in the state
 
 
-class InsiderPipeline:
+class InsiderPipeline(ReviewPipeline[InsiderState]):
+    LOG_PREFIX: ClassVar[str] = "[insider_trades] "
+    WHAT: ClassVar[str] = "run"
+    RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")
+    DATA_ERRORS: ClassVar[tuple[type[Exception], ...]] = (InsiderDataError,)
+
     def __init__(
         self,
         *,
@@ -105,7 +86,7 @@ class InsiderPipeline:
         agents: AgentLookup,
         recorder: InsiderRecorder,
         state: StateStore,
-        run_log: RunLog,
+        log: RunLog,
         desk: TradeDesk,
         load_window: Callable[[], tuple[datetime, date]],
         researcher_task: str,
@@ -113,14 +94,10 @@ class InsiderPipeline:
         trader_retry_task: str,
         retry_prompt: Callable[[str, str], str],
     ) -> None:
-        self._strategy = strategy
+        super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._source = source
         self._facts = facts
-        self._agents = agents
-        self._recorder = recorder
-        self._state = state
-        self._log = run_log
         self._desk = desk
         self._load_window = load_window
         self._researcher_task = researcher_task
@@ -133,29 +110,14 @@ class InsiderPipeline:
 
     # --- one daily check ---------------------------------------------------------------------------
 
-    def run(self) -> RunOutcome:
-        state = self._state.load()
-        now = self._strategy.clock.now().astimezone(MARKET_TZ)
-        record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "outcome": None}
+    def _begin(self) -> None:
         self._phase, self._pending_retry = "filings", False
-        try:
-            return self._run(now, state, record)
-        except RunAbandoned as exc:
-            stage, error = exc.stage, exc
-        except InsiderDataError as exc:
-            stage, error = "filings", exc
-        except (BrokerError, BacktestError) as exc:
-            stage, error = ("execution" if self._phase == "trading" else "broker"), exc
-        streak = state.abandoned_streak + 1
-        self._strategy.log_error(f"[insider_trades] run abandoned at the {stage} stage (streak {streak}): {error}")
-        pending = state.pending_trade
-        if self._pending_retry and pending is not None:
-            pending = replace(pending, days=pending.days + 1)  # an attempt that fails still uses up one of the retries
-        traded = sorted({*state.traded, *self._desk.traded})
-        self._state.save(replace(state, abandoned_streak=streak, pending_trade=pending, traded=traded))
-        orders = self._orders_record() if self._phase == "trading" else []
-        self._log.append({**record, "outcome": "abandoned", "stage": stage, "error": str(error), "abandoned_streak": streak, "orders": orders})
-        return RunOutcome(completed=False, abandoned_streak=streak)
+
+    def _executing(self) -> bool:
+        return self._phase == "trading"
+
+    def _on_abandoned(self, state: InsiderState, streak: int, stage: str) -> tuple[InsiderState, dict[str, Any]]:
+        return self._abandoned_with_pending(self._desk, state, streak, pending_retry=self._pending_retry, trading=self._executing())
 
     def _run(self, now: datetime, state: InsiderState, record: dict[str, Any]) -> RunOutcome:
         strategy = self._strategy
@@ -163,11 +125,12 @@ class InsiderPipeline:
         failed = self._refresh(today)
         known = self._facts.known()
         current = {ticker: {f.accession for f in known.filings.get(ticker, []) if f.trades} for ticker in self._watchlist if ticker not in failed}
-        changed = [ticker for ticker in self._watchlist if ticker in current and self._changed(ticker, current[ticker], state)]
+        reasons = {ticker: self._change_reasons(ticker, current[ticker], state) for ticker in self._watchlist if ticker in current}
+        changed = [ticker for ticker in self._watchlist if reasons.get(ticker)]
         record["failed"] = failed
         record["changed"] = changed
         if changed:
-            return self._full_run(now, state, current, changed, failed, record)
+            return self._full_run(now, state, current, reasons, changed, failed, record)
         if state.pending_trade is None:
             strategy.log_info("[insider_trades] nothing new: no change in the insider filings since the last run, so nothing to do")
             self._log.append({**record, "outcome": "nothing_new"})
@@ -200,10 +163,10 @@ class InsiderPipeline:
             strategy.log_warning(f"[insider_trades] {ticker}: Form 4 data could not be loaded: {error}")
         # A backtest needs every ticker: a history with a gap would mislabel trades.
         if report.failed and strategy.is_backtesting:
-            raise RunAbandoned("filings", f"Form 4 data could not be loaded for {', '.join(report.failed)}: {next(iter(report.failed.values()))}")
+            raise StageAbandoned("filings", f"Form 4 data could not be loaded for {', '.join(report.failed)}: {next(iter(report.failed.values()))}")
         # Paper/live skip the failed tickers, but with none loaded there is nothing to trade on.
         if not report.loaded:
-            raise RunAbandoned("filings", f"Form 4 data could not be loaded for any ticker: {next(iter(report.failed.values()), 'the watchlist is empty')}")
+            raise StageAbandoned("filings", f"Form 4 data could not be loaded for any ticker: {next(iter(report.failed.values()), 'the watchlist is empty')}")
         # Log what was kept and what the load set aside, so a run shows why a filing did not count.
         filings = [f for read in self._source.known(strategy.clock.now()).filings.values() for f in read]
         strategy.log_info(
@@ -215,12 +178,8 @@ class InsiderPipeline:
         # The failed tickers are skipped by the caller (`_run` leaves them out of the change check).
         return dict(report.failed)
 
-    def _changed(self, ticker: str, current: set[str], state: InsiderState) -> bool:
-        """A stock changed when a P/S filing is new to the last completed run, a filing it then had in its window has left it, or there is no note to reuse."""
-        return bool(self._change_reasons(ticker, current, state))
-
     def _change_reasons(self, ticker: str, current: set[str], state: InsiderState) -> list[str]:
-        """Why `_changed` holds, one text per cause (empty when the stock did not change)."""
+        """Why a stock changed (a P/S filing new to the last completed run, a filing it then had in its window has left it, or no note to reuse), one text per cause; empty when it did not change."""
         if state.last_run is None:
             return ["first run, no stored note"]
         if self._stored(ticker, state) is None:
@@ -250,11 +209,8 @@ class InsiderPipeline:
 
     def _retry_pending(self, now: datetime, state: InsiderState, pending: PendingTrade, record: dict[str, Any]) -> RunOutcome:
         strategy, params = self._strategy, self._params
-        if pending.days >= params.max_trade_retries:
-            strategy.log_warning(f"[insider_trades] giving up on the unfinished trade after {pending.days} later checks: the target was not reached")
-            self._state.save(replace(state, pending_trade=None))
-            self._log.append({**record, "outcome": "pending_gave_up", "target": pending.target})
-            return RunOutcome(completed=True, abandoned_streak=state.abandoned_streak)
+        if (gave_up := self._give_up_pending(state, pending, record, max_retries=params.max_trade_retries)) is not None:
+            return gave_up
         check = f"check {pending.days + 1} of {params.max_trade_retries}"
         self._phase, self._pending_retry = "trading", True
         audit = self._retry_trade(pending.target, state, record, check)
@@ -262,10 +218,7 @@ class InsiderPipeline:
             strategy.log_info(f"[trader] the unfinished trade is settled after {check}")
         else:
             strategy.log_info(f"[trader] still unfinished after {check}: {_unfinished(audit)}")
-        remaining = None if audit.complete else PendingTrade(target=pending.target, days=pending.days + 1)
-        self._state.save(replace(state, traded=self._desk.traded, pending_trade=remaining, abandoned_streak=0, last_run=now.date().isoformat()))
-        self._log.append({**record, "outcome": "pending_complete" if audit.complete else "pending_retry", "target": pending.target})
-        return RunOutcome(completed=True, abandoned_streak=0)
+        return self._finish_pending(self._desk, state, pending, audit, record, now)
 
     def _retry_trade(self, target: Mapping[str, float], state: InsiderState, record: dict[str, Any], check: str) -> Audit:
         """Run the retry agent against the stored `target`; returns the audit afterwards (complete = nothing unfilled, nothing off target).
@@ -277,11 +230,7 @@ class InsiderPipeline:
         before = desk.audit()
         strategy.log_info(f"[trader] checking the unfinished trade again ({check}): {_unfinished(before)}")
         record["shortfalls_before"] = [asdict(s) for s in before.shortfalls]
-        if not before.shortfalls:
-            if before.in_flight:
-                strategy.log_info(f"[trader] the account is at the target counting orders still working ({', '.join(before.in_flight)}): no new order, checked again later")
-            else:
-                strategy.log_info("[trader] the account is already at the target: no order needed")
+        if self._at_target(before):
             return before
         strategy.log_info(f"[trader] trader_retry triggered: {len(before.shortfalls)} stock(s) off target by more than the {self._params.rebalance_band:.1%} rebalance band")
         for shortfall in before.shortfalls:
@@ -294,23 +243,25 @@ class InsiderPipeline:
         }
         try:
             self._run_stage(AGENT_TRADER_RETRY, self._trader_retry_task, context, stage=AGENT_TRADER)
-        except RunAbandoned as exc:
+        except StageAbandoned as exc:
             if not desk.orders:
                 raise  # nothing was sent: abandon the whole run
             # Orders went out but were never reported: they are checked again on later days.
             strategy.log_error(f"[trader] no valid trade report, but {len(desk.orders)} order(s) were sent and will be checked again later: {exc}")
-        return self._audited(record)
+        return self._audited(desk, record)
 
     # --- a change: research the changed stocks, then trade ---------------------------------------------
 
-    def _full_run(self, now: datetime, state: InsiderState, current: dict[str, set[str]], changed: list[str], failed: dict[str, str], record: dict[str, Any]) -> RunOutcome:
+    def _full_run(
+        self, now: datetime, state: InsiderState, current: dict[str, set[str]], reasons: Mapping[str, list[str]], changed: list[str], failed: dict[str, str], record: dict[str, Any]
+    ) -> RunOutcome:
         strategy = self._strategy
         today = now.date()
         if state.pending_trade is not None:
             strategy.log_info(f"[insider_trades] this change replaces the unfinished trade (after {state.pending_trade.days} earlier check(s)); orders still working count toward the new target")
         strategy.log_info(f"[insider_trades] {len(changed)} stock(s) changed: {', '.join(changed)}")
         for ticker in changed:
-            strategy.log_info(f"[insider_trades]   {ticker}: {'; '.join(self._change_reasons(ticker, current[ticker], state))}")
+            strategy.log_info(f"[insider_trades]   {ticker}: {'; '.join(reasons[ticker])}")
 
         # 1. Researcher: one run per changed stock that has insider trades in its window.
         self._phase = "researcher"
@@ -320,7 +271,7 @@ class InsiderPipeline:
         # 2. Trader: the target, then the orders and the check that they filled.
         self._phase, self._pending_retry = "trading", False
         target = self._trade(now, state, stocks, failed, record)
-        audit = self._audited(record)
+        audit = self._audited(self._desk, record)
         if not audit.complete:
             strategy.log_info(f"[trader] unfinished trade kept; it will be checked again on later days (up to {self._params.max_trade_retries}): {_unfinished(audit)}")
 
@@ -409,7 +360,7 @@ class InsiderPipeline:
         }
         try:
             self._run_stage(AGENT_TRADER, self._trader_task, context)
-        except RunAbandoned as exc:
+        except StageAbandoned as exc:
             if recorder.target is None:
                 raise  # no valid target: nothing was traded, abandon the whole run
             # The target is in (so orders may be too) but the report never was: the audit decides what is left to check.
@@ -428,18 +379,6 @@ class InsiderPipeline:
         """What `submit_target` answers once the target is valid: the desk now knows it, and the trader gets what is off it."""
         self._desk.set_target(weights)
         return {"shortfalls": _shortfalls(self._desk.audit())}
-
-    def _audited(self, record: dict[str, Any]) -> Audit:
-        """The desk's audit after the trading stage, with the orders and what is still off target logged."""
-        strategy = self._strategy
-        after = self._desk.audit()
-        record["orders"] = self._orders_record()
-        record["shortfalls_after"] = [asdict(s) for s in after.shortfalls]
-        for view in after.unfilled:
-            strategy.log_warning(f"[trader] {view.side} {view.quantity:g} {view.symbol} is {view.status}: it will be checked again")
-        for shortfall in after.shortfalls:
-            strategy.log_warning(f"[trader] off target: {shortfall.detail}")
-        return after
 
     def _stock_context(self, stock: _Stock, state: InsiderState, current_weight: float | None, failed: dict[str, str]) -> dict[str, Any]:
         insiders: list[InsiderSummary] = []
@@ -518,10 +457,7 @@ class InsiderPipeline:
             tool = recorder.missing_tool
             error = recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = self._retry_prompt(tool, error), tool
-        raise RunAbandoned(stage or agent_name, error)
-
-    def _orders_record(self) -> list[dict[str, Any]]:
-        return [asdict(view) for view in self._desk.orders_view().values()]
+        raise StageAbandoned(stage or agent_name, error)
 
 
 def _shortfalls(audit: Audit) -> list[dict[str, Any]]:

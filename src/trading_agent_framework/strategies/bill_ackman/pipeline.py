@@ -9,23 +9,25 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Protocol
 
-from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, price_return, unavailable_fact_sheet
+from trading_agent_framework.strategies.bill_ackman.fact_sheet import fact_sheet, unavailable_fact_sheet
 from trading_agent_framework.strategies.bill_ackman.handoff import FAIL, SURVIVE, HandoffRecorder, Idea, PortfolioPosition, Verdict
-from trading_agent_framework.strategies.bill_ackman.hysteresis import advance_cooldowns, apply_verdicts
+from trading_agent_framework.strategies.bill_ackman.hysteresis import HysteresisOutcome, apply_verdicts
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.bill_ackman.prompts import SHORT_SELLER_TASK, TRADER_TASK, researcher_task, retry_prompt
 from trading_agent_framework.strategies.bill_ackman.screen import Candidate, ScreenResult
-from trading_agent_framework.strategies.bill_ackman.state import ReviewLog, ReviewState, StateStore
+from trading_agent_framework.strategies.bill_ackman.state import ReviewState, StateStore
+from trading_agent_framework.strategies.common.cooldowns import advance_cooldowns
+from trading_agent_framework.strategies.common.pipeline import AgentLookup, ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
-from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, BacktestError, BrokerError, FundamentalsError, TradingFrameworkError
+from trading_agent_framework.strategies.common.run_log import RunLog
+from trading_agent_framework.strategies.common.scoring import compute_return_from_prices
+from trading_agent_framework.utils.errors import AgentError, FundamentalsError, TradingFrameworkError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -39,31 +41,7 @@ class ScreenLike(Protocol):
     def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult: ...
 
 
-class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
-
-
-class AgentLookup(Protocol):
-    """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
-
-    def __getitem__(self, name: str, /) -> AgentLike: ...
-
-
-class ReviewAbandoned(Exception):
-    """A stage could not produce what the review needs; the review ends with nothing traded."""
-
-    def __init__(self, stage: str, message: str) -> None:
-        super().__init__(message)
-        self.stage = stage
-
-
-@dataclass(frozen=True, slots=True)
-class ReviewOutcome:
-    completed: bool
-    abandoned_streak: int  # abandoned reviews in a row after this one (0 after a completed review)
-
-
-class ReviewPipeline:
+class AckmanPipeline(ReviewPipeline[ReviewState]):
     def __init__(
         self,
         *,
@@ -73,45 +51,34 @@ class ReviewPipeline:
         agents: AgentLookup,
         recorder: HandoffRecorder,
         state: StateStore,
-        review_log: ReviewLog,
+        log: RunLog,
         rebalancer: Rebalancer,
         universe: Sequence[str],
     ) -> None:
-        self._strategy = strategy
+        super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._screen = screen
-        self._agents = agents
-        self._recorder = recorder
-        self._state = state
-        self._log = review_log
         self._rebalancer = rebalancer
         self._universe = list(universe)
         self._stage = "setup"  # "setup" until the rebalancer starts, then "execution": what a broker failure is attributed to
 
     # --- one review --------------------------------------------------------------------------------
 
-    def run(self) -> ReviewOutcome:
-        state = self._state.load()
-        now = self._strategy.clock.now().astimezone(MARKET_TZ)
-        record: dict[str, Any] = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
+    def _begin(self) -> None:
         self._stage = "setup"
+
+    def _run(self, now: datetime, state: ReviewState, record: dict[str, Any]) -> RunOutcome:
+        self._review(now, state, record)
+        return RunOutcome(completed=True, abandoned_streak=0)
+
+    def _executing(self) -> bool:
+        return self._stage == "execution"
+
+    def _on_abandoned(self, state: ReviewState, streak: int, stage: str) -> tuple[ReviewState, dict[str, Any]]:
         extra: dict[str, Any] = {}
-        try:
-            self._review(now, state, record)
-        except ReviewAbandoned as exc:
-            stage, error = exc.stage, exc
-        except (BrokerError, BacktestError) as exc:
-            # A broker or data failure anywhere in the review (ConfigurationError is not one: it propagates).
-            stage, error = ("execution" if self._stage == "execution" else "broker"), exc
-            if stage == "execution":
-                extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
-        else:
-            return ReviewOutcome(completed=True, abandoned_streak=0)
-        streak = state.abandoned_streak + 1
-        self._strategy.log_error(f"review abandoned at the {stage} stage (streak {streak}): {error}")
-        self._state.save(replace(state, abandoned_streak=streak))
-        self._log.append({**record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
-        return ReviewOutcome(completed=False, abandoned_streak=streak)
+        if stage == "execution":
+            extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
+        return replace(state, abandoned_streak=streak), extra
 
     def _review(self, now: datetime, state: ReviewState, record: dict[str, Any]) -> None:
         params = self._params
@@ -124,7 +91,7 @@ class ReviewPipeline:
             holdings = self._rebalancer.holdings()
             holdings_result = self._screen.run(holdings, as_of=now, price_of=price_of, top_n=len(holdings), label="holdings") if holdings else ScreenResult(candidates=[], rejections={})
         except FundamentalsError as exc:
-            raise ReviewAbandoned("screen", str(exc)) from exc
+            raise StageAbandoned("screen", str(exc)) from exc
         weights = self._rebalancer.current_weights()
         cooling = set(state.cooldowns)  # recent forced exits: kept out of the candidates and the allowed set
         candidates = [candidate for candidate in universe_result.candidates if candidate.symbol not in cooling]
@@ -132,18 +99,7 @@ class ReviewPipeline:
         record.update(candidates=[{"symbol": c.symbol, "rank": c.rank, "fcf_yield": round(c.fcf_yield, 4)} for c in candidates], holdings=holdings)
 
         # 3. Researcher.
-        ranking: list[Idea] = []
-        if candidates:
-            symbols = [c.symbol for c in candidates]
-            self._recorder.expect_ranking(symbols)
-            strategy.log_info(f"[researcher] {len(candidates)} candidates, by FCF yield: {', '.join(f'{c.symbol} (#{c.rank}, {c.fcf_yield:.1%})' for c in candidates)}")
-            context = {
-                "current_datetime": now.isoformat(),
-                "candidates": [sheets[symbol] for symbol in symbols],
-                "holdings": [{"symbol": symbol, "weight": weight} for symbol, weight in weights.items()],
-            }
-            self._run_stage("researcher", "submit_ranking", researcher_task(min(params.research_top_n, len(symbols))), context)
-            ranking = self._recorder.submission
+        ranking = self._researcher(now, candidates, sheets, weights)
         ranked = [idea.symbol for idea in ranking]
         researcher_reasons = {idea.symbol: idea.reason for idea in ranking}
 
@@ -156,30 +112,9 @@ class ReviewPipeline:
 
         # 6. Short seller.
         to_judge = [symbol for symbol in review_set if symbol not in verdicts]
-        if to_judge:
-            previous = {symbol: state.last_verdicts[symbol] for symbol in to_judge if symbol in state.last_verdicts}
-            self._recorder.expect_verdicts(to_judge, previous={symbol: record["verdict"] for symbol, record in previous.items()})
-            strategy.log_info(f"[short_seller] {len(to_judge)} to judge: {', '.join(f'{symbol} (held)' if symbol in holdings else symbol for symbol in to_judge)}")
-            context = {
-                "current_datetime": now.isoformat(),
-                "to_judge": [
-                    {
-                        "fact_sheet": sheets[symbol],
-                        "researcher_reason": researcher_reasons.get(symbol),
-                        "held": symbol in holdings,
-                        "current_weight": weights.get(symbol, 0.0),
-                        "fail_count": state.fail_counts.get(symbol, 0),
-                        "previous_verdict": previous.get(symbol),
-                    }
-                    for symbol in to_judge
-                ],
-            }
-            # One or two checks per name; past the budget only submit_verdicts runs (it is exempt), so a long
-            # review set cannot overflow the model's context.
-            self._run_stage("short_seller", "submit_verdicts", SHORT_SELLER_TASK, context, tool_budget=2 * len(to_judge))
-            for verdict in self._recorder.submission:
-                verdicts[verdict.symbol] = verdict
-                sources[verdict.symbol] = "llm"
+        for verdict in self._short_seller(now, state, to_judge, holdings, sheets, researcher_reasons, weights):
+            verdicts[verdict.symbol] = verdict
+            sources[verdict.symbol] = "llm"
 
         survivors = [symbol for symbol in review_set if verdicts[symbol].verdict == SURVIVE]
         failures = [f"{symbol} ({verdicts[symbol].concern or verdicts[symbol].reason})" for symbol in review_set if verdicts[symbol].verdict == FAIL]
@@ -215,6 +150,123 @@ class ReviewPipeline:
             )
 
         # 8. Trader.
+        positions = self._trader(now, allowed, required, ranked, verdicts, researcher_reasons, outcome, weights, sheets)
+
+        chosen = {position.symbol for position in positions}
+        in_use = f"slots in use {len(chosen)}/{params.max_positions}"
+        for symbol in holdings:
+            if symbol not in chosen:
+                strategy.log_info(f"[book] slot freed: {symbol} ({'forced exit' if symbol in outcome.forced_exits else 'cooling down'}); {in_use}")
+        for position in positions:
+            if position.symbol not in holdings:
+                strategy.log_info(f"[book] slot filled: {position.symbol} at {position.weight:.1%}; {in_use}")
+
+        # 9. Targets and execution.
+        target = target_portfolio({position.symbol: position.weight for position in positions}, cash_buffer=params.cash_buffer)
+        self._stage = "execution"
+        orders = self._rebalancer.rebalance(target, outcome.forced_exits)
+
+        # 10. Remember and log.
+        cooldowns = advance_cooldowns(state.cooldowns, started=outcome.forced_exits, length=params.reentry_cooldown_reviews)
+        self._state.save(
+            ReviewState(
+                last_review=now.date().isoformat(),
+                fail_counts=outcome.fail_counts,
+                last_ranking=ranked,
+                last_verdicts={
+                    symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "concern": verdict.concern, "date": now.date().isoformat()}
+                    for symbol, verdict in verdicts.items()
+                    if sources[symbol] == "llm"  # a verdict code gave a rejected holding is not the short seller's own
+                },
+                abandoned_streak=0,
+                cooldowns=cooldowns,
+            )
+        )
+        self._log.append(
+            {
+                **record,
+                "ranking": [asdict(idea) for idea in ranking],
+                "review_set": review_set,
+                "verdicts": [{**asdict(verdict), "source": sources[verdict.symbol]} for verdict in verdicts.values()],
+                "fail_counts_before": state.fail_counts,
+                "fail_counts_after": outcome.fail_counts,
+                "forced_exits": outcome.forced_exits,
+                "allowed": allowed,
+                "required": required,
+                "cooldowns": cooldowns,
+                "portfolio": [asdict(position) for position in positions],
+                "targets": {**target.weights, params.parking_symbol: target.parking_weight},
+                "orders": [asdict(order) for order in orders],
+            }
+        )
+
+    def _researcher(self, now: datetime, candidates: Sequence[Candidate], sheets: Mapping[str, dict[str, Any]], weights: Mapping[str, float]) -> list[Idea]:
+        """The researcher stage: the candidates ranked, best first (none without candidates)."""
+        params, strategy = self._params, self._strategy
+        ranking: list[Idea] = []
+        if candidates:
+            symbols = [c.symbol for c in candidates]
+            self._recorder.expect_ranking(symbols)
+            strategy.log_info(f"[researcher] {len(candidates)} candidates, by FCF yield: {', '.join(f'{c.symbol} (#{c.rank}, {c.fcf_yield:.1%})' for c in candidates)}")
+            context = {
+                "current_datetime": now.isoformat(),
+                "candidates": [sheets[symbol] for symbol in symbols],
+                "holdings": [{"symbol": symbol, "weight": weight} for symbol, weight in weights.items()],
+            }
+            self._run_stage("researcher", "submit_ranking", researcher_task(min(params.research_top_n, len(symbols))), context)
+            ranking = self._recorder.submission
+        return ranking
+
+    def _short_seller(
+        self,
+        now: datetime,
+        state: ReviewState,
+        to_judge: Sequence[str],
+        holdings: Sequence[str],
+        sheets: Mapping[str, dict[str, Any]],
+        researcher_reasons: Mapping[str, str],
+        weights: Mapping[str, float],
+    ) -> list[Verdict]:
+        """The short seller stage: a verdict on each of `to_judge` (none when there is nothing to judge)."""
+        strategy = self._strategy
+        if to_judge:
+            previous = {symbol: state.last_verdicts[symbol] for symbol in to_judge if symbol in state.last_verdicts}
+            self._recorder.expect_verdicts(to_judge, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
+            strategy.log_info(f"[short_seller] {len(to_judge)} to judge: {', '.join(f'{symbol} (held)' if symbol in holdings else symbol for symbol in to_judge)}")
+            context = {
+                "current_datetime": now.isoformat(),
+                "to_judge": [
+                    {
+                        "fact_sheet": sheets[symbol],
+                        "researcher_reason": researcher_reasons.get(symbol),
+                        "held": symbol in holdings,
+                        "current_weight": weights.get(symbol, 0.0),
+                        "fail_count": state.fail_counts.get(symbol, 0),
+                        "previous_verdict": previous.get(symbol),
+                    }
+                    for symbol in to_judge
+                ],
+            }
+            # One or two checks per name; past the budget only submit_verdicts runs (it is exempt), so a long
+            # review set cannot overflow the model's context.
+            self._run_stage("short_seller", "submit_verdicts", SHORT_SELLER_TASK, context, tool_budget=2 * len(to_judge))
+            return list(self._recorder.submission)
+        return []
+
+    def _trader(
+        self,
+        now: datetime,
+        allowed: Sequence[str],
+        required: Sequence[str],
+        ranked: Sequence[str],
+        verdicts: Mapping[str, Verdict],
+        researcher_reasons: Mapping[str, str],
+        outcome: HysteresisOutcome,
+        weights: Mapping[str, float],
+        sheets: Mapping[str, dict[str, Any]],
+    ) -> list[PortfolioPosition]:
+        """The trader stage: the portfolio chosen from the allowed set (empty when nothing is allowed or the trader holds nothing)."""
+        params, strategy = self._params, self._strategy
         positions: list[PortfolioPosition] = []
         if allowed:
             self._recorder.expect_portfolio(allowed, required=required)
@@ -256,54 +308,7 @@ class ReviewPipeline:
                 strategy.log_info(f"[trader]   {position.symbol} {position.weight:.1%}: {position.reason}")
         elif allowed:
             strategy.log_info(f"[trader] decision: hold nothing, everything goes to {params.parking_symbol}")
-
-        chosen = {position.symbol for position in positions}
-        in_use = f"slots in use {len(chosen)}/{params.max_positions}"
-        for symbol in holdings:
-            if symbol not in chosen:
-                strategy.log_info(f"[book] slot freed: {symbol} ({'forced exit' if symbol in outcome.forced_exits else 'cooling down'}); {in_use}")
-        for position in positions:
-            if position.symbol not in holdings:
-                strategy.log_info(f"[book] slot filled: {position.symbol} at {position.weight:.1%}; {in_use}")
-
-        # 9. Targets and execution.
-        target = target_portfolio({position.symbol: position.weight for position in positions}, cash_buffer=params.cash_buffer)
-        self._stage = "execution"
-        orders = self._rebalancer.rebalance(target, outcome.forced_exits)
-
-        # 10. Remember and log.
-        cooldowns = advance_cooldowns(state.cooldowns, forced_exits=outcome.forced_exits, reviews=params.reentry_cooldown_reviews)
-        self._state.save(
-            ReviewState(
-                last_review=now.date().isoformat(),
-                fail_counts=outcome.fail_counts,
-                last_ranking=ranked,
-                last_verdicts={
-                    symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "concern": verdict.concern, "date": now.date().isoformat()}
-                    for symbol, verdict in verdicts.items()
-                    if sources[symbol] == "llm"  # a verdict code gave a rejected holding is not the short seller's own
-                },
-                abandoned_streak=0,
-                cooldowns=cooldowns,
-            )
-        )
-        self._log.append(
-            {
-                **record,
-                "ranking": [asdict(idea) for idea in ranking],
-                "review_set": review_set,
-                "verdicts": [{**asdict(verdict), "source": sources[verdict.symbol]} for verdict in verdicts.values()],
-                "fail_counts_before": state.fail_counts,
-                "fail_counts_after": outcome.fail_counts,
-                "forced_exits": outcome.forced_exits,
-                "allowed": allowed,
-                "required": required,
-                "cooldowns": cooldowns,
-                "portfolio": [asdict(position) for position in positions],
-                "targets": {**target.weights, params.parking_symbol: target.parking_weight},
-                "orders": [asdict(order) for order in orders],
-            }
-        )
+        return positions
 
     # --- helpers -----------------------------------------------------------------------------------
 
@@ -329,7 +334,7 @@ class ReviewPipeline:
                 return
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
             prompt, force_tool = retry_prompt(tool, error), tool
-        raise ReviewAbandoned(agent_name, error)
+        raise StageAbandoned(agent_name, error)
 
     def _fact_sheets(self, candidates: Sequence[Candidate], holdings: Sequence[str], holdings_result: ScreenResult) -> dict[str, dict[str, Any]]:
         """A fact sheet per candidate and per holding; a holding the screen could not describe gets the price facts and the reason."""
@@ -356,4 +361,4 @@ class ReviewPipeline:
         except TradingFrameworkError:
             bars = None
         closes = [float(close) for close in bars.df["close"]] if bars is not None else []
-        return (float(last) if last is not None else None, price_return(closes))
+        return (float(last) if last is not None else None, compute_return_from_prices(closes, 252, 0))

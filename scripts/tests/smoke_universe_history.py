@@ -35,11 +35,11 @@ from pathlib import Path
 import pandas as pd
 
 from trading_agent_framework.backtesting.data.yahoo import parse_yahoo_frame
-from trading_agent_framework.strategies.common.universe_history import UniverseHistory
-from trading_agent_framework.strategies.cross_momentum.batch_us_stock_universe import (
+from trading_agent_framework.strategies.common.batch_us_stock_universe import (
     _DEFAULT_HISTORY_CACHE,
     ensure_universe_history,
 )
+from trading_agent_framework.strategies.common.universe_history import UniverseHistory
 
 START = date(2017, 6, 1)
 CHECK_MONTH = "2017-06"
