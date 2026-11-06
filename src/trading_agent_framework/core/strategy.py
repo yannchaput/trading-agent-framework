@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from types import MappingProxyType, SimpleNamespace
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.config import LLMCredentials
@@ -91,7 +91,9 @@ class Strategy:
     # First on_trading_iteration() of each session at this market time (America/New_York); None = at the open.
     # The other hooks keep their times; a start at or after the closing window skips that session's iterations.
     iteration_start_time: time | None = None
-    parameters: Mapping[str, Any] = MappingProxyType({})
+    # A dict (strategies record e.g. `parameters["universe"]`): __init__ always replaces this class default with a
+    # per-instance copy, so the class-level dict is never mutated.
+    parameters: dict[str, Any] = {}
 
     # backtesting defaults (Strategy.run_backtesting()), overridable per call
     backtesting_start: datetime | None = None

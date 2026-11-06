@@ -4,7 +4,7 @@
 
 * ~~ Migrate projects to the 2nd hard drive (with the models)~~
 * ~~Enable IBKR broker~~
-* Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)
+* ~~Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)~~
 * ~~Cache LLM calls during backtesting so reruns against the same period are deterministic and free (design spec section 1.3 -- currently every backtest rerun calls the live LLM again)~~ => Too complex
 * ~~Add agent call telemetry (token counts, latency) to backtesting settings.json and `llm_stats.sqlite`, shown in the dashboard's Parameters tab (no cache hits: LLM call caching was dropped as too complex)~~
 * ~~Create a batch to run all the smoke tests altogether~~
@@ -13,7 +13,7 @@
 * ~~Add a gloabl factory/builder for strategy in main.py~~
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
-* Implement a skill scanning the auto memory and sessions to get a finding
+* Implement a skill scanning the auto memory and session traces to get a finding
 
 ## BUGS
 
@@ -25,7 +25,7 @@
 
 * Caveman
 * RTK
-* Wait-what
+* Wait-what (mattpockock)
 * poneytail
 
 ## PEA Manager
