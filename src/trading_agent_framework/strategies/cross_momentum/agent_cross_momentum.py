@@ -42,6 +42,7 @@ from trading_agent_framework.config import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
+from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
@@ -621,7 +622,14 @@ class CrossMomentumStrategy(Strategy):
         sleeve_order = (*parking["trend_assets"], parking["symbol"])
         portfolio_value = float(self.portfolio_value or 1.0)
 
-        current_positions = self.get_positions()
+        # Long positions only: IBKR and Tastytrade report a short as a positive quantity with side=SHORT, and a sell
+        # against it would open more short (this strategy is long-only and never trades one)
+        current_positions = []
+        for pos in self.get_positions():
+            if pos.side is PositionSide.LONG:
+                current_positions.append(pos)
+            else:
+                self.log_warning(f"{pos.asset.symbol}: short position of {pos.quantity} ignored (this strategy is long-only and will not trade it)")
         # Orders still open from an earlier rebalance (a restart on a rebalance day sends this one again), read before
         # this run sends anything: a pending buy counts toward its position, a pending sell is not sent again, and the
         # buy budget is net of both. Cash is not debited by an open buy, nor credited by an open sell, until it fills.

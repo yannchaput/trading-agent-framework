@@ -14,7 +14,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.config import TradingMode
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
+from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide, TimeInForce
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.utils import unfilled_sell_proceeds
@@ -159,7 +159,7 @@ def test_buys_leave_the_cash_buffer_unspent():
 
 def test_buffer_applies_to_estimated_sell_proceeds_too():
     prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
-    held = SimpleNamespace(asset=SimpleNamespace(symbol="OLD"), quantity=100.0)  # worth 1000
+    held = _held("OLD", 100.0)  # worth 1000
     fake = FakeStrategy(cash=0.0, positions=[held], last_prices=prices, cash_buffer_pct=0.05)
 
     target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
@@ -224,8 +224,8 @@ def test_zero_buffer_spends_everything_available():
     assert _planned_buy_cost(fake, prices) > 1000.0 * 0.99
 
 
-def _held(symbol, quantity):
-    return SimpleNamespace(asset=SimpleNamespace(symbol=symbol), quantity=quantity)
+def _held(symbol, quantity, side=PositionSide.LONG):
+    return SimpleNamespace(asset=SimpleNamespace(symbol=symbol), quantity=quantity, side=side)
 
 
 def _open(symbol, quantity, side):
@@ -275,6 +275,15 @@ def test_a_trim_already_in_flight_is_not_sent_again():
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1)], {"AAA": 1})
 
     assert _orders(fake, "AAA", "sell") == []
+
+
+def test_a_short_position_is_not_sold_as_unranked():
+    """IBKR and Tastytrade report a short as a positive quantity with side=SHORT: a sell would open more short."""
+    fake = FakeStrategy(cash=1000.0, positions=[_held("OLD", 10.0, PositionSide.SHORT)], last_prices={"OLD": 100.0, "AAA": 50.0})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 50.0, 1)], {"AAA": 1})  # OLD is unranked
+
+    assert _orders(fake, "OLD", "sell") == []
 
 
 def _orders(fake, symbol, side):

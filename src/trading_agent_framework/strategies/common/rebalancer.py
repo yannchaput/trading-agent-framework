@@ -20,7 +20,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from trading_agent_framework.entities.enums import OrderSide
+from trading_agent_framework.entities.enums import OrderSide, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.portfolio import TargetPortfolio
 from trading_agent_framework.utils.errors import BrokerUncertainError, TradingFrameworkError
@@ -86,10 +86,24 @@ class Rebalancer:
 
     # --- what is held ----------------------------------------------------------------------------
 
+    def _long_positions(self, *, warn: bool = False) -> list:
+        """The long positions with a positive quantity. IBKR and Tastytrade report a short as a POSITIVE quantity with
+        `side=SHORT`, and a sell against it would open more short, so a short is never a holding here: `warn` logs each one
+        (the order path asks for it; the read-only views stay quiet)."""
+        positions = []
+        for position in self._strategy.get_positions():
+            if position.quantity <= 0:
+                continue
+            if position.side is PositionSide.LONG:
+                positions.append(position)
+            elif warn:
+                self._strategy.log_warning(f"{position.asset.symbol}: short position of {position.quantity} ignored (this strategy is long-only and will not trade it)")
+        return positions
+
     def holdings(self) -> list[str]:
         """The stocks held (every long position except the parking instrument), sorted."""
         parking = self._params.parking_symbol
-        return sorted(position.asset.symbol for position in self._strategy.get_positions() if position.quantity > 0 and position.asset.symbol != parking)
+        return sorted(position.asset.symbol for position in self._long_positions() if position.asset.symbol != parking)
 
     def current_weights(self) -> dict[str, float]:
         """Each stock's share of portfolio value counting open orders (held + pending buys - pending sells), rounded to 4 decimals.
@@ -100,7 +114,7 @@ class Rebalancer:
         if portfolio_value <= 0:
             return {}
         parking = self._params.parking_symbol
-        held = {position.asset.symbol: float(position.quantity) for position in self._strategy.get_positions() if position.quantity > 0}
+        held = {position.asset.symbol: float(position.quantity) for position in self._long_positions()}
         incoming, outgoing = self._in_flight()
         weights = {}
         for symbol in dict.fromkeys([*held, *incoming, *outgoing]):
@@ -151,7 +165,7 @@ class Rebalancer:
         parking = params.parking_symbol
         forced = set(forced_exits)
         targets = {symbol: weight for symbol, weight in target.weights.items() if symbol not in forced and symbol != parking}
-        positions = [position for position in strategy.get_positions() if position.quantity > 0]
+        positions = self._long_positions(warn=True)
         held = {position.asset.symbol: float(position.quantity) for position in positions}
         costs = {position.asset.symbol: float(position.avg_fill_price) for position in positions if position.avg_fill_price}
         incoming, outgoing = self._in_flight()

@@ -296,6 +296,31 @@ def test_holdings_exclude_the_parking_instrument_and_empty_positions(tmp_path: P
     assert rebalancer.holdings() == ["A", "B"]
 
 
+def _with_short(broker: FakeBroker, symbol: str, quantity: float) -> None:
+    """IBKR and Tastytrade report a short as a POSITIVE quantity with side=SHORT (brokers/CLAUDE.md)."""
+    broker.positions = [*broker.positions, Position(strategy_name="bill_ackman", asset=Asset(symbol), quantity=Decimal(str(quantity)), side=PositionSide.SHORT)]
+
+
+def test_a_short_position_is_not_a_holding_and_has_no_weight(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "X": 20, "SHV": 100}, cash=0)
+    _with_short(broker, "X", 100)
+
+    assert rebalancer.holdings() == ["A"]
+    assert rebalancer.current_weights() == {"A": 0.5}
+
+
+def test_a_short_position_is_never_sold_and_the_run_warns_about_it(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Selling against a short opens more short: X (short 100, not in the target) must get no order."""
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "X": 20, "SHV": 100}, cash=5_000)
+    _with_short(broker, "X", 100)
+
+    with caplog.at_level(logging.WARNING):
+        rebalancer.rebalance(target_portfolio({"A": 0.5}, cash_buffer=0.02))
+
+    assert all(symbol != "X" for symbol, _, _ in _orders(broker))
+    assert any("short" in record.getMessage().lower() and "X" in record.getMessage() for record in caplog.records)
+
+
 def test_current_weights_are_each_stocks_share_of_portfolio_value(tmp_path: Path) -> None:
     _, _, rebalancer = _book(tmp_path, positions={"A": 100, "B": 10, "SHV": 10}, prices={"A": 50, "B": 25, "SHV": 100}, cash=0)
 
