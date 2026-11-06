@@ -51,10 +51,6 @@
 * Draw a plot of realized P&L in grey
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
-### Time Machine
-
-* https://github.com/Jakeschincariol/day-trader-skill
-* Prends juste le mécanisme Time Machine parce que le reste est une strat différente
 
 ### Cross sectional momentum
 
@@ -65,7 +61,7 @@
 
 ### Bull Bear
 
-* Verifier si le tools search_memory a ete utilisé et pourquoi
+* Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
 * ~~Enable compaction of the state in langchain with middleware~~
@@ -94,6 +90,9 @@
 * To study
 
 ### Time Machine
+
+* https://github.com/Jakeschincariol/day-trader-skill
+* Prends juste le mécanisme Time Machine parce que le reste est une strat différente
 
 ``` code
 Ce qui est demandé : chaque mardi, juste avant d'envoyer les ordres, cross_momentum et bull_bear simulent le portefeuille qu'elles s'apprêtent à acheter. Elles calculent la même chose pour le portefeuille qu'elles détiennent. Deux méthodes, dans l'esprit de Time Machine :
