@@ -68,6 +68,11 @@ select = ["E", "F", "I", "UP", "B", "D"] # D: Enables all pydocstyle rules
 convention = "google" # Options: "google", "numpy", or "pep257"
 
 
+[tool.interrogate]
+paths = ["src"]
+exclude = ["scripts", "tests"]
+fail-under = 80
+
 [tool.pyright]
 include = ["src"]
 typeCheckingMode = "standard"
@@ -86,6 +91,7 @@ source = ["src"]
 branch = true
 
 [tool.coverage.report]
+fail_under = 80
 exclude_lines = [
     "pragma: no cover",
     "if TYPE_CHECKING:",

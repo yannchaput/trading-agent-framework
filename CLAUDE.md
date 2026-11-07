@@ -17,7 +17,11 @@ uv run batch-universe --history --start YYYY-MM [--end YYYY-MM]  # build or exte
 uv run bull-bear-scores <run_dir> [<run_dir>...]  # score bull_bear's bull/bear/judge calls and the judge's strengths against forward returns, runs side by side (fetches Yahoo opens; read-only)
 uv run pytest                             # run the full test suite
 uv run pytest tests/brokers/alpaca/       # run one directory/file
-uv run ruff check                         # lint
+uv run pytest --cov                       # tests with branch coverage (gate: >= 80%)
+uv run ruff check                         # lint (gate: zero errors)
+uv run ruff format --check                # formatting check
+uv run pyright                            # type check
+uv run interrogate -v                     # docstring coverage of src/ (gate: >= 80%)
 uv run python scripts/tests/smoke_alpaca_orders.py     # manual paper-trading smoke test: broker orders
 uv run python scripts/tests/smoke_strategy_paper.py    # manual paper-trading smoke test: strategy lifecycle
 uv run python scripts/tests/smoke_alpaca_data.py       # manual paper-account smoke test: market data + indicators (read-only)
