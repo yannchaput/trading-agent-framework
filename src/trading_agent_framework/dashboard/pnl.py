@@ -42,7 +42,8 @@ class Sale:
 
 class AverageCostBook:
     """Replays time-ordered fills: each symbol's shares and remaining cost (every buy fee in it). A sale leaves at
-    the average cost and pays its own fee; the shares sold beyond what is held are counted in `unmatched`."""
+    the average cost and pays its own fee; the shares sold beyond what is held are counted in `unmatched`.
+    """
 
     def __init__(self) -> None:
         self._holdings: dict[str, tuple[float, float]] = {}
@@ -108,7 +109,8 @@ class AccountPnl:
     `unrealized_now` is on the replay's average cost, the basis of the realized P&L; `broker_unrealized` is Alpaca's
     own figure (it re-bases overnight positions to compressed FIFO, so the two differ after a partial sale).
     `mismatches`: `(symbol, replayed shares, broker shares)` where the fills do not explain the positions;
-    `unmatched_sales`: shares sold with no held shares to cost them against; `unpriced`: held symbols with no close."""
+    `unmatched_sales`: shares sold with no held shares to cost them against; `unpriced`: held symbols with no close.
+    """
 
     days: list[dict[str, Any]]
     realized_total: float
@@ -123,7 +125,8 @@ class AccountPnl:
 @dataclass(frozen=True, slots=True)
 class ReturnBases:
     """What a day's move is measured against, each keyed by the day of the close: `equity` is the account's equity at
-    that close, `benchmark` the benchmark's close (today's is its latest price)."""
+    that close, `benchmark` the benchmark's close (today's is its latest price).
+    """
 
     equity: Mapping[date, float]
     benchmark: Mapping[date, float]
@@ -151,7 +154,8 @@ def _close_before(closes: Mapping[date, float], day: date) -> float | None:
 def daily_returns_pct(days: Sequence[Mapping[str, Any]], bases: ReturnBases) -> list[dict[str, Any]]:
     """`{date, strategy, benchmark}` per `AccountPnl.days` row, both in percent against the day before: the strategy's
     `change` over the account's equity at the previous close, the benchmark's close over its previous close. A value is
-    None when its base is missing (no history yet, an account not funded yet), so the plot leaves a gap, not a zero."""
+    None when its base is missing (no history yet, an account not funded yet), so the plot leaves a gap, not a zero.
+    """
     rows: list[dict[str, Any]] = []
     for day in days:
         moment = date.fromisoformat(day["date"])
@@ -170,7 +174,8 @@ def daily_returns_pct(days: Sequence[Mapping[str, Any]], bases: ReturnBases) -> 
 def _unrealized_today(positions: Sequence[BrokerPosition], held: Mapping[str, tuple[float, float]]) -> float:
     """Today's unrealized P&L on the replay's cost basis: the replayed shares at the position's current price, against
     their replayed cost. A position the fills do not explain (other quantity, not replayed, no price) keeps the
-    broker's own `unrealized_pl`."""
+    broker's own `unrealized_pl`.
+    """
     total = 0.0
     for position in positions:
         replayed = held.get(position.symbol)
@@ -191,7 +196,8 @@ def daily_account_pnl(
 ) -> AccountPnl:
     """Realized P&L of each day's sales (net of fees, at average cost, plus that day's fee and dividend activities) and the
     unrealized P&L of the shares held at each day's close; today's unrealized is the broker's, not a close's.
-    A day is any day with a close, a fill, a fee or a dividend between the first fill and today, and today."""
+    A day is any day with a close, a fill, a fee or a dividend between the first fill and today, and today.
+    """
     broker_unrealized = sum(p.unrealized_pl or 0.0 for p in positions)
     unrealized_now = broker_unrealized  # replaced below by the replay's figure once today's fills are in
     ordered = sorted(fills, key=lambda f: f.time)

@@ -22,6 +22,7 @@ class HandoffError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class OrderReport:
+    """One order as reported back to the agent."""
     order_id: str
     reason: str | None
 
@@ -40,6 +41,7 @@ class OrderView:
 
     @property
     def filled(self) -> bool:
+        """Whether the order is fully filled."""
         return self.status == "filled"
 
 
@@ -47,6 +49,7 @@ class OrderView:
 
 
 def items(raw: Any, what: str) -> list[Mapping[str, Any]]:
+    """`raw` as a list of mappings; raise a validation error naming `what` otherwise."""
     if not isinstance(raw, list | tuple):
         raise HandoffError(f"{what} must be a list of objects")
     result = []
@@ -58,6 +61,7 @@ def items(raw: Any, what: str) -> list[Mapping[str, Any]]:
 
 
 def key(item: Mapping[str, Any], field: str, index: int) -> str:
+    """The `field` of an item as a non-empty string; raise naming the item index otherwise."""
     value = item.get(field)
     if not isinstance(value, str) or not value.strip():
         raise HandoffError(f"item {index} has no {field}")
@@ -75,6 +79,7 @@ def _clean_text(value: Any, field: str, who: str, max_chars: int) -> str:
 
 
 def required_text(item: Mapping[str, Any], field: str, who: str, max_chars: int) -> str:
+    """A non-empty text `field` within `max_chars`; raise naming `who` otherwise."""
     value = item.get(field)
     if not isinstance(value, str) or not value.strip():
         raise HandoffError(f"{who} has no {field}: give one short sentence")
@@ -82,6 +87,7 @@ def required_text(item: Mapping[str, Any], field: str, who: str, max_chars: int)
 
 
 def optional_text(item: Mapping[str, Any], field: str, who: str, max_chars: int) -> str | None:
+    """A text `field` within `max_chars`, or `None` when absent."""
     value = item.get(field)
     if value is None or (isinstance(value, str) and not value.strip()):
         return None
@@ -99,6 +105,7 @@ def text(item: Mapping[str, Any], who: str, max_chars: int, *, required: bool) -
 
 
 def weight(item: Mapping[str, Any], ticker: str, *, example: str = "0.08") -> float:
+    """The item's portfolio `weight` as a float in range; raise naming `ticker` otherwise."""
     value = item.get("weight")
     if isinstance(value, bool):
         raise HandoffError(f"the weight for {ticker} must be a number")
@@ -183,6 +190,7 @@ class SubmitRecorder:
     ALREADY_RECORDED: ClassVar[str] = "already recorded for this run"
 
     def __init__(self) -> None:
+        """Create a recorder that accepts no submission until armed."""
         self._stage: str | None = None
         self._context: dict[str, Any] = {}
         self._submission: Any = None
@@ -190,6 +198,7 @@ class SubmitRecorder:
         self.last_error: str | None = None
 
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
+        """Arm the recorder to accept the submission for `stage` with its validation context."""
         self._stage, self._context = stage, context
         self._submission, self._submitted, self.last_error = None, False, None
 
@@ -209,6 +218,7 @@ class SubmitRecorder:
         return self.TOOL_NAMES.get(self._stage or "", "")
 
     def submit(self, stage: str, *args: Any) -> dict[str, Any]:
+        """Validate and record the agent's submission for `stage`; return a result or error payload for the agent."""
         if self._stage != stage:
             return self._fail(f"{self.TOOL_NAMES[stage]} is not expected at this point{self.NOT_EXPECTED_SUFFIX}")
         if self._submitted:
@@ -225,5 +235,6 @@ class SubmitRecorder:
         raise NotImplementedError
 
     def _fail(self, message: str) -> dict[str, Any]:
+        """Remember `message` as the last error and return it as the error payload."""
         self.last_error = message
         return {"error": message}

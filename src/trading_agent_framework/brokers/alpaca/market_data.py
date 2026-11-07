@@ -55,18 +55,27 @@ class AlpacaStockDataClient(Protocol):
     Narrower than the SDK's `... | RawData` return types: this project never enables raw_data.
     """
 
-    def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet: ...
-    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]: ...
-    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]: ...
+    def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet:
+        """Fetch stock bars for the request."""
+        ...
+    def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]:
+        """Fetch the latest trade per symbol."""
+        ...
+    def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]:
+        """Fetch the latest quote per symbol."""
+        ...
 
 
 class AlpacaNewsClient(Protocol):
     """What `AlpacaBroker` calls on a `NewsClient` (or a test fake)."""
 
-    def get_news(self, request_params: NewsRequest) -> NewsSet: ...
+    def get_news(self, request_params: NewsRequest) -> NewsSet:
+        """Fetch news articles for the request."""
+        ...
 
 
 def parse_timestep(timestep: str) -> TimeFrame:
+    """Convert `minute` or `day` to an Alpaca `TimeFrame`; raise on anything else."""
     if timestep == "minute":
         return cast(TimeFrame, TimeFrame.Minute)
     if timestep == "day":
@@ -109,6 +118,7 @@ def chunk_assets(assets: Iterable[Asset]) -> Iterator[list[Asset]]:
 
 
 def _symbols(assets: Sequence[Asset]) -> list[str]:
+    """Alpaca symbols for the assets."""
     return [to_alpaca_symbol(asset.symbol) for asset in assets]
 
 
@@ -130,10 +140,12 @@ def build_bars_request(assets: Sequence[Asset], timestep: str, start: datetime, 
 
 
 def build_latest_trade_request(assets: Sequence[Asset]) -> StockLatestTradeRequest:
+    """Latest-trade request for the assets on the configured feed."""
     return StockLatestTradeRequest(symbol_or_symbols=_symbols(assets), feed=FEED)
 
 
 def build_latest_quote_request(assets: Sequence[Asset]) -> StockLatestQuoteRequest:
+    """Latest-quote request for the assets on the configured feed."""
     return StockLatestQuoteRequest(symbol_or_symbols=_symbols(assets), feed=FEED)
 
 
@@ -199,6 +211,7 @@ def _bars_frame(rows: Sequence[object]) -> pd.DataFrame:
 
 
 def _within_sessions(df: pd.DataFrame, sessions: Sequence[MarketSession]) -> pd.DataFrame:
+    """Keep only the rows that fall inside the given market sessions."""
     keep = pd.Series(False, index=df.index)
     for session in sessions:
         keep |= (df.index >= session.open) & (df.index < session.close)
@@ -211,6 +224,7 @@ def parse_latest_trades(response: Mapping[str, object], assets: Sequence[Asset])
 
 
 def parse_quote(response: Mapping[str, object], asset: Asset) -> Quote | None:
+    """Quote for `asset` from a latest-quote response; `None` when absent."""
     raw = response.get(to_alpaca_symbol(asset.symbol))
     if raw is None:
         return None

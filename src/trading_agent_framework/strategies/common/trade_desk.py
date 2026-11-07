@@ -67,6 +67,7 @@ class Shortfall:
 
 @dataclass(frozen=True, slots=True)
 class Audit:
+    """Result of auditing a run's orders against the target portfolio."""
     unfilled: list[OrderView]  # this run's orders that are not fully filled
     shortfalls: list[Shortfall]
     in_flight: list[str] = field(default_factory=list)  # owned stocks with an order still working at the broker (this run's or an earlier one's)
@@ -81,17 +82,31 @@ class DeskParams(Protocol):
     """What the desk reads from a strategy's parameters (`CongressParams` and `InsiderParams` satisfy it structurally)."""
 
     @property
-    def rebalance_band(self) -> float: ...
+    def rebalance_band(self) -> float:
+        """Fraction of the portfolio a position may drift from its target weight before a trade is required."""
+        ...
 
     @property
-    def min_trade_pct(self) -> float: ...
+    def min_trade_pct(self) -> float:
+        """Smallest trade, as a fraction of the portfolio, worth placing."""
+        ...
 
     @property
-    def order_wait_seconds(self) -> float: ...
+    def order_wait_seconds(self) -> float:
+        """Seconds to wait for submitted orders to fill."""
+        ...
 
 
 class TradeDesk:
+    """Order desk that lets an agent trade toward a target portfolio under size, band and sell-first guardrails."""
     def __init__(self, strategy: "Strategy", params: DeskParams, *, log_tag: str) -> None:  # noqa: UP037
+        """Bind the desk to a strategy and its guardrail parameters.
+
+        Args:
+            strategy: Strategy whose broker receives the orders.
+            params: Guardrail thresholds.
+            log_tag: Prefix for the desk's log lines.
+        """
         self._strategy = strategy
         self._params = params
         self._log_tag = log_tag
@@ -122,15 +137,18 @@ class TradeDesk:
 
     @property
     def has_target(self) -> bool:
+        """Whether a target portfolio has been set."""
         with self._lock:
             return self._target is not None
 
     @property
     def _weights(self) -> dict[str, float]:
+        """Target weights by symbol; empty before a target is set."""
         return self._target or {}
 
     @staticmethod
     def _normalised(target: Mapping[str, float]) -> dict[str, float]:
+        """Upper-case the symbols and drop non-positive weights."""
         return {symbol.upper(): weight for symbol, weight in target.items() if weight > 0}
 
     @property
@@ -141,6 +159,7 @@ class TradeDesk:
 
     @property
     def orders(self) -> list[Order]:
+        """Orders this desk has placed."""
         with self._lock:
             return list(self._orders.values())
 
@@ -163,6 +182,7 @@ class TradeDesk:
     # --- the agent's tools -------------------------------------------------------------------------
 
     def tools(self) -> list[Callable[..., dict[str, Any]]]:
+        """The order and check tools handed to the agent."""
         def place_order(symbol: str, side: str, quantity: float) -> dict[str, Any]:
             """Place a market order, side buy or sell, for a target-portfolio stock; sells first, quantity in shares (fractions allowed)."""
             return self._place(symbol, side, quantity)
@@ -197,16 +217,19 @@ class TradeDesk:
         )
 
     def _price(self, symbol: str) -> float | None:
+        """Positive last price for `symbol`, or `None` when unavailable."""
         price = self._strategy.get_last_price(symbol)
         return float(price) if price is not None and float(price) > 0 else None
 
     def _refuse(self, message: str) -> dict[str, Any]:
+        """Log a refused order and return the error payload for the agent."""
         self._strategy.log_warning(f"[{self._log_tag}] order refused: {message}")
         return {"error": message}
 
     # --- place_order -------------------------------------------------------------------------------
 
     def _place(self, symbol: Any, side: Any, quantity: Any) -> dict[str, Any]:
+        """Validate and place one market order; return a result or error payload for the agent."""
         symbol = str(symbol).strip().upper()
         side = str(side).strip().lower()
         if side not in ("buy", "sell"):
@@ -248,6 +271,7 @@ class TradeDesk:
     def _check_buy(
         self, symbol: str, quantity: float, price: float, cost: float, effective: float, portfolio_value: float, band: float, min_trade: float, cash: float, buying_power: float
     ) -> str | None:
+        """Reason a buy must be refused (unknown stock, over-weight, cash, minimum size), or `None` when it passes."""
         weight = self._weights.get(symbol)
         if weight is None:
             return f"{symbol} is not in the target portfolio ({', '.join(sorted(self._weights)) or 'it is empty'}): do not buy it"
@@ -280,6 +304,7 @@ class TradeDesk:
         band: float,
         min_trade: float,
     ) -> str | None:
+        """Reason a sell must be refused (not held, over-sell, minimum size), or `None` when it passes."""
         if symbol not in self._weights and symbol not in self._traded:
             return f"{symbol} is not a position of this strategy (not in the target and never ordered by it): do not touch it"
         if self._buys_placed:
@@ -301,6 +326,7 @@ class TradeDesk:
         return None
 
     def _submit(self, symbol: str, side: str, quantity: float, price: float, cost: float) -> dict[str, Any]:
+        """Record and submit the order, keeping the stock tracked even if the broker call raises."""
         strategy = self._strategy
         # Recorded BEFORE the submission: an order the client raised on may still have reached the broker, and a stock we may hold must stay ours to sell.
         self._traded.add(symbol)
@@ -318,6 +344,7 @@ class TradeDesk:
     # --- check_orders ------------------------------------------------------------------------------
 
     def _check(self) -> dict[str, Any]:
+        """Audit this run's orders against the target and report unfilled orders and shortfalls."""
         with self._lock:
             orders = list(self._orders.values())
         if not orders:
@@ -333,6 +360,7 @@ class TradeDesk:
 
     @staticmethod
     def _lean(order: Order) -> dict[str, Any]:
+        """Compact order summary for the agent."""
         item: dict[str, Any] = {
             "order_id": order.identifier,
             "symbol": order.asset.symbol,

@@ -27,18 +27,21 @@ class NoteTooLong(HandoffError):
     """A note over the hard limit; `note` is the refused (stripped) text, so the recorder can spot a resubmission."""
 
     def __init__(self, message: str, note: str) -> None:
+        """Keep the over-long note so it can be shortened and resubmitted."""
         super().__init__(message)
         self.note = note
 
 
 @dataclass(frozen=True, slots=True)
 class Note:
+    """A research note on one stock."""
     symbol: str
     note: str
 
 
 @dataclass(frozen=True, slots=True)
 class BullCase:
+    """The bull side's case for one stock: a conviction level and an argument."""
     symbol: str
     conviction: str  # one of LEVELS
     argument: str
@@ -46,6 +49,7 @@ class BullCase:
 
 @dataclass(frozen=True, slots=True)
 class BearCase:
+    """The bear side's case against one stock: a conviction level and an argument."""
     symbol: str
     risk: str  # one of LEVELS
     concern: str  # one of CONCERNS
@@ -54,6 +58,7 @@ class BearCase:
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
+    """The judge's call on one stock."""
     symbol: str
     verdict: str  # one of VERDICTS
     reason: str
@@ -63,6 +68,7 @@ class Verdict:
 
 @dataclass(frozen=True, slots=True)
 class Verdicts:
+    """The judge's verdicts for a batch of candidates."""
     verdicts: tuple[Verdict, ...]  # one per candidate, in submission order
 
     @property
@@ -75,6 +81,7 @@ class Verdicts:
 
 
 def _one_of(item: Mapping[str, Any], key: str, symbol: str, allowed: Sequence[str]) -> str:
+    """The string at `key`, checked to be one of `allowed`."""
     value = item.get(key)
     choice = value.strip().lower() if isinstance(value, str) else None
     if choice is None or choice not in allowed:
@@ -111,7 +118,8 @@ def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_
 
 def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
     """`text` cut to at most `max_chars`, never reworded: the longest run of whole sentences that fits, if it has
-    at least `min_chars`; otherwise a cut at a word with a trailing ellipsis (or hard, when there is no space)."""
+    at least `min_chars`; otherwise a cut at a word with a trailing ellipsis (or hard, when there is no space).
+    """
     text = text.strip()
     if len(text) <= max_chars:
         return text
@@ -130,10 +138,12 @@ def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
 
 
 def validate_bull_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BullCase]:
+    """Validate the bull cases against the expected symbols and the length limit."""
     return [BullCase(symbol, _one_of(item, "conviction", symbol, LEVELS), required_text(item, "argument", symbol, max_chars)) for symbol, item in _covering(raw, expected)]
 
 
 def validate_bear_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BearCase]:
+    """Validate the bear cases against the expected symbols and the length limit."""
     return [
         BearCase(symbol, _one_of(item, "risk", symbol, LEVELS), _one_of(item, "concern", symbol, CONCERNS), required_text(item, "argument", symbol, max_chars))
         for symbol, item in _covering(raw, expected)
@@ -183,11 +193,13 @@ class HandoffRecorder(SubmitRecorder):
     ALREADY_RECORDED = "already recorded for this stage"
 
     def __init__(self, params: BullBearParams) -> None:
+        """Create a recorder bound to the strategy parameters."""
         super().__init__()
         self._params = params
         self._refused_note: str | None = None
 
     def expect_note(self, symbol: str) -> None:
+        """Arm the recorder to accept a note for `symbol`."""
         self._arm(NOTE, {"expected": symbol})
 
     @property
@@ -196,15 +208,19 @@ class HandoffRecorder(SubmitRecorder):
         return self._context["expected"] if self._stage == NOTE else None
 
     def expect_bull(self, symbols: Sequence[str]) -> None:
+        """Arm the recorder to accept bull cases for `symbols`."""
         self._arm(BULL, {"expected": list(symbols)})
 
     def expect_bear(self, symbols: Sequence[str]) -> None:
+        """Arm the recorder to accept bear cases for `symbols`."""
         self._arm(BEAR, {"expected": list(symbols)})
 
     def expect_verdicts(self, symbols: Sequence[str], *, max_in: int, previous: Mapping[str, str] | None = None) -> None:
+        """Arm the recorder to accept at most `max_in` verdicts for `symbols`, given the previous run's strengths."""
         self._arm(VERDICT, {"expected": list(symbols), "max_in": max_in, "previous": dict(previous or {})})
 
     def _arm(self, stage: str, context: dict[str, Any]) -> None:
+        """Arm the recorder for `stage` with its validation context."""
         super()._arm(stage, context)
         self._refused_note = None
 
@@ -214,6 +230,7 @@ class HandoffRecorder(SubmitRecorder):
         return self._refused_note
 
     def _validate(self, stage: str, *args: Any) -> Any:
+        """Validate the submitted payload for `stage`."""
         params, context = self._params, self._context
         if stage == NOTE:
             try:

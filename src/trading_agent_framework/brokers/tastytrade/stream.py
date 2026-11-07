@@ -24,11 +24,18 @@ MAX_BACKOFF = 30.0
 
 
 class StreamSocket(Protocol):
-    def send(self, message: str) -> None: ...
+    """The slice of a websocket the account stream needs."""
+    def send(self, message: str) -> None:
+        """Send one text message."""
+        ...
 
-    def recv(self, timeout: float | None = None) -> str: ...
+    def recv(self, timeout: float | None = None) -> str:
+        """Receive one text message, waiting up to `timeout` seconds."""
+        ...
 
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Close the socket."""
+        ...
 
 
 def auth_token_value(token: str) -> str:
@@ -44,6 +51,7 @@ class StreamError(Exception):
 
 
 def _default_connect(url: str) -> StreamSocket:
+    """Open a real websocket to `url`."""
     from websockets.sync.client import connect
 
     from trading_agent_framework.brokers.tastytrade.client import USER_AGENT
@@ -52,6 +60,7 @@ def _default_connect(url: str) -> StreamSocket:
 
 
 class TastytradeAccountStream:
+    """Background thread that keeps a Tastytrade account-streamer websocket subscribed and forwards order messages."""
     def __init__(
         self,
         url: str,
@@ -64,6 +73,15 @@ class TastytradeAccountStream:
         clock: Callable[[], float] = time.monotonic,
         wait: Callable[[float], bool] | None = None,
     ) -> None:
+        """Configure the stream.
+
+        Args:
+            url: Account-streamer websocket URL.
+            account_number: Account to subscribe to.
+            token: Returns a fresh session token for each connection.
+            on_order: Called with every order message.
+            on_reconnect: Called after a reconnect so orders missed meanwhile can be reconciled.
+        """
         self._url = url
         self._account_number = account_number
         self._token = token
@@ -81,6 +99,7 @@ class TastytradeAccountStream:
 
     @property
     def is_running(self) -> bool:
+        """Whether the stream thread is alive."""
         return self._thread is not None and self._thread.is_alive()
 
     @property
@@ -94,9 +113,11 @@ class TastytradeAccountStream:
         return self._last_error
 
     def wait_subscribed(self, timeout: float) -> bool:
+        """Wait up to `timeout` seconds for the account subscription; return whether it succeeded."""
         return self._subscribed.wait(timeout)
 
     def start(self) -> None:
+        """Start the stream thread; no-op when it is already running."""
         if self.is_running:
             return
         self._stopped.clear()
@@ -104,6 +125,7 @@ class TastytradeAccountStream:
         self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
+        """Stop the stream and join its thread, waiting up to `timeout` seconds."""
         self._stopped.set()
         socket = self._socket
         if socket is not None:
@@ -149,12 +171,14 @@ class TastytradeAccountStream:
             self._wait(min(MAX_BACKOFF, 2.0 ** (failures - 1)))
 
     def _reconcile(self) -> None:
+        """Run the reconnect callback, logging rather than raising its failures."""
         try:
             self._on_reconnect()
         except Exception:
             logger.exception("reconciling Tastytrade orders after a reconnect failed")
 
     def _send(self, socket: StreamSocket, action: str, value: object = None) -> int:
+        """Send an action with a fresh request id and return the id."""
         request_id = next(self._request_ids)
         message: dict[str, Any] = {"action": action}
         if value is not None:
@@ -165,6 +189,7 @@ class TastytradeAccountStream:
         return request_id
 
     def _subscribe(self, socket: StreamSocket) -> None:
+        """Subscribe to the account and wait for the acknowledgement."""
         request_id = self._send(socket, "connect", [self._account_number])
         deadline = self._clock() + CONNECT_TIMEOUT
         while True:
@@ -179,6 +204,7 @@ class TastytradeAccountStream:
             self._dispatch(message)
 
     def _serve(self, socket: StreamSocket) -> None:
+        """Read messages and send heartbeats until the socket drops or the stream is stopped."""
         next_beat = self._clock() + HEARTBEAT_INTERVAL
         while not self._stopped.is_set():
             remaining = next_beat - self._clock()
@@ -193,6 +219,7 @@ class TastytradeAccountStream:
             self._dispatch(self._parse(raw))
 
     def _dispatch(self, message: Mapping[str, Any]) -> None:
+        """Route one message: order messages go to the order callback."""
         if message.get("type") == "Order":
             data = message.get("data")
             if isinstance(data, Mapping):
@@ -205,6 +232,7 @@ class TastytradeAccountStream:
 
     @staticmethod
     def _parse(raw: object) -> dict[str, Any]:
+        """Decode a raw message to a dict; non-JSON payloads become an empty dict."""
         try:
             message = json.loads(raw)  # ty: ignore[invalid-argument-type]
         except TypeError, ValueError:

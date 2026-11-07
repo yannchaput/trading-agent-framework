@@ -81,7 +81,8 @@ class Settings(BaseModel):
 
 class MetricSet(BaseModel):
     """All scalar performance metrics from metrics.json (backtesting.report.write_metrics
-    writes this keyed exactly by these field names; see tests/backtesting/dashboard_contract.py)."""
+    writes this keyed exactly by these field names; see tests/backtesting/dashboard_contract.py).
+    """
 
     total_return_strategy: float = 0.0
     total_return_benchmark: float = 0.0

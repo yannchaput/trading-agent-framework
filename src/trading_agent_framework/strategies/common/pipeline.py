@@ -27,25 +27,32 @@ if TYPE_CHECKING:
 
 
 class AgentLike(Protocol):
-    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult: ...
+    """The slice of an agent handle the pipeline uses."""
+    def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
+        """Run the agent on `task_prompt` and return its output."""
+        ...
 
 
 class AgentLookup(Protocol):
     """What a pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
 
-    def __getitem__(self, name: str, /) -> AgentLike: ...
+    def __getitem__(self, name: str, /) -> AgentLike:
+        """The agent registered under `name`."""
+        ...
 
 
 class StageAbandoned(Exception):
     """A stage could not produce what the run needs; the run ends with nothing traded."""
 
     def __init__(self, stage: str, message: str) -> None:
+        """Record which stage was abandoned alongside the message."""
         super().__init__(message)
         self.stage = stage
 
 
 @dataclass(frozen=True, slots=True)
 class RunOutcome:
+    """What a pipeline run did: whether it completed and its record."""
     completed: bool
     abandoned_streak: int  # abandoned runs in a row after this one (0 after a completed run)
 
@@ -59,6 +66,7 @@ class PendingTrade:
 
 
 def valid_pending(value: Any) -> bool:
+    """Whether `value` is `None` or a well-formed pending trade (target weights and day count)."""
     return value is None or (isinstance(value, dict) and set(value) == {"target", "days"} and valid_weights(value["target"]) and is_int(value["days"]) and value["days"] >= 0)
 
 
@@ -71,7 +79,9 @@ class Streaked(Protocol):
     """A pipeline's state: it counts the abandoned runs in a row."""
 
     @property
-    def abandoned_streak(self) -> int: ...
+    def abandoned_streak(self) -> int:
+        """Consecutive abandoned runs."""
+        ...
 
 
 class ReviewPipeline[S: Streaked](ABC):
@@ -83,6 +93,7 @@ class ReviewPipeline[S: Streaked](ABC):
     DATA_ERRORS: ClassVar[tuple[type[Exception], ...]] = ()  # data failures that abandon the run at the "filings" stage
 
     def __init__(self, *, strategy: Strategy, agents: AgentLookup, recorder: Any, state: JsonStateStore[S], log: RunLog) -> None:
+        """Wire the pipeline to the strategy, agents, handoff recorder, state store and run log."""
         self._strategy = strategy
         self._agents = agents
         self._recorder = recorder
@@ -90,6 +101,7 @@ class ReviewPipeline[S: Streaked](ABC):
         self._log = log
 
     def run(self) -> RunOutcome:
+        """Run one pass: load the state, execute it, persist the outcome and log the record."""
         state = self._state.load()
         now = self._strategy.clock.now().astimezone(MARKET_TZ)
         key, initial, abandoned = self.RECORD_FLAG
@@ -113,22 +125,27 @@ class ReviewPipeline[S: Streaked](ABC):
 
     def _begin(self) -> None:  # noqa: B027 -- an optional hook, not abstract
         """Reset what a failure is attributed to, at the start of each run. Nothing by default."""
+        ...
 
     @abstractmethod
     def _run(self, now: datetime, state: S, record: dict[str, Any]) -> RunOutcome:
         """The run itself; `record` is the line it fills in."""
+        ...
 
     @abstractmethod
     def _executing(self) -> bool:
         """Whether a broker failure now happened while orders were going out (the `execution` stage) rather than before (`broker`)."""
+        ...
 
     @abstractmethod
     def _on_abandoned(self, state: S, streak: int, stage: str) -> tuple[S, dict[str, Any]]:
         """The state to save for an abandoned run, and the fields to add to its record."""
+        ...
 
     # --- pending-trade steps: concrete, called only by congress_trades and insider_trades ---------------------------------
 
     def _orders_record(self, desk: TradeDesk) -> list[dict[str, Any]]:
+        """The desk's orders as plain records."""
         return [asdict(view) for view in desk.orders_view().values()]
 
     def _at_target(self, before: Audit) -> bool:

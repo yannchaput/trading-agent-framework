@@ -1,3 +1,5 @@
+"""Environment resolution: env files per strategy and mode, and the broker and credential settings read from them."""
+
 from __future__ import annotations
 
 import logging
@@ -93,6 +95,7 @@ def load_strategy_env(
 
 
 def _reject_renamed(source: Mapping[str, str]) -> None:
+    """Raise when a renamed environment variable is still set under its old name."""
     for old, new in _RENAMED_VARIABLES.items():
         if old in source:
             raise ConfigurationError(f"{old} was renamed to {new}; rename it in your env file")
@@ -104,6 +107,7 @@ def _is_paper(raw: str | None) -> bool:
 
 
 def _int_setting(source: Mapping[str, str], name: str, default: int) -> int:
+    """Integer setting `name`, or `default` when unset; raise on a non-integer value."""
     raw = source.get(name)
     if raw is None or not raw.strip():
         return default
@@ -115,7 +119,8 @@ def _int_setting(source: Mapping[str, str], name: str, default: int) -> int:
 
 class BrokerKind(StrEnum):
     """Which broker trades in paper/live mode (`BROKER`). In backtesting it only picks the
-    simulated fee schedule (`brokers/fees.py`); the broker itself is always `BacktestBroker`."""
+    simulated fee schedule (`brokers/fees.py`); the broker itself is always `BacktestBroker`.
+    """
 
     ALPACA = "alpaca"
     IBKR = "ibkr"
@@ -124,11 +129,13 @@ class BrokerKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class BrokerSettings:
+    """Which broker to use and whether its account is paper."""
     kind: BrokerKind
     is_paper: bool
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> BrokerSettings:
+        """Read the broker settings from the environment."""
         source = env if env is not None else os.environ
         _reject_renamed(source)
         raw_kind = (source.get("BROKER") or BrokerKind.ALPACA.value).strip().lower()
@@ -143,7 +150,8 @@ class BrokerSettings:
 @dataclass(frozen=True, slots=True)
 class AlpacaCredentials:
     """One Alpaca key pair. Each component reads its OWN group -- trading, news or data --
-    and groups never fall back to each other."""
+    and groups never fall back to each other.
+    """
 
     api_key: str = field(repr=False)
     api_secret: str = field(repr=False)
@@ -162,11 +170,13 @@ class AlpacaCredentials:
     @classmethod
     def for_data(cls, env: Mapping[str, str] | None = None) -> AlpacaCredentials:
         """`ALPACA_DATA_API_*`: prices, bars and the calendar (paper/live, every broker) and
-        `AlpacaBacktestData`. `ALPACA_DATA_IS_PAPER` picks the endpoint the calendar call uses."""
+        `AlpacaBacktestData`. `ALPACA_DATA_IS_PAPER` picks the endpoint the calendar call uses.
+        """
         return cls._read(env, "ALPACA_DATA_API", paper_variable="ALPACA_DATA_IS_PAPER")
 
     @classmethod
     def _read(cls, env: Mapping[str, str] | None, prefix: str, *, paper_variable: str | None) -> AlpacaCredentials:
+        """Read one Alpaca credential group from the environment under `prefix`."""
         source = env if env is not None else os.environ
         _reject_renamed(source)
         key_name, secret_name = f"{prefix}_KEY", f"{prefix}_SECRET"
@@ -189,6 +199,7 @@ class IbkrSettings:
 
     @classmethod
     def from_env(cls, is_paper: bool, env: Mapping[str, str] | None = None) -> IbkrSettings:
+        """Read the IB Gateway settings from the environment."""
         source = env if env is not None else os.environ
         _reject_renamed(source)
         host = (source.get("IBKR_HOST") or "127.0.0.1").strip()
@@ -200,7 +211,8 @@ class IbkrSettings:
 @dataclass(frozen=True, slots=True)
 class TastytradeSettings:
     """Tastytrade OAuth credentials and the account to trade. `is_paper` picks the sandbox hosts:
-    sandbox and production credentials are separate OAuth applications and never work against each other."""
+    sandbox and production credentials are separate OAuth applications and never work against each other.
+    """
 
     client_secret: str = field(repr=False)
     refresh_token: str = field(repr=False)
@@ -209,14 +221,17 @@ class TastytradeSettings:
 
     @property
     def api_url(self) -> str:
+        """REST API base URL for the paper or live environment."""
         return TASTYTRADE_API_URLS[self.is_paper]
 
     @property
     def streamer_url(self) -> str:
+        """Account-streamer URL for the paper or live environment."""
         return TASTYTRADE_STREAMER_URLS[self.is_paper]
 
     @classmethod
     def from_env(cls, is_paper: bool, env: Mapping[str, str] | None = None) -> TastytradeSettings:
+        """Read the Tastytrade credentials from the environment."""
         source = env if env is not None else os.environ
         _reject_renamed(source)
         values: dict[str, str] = {}
@@ -235,10 +250,12 @@ class TastytradeSettings:
 
 @dataclass(frozen=True, slots=True)
 class FredCredentials:
+    """Credentials for the FRED macro-data API."""
     api_key: str = field(repr=False)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> FredCredentials:
+        """Read the FRED API key from the environment."""
         source = env if env is not None else os.environ
         api_key = source.get("FRED_API_KEY")
         if not api_key or not api_key.strip():

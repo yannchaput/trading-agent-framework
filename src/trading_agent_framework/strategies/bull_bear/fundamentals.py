@@ -26,9 +26,14 @@ _NO_FIGURES = "no SEC figures"
 
 
 class _SecClient(Protocol):
-    def ticker_to_cik(self, symbol: str) -> str: ...
+    """The slice of the SEC client the fundamentals need."""
+    def ticker_to_cik(self, symbol: str) -> str:
+        """Zero-padded CIK for `symbol`."""
+        ...
 
-    def get_company_facts_payload(self, cik: str, *, as_of: datetime) -> dict[str, Any]: ...
+    def get_company_facts_payload(self, cik: str, *, as_of: datetime) -> dict[str, Any]:
+        """A company's XBRL facts as known at `as_of`."""
+        ...
 
 
 def unavailable_fundamentals(reason: str) -> dict[str, Any]:
@@ -37,12 +42,14 @@ def unavailable_fundamentals(reason: str) -> dict[str, Any]:
 
 
 def _number(value: Any) -> float | None:
+    """`value` as a float; `None` for booleans and non-numbers."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value) if isfinite(value) else None
 
 
 def _day(value: Any) -> date | None:
+    """`value` parsed as an ISO date; `None` when malformed."""
     try:
         return date.fromisoformat(str(value)[:10])
     except ValueError:
@@ -50,24 +57,29 @@ def _day(value: Any) -> date | None:
 
 
 def _months(row: Mapping[str, Any]) -> int | None:
+    """Length in months of the fact's reporting period; `None` when its dates are missing."""
     start, end = _day(row.get("start")), _day(row.get("end"))
     return None if start is None or end is None else round((end - start).days / _DAYS_PER_MONTH)
 
 
 def _pct(value: float) -> float:
+    """A ratio as a percentage rounded to one decimal."""
     return round(value * 100, 1) + 0.0
 
 
 def _billions(value: float) -> float:
+    """An amount in billions rounded to three decimals."""
     return round(value / _BILLION, 3) + 0.0
 
 
 def _prior_value(row: Mapping[str, Any] | None) -> float | None:
+    """The prior-year value of a fact row, or `None`."""
     prior = (row or {}).get("prior_year") or {}
     return _number(prior.get("value"))
 
 
 def _margin(operating: float | None, revenue: float | None) -> float | None:
+    """Operating margin as a percentage; `None` when an input is missing or revenue is not positive."""
     return None if operating is None or revenue is None or revenue <= 0 else _pct(operating / revenue)
 
 
@@ -145,9 +157,11 @@ class SecFundamentals:
     """Reads one stock's latest SEC figures as of a time; a failure becomes `fundamentals_unavailable`, never an exception."""
 
     def __init__(self, client: _SecClient) -> None:
+        """Create the fundamentals reader over an SEC client."""
         self._client = client
 
     def __call__(self, symbol: str, as_of: datetime) -> dict[str, Any]:
+        """Fundamentals for `symbol` as known at `as_of`; an error payload when the data is unavailable."""
         try:
             cik = self._client.ticker_to_cik(symbol)
             payload = self._client.get_company_facts_payload(cik, as_of=as_of)

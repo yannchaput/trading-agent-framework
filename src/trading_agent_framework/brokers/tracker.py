@@ -1,3 +1,5 @@
+"""Thread-safe bookkeeping of orders by lifecycle status."""
+
 from __future__ import annotations
 
 import logging
@@ -23,10 +25,12 @@ class SafeList[T]:
     """
 
     def __init__(self) -> None:
+        """Create an empty list guarded by a re-entrant lock."""
         self._items: list[T] = []
         self._lock = threading.RLock()
 
     def append(self, item: T) -> None:
+        """Append `item` under the lock."""
         with self._lock:
             self._items.append(item)
 
@@ -45,6 +49,7 @@ class SafeList[T]:
         return None
 
     def get_by(self, key: str, value: Any) -> T | None:
+        """First item whose attribute `key` equals `value`, or `None`."""
         with self._lock:
             for candidate in self._items:
                 if getattr(candidate, key) == value:
@@ -57,10 +62,12 @@ class SafeList[T]:
             return list(self._items)
 
     def __len__(self) -> int:
+        """Number of items."""
         with self._lock:
             return len(self._items)
 
     def __contains__(self, item: object) -> bool:
+        """Whether `item` is in the list."""
         with self._lock:
             return item in self._items
 
@@ -73,6 +80,7 @@ class OrderTracker:
     """
 
     def __init__(self) -> None:
+        """Create the empty status buckets and the listener list."""
         self.unprocessed: SafeList[Order] = SafeList()
         self.new: SafeList[Order] = SafeList()
         self.partially_filled: SafeList[Order] = SafeList()
@@ -83,6 +91,7 @@ class OrderTracker:
         self._transition_lock = threading.RLock()
 
     def _buckets(self) -> tuple[SafeList[Order], ...]:
+        """Every status bucket, in lifecycle order."""
         return (
             self.unprocessed,
             self.new,
@@ -93,9 +102,11 @@ class OrderTracker:
         )
 
     def track_unprocessed(self, order: Order) -> None:
+        """Start tracking a just-created order in the unprocessed bucket."""
         self.unprocessed.append(order)
 
     def get_tracked_order(self, identifier: str) -> Order | None:
+        """Find a tracked order by identifier; `None` when not tracked."""
         for bucket in self._buckets():
             found = bucket.get_by("identifier", identifier)
             if found is not None:
@@ -103,6 +114,7 @@ class OrderTracker:
         return None
 
     def get_tracked_order_by_client_order_id(self, client_order_id: str) -> Order | None:
+        """Find a tracked order by client order id; `None` when not tracked."""
         for bucket in self._buckets():
             found = bucket.get_by("client_order_id", client_order_id)
             if found is not None:
@@ -115,12 +127,14 @@ class OrderTracker:
             self._remove_from_all_buckets(order)
 
     def get_all_tracked_orders(self) -> list[Order]:
+        """Every tracked order across all buckets."""
         orders: list[Order] = []
         for bucket in self._buckets():
             orders.extend(bucket.snapshot())
         return orders
 
     def get_active_orders(self) -> list[Order]:
+        """Orders that can still fill: unprocessed, new and partially filled."""
         active_buckets = (self.unprocessed, self.new, self.partially_filled)
         orders: list[Order] = []
         for bucket in active_buckets:
@@ -138,37 +152,44 @@ class OrderTracker:
             self.unprocessed.append(new)
 
     def _remove_from_all_buckets(self, order: Order) -> None:
+        """Remove `order` from every bucket before it is re-filed."""
         for bucket in self._buckets():
             bucket.remove(order)
 
     def _process_new(self, order: Order) -> None:
+        """Mark `order` as accepted and file it under new."""
         self._remove_from_all_buckets(order)
         order.status = OrderStatus.NEW
         self.new.append(order)
 
     def _process_partial_fill(self, order: Order, price: Decimal, filled_quantity: Decimal) -> None:
+        """Record a partial fill on `order` and file it under partially filled."""
         self._remove_from_all_buckets(order)
         order.add_transaction(price, filled_quantity)
         order.status = OrderStatus.PARTIAL_FILL
         self.partially_filled.append(order)
 
     def _process_fill(self, order: Order, price: Decimal, filled_quantity: Decimal) -> None:
+        """Record the final fill on `order` and file it under filled."""
         self._remove_from_all_buckets(order)
         order.add_transaction(price, filled_quantity)
         order.status = OrderStatus.FILL
         self.filled.append(order)
 
     def _process_canceled(self, order: Order) -> None:
+        """Mark `order` canceled and file it under canceled."""
         self._remove_from_all_buckets(order)
         order.status = OrderStatus.CANCELED
         self.canceled.append(order)
 
     def _process_error(self, order: Order) -> None:
+        """Mark `order` errored and file it under error."""
         self._remove_from_all_buckets(order)
         order.status = OrderStatus.ERROR
         self.error.append(order)
 
     def _notify_listeners(self, order: Order, event: OrderEvent) -> None:
+        """Call every listener with the order and event, logging (not raising) listener failures."""
         for listener in self.listeners:
             try:
                 listener(order, event)

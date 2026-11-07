@@ -14,7 +14,8 @@ from trading_agent_framework.utils.errors import BrokerError
 class AlpacaMarketClock(MarketClock):
     """Sessions (early closes included) come from Alpaca's calendar, fetched about ten
     trading days at a time and refetched once every cached session has closed.
-    Nothing is fetched until the first `next_session()` call."""
+    Nothing is fetched until the first `next_session()` call.
+    """
 
     LOOKAHEAD_DAYS = 14
 

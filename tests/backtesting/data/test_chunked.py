@@ -44,7 +44,8 @@ B = Asset("BBB")
 
 class _Factory:
     """Builds a FakeBacktestDataSource per call, recording its window; keeps only weak references, so a test
-    can check that a dropped chunk source is really freed. Every source serves `frame` for A at any timestep."""
+    can check that a dropped chunk source is really freed. Every source serves `frame` for A at any timestep.
+    """
 
     def __init__(self, frame=None) -> None:
         self.frame = frame

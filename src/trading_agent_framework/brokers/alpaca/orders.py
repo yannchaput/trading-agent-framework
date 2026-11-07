@@ -76,18 +76,42 @@ class AlpacaTradingClient(Protocol):
     `Order | RawData` return type.
     """
 
-    def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel: ...
-    def cancel_order_by_id(self, order_id: str) -> None: ...
-    def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]: ...
-    def get_order_by_id(self, order_id: str) -> AlpacaOrderModel: ...
-    def get_all_positions(self) -> list[AlpacaPositionModel]: ...
-    def get_account(self) -> AlpacaTradeAccount: ...
-    def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]: ...
-    def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> AlpacaOrderModel: ...
-    def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> AlpacaOrderModel: ...
-    def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]: ...
-    def get_account_configurations(self) -> AlpacaAccountConfiguration: ...
-    def set_account_configurations(self, account_configurations: AlpacaAccountConfiguration) -> AlpacaAccountConfiguration: ...
+    def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel:
+        """Submit an order request."""
+        ...
+    def cancel_order_by_id(self, order_id: str) -> None:
+        """Cancel one order by id."""
+        ...
+    def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]:
+        """List orders matching `filter`."""
+        ...
+    def get_order_by_id(self, order_id: str) -> AlpacaOrderModel:
+        """Fetch one order by id."""
+        ...
+    def get_all_positions(self) -> list[AlpacaPositionModel]:
+        """List every open position."""
+        ...
+    def get_account(self) -> AlpacaTradeAccount:
+        """Fetch the trading account."""
+        ...
+    def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]:
+        """Fetch market calendar days matching `filters`."""
+        ...
+    def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> AlpacaOrderModel:
+        """Replace an open order's prices."""
+        ...
+    def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> AlpacaOrderModel:
+        """Close (part of) one position."""
+        ...
+    def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]:
+        """Close every position, cancelling open orders if `cancel_orders`."""
+        ...
+    def get_account_configurations(self) -> AlpacaAccountConfiguration:
+        """Fetch the account configuration."""
+        ...
+    def set_account_configurations(self, account_configurations: AlpacaAccountConfiguration) -> AlpacaAccountConfiguration:
+        """Update the account configuration."""
+        ...
 
 
 # --- status / event maps -----------------------------------------------------
@@ -145,7 +169,8 @@ ALPACA_EVENT_MAP: MappingProxyType[str, OrderEvent | None] = MappingProxyType(
 
 def _normalize_key(raw: object) -> str:
     """Reduce a raw status/event -- a plain string or a `(str, Enum)` member -- to
-    the lowercase string used as a map key."""
+    the lowercase string used as a map key.
+    """
     value = getattr(raw, "value", raw)
     return str(value).lower()
 
@@ -201,6 +226,7 @@ def round_stop_price(price: Decimal) -> Decimal:
 
 
 def _conform_field(order: Order, field_name: str, rounder: Callable[[Decimal], Decimal]) -> None:
+    """Round the order's price field in place with `rounder`, leaving `None` untouched."""
     current: Decimal | None = getattr(order, field_name)
     if current is None:
         return
@@ -440,13 +466,15 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 
 def parse_broker_orders(responses: Iterable[object], strategy_name: str) -> list[Order]:
     """Parse an iterable of broker order responses, dropping any that
-    `parse_broker_order` returns None for."""
+    `parse_broker_order` returns None for.
+    """
     return [order for order in (parse_broker_order(response, strategy_name) for response in responses) if order is not None]
 
 
 def parse_broker_position(response: object, strategy_name: str) -> Position:
     """Parse an Alpaca position response (a real `alpaca.trading.models.Position`
-    instance or an equivalent raw dict) into our `Position` entity."""
+    instance or an equivalent raw dict) into our `Position` entity.
+    """
     quantity = _to_decimal(_field(response, "qty"))
     # alpaca.trading.models.Position.qty is a required field -- unlike an Order,
     # which can be notional-only, a position always has a share quantity.
@@ -466,7 +494,8 @@ def parse_broker_position(response: object, strategy_name: str) -> Position:
 
 def parse_close_all_responses(responses: Iterable[object], strategy_name: str) -> list[Order]:
     """Orders placed by close_all_positions. Each response `body` is either an order or a
-    FailedClosePositionDetails (code/message, no id); failures are logged and skipped."""
+    FailedClosePositionDetails (code/message, no id); failures are logged and skipped.
+    """
     closed: list[Order] = []
     for response in responses:
         body = _field(response, "body")

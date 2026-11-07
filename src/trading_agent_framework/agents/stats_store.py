@@ -57,7 +57,8 @@ def llm_stats_db_path(project_root: Path, strategy_name: str, mode: TradingMode)
 
 class LLMStatsStore:
     """Append-only log of model calls. Each write opens a connection and closes it (WAL journal), so the
-    file can be read by the dashboard or `sqlite3` while a run is writing."""
+    file can be read by the dashboard or `sqlite3` while a run is writing.
+    """
 
     def __init__(self, db_path: Path, *, run_id: str, fresh: bool = False) -> None:
         self.db_path = db_path

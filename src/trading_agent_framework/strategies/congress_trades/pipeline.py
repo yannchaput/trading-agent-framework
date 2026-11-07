@@ -44,12 +44,18 @@ AGENT_TRADER = "trader"
 
 
 class SourceLike(Protocol):
-    def known(self, as_of: datetime) -> KnownFilings: ...
+    """The filings source the pipeline reads, as a protocol so tests can fake it."""
+    def known(self, as_of: datetime) -> KnownFilings:
+        """The congressional filings known at `as_of`."""
+        ...
 
-    def new_since(self, known: KnownFilings, processed: Collection[str]) -> list[FilingRef]: ...
+    def new_since(self, known: KnownFilings, processed: Collection[str]) -> list[FilingRef]:
+        """Filings in `known` that are not among the `processed` ids."""
+        ...
 
 
 class CongressPipeline(ReviewPipeline[CongressState]):
+    """Congress-trades review pipeline: find new disclosures, let the agent review them and trade the resulting portfolio."""
     LOG_PREFIX: ClassVar[str] = "[congress_trades] "
     WHAT: ClassVar[str] = "run"
     RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")
@@ -67,6 +73,7 @@ class CongressPipeline(ReviewPipeline[CongressState]):
         log: RunLog,
         desk: TradeDesk,
     ) -> None:
+        """Wire the pipeline to the strategy, its parameters, the filings source and the agents."""
         super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._source = source
@@ -77,15 +84,19 @@ class CongressPipeline(ReviewPipeline[CongressState]):
     # --- one daily check ---------------------------------------------------------------------------
 
     def _begin(self) -> None:
+        """Reset the per-run phase to filings and clear any pending retry."""
         self._phase, self._pending_retry = "filings", False
 
     def _executing(self) -> bool:
+        """Whether the run has reached the trading phase."""
         return self._phase == "trading"
 
     def _on_abandoned(self, state: CongressState, streak: int, stage: str) -> tuple[CongressState, dict[str, Any]]:
+        """Build the state and record for a run abandoned after repeated failures, keeping any pending trade for retry."""
         return self._abandoned_with_pending(self._desk, state, streak, pending_retry=self._pending_retry, trading=self._executing())
 
     def _run(self, now: datetime, state: CongressState, record: dict[str, Any]) -> RunOutcome:
+        """Run one pipeline pass: look for new filings and review them."""
         strategy = self._strategy
         known = self._source.known(strategy.clock.now())
         new = self._source.new_since(known, state.processed)
@@ -101,6 +112,7 @@ class CongressPipeline(ReviewPipeline[CongressState]):
     # --- a pending trade: only the trading stage ---------------------------------------------------------
 
     def _retry_pending(self, now: datetime, state: CongressState, pending: PendingTrade, record: dict[str, Any]) -> RunOutcome:
+        """Retry the trade left pending by an earlier abandoned run."""
         strategy, params = self._strategy, self._params
         if (gave_up := self._give_up_pending(state, pending, record, max_retries=params.max_trade_retries)) is not None:
             return gave_up
@@ -112,6 +124,7 @@ class CongressPipeline(ReviewPipeline[CongressState]):
     # --- a new filing: research, portfolio, trading ------------------------------------------------------
 
     def _full_run(self, now: datetime, state: CongressState, known: KnownFilings, new: list[FilingRef], record: dict[str, Any]) -> RunOutcome:
+        """Review the new filings with the agent and execute the resulting target portfolio."""
         strategy, params = self._strategy, self._params
         current = holdings_module.reconstruct(known.assets, known.transactions, period_end=known.period_end)
         baseline_weights = self._weights(current)
@@ -240,6 +253,7 @@ class CongressPipeline(ReviewPipeline[CongressState]):
         raise StageAbandoned(agent_name, error)
 
     def _weights(self, holdings: list[Holding]) -> dict[str, Decimal]:
+        """Baseline portfolio weights for the holdings, from their tiers."""
         params = self._params
         return holdings_module.baseline_weights(
             holdings,
@@ -274,8 +288,10 @@ class CongressPipeline(ReviewPipeline[CongressState]):
 
 
 def _holding_context(holding: Holding) -> dict[str, Any]:
+    """A holding as the plain context handed to the agent."""
     return {"ticker": holding.ticker, "tier": holding.tier, "value_low": int(holding.value_low), "value_high": int(holding.value_high), "filings": list(holding.sources)}
 
 
 def _holding_record(holding: Holding, weight: Decimal | None) -> dict[str, Any]:
+    """A holding as a run-log record, with its baseline weight."""
     return {**_holding_context(holding), "baseline_weight": float(weight) if weight is not None else None}

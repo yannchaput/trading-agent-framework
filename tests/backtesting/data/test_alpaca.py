@@ -87,7 +87,8 @@ def test_bars_are_reindexed_through_the_end_of_the_end_date_even_with_a_midnight
     request) still returned that day's bar -- `reindex_to_bar_close` then raised
     `BacktestDataError` before a single log line was written. `sessions()` now
     filters by calendar date like `YahooBacktestData`, so a midnight `end` still
-    covers its whole day."""
+    covers its whole day.
+    """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [
         make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06"),
@@ -118,7 +119,8 @@ def test_a_daily_bar_dated_outside_the_known_calendar_raises_through_the_public_
     mismatch: a date the bars endpoint returned a bar for but the calendar has no
     session on at all (e.g. Alpaca's calendar and bars endpoints disagreeing, or a
     stale cached calendar) -- not merely an `end` that lands mid-session or at
-    midnight, which `sessions()`'s calendar-date filter now tolerates."""
+    midnight, which `sessions()`'s calendar-date filter now tolerates.
+    """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]  # 2026-01-06 missing
     data_client = FakeStockHistoricalDataClient()
@@ -189,7 +191,8 @@ def test_a_calendar_fetch_failure_raises_backtest_data_error() -> None:
 
 def test_a_malformed_bars_response_raises_backtest_data_error() -> None:
     """`parse_bars` runs in the same guarded block as the fetch: a malformed
-    response must not escape as a raw exception either."""
+    response must not escape as a raw exception either.
+    """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
     data_client = FakeStockHistoricalDataClient()
@@ -238,7 +241,8 @@ def test_an_unknown_feed_is_refused_at_construction() -> None:
 def test_load_honors_its_own_start_and_end_arguments() -> None:
     """load()'s start/end must reach the built bars request, not the constructor's
     fixed window -- CachedDataSource trusts load()'s own window when it derives
-    a cache file's path."""
+    a cache file's path.
+    """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-02-01")]
     data_client = FakeStockHistoricalDataClient()
@@ -258,7 +262,8 @@ def test_load_honors_its_own_start_and_end_arguments() -> None:
 
 def test_bars_lazy_fetch_uses_the_constructor_fixed_window() -> None:
     """Unlike `load()`, `bars()`'s own lazy-fetch path has no start/end parameters
-    of its own -- it must fall back to the constructor's fixed window."""
+    of its own -- it must fall back to the constructor's fixed window.
+    """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
     data_client = FakeStockHistoricalDataClient()
@@ -362,7 +367,8 @@ def test_bars_refetches_when_asked_for_a_different_timestep_than_was_loaded() ->
 def test_load_batches_multiple_assets_into_one_alpaca_call() -> None:
     """The whole point: filtering a large universe must not fire one `get_stock_bars`
     call per ticker -- `load()` fetches every requested asset in a single request,
-    mirroring `YahooBacktestData.load()`'s single batched `download` call."""
+    mirroring `YahooBacktestData.load()`'s single batched `download` call.
+    """
     MSFT = Asset("MSFT")
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]
@@ -399,7 +405,8 @@ def test_concurrent_fetches_are_serialized() -> None:
     when a position falls outside a preloaded batch. Firing many `get_stock_bars`
     calls at once races the shared client's session state, mirroring the exact
     concern `YahooBacktestData._download_lock` addresses for `yf.download`.
-    `AlpacaBacktestData` must serialize its fetches so only one is ever in flight."""
+    `AlpacaBacktestData` must serialize its fetches so only one is ever in flight.
+    """
     import threading as threading_module
     import time
 
@@ -444,7 +451,8 @@ def test_default_clients_are_built_from_env_credentials_when_not_injected(
     `trading_client` is not required up front -- it's built from
     `AlpacaCredentials.for_data()` only the first time it's actually needed, which
     is what lets `AlpacaBacktestData` be passed as a bare `data_source` class, the
-    same way `YahooBacktestData` already can be."""
+    same way `YahooBacktestData` already can be.
+    """
     monkeypatch.delenv("ALPACA_IS_PAPER", raising=False)
     monkeypatch.setenv("ALPACA_DATA_API_KEY", "key")
     monkeypatch.setenv("ALPACA_DATA_API_SECRET", "secret")

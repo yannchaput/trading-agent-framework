@@ -47,7 +47,8 @@ class AlpacaNewsProvider:
 def lazy_news_provider(credentials: Callable[[], AlpacaCredentials]) -> Callable[[], AlpacaNewsProvider]:
     """A factory reading the news credentials only when first called, so a strategy that never
     searches news needs no `ALPACA_NEWS_*`. Missing credentials become `BrokerError`, which the
-    news tool turns into `{"error": ...}`."""
+    news tool turns into `{"error": ...}`.
+    """
 
     def build() -> AlpacaNewsProvider:
         try:

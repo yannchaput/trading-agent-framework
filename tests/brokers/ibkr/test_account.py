@@ -53,7 +53,8 @@ def test_a_margin_account_is_refused_live() -> None:
 
 def test_a_margin_looking_account_is_not_flagged_on_paper() -> None:
     """The margin heuristic (`BuyingPower` vs cash) is not meaningful on IBKR's paper-trading
-    simulator (see `account.py`'s module docstring), so it must not even run there."""
+    simulator (see `account.py`'s module docstring), so it must not even run there.
+    """
     assert account.check_account(make_ib_summary(cash="10000", buying_power="40000"), "DU123", is_paper=True) is None
 
 

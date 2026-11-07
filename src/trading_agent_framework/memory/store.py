@@ -145,20 +145,24 @@ class HeldPosition:
 
     @property
     def market_value(self) -> Decimal | None:
+        """Quantity times last price; `None` without a price."""
         return None if self.last_price is None else self.quantity * self.last_price
 
 
 def _utc_now() -> datetime:
+    """Current wall-clock time in UTC."""
     return datetime.now(UTC)
 
 
 def _require_text(text: object) -> str:
+    """`text` as a non-empty string; raise otherwise."""
     if not isinstance(text, str) or not text.strip():
         raise MemoryValidationError("text must be a non-empty string")
     return text.strip()
 
 
 def _require_tags(tags: object) -> list[str]:
+    """`tags` as a list of strings (empty when `None`); raise otherwise."""
     if tags is None:
         return []
     if not isinstance(tags, (list, tuple)) or not all(isinstance(tag, str) for tag in tags):
@@ -167,6 +171,7 @@ def _require_tags(tags: object) -> list[str]:
 
 
 def _order_fields(order: Order) -> dict[str, Any]:
+    """The order fields stored with a memory entry."""
     fields = {
         "identifier": order.identifier,
         "client_order_id": order.client_order_id,
@@ -198,6 +203,14 @@ class MemoryStore:
         wall_clock: Callable[[], datetime] = _utc_now,
         fresh: bool = False,
     ) -> None:
+        """Open the store at `db_path` for one strategy.
+
+        Args:
+            db_path: SQLite database file.
+            strategy_name: Strategy whose memory this is.
+            now: Strategy-clock time, so backtests never read the wall clock.
+            wall_clock: Real time, used only for audit timestamps.
+        """
         self.db_path = db_path
         self.strategy_name = strategy_name
         self._now = now
@@ -476,7 +489,8 @@ class MemoryStore:
         retrieval_id: str | None = None,
     ) -> dict[str, Any]:
         """Record a submitted order (`order.submitted`, history only), linked to the decision
-        recorded in the same model call."""
+        recorded in the same model call.
+        """
         symbol = order.asset.symbol.upper()
         size = str(order.quantity) if order.quantity is not None else f"${order.notional}"
         text = f"Submitted order {order.side} {size} {symbol} as {order.order_type}"
@@ -677,6 +691,7 @@ class MemoryStore:
 
     @staticmethod
     def _unused_memory_id(conn: sqlite3.Connection, kind: str) -> str:
+        """A memory id of `kind` not yet present in the database."""
         while True:
             memory_id = records.new_memory_id(kind)
             taken = conn.execute("SELECT 1 FROM memory_index WHERE memory_id = ?", (memory_id,)).fetchone()
@@ -798,10 +813,12 @@ class MemoryStore:
         return self._now().isoformat()
 
     def _wall_time(self) -> str:
+        """Wall-clock time as an ISO UTC string."""
         return self._wall_clock().astimezone(UTC).isoformat().replace("+00:00", "Z")
 
     @staticmethod
     def _open_thesis_row(conn: sqlite3.Connection, thesis_id: str) -> dict[str, Any]:
+        """The index row of an open thesis; raise when missing or closed."""
         row = conn.execute("SELECT * FROM memory_index WHERE memory_id = ?", (thesis_id,)).fetchone()
         if row is None or row["kind"] != "thesis":
             raise MemoryValidationError(f"unknown thesis_id {thesis_id!r}")
@@ -827,6 +844,7 @@ class MemoryStore:
 
     @staticmethod
     def _latest_index_items(conn: sqlite3.Connection, kind: str, status: str, limit: int) -> list[dict[str, Any]]:
+        """The newest `limit` index rows of `kind` with `status`."""
         rows = conn.execute(
             """
             SELECT * FROM memory_index WHERE kind = ? AND status = ?

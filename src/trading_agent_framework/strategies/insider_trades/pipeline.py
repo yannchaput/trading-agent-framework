@@ -50,11 +50,17 @@ class SourceLike(Protocol):
     """What the pipeline needs from the Form 4 source (`Form4Source`, or a fake in tests)."""
 
     @property
-    def loaded_on(self) -> date | None: ...
+    def loaded_on(self) -> date | None:
+        """Date the insider-trade data was last loaded, or `None` before the first load."""
+        ...
 
-    def load(self, *, as_of: datetime, since: date) -> LoadReport: ...
+    def load(self, *, as_of: datetime, since: date) -> LoadReport:
+        """Load Form 4 filings filed since `since`, as known at `as_of`, and report what changed."""
+        ...
 
-    def known(self, as_of: datetime) -> KnownInsiderData: ...
+    def known(self, as_of: datetime) -> KnownInsiderData:
+        """The insider data known at `as_of`."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +77,7 @@ class _Stock:
 
 
 class InsiderPipeline(ReviewPipeline[InsiderState]):
+    """Insider-trades review pipeline: refresh filings, pick the changed stocks, let the agent review them and execute the trades."""
     LOG_PREFIX: ClassVar[str] = "[insider_trades] "
     WHAT: ClassVar[str] = "run"
     RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")
@@ -94,6 +101,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
         trader_retry_task: str,
         retry_prompt: Callable[[str, str], str],
     ) -> None:
+        """Wire the pipeline to the strategy, its parameters, the filings source and the facts builder."""
         super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._source = source
@@ -111,15 +119,19 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
     # --- one daily check ---------------------------------------------------------------------------
 
     def _begin(self) -> None:
+        """Reset the per-run phase to filings and clear any pending retry."""
         self._phase, self._pending_retry = "filings", False
 
     def _executing(self) -> bool:
+        """Whether the run has reached the trading phase."""
         return self._phase == "trading"
 
     def _on_abandoned(self, state: InsiderState, streak: int, stage: str) -> tuple[InsiderState, dict[str, Any]]:
+        """Build the state and record for a run abandoned after repeated failures, keeping any pending trade for retry."""
         return self._abandoned_with_pending(self._desk, state, streak, pending_retry=self._pending_retry, trading=self._executing())
 
     def _run(self, now: datetime, state: InsiderState, record: dict[str, Any]) -> RunOutcome:
+        """Run one pipeline pass: load filings, compute signals and review the stocks that changed."""
         strategy = self._strategy
         today = now.date()
         failed = self._refresh(today)
@@ -208,6 +220,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
     # --- a pending trade: only the trading stage ---------------------------------------------------------
 
     def _retry_pending(self, now: datetime, state: InsiderState, pending: PendingTrade, record: dict[str, Any]) -> RunOutcome:
+        """Retry the trade left pending by an earlier abandoned run."""
         strategy, params = self._strategy, self._params
         if (gave_up := self._give_up_pending(state, pending, record, max_retries=params.max_trade_retries)) is not None:
             return gave_up
@@ -255,6 +268,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
     def _full_run(
         self, now: datetime, state: InsiderState, current: dict[str, set[str]], reasons: Mapping[str, list[str]], changed: list[str], failed: dict[str, str], record: dict[str, Any]
     ) -> RunOutcome:
+        """Review the changed stocks with the agent and execute the resulting target portfolio."""
         strategy = self._strategy
         today = now.date()
         if state.pending_trade is not None:
@@ -329,10 +343,12 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
             return None
 
     def _summary_of(self, ticker: str, window: list[Labelled], overrides: tuple[Override, ...], today: date) -> StockFacts:
+        """Summarise a stock's insider activity over the signal window."""
         start = today - timedelta(days=self._params.signal_window_days)
         return summarise(ticker, apply_overrides(window, overrides), today=today, window_start=start)
 
     def _signal(self, ticker: str, window: list[Labelled], overrides: tuple[Override, ...], today: date) -> SignalClass:
+        """Classify a stock's insider signal from its labelled trades and any overrides."""
         params = self._params
         return signal_class(
             self._summary_of(ticker, window, overrides, today),
@@ -381,6 +397,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
         return {"shortfalls": _shortfalls(self._desk.audit())}
 
     def _stock_context(self, stock: _Stock, state: InsiderState, current_weight: float | None, failed: dict[str, str]) -> dict[str, Any]:
+        """Build the per-stock context handed to the agent."""
         insiders: list[InsiderSummary] = []
         if stock.ticker not in failed:
             today = self._facts.today()
@@ -461,6 +478,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
 
 
 def _shortfalls(audit: Audit) -> list[dict[str, Any]]:
+    """Audit shortfalls as plain records, with dollar values rounded."""
     return [{"symbol": s.symbol, "kind": s.kind, "dollars": round(s.value), "detail": s.detail} for s in audit.shortfalls]
 
 
@@ -472,10 +490,12 @@ def _unfinished(audit: Audit) -> str:
 
 
 def _dollars(value: Decimal) -> int:
+    """Round a dollar amount half-up to whole dollars."""
     return int(value.quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
 
 def _note_record(stock: _Stock) -> dict[str, Any]:
+    """The note recorded for a stock, as a plain record."""
     return {
         "summary": stock.summary,
         "class": stock.signal.value,

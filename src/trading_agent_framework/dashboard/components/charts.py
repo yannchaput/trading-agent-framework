@@ -890,7 +890,8 @@ def _sign_colors(values: Sequence[float]) -> list[str]:
 def account_pnl_chart(days: list[dict[str, Any]], title: str = "P&L per day") -> go.Figure:
     """One point per trading day (`pnl.daily_account_pnl`) joined by a line: that day's P&L, i.e. the P&L realized by
     its sales plus the move of the open positions' P&L since the previous close. Markers are green for a gain, red for
-    a loss; the hover gives the realized part and the open P&L level at the close."""
+    a loss; the hover gives the realized part and the open P&L level at the close.
+    """
     if not days:
         fig = go.Figure()
         fig.add_annotation(text="No trade data available", showarrow=False)
@@ -930,7 +931,8 @@ BENCHMARK_COLOR = "#eab308"  # the benchmark line of every backtest chart
 def account_returns_chart(rows: list[dict[str, Any]], benchmark_label: str = "SPY", title: str = "Daily return vs benchmark") -> go.Figure:
     """The strategy's and the benchmark's move against the day before, in percent (`pnl.daily_returns_pct` rows), one
     line each in the backtest colours. The last known value of each line is written at its end, in the line's colour;
-    a day without a base is a gap."""
+    a day without a base is a gap.
+    """
     if not any(row[key] is not None for row in rows for key in ("strategy", "benchmark")):
         fig = go.Figure()
         fig.add_annotation(text="No return data available", showarrow=False)

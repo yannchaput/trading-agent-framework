@@ -59,14 +59,17 @@ _FINAL_STATUSES = frozenset(OrderStatus) - ACTIVE_ORDER_STATUSES
 
 
 def _to_asset(asset: Asset | str) -> Asset:
+    """Coerce a symbol string to an `Asset`, passing an `Asset` through."""
     return asset if isinstance(asset, Asset) else Asset(asset)
 
 
 def _to_decimal(value: Number) -> Decimal:
+    """Coerce a number to `Decimal` via `str`, avoiding float binary artefacts."""
     return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
 def _to_optional_decimal(value: Number | None) -> Decimal | None:
+    """Like `_to_decimal`, but `None` stays `None`."""
     return None if value is None else _to_decimal(value)
 
 
@@ -122,6 +125,15 @@ class Strategy:
         clock: MarketClock | None = None,
         project_root: Path | None = None,
     ) -> None:
+        """Wire the strategy to its broker, clock, parameters and project root.
+
+        Args:
+            broker: Broker facade every order, quote and account call goes through.
+            mode: Trading mode the strategy starts in.
+            parameters: Overrides merged over the class-level `parameters` defaults.
+            clock: Market clock; defaults to the broker's own clock.
+            project_root: Project directory for logs and memory; discovered when omitted.
+        """
         self.broker = broker
         self.trading_mode = mode
         # Copy all parameters passed to __init__ into self.parameters, overriding class-level defaults
@@ -147,10 +159,12 @@ class Strategy:
 
     @property
     def name(self) -> str:
+        """Strategy name, taken from the broker (it prefixes every client order id)."""
         return self.broker.strategy_name
 
     @property
     def is_backtesting(self) -> bool:
+        """Whether the strategy runs in backtesting mode."""
         return self.trading_mode is TradingMode.BACKTESTING
 
     @property
@@ -208,24 +222,31 @@ class Strategy:
 
     def initialize(self) -> None:
         """Called once before trading starts; receives matching `parameters` as kwargs."""
+        ...
 
     def on_trading_iteration(self) -> None:
         """Called every `sleeptime` while the market is open."""
+        ...
 
     def before_market_opens(self) -> None:
         """Called `minutes_before_opening` before each session opens."""
+        ...
 
     def before_starting_trading(self) -> None:
         """Called when each session opens, before its first iteration."""
+        ...
 
     def before_market_closes(self) -> None:
         """Called `minutes_before_closing` before each session closes."""
+        ...
 
     def after_market_closes(self) -> None:
         """Called `minutes_after_closing` after each session closes."""
+        ...
 
     def on_strategy_end(self) -> None:
         """Called once when the run ends (stop, interrupt, or no more sessions)."""
+        ...
 
     def on_bot_crash(self, error: BaseException) -> None:
         """Called when a hook raises; like lumibot, defaults to `on_abrupt_closing()`."""
@@ -233,14 +254,17 @@ class Strategy:
 
     def on_abrupt_closing(self) -> None:
         """Called on Ctrl+C / SIGTERM, and by the default `on_bot_crash`."""
+        ...
 
     # --- order-event hooks -----------------------------------------------------
 
     def on_new_order(self, order: Order) -> None:
         """Called when the broker accepts an order."""
+        ...
 
     def on_canceled_order(self, order: Order) -> None:
         """Called when an order is canceled or expires."""
+        ...
 
     def on_partially_filled_order(
         self,
@@ -251,6 +275,7 @@ class Strategy:
         multiplier: int,
     ) -> None:
         """Called on each partial fill; `quantity` is the size of this fill."""
+        ...
 
     def on_filled_order(
         self,
@@ -261,22 +286,28 @@ class Strategy:
         multiplier: int,
     ) -> None:
         """Called when an order is completely filled."""
+        ...
 
     # --- logging ---------------------------------------------------------------
 
     def log_debug(self, message: object) -> str:
+        """Log `message` at DEBUG level and return the formatted text."""
         return self._log.log_debug(message, stacklevel=2)
 
     def log_info(self, message: object) -> str:
+        """Log `message` at INFO level and return the formatted text."""
         return self._log.log_info(message, stacklevel=2)
 
     def log_warning(self, message: object) -> str:
+        """Log `message` at WARNING level and return the formatted text."""
         return self._log.log_warning(message, stacklevel=2)
 
     def log_error(self, message: object) -> str:
+        """Log `message` at ERROR level and return the formatted text."""
         return self._log.log_error(message, stacklevel=2)
 
     def log_critical(self, message: object) -> str:
+        """Log `message` at CRITICAL level and return the formatted text."""
         return self._log.log_critical(message, stacklevel=2)
 
     # --- control -------------------------------------------------------------------
@@ -299,7 +330,8 @@ class Strategy:
         plot_name: str = "default_plot",
     ) -> None:
         """Record a charted value at the current simulated time (lumibot-compatible
-        signature). No-op outside backtesting."""
+        signature). No-op outside backtesting.
+        """
         if not self.is_backtesting:
             return
         from trading_agent_framework.backtesting.broker import BacktestBroker
@@ -356,38 +388,48 @@ class Strategy:
         return self.wait_for_orders_execution([order], timeout)
 
     def wait_for_orders_execution(self, orders: Sequence[Order], timeout: float | None = None) -> bool:
+        """Block until every order is in a final status or `timeout` seconds of clock time pass; return whether all finished."""
         return self.executor.wait_for(lambda: all(order.status in _FINAL_STATUSES for order in orders), timeout)
 
     # --- accounting --------------------------------------------------------------
 
     def get_datetime(self) -> datetime:
+        """Current time according to the strategy clock (simulated in backtests)."""
         return self.clock.now()
 
     def get_cash(self) -> Decimal:
+        """Cash available in the account."""
         return self.broker.get_account().cash
 
     def get_portfolio_value(self) -> Decimal:
+        """Total account value: cash plus positions."""
         return self.broker.get_account().portfolio_value
 
     @property
     def cash(self) -> Decimal:
+        """Cash available in the account (property form of `get_cash`)."""
         return self.get_cash()
 
     @property
     def portfolio_value(self) -> Decimal:
+        """Total account value (property form of `get_portfolio_value`)."""
         return self.get_portfolio_value()
 
     def get_positions(self) -> list[Position]:
+        """All open positions held at the broker."""
         return self.broker.pull_positions()
 
     def get_position(self, asset: Asset | str) -> Position | None:
+        """The open position in `asset`, or `None` when flat."""
         symbol = _to_asset(asset).symbol
         return next((p for p in self.get_positions() if p.asset.symbol == symbol), None)
 
     def get_orders(self) -> list[Order]:
+        """Every order the broker's tracker knows about."""
         return self.broker.tracker.get_all_tracked_orders()
 
     def get_order(self, identifier: str) -> Order | None:
+        """Look an order up by identifier, tracker first, then the broker; `None` when unknown."""
         tracked = self.broker.get_tracked_order(identifier)
         return tracked if tracked is not None else self.broker.pull_order(identifier)
 
@@ -398,9 +440,11 @@ class Strategy:
         return self.broker.get_last_price(_to_asset(asset))
 
     def get_last_prices(self, assets: Iterable[Asset | str]) -> dict[Asset, Decimal | None]:
+        """Last traded price for each asset; `None` where no price is available."""
         return self.broker.get_last_prices([_to_asset(asset) for asset in assets])
 
     def get_quote(self, asset: Asset | str) -> Quote | None:
+        """Latest bid/ask quote for `asset`, or `None` when unavailable."""
         return self.broker.get_quote(_to_asset(asset))
 
     def get_historical_prices(
@@ -424,6 +468,7 @@ class Strategy:
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Fetch the last `length` bars of `timestep` for several assets in one call."""
         return self.broker.get_bars(
             [_to_asset(asset) for asset in assets],
             length,
@@ -478,19 +523,24 @@ class Strategy:
         )
 
     def submit_order(self, order: Order) -> Order:
+        """Submit one order to the broker and return it with its broker-assigned state."""
         return self.broker.submit_order(order)
 
     def submit_orders(self, orders: Sequence[Order]) -> list[Order]:
+        """Submit several orders and return them in the same order."""
         return self.broker.submit_orders(orders)
 
     def cancel_order(self, order: Order) -> None:
+        """Cancel one open order."""
         self.broker.cancel_order(order)
 
     def cancel_orders(self, orders: Iterable[Order]) -> None:
+        """Cancel each of the given orders."""
         for order in orders:
             self.cancel_order(order)
 
     def cancel_open_orders(self) -> None:
+        """Cancel every order that is still active."""
         self.cancel_orders(self.broker.tracker.get_active_orders())
 
     def modify_order(self, order: Order, limit_price: Number | None = None, stop_price: Number | None = None) -> Order:
@@ -502,9 +552,11 @@ class Strategy:
         )
 
     def sell_all(self, cancel_open_orders: bool = True) -> list[Order]:
+        """Close every position, optionally cancelling open orders first; return the closing orders."""
         return self.broker.close_all_positions(cancel_orders=cancel_open_orders)
 
     def close_position(self, asset: Asset | str, fraction: Number = 1) -> Order | None:
+        """Close `fraction` (default all) of the position in `asset`; `None` when there is nothing to close."""
         return self.broker.close_position(_to_asset(asset), _to_decimal(fraction))
 
     def close_positions(self, assets: Iterable[Asset | str] | None = None) -> list[Order]:
@@ -516,6 +568,7 @@ class Strategy:
     # --- runners (the lumibot-agent `WrappingStrategy` entry points) -------------------
 
     def run_strategy(self) -> None:
+        """Run the strategy in its current trading mode."""
         if self.trading_mode is TradingMode.LIVE:
             self.run_live_trading()
         elif self.trading_mode is TradingMode.PAPER:
@@ -534,9 +587,11 @@ class Strategy:
         return self.project_root / "data" / f"{name or self.name}_state_{self.trading_mode.value}.json"
 
     def run_paper_trading(self) -> None:
+        """Run against the paper broker account."""
         self._run_trading(TradingMode.PAPER)
 
     def run_live_trading(self) -> None:
+        """Run against the live broker account."""
         self._run_trading(TradingMode.LIVE)
 
     def resolved_window(self, start: datetime | None = None, end: datetime | None = None) -> tuple[datetime, datetime]:
@@ -666,6 +721,7 @@ class Strategy:
         )
 
     def _run_trading(self, mode: TradingMode) -> None:
+        """Run the live or paper loop, refusing a mode that does not match the broker account."""
         if self.broker.is_paper != (mode is TradingMode.PAPER):
             account_kind = "paper" if self.broker.is_paper else "live"
             raise ConfigurationError(f"Refusing to run strategy {self.name!r} in {mode} mode against a {account_kind} broker account")
@@ -676,6 +732,7 @@ class Strategy:
         self.executor.run()
 
     def _log_startup_banner(self, mode: TradingMode, log_file: Path) -> None:
+        """Log the run header: mode, log directory, account kind, parameters and market state."""
         self.log_info(f"======== {mode.value.upper()} TRADING MODE ========")
         self.log_info(f"Logs will be saved to: {log_file.parent}")
         self.log_info(f"Broker account: {'PAPER' if self.broker.is_paper else 'LIVE'}")
@@ -689,6 +746,7 @@ class Strategy:
             self.log_warning(f"Could not fetch account/position info: {exc}")
 
     def _log_market_conditions(self) -> None:
+        """Log the next market session, or a warning when the calendar is unavailable."""
         try:
             session = self.clock.next_session()
         except BrokerError as exc:

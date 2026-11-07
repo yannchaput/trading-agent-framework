@@ -38,10 +38,14 @@ QUALITY_REJECTIONS = frozenset({"insufficient_history", "stale_filing", "operati
 
 
 class ScreenLike(Protocol):
-    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult: ...
+    """The quality screen the pipeline uses, as a protocol so tests can fake it."""
+    def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult:
+        """Screen `symbols` as of `as_of` and return the top `top_n`."""
+        ...
 
 
 class AckmanPipeline(ReviewPipeline[ReviewState]):
+    """Bill Ackman review pipeline: screen quality stocks, let the agents rank and vet them, then execute the portfolio."""
     def __init__(
         self,
         *,
@@ -55,6 +59,7 @@ class AckmanPipeline(ReviewPipeline[ReviewState]):
         rebalancer: Rebalancer,
         universe: Sequence[str],
     ) -> None:
+        """Wire the pipeline to the strategy, parameters, screen and agents."""
         super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._screen = screen
@@ -65,22 +70,27 @@ class AckmanPipeline(ReviewPipeline[ReviewState]):
     # --- one review --------------------------------------------------------------------------------
 
     def _begin(self) -> None:
+        """Reset the run stage to setup."""
         self._stage = "setup"
 
     def _run(self, now: datetime, state: ReviewState, record: dict[str, Any]) -> RunOutcome:
+        """Run one pass: review the candidates, then execute."""
         self._review(now, state, record)
         return RunOutcome(completed=True, abandoned_streak=0)
 
     def _executing(self) -> bool:
+        """Whether the run has reached the execution stage."""
         return self._stage == "execution"
 
     def _on_abandoned(self, state: ReviewState, streak: int, stage: str) -> tuple[ReviewState, dict[str, Any]]:
+        """Build the state and record for a run abandoned after repeated failures."""
         extra: dict[str, Any] = {}
         if stage == "execution":
             extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
         return replace(state, abandoned_streak=streak), extra
 
     def _review(self, now: datetime, state: ReviewState, record: dict[str, Any]) -> None:
+        """Run the ranking, verdict and portfolio stages."""
         params = self._params
         strategy = self._strategy
         price_of = strategy.get_last_price

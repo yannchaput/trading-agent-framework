@@ -1,6 +1,7 @@
 """The screen end to end on real-shaped data: a company-facts payload served through `httpx.MockTransport`
 into the real `SecEdgarClient`, `AnnualFiguresStore`, `SplitHistory` and `QualityScreen`. Only the network
-(SEC transport, the Yahoo fetch function) and the clocks are fakes."""
+(SEC transport, the Yahoo fetch function) and the clocks are fakes.
+"""
 
 from __future__ import annotations
 

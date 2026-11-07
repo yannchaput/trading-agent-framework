@@ -39,6 +39,7 @@ from trading_agent_framework.utils.errors import AgentError, ConfigurationError,
 
 
 class EarningsDriftStrategy(Strategy):
+    """Earnings-drift strategy: an agent trades stocks whose earnings reaction suggests post-announcement drift."""
     sleeptime = "1D"  # on_trading_iteration raises a pending fatal error and, in paper/live, recovers the desk; the work is in after_market_closes
     minutes_after_closing = 0  # at the exact close: a backtest order then fills at the next open, not a session later
     AGENT_NAME = "drift"
@@ -61,6 +62,7 @@ class EarningsDriftStrategy(Strategy):
         event_source: EventProvider | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the strategy over a stock universe with optional parameter overrides."""
         super().__init__(broker, mode=mode, **kwargs)
         self.universe = list(universe)
         self.settings = settings or DriftParams()
@@ -74,6 +76,7 @@ class EarningsDriftStrategy(Strategy):
     # --- lifecycle --------------------------------------------------------------------------------
 
     def initialize(self) -> None:
+        """Load the persisted state and build the scanner, desk and agent."""
         store = StateStore(self.state_file(), fresh=self.is_backtesting)  # one run's trades must not leak into the next; paper and live state is never wiped
         self._state = store.load()
         state = self._state
@@ -111,6 +114,7 @@ class EarningsDriftStrategy(Strategy):
         self.log_info(f"EarningsDriftStrategy initialized: {len(self.universe)} symbols, agent {'on' if self.settings.agent_enabled else 'off (baseline)'}")
 
     def on_trading_iteration(self) -> None:
+        """Run one cycle, raising any fatal error recorded earlier."""
         if self._pending_fatal is not None:
             raise FatalStrategyError(self._pending_fatal)
         if self.is_backtesting or self.desk is None:
@@ -121,21 +125,25 @@ class EarningsDriftStrategy(Strategy):
             self.log_error(f"[earnings_drift] recovery at the open failed ({type(exc).__name__}: {exc}); the cycle after the close retries")
 
     def after_market_closes(self) -> None:
+        """Pause briefly so late bars settle (live and paper only)."""
         if not self.is_backtesting and self.settings.live_bar_delay_seconds > 0:
             self.sleep(self.settings.live_bar_delay_seconds)  # let the day's bar become final
         self.run_cycle()
 
     def on_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Forward a fill to the desk."""
         if self.desk is not None:
             self.desk.on_order_filled(order)
 
     def on_canceled_order(self, order: Order) -> None:
+        """Forward a cancellation to the desk."""
         if self.desk is not None:
             self.desk.on_order_canceled(order)
 
     # --- the daily cycle --------------------------------------------------------------------------
 
     def run_cycle(self) -> None:
+        """Scan for candidates, let the agent decide and record undecided stocks."""
         assert self.desk is not None and self.scanner is not None, "initialize() has not run"
         desk, settings, state = self.desk, self.settings, self._state
         try:
@@ -163,6 +171,7 @@ class EarningsDriftStrategy(Strategy):
             desk.save()
 
     def _run_agent(self, scan: ScanResult) -> None:
+        """Run the agent over the scan's candidates."""
         assert self.desk is not None
         desk, state = self.desk, self._state
         candidates, holdings = desk.candidate_sheets(), desk.holdings_context()

@@ -31,7 +31,8 @@ FULL_HISTORY = 10_000_000  # "return every bar you have" sentinel for bars(..., 
 
 class BacktestDataSource(ABC):
     """Bars and sessions for a backtest run. Never imports a broker; `BacktestBroker`
-    depends on this, never the reverse."""
+    depends on this, never the reverse.
+    """
 
     name: str
 
@@ -40,12 +41,14 @@ class BacktestDataSource(ABC):
         self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str
     ) -> None:
         """Pre-fetch and cache `assets` for [start, end]. Optional to call; `bars()`
-        fetches lazily for any asset it hasn't seen."""
+        fetches lazily for any asset it hasn't seen.
+        """
 
     @abstractmethod
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
         """The last `length` bars closed at or before `cutoff`, oldest first, indexed
-        by bar CLOSE time. None if the asset has no data at all."""
+        by bar CLOSE time. None if the asset has no data at all.
+        """
 
     @abstractmethod
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:

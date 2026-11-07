@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 def universe_parameters(history: UniverseHistory) -> dict[str, Any]:
     """What a point-in-time backtest records in `parameters["universe"]` (so `settings.json` shows it): the history's
-    build and pool counts, plus `preload_missing`, which the data source updates once the bars are loaded."""
+    build and pool counts, plus `preload_missing`, which the data source updates once the bars are loaded.
+    """
     return {
         "mode": "point_in_time",
         "history_built": history.built.isoformat(),

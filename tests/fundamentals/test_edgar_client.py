@@ -101,7 +101,8 @@ def test_get_company_facts_payload_hits_the_xbrl_endpoint(tmp_path: Path) -> Non
 def test_get_json_wraps_a_non_json_2xx_body_as_fundamentals_error(tmp_path: Path) -> None:
     """SEC's fair-access throttling sometimes serves an HTML block page with a 2xx status
     instead of JSON; `response.json()` then raises a raw `json.JSONDecodeError` (a
-    `ValueError` subclass) that must not escape as a raw exception."""
+    `ValueError` subclass) that must not escape as a raw exception.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html>Request Rate Threshold Exceeded</html>")
@@ -114,7 +115,8 @@ def test_get_json_wraps_a_non_json_2xx_body_as_fundamentals_error(tmp_path: Path
 
 def test_get_json_treats_a_corrupt_cache_file_as_a_miss_and_self_heals(tmp_path: Path) -> None:
     """A cache file truncated by an interrupted write must not permanently wedge the
-    client -- it should be treated as a cache miss, re-fetched, and rewritten as valid."""
+    client -- it should be treated as a cache miss, re-fetched, and rewritten as valid.
+    """
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:

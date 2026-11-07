@@ -21,6 +21,7 @@ from trading_agent_framework.strategies.insider_trades.form4.classify import Lab
 
 
 class SignalClass(StrEnum):
+    """Overall insider signal for a stock: buying, selling or none."""
     BUYING = "buying"
     SELLING = "selling"
     NONE = "none"
@@ -28,6 +29,7 @@ class SignalClass(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Override:
+    """A manual correction to the label of an insider's trade."""
     insider_id: str  # the owner CIK
     from_label: Label
     to_label: Label
@@ -36,6 +38,7 @@ class Override:
 
 @dataclass(frozen=True, slots=True)
 class InsiderSummary:
+    """One insider's buying and selling in the signal window, by label."""
     insider_id: str
     name: str
     role: str
@@ -47,11 +50,13 @@ class InsiderSummary:
 
     @property
     def dollars(self) -> Decimal:
+        """Total dollars bought plus sold."""
         return sum(self.bought.values(), Decimal(0)) + sum(self.sold.values(), Decimal(0))
 
 
 @dataclass(frozen=True, slots=True)
 class StockFacts:
+    """A stock's insider activity over the signal window, summarised per insider."""
     ticker: str
     today: date
     window_start: date
@@ -59,6 +64,7 @@ class StockFacts:
 
     @property
     def accessions(self) -> frozenset[str]:
+        """Accession numbers of every filing behind the facts."""
         return frozenset(lt.trade.accession for i in self.insiders for lt in i.labelled)
 
 
@@ -82,6 +88,7 @@ def apply_overrides(labelled: Sequence[Labelled], overrides: Sequence[Override])
 
 
 def summarise(ticker: str, window: Sequence[Labelled], *, today: date, window_start: date) -> StockFacts:
+    """Summarise a stock's labelled trades in the window into `StockFacts`."""
     by_insider: dict[str, list[Labelled]] = defaultdict(list)
     for lt in window:
         by_insider[lt.trade.owner_cik].append(lt)
@@ -90,6 +97,7 @@ def summarise(ticker: str, window: Sequence[Labelled], *, today: date, window_st
 
 
 def _summarise_insider(insider_id: str, trades: list[Labelled]) -> InsiderSummary:
+    """Summarise one insider's labelled trades."""
     bought: dict[Label, Decimal] = defaultdict(Decimal)
     sold: dict[Label, Decimal] = defaultdict(Decimal)
     for lt in trades:
@@ -109,6 +117,7 @@ def _summarise_insider(insider_id: str, trades: list[Labelled]) -> InsiderSummar
 
 
 def signal_class(facts: StockFacts, *, min_buy_fraction: Decimal, min_sell_fraction: Decimal) -> SignalClass:
+    """Classify a stock's signal from the largest buy or sell fraction among its insiders."""
     if any(i.max_buy_fraction >= min_buy_fraction for i in facts.insiders):
         return SignalClass.BUYING
     bought = sum((i.bought.get(Label.OPPORTUNISTIC, Decimal(0)) for i in facts.insiders), Decimal(0))

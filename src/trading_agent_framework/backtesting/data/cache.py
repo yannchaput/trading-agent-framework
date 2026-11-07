@@ -28,15 +28,18 @@ class CachedDataSource(BacktestDataSource):
     """
 
     def __init__(self, inner: BacktestDataSource, cache_dir: Path) -> None:
+        """Wrap `inner` with an on-disk bar cache in `cache_dir`."""
         self._inner = inner
         self._cache_dir = Path(cache_dir) / inner.name
         self.name = inner.name
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
+        """Cache the bars of each asset for the window, fetching from the inner source on a miss."""
         for asset in assets:
             self._ensure_cached(asset, start, end, timestep)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        """Bars up to `cutoff` from the cache, or the inner source on a miss."""
         # bars() alone carries no [start, end] window to cache against -- only load()
         # does -- so a cache miss here falls straight through to the inner source.
         path = self._latest_cache_path(asset, timestep)
@@ -45,19 +48,23 @@ class CachedDataSource(BacktestDataSource):
         return self._read(path, asset, timestep, cutoff, length)
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
+        """Market sessions in the window, from the inner source."""
         return self._inner.sessions(start, end)
 
     def _cache_path(self, asset: Asset, start: datetime, end: datetime, timestep: str) -> Path:
+        """Cache file for an asset, timestep and window."""
         stamp = f"{asset.symbol}_{timestep}_{start.date()}_{end.date()}"
         return self._cache_dir / f"{stamp}.parquet"
 
     def _latest_cache_path(self, asset: Asset, timestep: str) -> Path | None:
+        """The most recent cache file for an asset and timestep; `None` when there is none."""
         if not self._cache_dir.is_dir():
             return None
         matches = sorted(self._cache_dir.glob(f"{asset.symbol}_{timestep}_*.parquet"))
         return matches[-1] if matches else None
 
     def _ensure_cached(self, asset: Asset, start: datetime, end: datetime, timestep: str) -> None:
+        """Fetch and write the window's bars unless a cache file exists."""
         path = self._cache_path(asset, start, end, timestep)
         if path.exists():
             return
@@ -68,6 +75,7 @@ class CachedDataSource(BacktestDataSource):
         self._write(path, bars, asset)
 
     def _write(self, path: Path, bars: Bars, asset: Asset) -> None:
+        """Write the bars to a cache file, logging rather than raising on failure."""
         try:
             self._cache_dir.mkdir(parents=True, exist_ok=True)
             bars.df.to_parquet(path)
@@ -88,6 +96,7 @@ class CachedDataSource(BacktestDataSource):
     def _read(
         self, path: Path, asset: Asset, timestep: str, cutoff: datetime, length: int
     ) -> Bars | None:
+        """Read cached bars up to `cutoff`, at most `length` of them."""
         import pandas as pd
 
         try:

@@ -45,6 +45,7 @@ class LumibotStyleFormatter(logging.Formatter):
     _long = logging.Formatter("%(asctime)s | %(levelname)s | %(filename)s:%(funcName)s:%(lineno)d | %(message)s")
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a record in the short style, or the long style from WARNING up."""
         formatter = self._long if record.levelno >= logging.WARNING else self._short
         return formatter.format(record)
 
@@ -107,25 +108,32 @@ class ColorLogger:
     """
 
     def __init__(self, logger: logging.Logger, prefix: str) -> None:
+        """Wrap `logger`, prefixing every message with `prefix`."""
         self._logger = logger
         self._prefix = prefix
 
     def log_debug(self, message: object, *, stacklevel: int = 1) -> str:
+        """Log at DEBUG in grey and return the formatted text."""
         return self._log(logging.DEBUG, ANSI_GREY, message, stacklevel)
 
     def log_info(self, message: object, *, stacklevel: int = 1) -> str:
+        """Log at INFO in blue and return the formatted text."""
         return self._log(logging.INFO, ANSI_BLUE, message, stacklevel)
 
     def log_warning(self, message: object, *, stacklevel: int = 1) -> str:
+        """Log at WARNING in yellow and return the formatted text."""
         return self._log(logging.WARNING, ANSI_YELLOW, message, stacklevel)
 
     def log_error(self, message: object, *, stacklevel: int = 1) -> str:
+        """Log at ERROR in red and return the formatted text."""
         return self._log(logging.ERROR, ANSI_RED, message, stacklevel)
 
     def log_critical(self, message: object, *, stacklevel: int = 1) -> str:
+        """Log at CRITICAL in red and return the formatted text."""
         return self._log(logging.CRITICAL, ANSI_RED, message, stacklevel)
 
     def _log(self, level: int, color: str, message: object, stacklevel: int) -> str:
+        """Log `message` with the colour and level, attributing it to the caller's frame."""
         text = str(message)
         # +2 skips this helper and the public log_* method.
         self._logger.log(

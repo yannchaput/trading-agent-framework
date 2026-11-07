@@ -38,6 +38,7 @@ _DATA_ERRORS = (BrokerError, BacktestError)
 
 
 def _lean(order: Order) -> dict[str, Any]:
+    """Compact order summary for the agent."""
     return {"identifier": order.identifier, "symbol": order.asset.symbol, "side": order.side.value, "quantity": float(order.quantity or 0), "status": order.status.value}
 
 
@@ -56,6 +57,7 @@ def _is_long(position: Position) -> bool:
 
 
 def _number(value: object) -> Decimal | None:
+    """Parse `value` as a `Decimal`; `None` when it is not a number."""
     try:
         number = Decimal(str(value))
     except InvalidOperation, ValueError:
@@ -64,6 +66,7 @@ def _number(value: object) -> Decimal | None:
 
 
 class Desk:
+    """Order desk for earnings drift: guardrailed buys, trailing stops and exits, with every decision logged."""
     def __init__(
         self,
         strategy: Strategy,
@@ -74,6 +77,15 @@ class Desk:
         trade_log: RunLog,
         decision_log: RunLog,
     ) -> None:
+        """Bind the desk to the strategy, parameters and persisted state.
+
+        Args:
+            strategy: Strategy whose broker receives the orders.
+            params: Guardrail thresholds.
+            state: Persisted trades.
+            save: Callback that persists the state.
+            trade_log: Run log receiving each decision record.
+        """
         self._strategy = strategy
         self._params = params
         self._state = state
@@ -100,6 +112,7 @@ class Desk:
     # --- session ---------------------------------------------------------------------------------
 
     def begin_session(self, today: date, trading_dates: Sequence[date], candidates: Sequence[Candidate], rejections: Mapping[str, str]) -> None:
+        """Load today's candidates and rejections and reset the per-session decision state."""
         with self._lock:
             self._today = today
             # An empty list (a cycle whose scan failed) keeps the dates already known and adds today, so `sessions_held` still counts.
@@ -112,12 +125,14 @@ class Desk:
                 self._log_decision(symbol, "rejected", reason=reason)
 
     def save(self) -> None:
+        """Persist the trade state."""
         self._save_state()
 
     # --- views -----------------------------------------------------------------------------------
 
     @property
     def trades(self) -> list[Trade]:
+        """Every trade in the state, open or closed."""
         return list(self._state.trades.values())
 
     def exposed_symbols(self) -> set[str]:
@@ -157,6 +172,7 @@ class Desk:
             return int((budget / price).to_integral_value(rounding=ROUND_FLOOR))
 
     def candidate_sheets(self) -> list[dict[str, Any]]:
+        """Candidate fact sheets for the agent, strongest abnormal reaction first."""
         with self._lock:
             ordered = sorted(self._candidates.values(), key=lambda c: c.reaction.abnormal_pct, reverse=True)
             return [fact_sheet(candidate, self.max_quantity(candidate.symbol)) for candidate in ordered]
@@ -189,6 +205,7 @@ class Desk:
             return rows
 
     def balances(self) -> dict[str, Any]:
+        """Cash and portfolio value for the agent, or an error payload when the broker fails."""
         try:
             account = self._strategy.broker.get_account()
         except _DATA_ERRORS as exc:
@@ -203,9 +220,11 @@ class Desk:
     # --- agent tools -----------------------------------------------------------------------------
 
     def buy(self, symbol: str, quantity: object, trail_percent: object, reason: str) -> dict[str, Any]:
+        """Buy `symbol` with a trailing stop; refused when a guardrail trips."""
         return self._buy(symbol, quantity, trail_percent, reason, decision="buy")
 
     def skip(self, symbol: str, reason: str) -> dict[str, Any]:
+        """Record a decision not to trade `symbol`, with the reason."""
         with self._lock:
             symbol = str(symbol).strip().upper()
             if symbol not in self._candidates:
@@ -217,6 +236,7 @@ class Desk:
             return {"symbol": symbol, "status": "skipped"}
 
     def set_trailing_stop(self, symbol: str, trail_percent: object, reason: str) -> dict[str, Any]:
+        """Replace the trailing stop on an open trade."""
         with self._lock:
             symbol = str(symbol).strip().upper()
             trade = self._open_trade_or_refusal(symbol, "set_trailing_stop")
@@ -255,9 +275,11 @@ class Desk:
         return trade
 
     def _trail_in_range(self, trail: Decimal) -> bool:
+        """Whether `trail` lies within the configured minimum and maximum trail percent."""
         return Decimal(str(self._params.min_trail_percent)) <= trail <= Decimal(str(self._params.max_trail_percent))
 
     def sell(self, symbol: str, reason: str) -> dict[str, Any]:
+        """Exit an open trade at market, cancelling its stop."""
         with self._lock:
             symbol = str(symbol).strip().upper()
             trade = self._open_trade_or_refusal(symbol, "sell")
@@ -287,6 +309,7 @@ class Desk:
             return bought
 
     def record_undecided(self) -> None:
+        """Log a no-decision record for every candidate the agent never decided on."""
         with self._lock:
             for symbol in sorted(set(self._candidates) - self._decided):
                 self._decided.add(symbol)
@@ -295,6 +318,7 @@ class Desk:
     # --- order hooks -----------------------------------------------------------------------------
 
     def on_order_filled(self, order: Order) -> None:
+        """Advance the matching trade when its entry, stop or exit order fills."""
         with self._lock:
             trade = self._trade_for(order)
             if trade is None:
@@ -455,6 +479,7 @@ class Desk:
                         self._book_partial(trade, order, reason)
 
     def _positions(self) -> dict[str, Position] | None:
+        """Long positions by symbol, or `None` when the broker call fails."""
         try:
             return {p.asset.symbol: p for p in self._strategy.get_positions() if _is_long(p)}
         except _DATA_ERRORS as exc:
@@ -542,6 +567,7 @@ class Desk:
     # --- internals -------------------------------------------------------------------------------
 
     def _buy(self, symbol: str, quantity: object, trail_percent: object, reason: str, *, decision: str) -> dict[str, Any]:
+        """Shared buy path: validate guardrails, submit the entry and record the trade."""
         with self._lock:
             symbol = str(symbol).strip().upper()
             shares, trail = _number(quantity), _number(trail_percent)
@@ -590,6 +616,7 @@ class Desk:
             return {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
 
     def _entry_filled(self, trade: Trade, order: Order) -> None:
+        """Mark the trade open with its filled quantity and place its trailing stop."""
         trade.state = TradeState.OPEN
         trade.quantity = order.filled_quantity
         trade.entry_price = order.avg_fill_price
@@ -696,6 +723,7 @@ class Desk:
         return f"{what}, the stop could not be put back and the backstop market sell failed too: the position has no stop"
 
     def _submit_stop(self, trade: Trade, trail: Decimal) -> Order | None:
+        """Submit the trailing stop for an open trade; `None` when there is nothing to protect."""
         if trade.quantity <= 0:
             return None
         try:  # building the order too: an exception must reach the second attempt and the backstop sell, never the hook
@@ -707,6 +735,7 @@ class Desk:
         return submitted
 
     def _market_sell(self, trade: Trade, exit_reason: str) -> Order | None:
+        """Submit a market sell for the whole trade; `None` when the submit fails."""
         try:
             submitted = self._strategy.submit_order(self._strategy.create_order(trade.symbol, trade.quantity, "sell"))
         except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
@@ -719,9 +748,11 @@ class Desk:
         return submitted
 
     def _open_trades(self) -> list[Trade]:
+        """Open trades that have no exit order yet."""
         return [t for t in self._state.trades.values() if t.state is TradeState.OPEN and t.exit_order_id is None]
 
     def _trade_for(self, order: Order) -> Trade | None:
+        """The trade an order belongs to, matched on its entry, stop or exit id; `None` otherwise."""
         trade = self._state.trades.get(order.asset.symbol)
         if trade is None or order.identifier not in (trade.entry_order_id, trade.stop_order_id, trade.exit_order_id):
             return None
@@ -738,19 +769,23 @@ class Desk:
             return False, None
 
     def _stop_is_working(self, trade: Trade) -> bool:
+        """Whether the trade's trailing stop is still active at the broker."""
         stop = self._fetch(trade.stop_order_id, trade.symbol)[1]
         return stop is not None and stop.is_active()
 
     def _price(self, symbol: str) -> Decimal | None:
+        """Last price for `symbol`, or `None` when unavailable."""
         try:
             return self._strategy.get_last_price(symbol)
         except _DATA_ERRORS:
             return None
 
     def _now_date(self) -> date:
+        """Today's date in the market timezone, from the strategy clock."""
         return self._strategy.clock.now().astimezone(MARKET_TZ).date()
 
     def _sessions_held(self, trade: Trade) -> int:
+        """Trading sessions the trade has been open."""
         if trade.opened_on is None:
             return 0
         today = self._now_date()
@@ -760,13 +795,16 @@ class Desk:
         return sessions_held(trade.opened_on, today, dates)
 
     def _refuse(self, guardrail: str, message: str) -> dict[str, Any]:
+        """Log a tripped guardrail and return the error payload for the agent."""
         self._strategy.log_warning(f"guardrail {guardrail}: {message}")
         return {"error": message}
 
     def _clip(self, reason: str) -> str:
+        """Trim the agent's reason to the configured maximum length."""
         return str(reason or "").strip()[: self._params.reason_max_chars]
 
     def _log_decision(self, symbol: str, decision: str, **fields: Any) -> None:
+        """Append a decision record, with the candidate's facts, to the run log."""
         record: dict[str, Any] = {"date": self._today.isoformat() if self._today else None, "symbol": symbol, "decision": decision, **fields}
         candidate = self._candidates.get(symbol)
         if candidate is not None:

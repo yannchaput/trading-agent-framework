@@ -1,3 +1,5 @@
+"""The broker-agnostic `Order` entity and its fill transactions."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -42,6 +44,7 @@ def _to_decimal(value: int | float | str | Decimal | None) -> Decimal | None:
 
 @dataclass(frozen=True, slots=True)
 class Transaction:
+    """One fill of an order: quantity, price and time."""
     quantity: Decimal
     price: Decimal
     timestamp: datetime
@@ -80,6 +83,7 @@ class Order:
     raw: Any = None
 
     def __post_init__(self) -> None:
+        """Check that exactly one of quantity and notional is set."""
         if (self.quantity is None) == (self.notional is None):
             raise OrderValidationError("Exactly one of `quantity` or `notional` must be set on an Order.")
 
@@ -87,21 +91,26 @@ class Order:
             setattr(self, field_name, _to_decimal(getattr(self, field_name)))
 
     def __eq__(self, other: object) -> bool:
+        """Orders are equal when their identifiers are equal."""
         if not isinstance(other, Order):
             return NotImplemented
         return self.identifier == other.identifier
 
     def __hash__(self) -> int:
+        """Hash on the identifier, consistent with equality."""
         return hash(self.identifier)
 
     def set_identifier(self, identifier: str | UUID) -> None:
+        """Set the identifier from a string or UUID."""
         self.identifier = str(identifier)
 
     def set_error(self, error: BaseException | str) -> None:
+        """Mark the order as errored and keep the error."""
         self.status = OrderStatus.ERROR
         self.error_message = str(error)
 
     def update_raw(self, raw: Any) -> None:
+        """Store the broker's raw payload on the order."""
         self.raw = raw
 
     def add_transaction(
@@ -110,6 +119,7 @@ class Order:
         quantity: Decimal,
         timestamp: datetime | None = None,
     ) -> None:
+        """Record a fill and update the filled quantity and average price."""
         # price/quantity are already Decimal per this method's signature -- callers
         # (AlpacaTradeStream, OrderTracker) convert at the broker-response boundary
         # via _to_decimal before reaching here.
@@ -123,10 +133,13 @@ class Order:
         self.filled_quantity += quantity
 
     def is_active(self) -> bool:
+        """Whether the order can still fill."""
         return self.status in ACTIVE_ORDER_STATUSES
 
     def is_filled(self) -> bool:
+        """Whether the order is completely filled."""
         return self.status == OrderStatus.FILL
 
     def is_canceled(self) -> bool:
+        """Whether the order was canceled."""
         return self.status == OrderStatus.CANCELED

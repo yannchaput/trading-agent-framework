@@ -49,7 +49,8 @@ def _valid_dates(raw: dict[str, Any]) -> bool:
 
 def _valid_verdict(entry: Any, version: int) -> bool:
     """One `verdicts` entry: {verdict, reason, date} in version 2; in version 3 also a `strength`, which may be absent (a version-2 verdict
-    not judged again) but, when there, is a known one (never weak on an `in`)."""
+    not judged again) but, when there, is a known one (never weak on an `in`).
+    """
     allowed = _VERDICT_KEYS if version == _UNRATED_VERSION else _VERDICT_KEYS | {"strength"}
     if not isinstance(entry, dict) or not _VERDICT_KEYS <= set(entry) <= allowed or not all(isinstance(value, str) for value in entry.values()) or entry["verdict"] not in _VERDICTS:
         return False

@@ -56,7 +56,8 @@ def test_dir_includes_lazy_and_eager_names() -> None:
 def test_importing_backtesting_package_does_not_import_vectorbt_or_yfinance() -> None:
     """Must run in a subprocess -- see tests/brokers/test_lazy_imports.py's identical
     reasoning: other test modules have already imported these by the time this test
-    runs in-process, so only a fresh interpreter makes the assertion meaningful."""
+    runs in-process, so only a fresh interpreter makes the assertion meaningful.
+    """
     result = subprocess.run(
         [
             sys.executable,
@@ -74,7 +75,8 @@ def test_importing_backtesting_package_does_not_import_vectorbt_or_yfinance() ->
 def test_accessing_run_backtest_lazily_imports_vectorbt_is_not_true_until_called() -> None:
     """run_backtest itself is light to import (metrics.py's vectorbt import is deferred
     further, inside compute_metrics) -- confirm importing the function doesn't pull
-    vectorbt in either, only actually calling compute_metrics does (not exercised here)."""
+    vectorbt in either, only actually calling compute_metrics does (not exercised here).
+    """
     result = subprocess.run(
         [
             sys.executable,

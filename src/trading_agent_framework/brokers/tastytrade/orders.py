@@ -40,10 +40,12 @@ _TIME_IN_FORCE: dict[TimeInForce, tuple[str, str | None]] = {
 
 
 def external_identifier_for(strategy_name: str, identifier: str) -> str:
+    """Tastytrade external identifier for an order: the strategy name prefixed to its identifier."""
     return f"{strategy_name}:{identifier}"
 
 
 def identifier_from_external(external: str | None, strategy_name: str) -> str | None:
+    """Recover the order identifier from an external identifier; `None` when it belongs to another strategy."""
     prefix = f"{strategy_name}:"
     if external and external.startswith(prefix) and len(external) > len(prefix):
         return external[len(prefix) :]
@@ -52,11 +54,13 @@ def identifier_from_external(external: str | None, strategy_name: str) -> str | 
 
 def to_tastytrade_symbol(symbol: str) -> str:
     """Class shares: our (Alpaca's) `BRK.B` is Tastytrade's `BRK/B` (confirmed by the sandbox probe: `BRK.B` is
-    a 404, `BRK%2FB` resolves to `BRK/B`; the slash must be URL-encoded in a path, as `broker.py` does)."""
+    a 404, `BRK%2FB` resolves to `BRK/B`; the slash must be URL-encoded in a path, as `broker.py` does).
+    """
     return symbol.replace(".", "/")
 
 
 def from_tastytrade_symbol(symbol: str) -> str:
+    """Convert a Tastytrade symbol to the project's (slash to dot)."""
     return symbol.replace("/", ".")
 
 
@@ -98,6 +102,7 @@ def conform_order(order: Order, *, fractional_eligible: bool, last_price: Decima
 
 
 def _conform_notional(order: Order, *, fractional_eligible: bool, last_price: Decimal | None) -> Order:
+    """Turn a notional market order into whole shares when the asset is not fractional-eligible."""
     if order.order_type is not OrderType.MARKET:
         raise OrderValidationError(f"notional is only supported for MARKET orders (order_type={order.order_type})")
     if fractional_eligible:
@@ -111,6 +116,7 @@ def _conform_notional(order: Order, *, fractional_eligible: bool, last_price: De
 
 
 def _whole_shares(order: Order, shares: Decimal, what: str) -> Decimal:
+    """Round `shares` down to whole shares, or raise when that leaves nothing to trade."""
     whole = shares.to_integral_value(rounding=ROUND_FLOOR)
     if whole < 1:
         raise OrderValidationError(f"order {order.identifier}: {what} is below one whole share of {order.asset.symbol}, which Tastytrade trades in whole shares only")
@@ -122,10 +128,12 @@ def _whole_shares(order: Order, shares: Decimal, what: str) -> Decimal:
 
 
 def round_price(price: Decimal) -> Decimal:
+    """Round a price to the cent, or to a tenth of a cent below one dollar."""
     return price.quantize(_PENNY if price >= 1 else _SUB_PENNY, rounding=ROUND_HALF_UP)
 
 
 def _price(price: Decimal) -> str:
+    """A rounded price formatted for the API."""
     return format(round_price(price), "f")
 
 
@@ -135,12 +143,14 @@ def _quantity(quantity: Decimal) -> str:
 
 
 def _require(value: Decimal | None, name: str, order: Order) -> Decimal:
+    """`value` if set; otherwise raise because the order type needs `name`."""
     if value is None:
         raise OrderValidationError(f"{order.order_type.value} order {order.identifier} needs {name}")
     return value
 
 
 def _pricing(order: Order, effect: str) -> dict[str, Any]:
+    """Price fields of the API order body for the order's type."""
     match order.order_type:
         case OrderType.MARKET:
             return {"order-type": "Market"}
@@ -205,6 +215,7 @@ _STATUSES: dict[str, OrderStatus] = {
 
 
 def map_status(status: str, *, has_fills: bool) -> OrderStatus:
+    """Map a Tastytrade order status to an `OrderStatus`."""
     if status in _SUBMITTED:
         return OrderStatus.SUBMITTED
     if status in _WORKING:
@@ -230,12 +241,14 @@ def is_still_arriving(data: Mapping[str, Any]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class Fill:
+    """One fill of a Tastytrade order."""
     fill_id: str
     quantity: Decimal
     price: Decimal
 
 
 def parse_fills(data: Mapping[str, Any]) -> list[Fill]:
+    """Fills found in an order's legs payload."""
     fills: list[Fill] = []
     for leg in data.get("legs") or []:
         if not isinstance(leg, Mapping):

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 
 
 class AgentLike(CommonAgentLike, Protocol):
+    """The slice of an agent handle bull_bear uses."""
     def run(
         self,
         task_prompt: str,
@@ -54,13 +55,17 @@ class AgentLike(CommonAgentLike, Protocol):
         force_tool: str | None = None,
         tool_budget: int | None = None,
         max_steps: int | None = None,
-    ) -> AgentRunResult: ...
+    ) -> AgentRunResult:
+        """Run the agent on `task_prompt` and return its output."""
+        ...
 
 
 class AgentLookup(Protocol):
     """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
 
-    def __getitem__(self, name: str, /) -> AgentLike: ...
+    def __getitem__(self, name: str, /) -> AgentLike:
+        """The agent registered under `name`."""
+        ...
 
 
 class AgentLooped(StageAbandoned):
@@ -76,6 +81,7 @@ class _Pending:
 
 
 class BullBearPipeline(ReviewPipeline[BullBearState]):
+    """Bull/bear pipeline: debate the candidates, let the judge rank them and execute the resulting portfolio."""
     LOG_PREFIX: ClassVar[str] = "[bull_bear] "
     _agents: AgentLookup  # the narrower lookup: its agents also take `max_steps`
 
@@ -95,6 +101,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         fundamentals_of: Callable[[str, datetime], Mapping[str, Any]],
         momentum: Mapping[str, Any],
     ) -> None:
+        """Wire the pipeline to the strategy, parameters, agents and handoff recorder."""
         super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
         self._params = params
         self._rebalancer = rebalancer
@@ -109,6 +116,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         self._pending: _Pending | None = None  # set once the judge has decided, just before the stage becomes "execution"
 
     def _now(self) -> datetime:
+        """Current time in the market timezone."""
         return self._strategy.clock.now().astimezone(MARKET_TZ)
 
     def _fundamentals(self, symbol: str, now: datetime) -> Mapping[str, Any]:
@@ -126,13 +134,16 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
     # --- one review --------------------------------------------------------------------------------
 
     def _run(self, now: datetime, state: BullBearState, record: dict[str, Any]) -> RunOutcome:
+        """Run one pass: review the candidates, then execute."""
         self._review(now, record, state)
         return RunOutcome(completed=True, abandoned_streak=0)
 
     def _executing(self) -> bool:
+        """Whether the run has reached the execution stage."""
         return self._stage == "execution"
 
     def _on_abandoned(self, state: BullBearState, streak: int, stage: str) -> tuple[BullBearState, dict[str, Any]]:
+        """Build the state and record for a run abandoned after repeated failures."""
         extra: dict[str, Any] = {}
         if stage == "execution":
             extra["orders"] = [asdict(order) for order in self._rebalancer.placed]  # sent before the failure
@@ -149,6 +160,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         return saved, extra
 
     def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
+        """Run the notes, bull, bear and judge stages for the candidates."""
         params, strategy = self._params, self._strategy
         # Reset at the start of every review, here and not in `_begin` (the base `run` leaves it the no-op default): pyright keeps
         # the `None` it narrowed `self._pending` to across the `_review` call, which a reset in `run` would not survive.
@@ -452,7 +464,8 @@ _ERROR_KEY = re.compile(r"""["']error["']\s*:""")
 def tool_failed(result: str) -> bool:
     """Whether a tool result says the call did nothing: an `{"error": ...}` (a tool's own refusal, or the tool-budget
     middleware's, as JSON or as a Python dict repr), an "Error invoking tool ..." message (the tool raised), or no
-    result at all (the call was requested but never answered)."""
+    result at all (the call was requested but never answered).
+    """
     return not result.strip() or result.lstrip().startswith("Error") or _ERROR_KEY.search(result) is not None
 
 

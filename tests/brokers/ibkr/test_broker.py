@@ -113,7 +113,8 @@ def test_a_rejection_sets_the_error_before_raising_and_untracks(broker: IbkrBrok
 
 def test_a_raw_exception_from_placing_surfaces_as_broker_error(broker: IbkrBroker, ib: FakeIB) -> None:
     """The shared `Rebalancer` catches `TradingFrameworkError` only: a raw error from the gateway
-    would abort a rebalance half way."""
+    would abort a rebalance half way.
+    """
     boom = RuntimeError("boom")
 
     def place_raises(contract, ib_order):
@@ -133,7 +134,8 @@ def test_a_raw_exception_from_placing_surfaces_as_broker_error(broker: IbkrBroke
 def test_an_exception_escaping_the_connection_raw_still_surfaces_as_broker_error(broker: IbkrBroker, monkeypatch: pytest.MonkeyPatch) -> None:
     """`IbkrConnection.call` already wraps what the loop thread raises, so `placeOrder` failures
     reach `_submit_order` as `BrokerError`. This pins the broker's own guarantee on top of that:
-    whatever escapes `call` raw (a future connection change) is wrapped too."""
+    whatever escapes `call` raw (a future connection change) is wrapped too.
+    """
     boom = RuntimeError("boom")
 
     def call_raises(*args: object, **kwargs: object) -> object:
@@ -172,7 +174,8 @@ def test_a_framework_error_from_placing_is_re_raised_unchanged(broker: IbkrBroke
 def test_a_rejection_with_no_log_message_falls_back_to_the_error_event(broker: IbkrBroker, ib: FakeIB) -> None:
     """Reproduces a real IBKR rejection (a PRIIPs/KID regulatory block on SPY): `trade.log` never
     got a message, but IBKR's `errorEvent` carried the real reason -- that must not be lost as
-    the generic, useless "order Inactive by IBKR"."""
+    the generic, useless "order Inactive by IBKR".
+    """
     ib.place_status = "Inactive"  # place_log_message left empty, exactly like the real rejection
     original_place_order = ib.placeOrder
 
@@ -192,7 +195,8 @@ def test_a_rejection_with_no_log_message_falls_back_to_the_error_event(broker: I
 
 def test_an_ioc_cancel_with_no_error_is_not_treated_as_a_rejection(broker: IbkrBroker, ib: FakeIB) -> None:
     """A `Cancelled` status with no error-code log entry is IOC/FOK doing its normal job --
-    it did not fill, so it cancelled -- never a submit-time rejection."""
+    it did not fill, so it cancelled -- never a submit-time rejection.
+    """
     ib.place_status = "Cancelled"
     order = _buy(time_in_force=TimeInForce.IOC)
 
@@ -206,7 +210,8 @@ def test_an_ioc_cancel_with_no_error_is_not_treated_as_a_rejection(broker: IbkrB
 def test_an_order_still_pending_past_ack_timeout_is_optimistically_marked_submitted(broker: IbkrBroker, ib: FakeIB) -> None:
     """`_place_and_wait` gives up waiting after `ack_timeout` (0.2s in this fixture) and returns
     whatever status IBKR still reports; the broker optimistically marks the order SUBMITTED,
-    relying on later stream/reconcile events to correct it."""
+    relying on later stream/reconcile events to correct it.
+    """
     ib.place_status = "PendingSubmit"
 
     order = broker.submit_order(_buy())
@@ -218,7 +223,8 @@ def test_an_order_still_pending_past_ack_timeout_is_optimistically_marked_submit
 def test_a_partial_fill_before_a_genuine_rejection_keeps_the_order_tracked(broker: IbkrBroker, ib: FakeIB) -> None:
     """A partial fill is real money moved. If IBKR reports a genuine rejection (a real error
     code) alongside a `Cancelled` status after that partial fill, the order must stay tracked --
-    untracking it would silently drop a position the framework already holds."""
+    untracking it would silently drop a position the framework already holds.
+    """
     ib.place_status = "Cancelled"
     ib.place_log_message = "Order rejected after partial fill"
     ib.place_log_error_code = 202
@@ -397,7 +403,8 @@ def test_reconcile_applies_missed_fills_once(broker: IbkrBroker, ib: FakeIB) -> 
 def test_stop_stream_does_not_reconnect_when_the_gateway_is_down(broker: IbkrBroker, ib: FakeIB) -> None:
     """A lost Gateway connection at teardown must fail fast, not reconnect-and-reconcile: that
     would mutate order-tracker state and push listener events after the strategy may already
-    have been told the run is over."""
+    have been told the run is over.
+    """
     broker.start_stream()
     reconcile_calls: list[str] = []
     original_req_executions = ib.reqExecutionsAsync

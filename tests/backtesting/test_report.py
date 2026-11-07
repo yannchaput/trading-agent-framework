@@ -20,7 +20,8 @@ LATER = datetime(2026, 1, 6, 16, tzinfo=UTC)
 def _session_equity() -> list[EquitySample]:
     """What `runner._session_equity_samples` hands `write_equity`: one sample per
     trading session, each stamped at that session's own close (NOT raw ledger samples
-    -- see `report.write_equity`'s docstring)."""
+    -- see `report.write_equity`'s docstring).
+    """
     return [
         EquitySample(time=NOW, portfolio_value=Decimal(10000), cash=Decimal(10000), positions_value=Decimal(0)),
         EquitySample(time=LATER, portfolio_value=Decimal(10500), cash=Decimal(500), positions_value=Decimal(10000)),

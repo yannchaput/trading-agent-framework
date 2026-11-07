@@ -164,7 +164,8 @@ def test_run_backtest_rejects_naive_datetimes_with_a_clear_error(tmp_path: Path,
 
 def test_run_backtest_accepts_aware_datetimes_in_any_timezone(tmp_path: Path) -> None:
     """The validation is "aware", not "in the market's timezone" -- a UTC bound (what
-    `smoke_backtest.py`-style code and most callers produce) must still work."""
+    `smoke_backtest.py`-style code and most callers produce) must still work.
+    """
     sessions = _sessions(date(2026, 1, 5), 2)
     source = FakeBacktestDataSource()
     source.set_sessions(sessions)
@@ -224,7 +225,8 @@ class RecordingStrategy(Strategy):
     portfolio's equity curve isn't perfectly flat -- a flat curve has zero variance,
     which makes `compute_metrics`'s benchmark-correlation math divide by zero (a
     pre-existing, harmless-but-noisy edge case in `metrics.py`'s `_relative_stats`,
-    unrelated to what this test is checking) and is not representative of a real run."""
+    unrelated to what this test is checking) and is not representative of a real run.
+    """
 
     sleeptime = "1D"
 
@@ -439,7 +441,8 @@ def test_run_backtest_fetches_the_benchmark_at_daily_cadence_even_with_a_minute_
 
 def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_count: int = 6):
     """Run a real `run_backtest` over `session_count` sessions and return
-    `(equity_dataframe, sessions)`."""
+    `(equity_dataframe, sessions)`.
+    """
     sessions = _sessions(date(2026, 3, 2), session_count)
     closes = [150.0 + i for i in range(session_count)]
     source = FakeBacktestDataSource()

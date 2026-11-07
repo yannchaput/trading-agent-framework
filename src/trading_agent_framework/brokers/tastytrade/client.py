@@ -39,11 +39,13 @@ class TastytradeHTTPError(BrokerError):
     """An error response from Tastytrade; `status_code` tells e.g. a 404 (unknown symbol) from a 422 (refused order)."""
 
     def __init__(self, status_code: int, message: str) -> None:
+        """Keep the HTTP status code alongside the message."""
         super().__init__(message)
         self.status_code = status_code
 
 
 class TastytradeSession:
+    """Authenticated Tastytrade REST session: refreshes its token, retries safe reads and unwraps the `data` envelope."""
     def __init__(
         self,
         settings: TastytradeSettings,
@@ -53,6 +55,7 @@ class TastytradeSession:
         sleep: Callable[[float], None] = time.sleep,
         timeout: float = 10.0,
     ) -> None:
+        """Create the session from credentials; `transport`, `clock` and `sleep` are injectable for tests."""
         self._settings = settings
         self._client = httpx.Client(base_url=settings.api_url, headers={"User-Agent": USER_AGENT}, timeout=timeout, transport=transport)
         self._clock = clock
@@ -72,6 +75,7 @@ class TastytradeSession:
         return token
 
     def _fetch_token(self) -> tuple[str, float]:
+        """Exchange the refresh token for an access token; return it with its expiry time."""
         body = {"grant_type": "refresh_token", "refresh_token": self._settings.refresh_token, "client_secret": self._settings.client_secret}
         try:
             response = self._client.post("/oauth/token", json=body)
@@ -92,15 +96,19 @@ class TastytradeSession:
     # --- requests --------------------------------------------------------------------------
 
     def get(self, path: str, *, params: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """GET `path` and return the response data; retried on transient failures."""
         return _data(self._send("GET", path, params=params))
 
     def post(self, path: str, *, json: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """POST `json` to `path` and return the response data (never retried)."""
         return _write_data(self._send("POST", path, json=json))
 
     def put(self, path: str, *, json: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        """PUT `json` to `path` and return the response data (never retried)."""
         return _write_data(self._send("PUT", path, json=json))
 
     def delete(self, path: str) -> dict[str, Any]:
+        """DELETE `path` and return the response data (never retried)."""
         return _write_data(self._send("DELETE", path))
 
     def get_all(self, path: str, *, params: Mapping[str, Any] | None = None, max_items: int | None = None) -> list[dict[str, Any]]:
@@ -119,9 +127,11 @@ class TastytradeSession:
             offset += 1
 
     def close(self) -> None:
+        """Close the underlying HTTP client."""
         self._client.close()
 
     def _send(self, method: str, path: str, *, json: Mapping[str, Any] | None = None, params: Mapping[str, Any] | None = None) -> httpx.Response:
+        """Send a request with a valid token; retry GETs with backoff, send writes once."""
         attempts = GET_ATTEMPTS if method == "GET" else 1
         attempt = 0
         reauthorized = False
@@ -155,6 +165,7 @@ class TastytradeSession:
 
 
 def _backoff(attempt: int, retry_after: str | None) -> float:
+    """Seconds to wait before retry `attempt`, honouring a `Retry-After` header."""
     if retry_after is not None:
         try:
             seconds = float(retry_after)
@@ -166,6 +177,7 @@ def _backoff(attempt: int, retry_after: str | None) -> float:
 
 
 def _json(response: httpx.Response) -> dict[str, Any]:
+    """Decode the response body as a JSON object."""
     try:
         body = response.json()
     except ValueError:
@@ -176,6 +188,7 @@ def _json(response: httpx.Response) -> dict[str, Any]:
 
 
 def _data(response: httpx.Response) -> dict[str, Any]:
+    """The `data` payload of a read response; empty for an empty body."""
     if response.status_code == 204 or not response.content:
         return {}
     data = _json(response).get("data")
@@ -191,6 +204,7 @@ def _write_data(response: httpx.Response) -> dict[str, Any]:
 
 
 def _describe(response: httpx.Response) -> str:
+    """Short error text for a failed response."""
     try:
         body = response.json()
     except ValueError:

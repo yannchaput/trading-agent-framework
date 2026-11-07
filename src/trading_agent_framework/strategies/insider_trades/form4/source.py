@@ -30,6 +30,7 @@ _IGNORED_FORMS = frozenset({"4/A", "5", "5/A"})
 
 @dataclass(frozen=True, slots=True)
 class LoadReport:
+    """Which tickers loaded and which failed in one load."""
     loaded: tuple[str, ...]  # the tickers that loaded
     failed: dict[str, str] = field(default_factory=dict)  # ticker -> error message
     ignored_forms: int = 0  # 4/A and 5 rows filed since the history start, seen and not read
@@ -38,12 +39,14 @@ class LoadReport:
 
 @dataclass(frozen=True, slots=True)
 class KnownInsiderData:
+    """Form 4 filings known at a point in time, by ticker."""
     filings: dict[str, list[Form4Filing]]  # ticker -> filings filed strictly before the market date, oldest first; a failed ticker is absent
     failed: dict[str, str]  # ticker -> why its last load failed
 
 
 @dataclass(frozen=True, slots=True)
 class _Row:
+    """One filing row of the submissions index."""
     form: str
     filed: date
     accession: str
@@ -58,6 +61,7 @@ def _rows(payload: Mapping[str, Any]) -> list[_Row]:
         return []
 
     def at(key: str, index: int) -> str:
+        """Value of column `key` at row `index`; empty when missing."""
         values = columns.get(key) or []
         return str(values[index]) if index < len(values) else ""
 
@@ -72,6 +76,7 @@ def _rows(payload: Mapping[str, Any]) -> list[_Row]:
 
 
 def _market_date(moment: datetime) -> date:
+    """The US market date of `moment` (naive times count as UTC)."""
     if moment.tzinfo is None:
         raise ValueError("as_of must be timezone-aware")
     return moment.astimezone(MARKET_TZ).date()
@@ -83,7 +88,9 @@ def _same_cik(left: str, right: str) -> bool:
 
 
 class Form4Source:
+    """Form 4 filings for a watchlist, loaded from SEC EDGAR."""
     def __init__(self, client: SecEdgarClient, watchlist: Sequence[str]) -> None:
+        """Create the source for a watchlist of tickers."""
         self._client = client
         self._watchlist = tuple(ticker.upper() for ticker in watchlist)
         self._filings: dict[str, list[Form4Filing]] = {}
@@ -91,6 +98,7 @@ class Form4Source:
         self.loaded_on: date | None = None  # market date of the last load's `as_of`; the pipeline loads once per market date
 
     def load(self, *, as_of: datetime, since: date) -> LoadReport:
+        """Fetch and parse the watchlist's filings since `since`, as known at `as_of`."""
         loaded_on = _market_date(as_of)
         filings: dict[str, list[Form4Filing]] = {}
         failed: dict[str, str] = {}
@@ -108,11 +116,13 @@ class Form4Source:
         return LoadReport(loaded=tuple(filings), failed=failed, ignored_forms=ignored_forms, other_issuer=other_issuer)
 
     def known(self, as_of: datetime) -> KnownInsiderData:
+        """The filings known at `as_of`: only those filed before the market date."""
         today = _market_date(as_of)
         filings = {ticker: [f for f in read if f.filed < today] for ticker, read in self._filings.items()}
         return KnownInsiderData(filings=filings, failed=dict(self._failed))
 
     def _ticker_filings(self, ticker: str, *, as_of: datetime, since: date) -> tuple[list[Form4Filing], int, int]:
+        """A ticker's parsed filings since `since`, with the counts of filings fetched and skipped."""
         cik = self._client.ticker_to_cik(ticker)
         recent = self._client.get_submissions_payload(cik, as_of=as_of, max_age_days=0)
         payloads = [recent, *(self._client.get_submissions_page(name) for name in older_pages(recent, since))]

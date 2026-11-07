@@ -22,6 +22,7 @@ from trading_agent_framework.utils.errors import FundamentalsError
 
 @dataclass(frozen=True, slots=True)
 class LoadReport:
+    """Counts describing what one event load fetched."""
     loaded: int
     failed: dict[str, str] = field(default_factory=dict)  # symbol -> error message
 
@@ -32,25 +33,38 @@ class LoadReport:
 
 
 class EventProvider(Protocol):
-    def needs_load(self) -> bool: ...
+    """Source of earnings events, as a protocol so tests can fake it."""
+    def needs_load(self) -> bool:
+        """Whether events must be loaded before use."""
+        ...
 
-    def load(self, symbols: Sequence[str], *, as_of: datetime, since: date) -> LoadReport: ...
+    def load(self, symbols: Sequence[str], *, as_of: datetime, since: date) -> LoadReport:
+        """Load events for `symbols` filed since `since`, as known at `as_of`."""
+        ...
 
-    def discard(self) -> None: ...
+    def discard(self) -> None:
+        """Forget the loaded events."""
+        ...
 
-    def all_events(self) -> list[EarningsEvent]: ...
+    def all_events(self) -> list[EarningsEvent]:
+        """Every loaded event."""
+        ...
 
 
 class EventSource:
+    """Earnings events read from SEC EDGAR filings."""
     def __init__(self, client: SecEdgarClient, *, reload_every_cycle: bool) -> None:
+        """Create the source; `reload_every_cycle` forces a fresh load on each cycle (backtests need it)."""
         self._client = client
         self._reload_every_cycle = reload_every_cycle
         self._events: dict[str, list[EarningsEvent]] | None = None
 
     def needs_load(self) -> bool:
+        """Whether events have not been loaded yet or must be reloaded each cycle."""
         return self._events is None or self._reload_every_cycle
 
     def load(self, symbols: Sequence[str], *, as_of: datetime, since: date) -> LoadReport:
+        """Load the symbols' events from EDGAR and report what was fetched."""
         events: dict[str, list[EarningsEvent]] = {}
         failed: dict[str, str] = {}
         for symbol in symbols:
@@ -62,12 +76,15 @@ class EventSource:
         return LoadReport(loaded=len(events), failed=failed)
 
     def discard(self) -> None:
+        """Forget the loaded events so the next cycle reloads them."""
         self._events = None
 
     def all_events(self) -> list[EarningsEvent]:
+        """Every loaded event, across all symbols."""
         return [event for events in (self._events or {}).values() for event in events]
 
     def _symbol_events(self, symbol: str, *, as_of: datetime, since: date) -> list[EarningsEvent]:
+        """Earnings events for one symbol since `since`, as known at `as_of`."""
         cik = self._client.ticker_to_cik(symbol)
         recent = self._client.get_submissions_payload(cik, as_of=as_of, max_age_days=0)
         pages = [self._client.get_submissions_page(name) for name in older_pages(recent, since)]

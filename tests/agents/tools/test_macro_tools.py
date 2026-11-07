@@ -79,7 +79,8 @@ def test_get_fred_series_pins_realtime_start_to_the_cutoff_not_none() -> None:
     `observation_start`/`observation_end`; `realtime_start`/`realtime_end` fall into its
     `**kwargs` and get URL-encoded with no `None` filtering, so `realtime_start=None`
     becomes a literal "&realtime_start=None" query param that FRED rejects. The tool must
-    always pass a concrete date for `realtime_start`, never `None`."""
+    always pass a concrete date for `realtime_start`, never `None`.
+    """
     calls: list[dict[str, object]] = []
     tool, strategy = _tool(pd.Series(dtype=float), calls)
 
@@ -108,7 +109,8 @@ def test_macro_tools_raises_configuration_error_eagerly_without_fred_api_key(
     """Regression test: `macro_tools` must fail fast at wiring time (like `fundamentals_tools`
     does for SEC_EDGAR_USER_AGENT) rather than deferring a missing FRED_API_KEY to the first
     `get_fred_series(...)` call, where a raised `ConfigurationError` would otherwise crash
-    `on_trading_iteration()` mid-run instead of surfacing at strategy setup."""
+    `on_trading_iteration()` mid-run instead of surfacing at strategy setup.
+    """
     monkeypatch.delenv("FRED_API_KEY", raising=False)
     strategy = _strategy()
 

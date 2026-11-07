@@ -49,7 +49,8 @@ def compute_metrics(
 ) -> dict[str, Any]:
     """`returns`/`benchmark_returns`: daily fractional returns, float64, no NaNs (the
     caller drops the first row of a pct_change() series). Returns a flat dict keyed
-    exactly by the dashboard's `MetricSet` field names, plus `raw.summary_tables`."""
+    exactly by the dashboard's `MetricSet` field names, plus `raw.summary_tables`.
+    """
     import vectorbt as vbt  # noqa: F401 -- registers the .vbt accessor on pd.Series
 
     periods = PERIODS_PER_YEAR.get(timestep, 252)

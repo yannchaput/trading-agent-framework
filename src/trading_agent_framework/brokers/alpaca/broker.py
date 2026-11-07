@@ -72,6 +72,18 @@ class AlpacaBroker(Broker):
         market_data: AlpacaMarketData | None = None,
         news_provider_factory: Callable[[], NewsProvider] | None = None,
     ) -> None:
+        """Build the broker around Alpaca clients.
+
+        Args:
+            strategy_name: Name that prefixes every client order id.
+            client: Alpaca trading client.
+            tracker: Order tracker; a fresh one is created when omitted.
+            stream: Alpaca trading websocket; required to use the order stream.
+            clock: Market clock; defaults to the Alpaca calendar clock.
+            is_paper: Whether the account is a paper account.
+            data_client: Alpaca market-data client.
+            news_client: Alpaca news client.
+        """
         super().__init__(
             strategy_name,
             tracker,
@@ -95,6 +107,7 @@ class AlpacaBroker(Broker):
         news: Callable[[], AlpacaCredentials] | None = None,
         with_stream: bool = True,
     ) -> AlpacaBroker:
+        """Build an Alpaca broker (trading, data, optional news and stream) from credential groups."""
         # TradingClient's own signatures declare `T | RawData` (a dict) because
         # the SDK supports a raw_data mode; this project never enables it, so
         # every call actually returns the parsed model. Narrow once, here, at
@@ -113,9 +126,11 @@ class AlpacaBroker(Broker):
         return broker
 
     def _conform_order(self, order: Order) -> Order:
+        """Conform `order` to Alpaca's rules."""
         return orders.conform_order(order)
 
     def _submit_order(self, order: Order) -> Order:
+        """Send `order` to Alpaca with a strategy-prefixed client order id."""
         if not order.client_order_id:
             order.client_order_id = f"{self.strategy_name}:{order.identifier}"
 
@@ -140,12 +155,14 @@ class AlpacaBroker(Broker):
         return order
 
     def cancel_order(self, order: Order) -> None:
+        """Cancel one order at Alpaca."""
         try:
             self._client.cancel_order_by_id(order.identifier)
         except Exception as exc:
             raise BrokerError(f"Failed to cancel order {order.identifier}: {exc}") from exc
 
     def pull_order(self, identifier: str) -> Order | None:
+        """Fetch one order from Alpaca by id; `None` when it does not exist."""
         try:
             response = self._client.get_order_by_id(identifier)
         except APIError as exc:
@@ -157,6 +174,7 @@ class AlpacaBroker(Broker):
         return orders.parse_broker_order(response, self.strategy_name)
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
+        """Fetch up to `limit` recent orders."""
         request = orders.build_get_orders_request(limit)
         try:
             responses = self._client.get_orders(filter=request)
@@ -165,6 +183,7 @@ class AlpacaBroker(Broker):
         return orders.parse_broker_orders(responses, self.strategy_name)
 
     def pull_positions(self) -> list[Position]:
+        """Fetch every open position."""
         try:
             responses = self._client.get_all_positions()
         except Exception as exc:
@@ -172,6 +191,7 @@ class AlpacaBroker(Broker):
         return [orders.parse_broker_position(p, self.strategy_name) for p in responses]
 
     def get_account(self) -> AccountBalances:
+        """Fetch the account balances."""
         try:
             response = self._client.get_account()
         except Exception as exc:
@@ -206,6 +226,7 @@ class AlpacaBroker(Broker):
         limit_price: Decimal | None = None,
         stop_price: Decimal | None = None,
     ) -> Order:
+        """Replace an open order's limit/stop prices and return the replacement."""
         request = orders.build_replace_order_request(limit_price=limit_price, stop_price=stop_price)
         try:
             response = self._client.replace_order_by_id(order.identifier, order_data=request)
@@ -218,6 +239,7 @@ class AlpacaBroker(Broker):
         return replacement
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        """Close `fraction` of the position in `asset`; `None` when flat."""
         request = orders.build_close_position_request(fraction)
         try:
             response = self._client.close_position(to_alpaca_symbol(asset.symbol), close_options=request)
@@ -233,6 +255,7 @@ class AlpacaBroker(Broker):
         return order
 
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        """Close every position, cancelling open orders by default."""
         try:
             responses = self._client.close_all_positions(cancel_orders=cancel_orders)
         except Exception as exc:
@@ -243,6 +266,7 @@ class AlpacaBroker(Broker):
         return closed
 
     def sync_open_orders(self) -> list[Order]:
+        """Adopt this strategy's open Alpaca orders into the tracker after a restart."""
         request = orders.build_get_orders_request(self._SYNC_LIMIT, open_only=True)
         try:
             responses = self._client.get_orders(filter=request)
@@ -262,6 +286,7 @@ class AlpacaBroker(Broker):
     # --- market data -------------------------------------------------------------------
 
     def news_provider(self) -> NewsProvider | None:
+        """The news provider, built lazily from its factory; `None` when none is configured."""
         if self._news_provider is None and self._news_provider_factory is not None:
             self._news_provider = self._news_provider_factory()
         return self._news_provider
@@ -276,18 +301,22 @@ class AlpacaBroker(Broker):
         include_content: bool = False,
         sort: str | None = None,
     ) -> list[dict[str, object]]:
+        """Fetch news articles for `symbols` up to `end`, through the news provider."""
         provider = self.news_provider()
         if provider is None:
             raise BrokerError("no news client configured; construct the broker with news_client=... or use AlpacaBroker.from_credentials(...)")
         return provider.get_news(symbols, start=start, end=end, limit=limit, include_content=include_content, sort=sort)
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Last traded price for `asset`, from market data."""
         return self._market_data.get_last_price(asset)
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Last traded prices for several assets, from market data."""
         return self._market_data.get_last_prices(assets)
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """Latest quote for `asset`, from market data."""
         return self._market_data.get_quote(asset)
 
     def get_bars(
@@ -298,17 +327,21 @@ class AlpacaBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Fetch bars ending at the broker clock's current time."""
         return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     def _ensure_alpaca_stream(self) -> AlpacaTradeStream:
+        """Create the trade-stream wrapper on first use."""
         if self._alpaca_stream is None:
             self._alpaca_stream = AlpacaTradeStream(self.tracker, self._stream)
         return self._alpaca_stream
 
     def start_stream(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
+        """Start the Alpaca order stream and wait up to `connect_timeout` seconds for the connection."""
         if self._stream is None:
             raise BrokerError("no TradingStream configured; construct the broker with a stream or use AlpacaBroker.from_credentials(..., with_stream=True)")
         self._ensure_alpaca_stream().start(connect_timeout=connect_timeout)
 
     def stop_stream(self, timeout: float = 5.0) -> None:
+        """Stop the Alpaca order stream, waiting up to `timeout` seconds."""
         self._ensure_alpaca_stream().stop(timeout)

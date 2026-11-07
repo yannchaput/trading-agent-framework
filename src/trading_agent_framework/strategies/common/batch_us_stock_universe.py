@@ -1,5 +1,4 @@
-"""
-Batch Stock Universe Builder
+"""Batch Stock Universe Builder
 =============================
 Runs once per month to compute the investable US stock universe.
 
@@ -566,7 +565,8 @@ def _etf_symbols(
 
     Lenient (the live batch): a failing source is logged and skipped rather than aborting the others. Strict (the history
     pool, where a silently smaller pool would bias every month): a source that fails or returns nothing raises
-    `UniverseHistoryError`."""
+    `UniverseHistoryError`.
+    """
     symbols: set[str] = set()
 
     def take(name: str, load: Callable[[], set[str]], label: str | None = None) -> None:
@@ -599,7 +599,8 @@ def get_extra_universe_symbols(
 
 def _filter_common_stocks(symbols: list[str], is_common_stock: Callable[[str], bool | None]) -> tuple[list[str], list[str]]:
     """The symbols `is_common_stock` accepts, and those it could not answer (None), checked over `_MAX_CONCURRENT_YF`
-    workers like `screen_tickers`."""
+    workers like `screen_tickers`.
+    """
     kept: list[str] = []
     failed: list[str] = []
     rejected = 0
@@ -888,7 +889,8 @@ def _load_traded_frames(symbols: list[str], bars_dir: Path) -> dict[str, pd.Data
 def _build_lock(cache_dir: Path) -> Iterator[None]:
     """An exclusive `flock` on `<cache_dir>/.lock`, held for the block: two processes building at once would share the
     cache's temp files and each save its own bars index over the other's files. Released when the process exits.
-    A caller that finds it held logs a warning and prints a line saying it waits, then blocks until the other build ends."""
+    A caller that finds it held logs a warning and prints a line saying it waits, then blocks until the other build ends.
+    """
     cache_dir.mkdir(parents=True, exist_ok=True)
     with (cache_dir / ".lock").open("w") as handle:
         try:

@@ -34,12 +34,14 @@ RANKING, VERDICTS_STAGE, PORTFOLIO = "ranking", "verdicts", "portfolio"
 
 @dataclass(frozen=True, slots=True)
 class Idea:
+    """A ranked investment idea: a stock and the agent's reasoning for it."""
     symbol: str
     reason: str
 
 
 @dataclass(frozen=True, slots=True)
 class Verdict:
+    """The quality verdict on one stock (fail or survive), with the concern for a short seller's fail."""
     symbol: str
     verdict: str
     reason: str
@@ -49,6 +51,7 @@ class Verdict:
 
 @dataclass(frozen=True, slots=True)
 class PortfolioPosition:
+    """One position of the proposed portfolio: a stock and its weight."""
     symbol: str
     weight: float
     reason: str
@@ -58,6 +61,7 @@ class PortfolioPosition:
 
 
 def _concern(item: Mapping[str, Any], symbol: str, verdict: str) -> str | None:
+    """The concern text of a failing verdict; `None` for a pass."""
     if verdict != FAIL:
         return None
     value = item.get("concern")
@@ -179,19 +183,24 @@ class HandoffRecorder(SubmitRecorder):
     ALREADY_RECORDED = "already recorded for this review"
 
     def __init__(self, params: AckmanParams) -> None:
+        """Create a recorder bound to the strategy parameters."""
         super().__init__()
         self._params = params
 
     def expect_ranking(self, candidates: Sequence[str]) -> None:
+        """Arm the recorder to accept a ranking of `candidates`."""
         self._arm(RANKING, {"candidates": list(candidates)})
 
     def expect_verdicts(self, symbols: Sequence[str], previous: Mapping[str, str] | None = None) -> None:
+        """Arm the recorder to accept verdicts for `symbols`, given the previous verdicts."""
         self._arm(VERDICTS_STAGE, {"expected": list(symbols), "previous": dict(previous or {})})
 
     def expect_portfolio(self, allowed: Sequence[str], required: Sequence[str] = ()) -> None:
+        """Arm the recorder to accept a portfolio of `allowed` stocks that includes the `required` ones."""
         self._arm(PORTFOLIO, {"allowed": list(allowed), "required": list(required)})
 
     def _validate(self, stage: str, *args: Any) -> Any:
+        """Validate the submitted payload for `stage`."""
         raw, params, context = args[0], self._params, self._context
         if stage == RANKING:
             return validate_ranking(raw, candidates=context["candidates"], top_n=params.research_top_n, reason_max_chars=params.reason_max_chars)

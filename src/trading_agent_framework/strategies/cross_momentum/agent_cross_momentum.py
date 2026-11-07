@@ -1,5 +1,4 @@
-"""
-Cross-Sectional Momentum Strategy (V5)
+"""Cross-Sectional Momentum Strategy (V5)
 --------------------------------------
 Fractional share support — floor-based quantities in rebalance().
 

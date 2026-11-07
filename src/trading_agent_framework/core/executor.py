@@ -40,6 +40,7 @@ class StrategyExecutor:
     """Runs one strategy's hooks on the calling thread, session after session."""
 
     def __init__(self, strategy: Strategy) -> None:
+        """Bind the executor to the strategy it drives."""
         self.strategy = strategy
         self._wake = threading.Event()
         self._stop = threading.Event()
@@ -49,6 +50,7 @@ class StrategyExecutor:
 
     @property
     def stopped(self) -> bool:
+        """Whether a stop has been requested."""
         return self._stop.is_set()
 
     def stop(self) -> None:
@@ -125,6 +127,7 @@ class StrategyExecutor:
     # --- run phases ----------------------------------------------------------------
 
     def _initialize(self) -> None:
+        """Run the strategy's `initialize` hook, aborting the run if it fails."""
         strategy = self.strategy
         signature = inspect.signature(strategy.initialize)
         # Populate the initialize() kwargs with the strategy's parameters that match its signature subclassing.
@@ -139,6 +142,7 @@ class StrategyExecutor:
             raise
 
     def _run_sessions(self) -> None:
+        """Loop over market sessions until stopped or the clock runs out."""
         while not self._stop.is_set():
             session = self._next_session()
             if session is None:
@@ -147,6 +151,7 @@ class StrategyExecutor:
             self._session_index += 1
 
     def _next_session(self) -> MarketSession | None:
+        """The next market session to run, waiting for it if needed; `None` when none remains."""
         clock = self.strategy.clock
         while not self._stop.is_set():
             try:
@@ -262,6 +267,7 @@ class StrategyExecutor:
         return max(session.open, datetime.combine(session_date, start_time, tzinfo=MARKET_TZ))
 
     def _iteration_due(self, sessions: int) -> bool:
+        """Whether the trading iteration should run in this session, given the configured session cadence."""
         last = self._last_iteration_session
         return last is None or self._session_index - last >= sessions
 
@@ -299,7 +305,8 @@ class StrategyExecutor:
 
     def _refresh_regime(self) -> None:
         """Once per session, also on a mid-session start. A framework step, not a strategy hook: a failure is
-        logged and the session carries on, without `on_bot_crash`."""
+        logged and the session carries on, without `on_bot_crash`.
+        """
         try:
             self.strategy._refresh_regime()
         except Exception:
@@ -308,7 +315,8 @@ class StrategyExecutor:
     def _settle_unknown_orders(self) -> None:
         """Before every tick: let the broker decide the orders whose submission outcome is unknown, then deliver the events that
         produces, so the tick sees the outcome. A framework step, not a strategy hook: a failure is logged and the tick still
-        runs, without `on_bot_crash` (the same rule as `_refresh_regime`)."""
+        runs, without `on_bot_crash` (the same rule as `_refresh_regime`).
+        """
         try:
             self.strategy.broker.settle_unknown_orders()
         except Exception:
@@ -316,6 +324,7 @@ class StrategyExecutor:
         self._dispatch_events()
 
     def _call_hook(self, hook: Callable[[], None]) -> None:
+        """Call a lifecycle hook, logging and reporting its exceptions instead of raising."""
         try:
             hook()
         except Exception as exc:
@@ -324,19 +333,23 @@ class StrategyExecutor:
             self._on_bot_crash(exc)
 
     def _on_bot_crash(self, error: BaseException) -> None:
+        """Report an error to the strategy's `on_bot_crash` hook, logging a failing hook."""
         try:
             self.strategy.on_bot_crash(error)
         except Exception:
             logger.exception("on_bot_crash raised for strategy %s", self.strategy.name)
 
     def _now(self) -> datetime:
+        """Current time from the strategy clock."""
         return self.strategy.clock.now()
 
     def _dispatch_events(self) -> None:
+        """Deliver the queued order events to the strategy hooks."""
         for item in self._events.drain():
             self._dispatch(item)
 
     def _dispatch(self, item: QueuedOrderEvent) -> None:
+        """Deliver one order event to the matching strategy hook."""
         strategy = self.strategy
         order = item.order
         try:
@@ -380,6 +393,7 @@ class StrategyExecutor:
         # Raising KeyboardInterrupt lets a SIGTERM (sent by a process supervisor, for example)
         # take the same shutdown path as Ctrl-C, so the run ends cleanly instead of being killed.
         def interrupt(signum: int, frame: FrameType | None) -> None:
+            """Turn SIGTERM into a `KeyboardInterrupt` so shutdown runs the normal cleanup."""
             raise KeyboardInterrupt
 
         signal.signal(signal.SIGTERM, interrupt)
@@ -387,6 +401,7 @@ class StrategyExecutor:
         # Put the previous handler back once the run ends. If there was none (None),
         # fall back to SIG_DFL, the OS default, since signal.signal() cannot accept None.
         def restore() -> None:
+            """Reinstall the previous SIGTERM handler."""
             signal.signal(signal.SIGTERM, previous if previous is not None else signal.SIG_DFL)
 
         return restore

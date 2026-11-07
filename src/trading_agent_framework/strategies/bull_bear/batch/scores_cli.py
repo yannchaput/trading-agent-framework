@@ -109,7 +109,8 @@ def fetch_opens(runs: Sequence[Sequence[Mapping[str, Any]]], *, today: date, dow
     """{symbol: {session date: open}} for every candidate of every run plus SPY, from one Yahoo download spanning 7 days
     before the first review to 40 days after the last (capped at today), and SPY's sessions as the calendar.
 
-    Raises YahooDataError when the download fails or has no SPY."""
+    Raises YahooDataError when the download fails or has no SPY.
+    """
     reviews = [review for records in runs for review in scored_reviews(records)]
     symbols = sorted({symbol for review in reviews for symbol in candidates(review)} | {CALENDAR_SYMBOL})
     days = [date.fromisoformat(review["date"]) for review in reviews] or [today]

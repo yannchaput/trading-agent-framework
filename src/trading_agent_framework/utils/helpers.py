@@ -24,8 +24,7 @@ def get_thread_capacity() -> int:
 
 
 def build_logs(strategy_name: str, trading_mode: TradingMode = TradingMode.BACKTESTING) -> Path:
-    """
-    Helper function to create a log directory for the current run.
+    """Helper function to create a log directory for the current run.
 
     Args:
         trading_mode (TradingMode): The trading mode (BACKTESTING, PAPER_TRADING, or LIVE_TRADING).

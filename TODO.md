@@ -14,6 +14,7 @@
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
+* Externalize the quality gate of claude.md in a mandatory skill loaded by the claude.md
 
 ## BUGS
 

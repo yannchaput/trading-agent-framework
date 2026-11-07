@@ -1,5 +1,4 @@
-"""
-Factory method returning a tuple for backend start and end time.
+"""Factory method returning a tuple for backend start and end time.
 The factory provides prebuilt configurations.
 """
 
@@ -10,8 +9,7 @@ from trading_agent_framework.utils.clock import MARKET_TZ
 
 
 class PredefinedWindow(StrEnum):
-    """
-    Backtesting periods predefined time Windows
+    """Backtesting periods predefined time Windows
     """
 
     DECADE = "decade"

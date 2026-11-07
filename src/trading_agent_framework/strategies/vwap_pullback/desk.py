@@ -331,7 +331,8 @@ class Desk:
     def _stop_for_flatten(self, trade: Trade) -> tuple[Order | None, bool]:
         """The trade's stop and whether the lookup worked. A lookup that fails leaves the stop's state unknown: the flatten
         must neither raise (the other trades would never be flattened) nor read it as "no stop" (that would sell shares a live
-        stop still covers)."""
+        stop still covers).
+        """
         try:
             return self._stop(trade), True
         except Exception as exc:  # noqa: BLE001 -- any broker failure: the state is unknown, not "gone"

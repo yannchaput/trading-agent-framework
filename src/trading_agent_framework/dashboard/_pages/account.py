@@ -39,7 +39,8 @@ def _problems(pnl: AccountPnl) -> list[str]:
 
 def _select_window(mode: str, days: list[dict[str, Any]]) -> tuple[date, date]:
     """The sidebar's Start/End date inputs, bounded by the first and last day of the history and defaulting to all of it.
-    The choice is kept under a plain session key, like the strategy: another tab's run does not draw these widgets."""
+    The choice is kept under a plain session key, like the strategy: another tab's run does not draw these widgets.
+    """
     first, last = date.fromisoformat(days[0]["date"]), date.fromisoformat(days[-1]["date"])
     remembered = st.session_state.get(f"account_window_{mode}", (first, last))
     start, end = (min(max(day, first), last) for day in remembered)
@@ -63,7 +64,8 @@ def _render_metrics(pnl: AccountPnl, realized: float) -> None:
 
 def _render_returns(strategy: str, mode: str, pnl: AccountPnl, start: date, end: date) -> None:
     """The strategy's and SPY's daily % under the P&L plot. The percentages are worked out over the whole history and
-    then cut to the window, so the window's first day still has its base. A failed fetch costs this plot only."""
+    then cut to the window, so the window's first day still has its base. A failed fetch costs this plot only.
+    """
     try:
         bases = _return_bases(strategy, mode, date.fromisoformat(pnl.days[0]["date"]), datetime.now(MARKET_TZ).date())
     except (APIError, RequestException, YahooDataError) as exc:

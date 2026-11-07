@@ -37,6 +37,7 @@ _SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.=-]+")
 
 
 def index_url(year: int) -> str:
+    """URL of the House Clerk's financial-disclosure index zip for `year`."""
     return f"{CLERK_BASE_URL}/financial-pdfs/{year}FD.zip"
 
 
@@ -57,6 +58,7 @@ class ClerkClient:
         min_request_interval_seconds: float = 1.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        """Create the client with a contact User-Agent, a cache directory and a minimum spacing between requests."""
         if not user_agent or not user_agent.strip():
             raise ConfigurationError("Missing or blank CONGRESS_USER_AGENT environment variable")
         self.user_agent = user_agent
@@ -66,20 +68,25 @@ class ClerkClient:
         self._client = httpx.Client(transport=transport, timeout=60.0, follow_redirects=True)
 
     def close(self) -> None:
+        """Close the HTTP client."""
         self._client.close()
 
     def __enter__(self) -> ClerkClient:
+        """Return the client for use in a `with` block."""
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        """Close the client on leaving a `with` block."""
         self.close()
 
     # --- plumbing ---------------------------------------------------------------------------------
 
     def _cache_path(self, *parts: str) -> Path:
+        """Cache file path for `parts`, with unsafe characters replaced."""
         return self.cache_dir.joinpath(*(_SAFE_CHARS.sub("_", str(part)).strip("_") for part in parts))
 
     def _get(self, url: str) -> bytes:
+        """GET `url` and return the body, spacing requests by the minimum interval."""
         if self.min_request_interval_seconds:
             elapsed = time.monotonic() - self._last_request_at
             if elapsed < self.min_request_interval_seconds:
@@ -131,10 +138,12 @@ class ClerkClient:
 
     @staticmethod
     def _index_is_stale(path: Path, year: int, as_of: datetime) -> bool:
+        """Whether the cached index for `year` is out of date at `as_of`."""
         fetched_at = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         return fetched_at.year <= year and is_stale(fetched_at, as_of, INDEX_MAX_AGE_DAYS)
 
     def _download_index(self, year: int) -> str:
+        """Download the year's index zip and return its listing text."""
         data = self._get(index_url(year))
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as archive:
@@ -158,6 +167,7 @@ class ClerkClient:
 
     @staticmethod
     def _pdf_text(data: bytes, ref: FilingRef) -> str:
+        """Extract the text of a filing PDF."""
         from pypdf import PdfReader
 
         try:

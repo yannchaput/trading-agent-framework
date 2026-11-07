@@ -67,7 +67,8 @@ class InvalidState(ValueError):
 
 class JsonStateStore[S]:
     """One state dataclass in one JSON file. `decode` gets the whole file dict (version included) and raises `InvalidState` (or a
-    ValueError/KeyError/TypeError/AttributeError) when it is not valid; `encode` gives the fields saved beside the version."""
+    ValueError/KeyError/TypeError/AttributeError) when it is not valid; `encode` gives the fields saved beside the version.
+    """
 
     def __init__(
         self,

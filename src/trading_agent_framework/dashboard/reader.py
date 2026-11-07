@@ -158,7 +158,8 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
 
 def _agent_rows(agents: dict[str, dict[str, Any]]) -> list[tuple[str, str, str]]:
     """Model (with its temperature and reasoning effort) / Calls / Tokens / Latency rows per agent. Section names carry the agent's name when
-    there are several, so each agent's rows stay one contiguous group in the Parameters tab."""
+    there are several, so each agent's rows stay one contiguous group in the Parameters tab.
+    """
     rows: list[tuple[str, str, str]] = []
     for name, agent in agents.items():
         suffix = f" ({name})" if len(agents) > 1 else ""

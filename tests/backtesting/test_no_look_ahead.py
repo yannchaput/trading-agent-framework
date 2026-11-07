@@ -107,7 +107,8 @@ def test_strategy_never_observes_a_bar_that_has_not_closed_yet(tmp_path: Path) -
 class LeakyDataSource(FakeBacktestDataSource):
     """A deliberately sloppy source: ignores `cutoff` entirely and hands back its whole
     frame -- exactly the "future provider with a sloppy index" the design spec's section
-    5.2 defensive assertion exists for."""
+    5.2 defensive assertion exists for.
+    """
 
     name = "leaky"
 
@@ -164,7 +165,8 @@ def test_the_gate_rejects_a_source_row_closing_after_the_cutoff() -> None:
 
 def test_the_gate_accepts_rows_at_exactly_the_cutoff() -> None:
     """`bar_end <= cutoff` -- a bar closing EXACTLY at `now` is visible (design spec,
-    section 5.1), so the defensive check must be strictly-greater-than, not >=."""
+    section 5.1), so the defensive check must be strictly-greater-than, not >=.
+    """
     sessions = _sessions(date(2026, 1, 5), 3)
     source = LeakyDataSource()
     source.set_sessions(sessions)

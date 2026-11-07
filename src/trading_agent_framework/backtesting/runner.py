@@ -179,7 +179,8 @@ def run_backtest(
 
 def _require_aware(**moments: datetime) -> None:
     """Reject naive `start`/`end` with a message that names the offending argument and
-    shows the fix, rather than letting a downstream comparison fail obscurely."""
+    shows the fix, rather than letting a downstream comparison fail obscurely.
+    """
     naive = [name for name, value in moments.items() if value.tzinfo is None or value.tzinfo.utcoffset(value) is None]
     if naive:
         raise BacktestError(

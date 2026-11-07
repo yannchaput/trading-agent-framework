@@ -25,6 +25,7 @@ _SESSIONS_PER_REVIEW = 5  # one review a week
 
 @dataclass(frozen=True, slots=True)
 class ForwardReturn:
+    """One reviewed stock's forward return and its agent calls."""
     review: date
     symbol: str
     horizon: int  # sessions
@@ -34,6 +35,7 @@ class ForwardReturn:
 
 @dataclass(frozen=True, slots=True)
 class Returns:
+    """Forward returns for every reviewed stock in a run."""
     rows: list[ForwardReturn]
     dropped: int  # candidate x horizon pairs with no entry or no exit open (no data, or a review before the calendar starts)
     immature: int = 0  # candidate x horizon pairs whose exit is past the last session: not yet knowable, not a data problem
@@ -41,7 +43,8 @@ class Returns:
 
 def scored_reviews(reviews: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
     """The reviews whose calls count: not abandoned (an execution-stage abandonment keeps its verdicts, but its book
-    never fully traded) and with a debate set (another strategy's records have none)."""
+    never fully traded) and with a debate set (another strategy's records have none).
+    """
     return [review for review in reviews if not review.get("abandoned") and review.get("debate_set")]
 
 
@@ -59,7 +62,8 @@ def forward_returns(
     """Each scored review's candidates, at each horizon: entry at the open of the first `calendar` session strictly
     after the review date, exit at the open `horizon` sessions later. A candidate with no open on either day, or a
     review the calendar does not reach back to (the session that followed it is not in the calendar), is dropped and
-    counted; an exit past the last session is immature, counted apart."""
+    counted; an exit past the last session is immature, counted apart.
+    """
     sessions = sorted(calendar)
     rows: list[ForwardReturn] = []
     dropped = 0
@@ -93,6 +97,7 @@ def forward_returns(
 
 @dataclass(frozen=True, slots=True)
 class GroupStats:
+    """Count and mean return statistics of one group of calls."""
     n: int
     mean_excess: float | None  # None when n == 0
     hit_rate: float | None  # share with a positive excess return
@@ -103,6 +108,7 @@ EMPTY_GROUP = GroupStats(0, None, None)
 
 @dataclass(frozen=True, slots=True)
 class Spread:
+    """Difference in mean excess return between a better and a worse group."""
     mean: float | None  # mean across reviews of (better group's mean excess - worse group's); None without a review
     t: float | None  # across reviews; None under 2 reviews or with zero variance
     reviews: int  # reviews with both groups
@@ -111,6 +117,7 @@ class Spread:
 
 @dataclass(frozen=True, slots=True)
 class HorizonScore:
+    """Group statistics and spread of an agent's calls at one forward horizon."""
     groups: dict[str, GroupStats]  # in display order
     spread: Spread
     concerns: dict[str, GroupStats] = field(default_factory=dict)  # the bear's, by concern; empty for the others
@@ -118,6 +125,7 @@ class HorizonScore:
 
 @dataclass(frozen=True, slots=True)
 class AgentScore:
+    """How well one agent's calls ranked forward returns, per horizon."""
     agent: str  # "bull", "bear", "judge", "strength" or "strength_standard"
     spread_label: str  # e.g. "high - low"
     by_horizon: dict[int, HorizonScore]
@@ -125,20 +133,24 @@ class AgentScore:
 
 @dataclass(frozen=True, slots=True)
 class RunScores:
+    """Scores of every agent for one run."""
     agents: list[AgentScore]  # bull, bear, judge, strength, strength_standard
     dropped: int  # from `Returns.dropped`: candidate x horizon pairs left out for want of prices
     immature: int = 0  # from `Returns.immature`: pairs whose exit is past the end of the data
 
 
 def bull_calls(review: Mapping[str, Any]) -> dict[str, str]:
+    """Bull conviction by symbol for a review."""
     return {case["symbol"]: case["conviction"] for case in review.get("bull") or [] if case.get("conviction") in LEVELS}
 
 
 def bear_calls(review: Mapping[str, Any]) -> dict[str, str]:
+    """Bear risk level by symbol for a review."""
     return {case["symbol"]: case["risk"] for case in review.get("bear") or [] if case.get("risk") in LEVELS}
 
 
 def bear_concerns(review: Mapping[str, Any]) -> dict[str, str]:
+    """Bear concern text by symbol for a review (`none` when blank)."""
     return {case["symbol"]: str(case.get("concern") or "none") for case in review.get("bear") or []}
 
 
@@ -169,7 +181,8 @@ _AGENTS: tuple[tuple[str, tuple[str, ...], tuple[str, str], Callable[[Mapping[st
 
 def score_agents(reviews: Sequence[Mapping[str, Any]], returns: Returns, horizons: Sequence[int] = HORIZONS) -> RunScores:
     """Each agent's calls against the excess returns: pooled group stats, and a spread computed per review (a review
-    missing either group is skipped and counted), averaged across reviews, with a t-stat across reviews."""
+    missing either group is skipped and counted), averaged across reviews, with a t-stat across reviews.
+    """
     excess = {(row.review, row.symbol, row.horizon): row.excess for row in returns.rows}
     counted = scored_reviews(reviews)
     agents: list[AgentScore] = []
@@ -210,7 +223,8 @@ def score_agents(reviews: Sequence[Mapping[str, Any]], returns: Returns, horizon
 def newey_west_t(values: Sequence[float], *, lags: int) -> float | None:
     """t-stat of the mean of `values`, with a Newey-West (Bartlett) long-run variance over `lags` lags scaled by
     n / (n - 1): at 0 lags this is the textbook t, the mean over (sample standard deviation / root n). None under two
-    values or with no variance."""
+    values or with no variance.
+    """
     n = len(values)
     if n < 2:
         return None
@@ -233,10 +247,12 @@ def _overlap_lags(horizon: int) -> int:
 
 
 def _stats(values: Sequence[float]) -> GroupStats:
+    """Count and statistics of `values`; empty statistics when there are none."""
     if not values:
         return EMPTY_GROUP
     return GroupStats(len(values), _mean(values), sum(1 for value in values if value > 0) / len(values))
 
 
 def _mean(values: Sequence[float]) -> float:
+    """Arithmetic mean of `values`."""
     return sum(values) / len(values)

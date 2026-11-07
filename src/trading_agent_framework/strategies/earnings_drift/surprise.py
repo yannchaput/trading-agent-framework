@@ -28,12 +28,14 @@ _CORRECTION = "CORRECTION"
 
 
 def _result(actual: Decimal, estimate: Decimal) -> str:
+    """`beat`, `miss` or `meet` for an actual against its estimate."""
     if actual > estimate:
         return "BEAT"
     return "MISS" if actual < estimate else "IN-LINE"
 
 
 def _surprise_pct(actual: Decimal, estimate: Decimal) -> float | None:
+    """Surprise as a percentage of the estimate; `None` when the estimate is zero."""
     if estimate == 0:
         return None
     return float((actual - estimate) / abs(estimate))
@@ -41,6 +43,7 @@ def _surprise_pct(actual: Decimal, estimate: Decimal) -> float | None:
 
 @dataclass(frozen=True, slots=True)
 class Surprise:
+    """Reported EPS and sales against their estimates for one earnings release."""
     eps_actual: Decimal
     eps_estimate: Decimal
     sales_actual: Decimal | None = None
@@ -48,24 +51,29 @@ class Surprise:
 
     @property
     def eps_beat(self) -> bool:
+        """Whether EPS beat the estimate."""
         return self.eps_actual > self.eps_estimate
 
     @property
     def eps_result(self) -> str:
+        """`beat`, `miss` or `meet` for EPS."""
         return _result(self.eps_actual, self.eps_estimate)
 
     @property
     def eps_surprise_pct(self) -> float | None:
+        """EPS surprise as a percentage of the estimate."""
         return _surprise_pct(self.eps_actual, self.eps_estimate)
 
     @property
     def sales_result(self) -> str | None:
+        """`beat`, `miss` or `meet` for sales; `None` without both figures."""
         if self.sales_actual is None or self.sales_estimate is None:
             return None
         return _result(self.sales_actual, self.sales_estimate)
 
     @property
     def sales_surprise_pct(self) -> float | None:
+        """Sales surprise as a percentage of the estimate; `None` without both figures."""
         if self.sales_actual is None or self.sales_estimate is None:
             return None
         return _surprise_pct(self.sales_actual, self.sales_estimate)
@@ -73,12 +81,14 @@ class Surprise:
 
 @dataclass(frozen=True, slots=True)
 class PickedSurprise:
+    """A surprise chosen for an event, with where it was found."""
     surprise: Surprise
     headline: str
     created_at: datetime
 
 
 def _number(text: str) -> Decimal | None:
+    """Parse a figure from news text, handling negatives and parentheses; `None` when it is not a number."""
     negative = "(" in text or "-" in text
     digits = re.sub(r"[^\d.]", "", text)
     try:

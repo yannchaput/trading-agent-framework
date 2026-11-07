@@ -24,11 +24,13 @@ if TYPE_CHECKING:
 
 
 class AlpacaMarketData:
+    """Alpaca-backed market data (prices, quotes, bars) and market calendar shared by every broker."""
     def __init__(
         self,
         data_client: market_data.AlpacaStockDataClient | None,
         calendar_client: orders.AlpacaTradingClient,
     ) -> None:
+        """Create the market data from a data client (optional) and a client for the calendar."""
         self._data_client = data_client
         self._calendar_client = calendar_client
 
@@ -41,17 +43,21 @@ class AlpacaMarketData:
 
     @property
     def calendar_client(self) -> orders.AlpacaTradingClient:
+        """The client used for the market calendar."""
         return self._calendar_client
 
     def _require_data_client(self) -> market_data.AlpacaStockDataClient:
+        """The data client; raise when none is configured."""
         if self._data_client is None:
             raise BrokerError("no market data client configured; construct the broker with data_client=... or use AlpacaBroker.from_credentials(...)")
         return self._data_client
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Last traded price for `asset`; `None` when unavailable."""
         return self.get_last_prices([asset])[asset]
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Last traded prices for several assets."""
         client = self._require_data_client()
         prices: dict[Asset, Decimal | None] = {}
         for chunk in market_data.chunk_assets(assets):
@@ -64,6 +70,7 @@ class AlpacaMarketData:
         return prices
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """Latest quote for `asset`; `None` when unavailable."""
         client = self._require_data_client()
         request = market_data.build_latest_quote_request([asset])
         try:
@@ -81,6 +88,7 @@ class AlpacaMarketData:
         end: datetime,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Fetch the last `length` bars per asset ending at `end`."""
         if not assets:
             return {}
         client = self._require_data_client()
@@ -98,6 +106,7 @@ class AlpacaMarketData:
         return bars
 
     def _sessions_before(self, end: datetime, length: int, timestep: str) -> list[MarketSession]:
+        """The `length` market sessions before `end`."""
         first_day = market_data.calendar_lookback_start(end, length, timestep)
         last_day = end.astimezone(market_data.MARKET_TZ).date()
         request = account.build_calendar_request(first_day, last_day)

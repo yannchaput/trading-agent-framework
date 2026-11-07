@@ -26,16 +26,19 @@ STATE_VERSION = 1
 
 
 class TradeState(StrEnum):
+    """Lifecycle state of a trade: pending entry, open, or closed."""
     PENDING = "pending"  # entry submitted, not filled yet
     OPEN = "open"  # entry filled: shares held, protected by a stop (or being sold)
 
 
 def _dec(value: Any) -> Decimal | None:
+    """`value` as a `Decimal`; `None` stays `None`."""
     return None if value is None else Decimal(str(value))
 
 
 @dataclass
 class Trade:
+    """One earnings-drift trade: entry, trailing stop and exit orders with their prices and dates."""
     symbol: str
     entry_order_id: str
     trail_percent: Decimal
@@ -52,6 +55,7 @@ class Trade:
     reaction_low: Decimal | None = None
 
     def to_json(self) -> dict[str, Any]:
+        """Serialise the trade for the state file."""
         return {
             "symbol": self.symbol,
             "entry_order_id": self.entry_order_id,
@@ -71,6 +75,7 @@ class Trade:
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Trade:
+        """Rebuild a trade from the state file; raise when the data is malformed."""
         try:
             trail = Decimal(str(data["trail_percent"]))
             quantity = Decimal(str(data["quantity"]))
@@ -108,6 +113,7 @@ class Trade:
 
 @dataclass
 class DriftState:
+    """Persisted state of the strategy: its trades and failure streak."""
     trades: dict[str, Trade] = field(default_factory=dict)  # symbol -> its pending or open trade
     agent_failure_streak: int = 0
     hollow_scan_streak: int = 0
@@ -115,12 +121,14 @@ class DriftState:
 
 
 def _streak(value: Any) -> int:
+    """A stored failure streak, validated as a non-negative integer."""
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         raise ValueError(f"invalid streak {value!r}")
     return value
 
 
 def _decode(raw: dict[str, Any]) -> DriftState:
+    """Build a `DriftState` from the state file's JSON."""
     trades = {symbol: Trade.from_json(data) for symbol, data in raw.get("trades", {}).items()}
     if any(symbol != trade.symbol for symbol, trade in trades.items()):
         raise InvalidState("a trade is filed under another symbol")
@@ -136,6 +144,7 @@ def _decode(raw: dict[str, Any]) -> DriftState:
 
 
 def _encode(state: DriftState) -> dict[str, Any]:
+    """Serialise a `DriftState` to JSON."""
     return {
         "trades": {symbol: trade.to_json() for symbol, trade in state.trades.items()},
         "agent_failure_streak": state.agent_failure_streak,
@@ -145,7 +154,9 @@ def _encode(state: DriftState) -> dict[str, Any]:
 
 
 class StateStore(JsonStateStore[DriftState]):
+    """JSON file store for the earnings-drift state."""
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
+        """Open the store at `path`; `fresh` ignores any existing file."""
         super().__init__(path, version=STATE_VERSION, empty=DriftState, decode=_decode, encode=_encode, log=logger, fresh=fresh)
 
 

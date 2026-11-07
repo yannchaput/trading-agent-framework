@@ -17,7 +17,8 @@ _MARKET_TZ = ZoneInfo("America/New_York")
 
 class FakeBacktestDataSource(BacktestDataSource):
     """Bars set directly by the test via `set_bars`; must already be indexed by bar
-    CLOSE timestamp (tz-aware), matching the real contract in `data/base.py`."""
+    CLOSE timestamp (tz-aware), matching the real contract in `data/base.py`.
+    """
 
     name = "fake"
 
@@ -36,7 +37,8 @@ class FakeBacktestDataSource(BacktestDataSource):
         Pass `timestep=` to make a request for that exact timestep see different bars,
         e.g. to catch a caller that fetches the wrong cadence (a real bug found in
         `runner.py`: the benchmark used to be fetched at the strategy's raw bar
-        timestep instead of always at daily cadence)."""
+        timestep instead of always at daily cadence).
+        """
         self._frames[(asset, timestep)] = df.sort_index()
 
     def set_sessions(self, sessions: list[MarketSession]) -> None:
@@ -69,7 +71,8 @@ class FakeBacktestDataSource(BacktestDataSource):
 
 def make_close_indexed_frame(closes: list[float], *, start: datetime, freq: str = "1D") -> pd.DataFrame:
     """An OHLCV frame indexed by bar CLOSE (see `data/base.py`'s convention).
-    high = close + 1, low = close - 1, matching `tests/fakes.py:make_bars_frame`'s shape."""
+    high = close + 1, low = close - 1, matching `tests/fakes.py:make_bars_frame`'s shape.
+    """
     index = pd.date_range(start, periods=len(closes), freq=freq, name="timestamp")
     close = [float(c) for c in closes]
     return pd.DataFrame(

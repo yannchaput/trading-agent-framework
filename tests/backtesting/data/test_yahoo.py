@@ -23,7 +23,8 @@ END = datetime(2026, 1, 10, tzinfo=UTC)
 
 def _raw_yahoo_frame() -> pd.DataFrame:
     """Shaped like a real single-ticker yfinance.download(...) result: capitalised
-    columns, a naive DatetimeIndex of session dates."""
+    columns, a naive DatetimeIndex of session dates.
+    """
     index = pd.date_range("2026-01-05", periods=3, freq="B")
     return pd.DataFrame(
         {
@@ -138,7 +139,7 @@ def test_parse_yahoo_frame_drops_a_multiindex_ticker_level() -> None:
 
 
 def test_parse_yahoo_frame_drops_nan_ohlcv_rows_and_keeps_the_valid_ones() -> None:
-    """yfinance legitimately emits NaN rows (halts, delistings, multi-ticker gaps).
+    """Yfinance legitimately emits NaN rows (halts, delistings, multi-ticker gaps).
     Left in, `BacktestBroker._latest_bar_with_time` turns one into `Decimal('NaN')`
     prices: a MARKET order filling against it poisons the broker's cash with NaN
     permanently (visible only much later, as blank metrics), and a LIMIT/STOP order
@@ -159,7 +160,8 @@ def test_parse_yahoo_frame_drops_nan_ohlcv_rows_and_keeps_the_valid_ones() -> No
 
 def test_parse_yahoo_frame_with_every_row_nan_produces_an_empty_frame() -> None:
     """The degenerate case must still come back well-formed (the columns downstream
-    expects, zero rows), not raise -- `bars()` then simply returns None."""
+    expects, zero rows), not raise -- `bars()` then simply returns None.
+    """
     raw = _raw_yahoo_frame()
     raw[["Open", "High", "Low", "Close", "Volume"]] = float("nan")
 
@@ -171,7 +173,8 @@ def test_parse_yahoo_frame_with_every_row_nan_produces_an_empty_frame() -> None:
 
 def test_bars_never_returns_a_nan_row_to_the_broker() -> None:
     """End-to-end through the public `bars()` path -- the shape the broker actually
-    sees, where a NaN OHLC row would become `Decimal('NaN')` prices."""
+    sees, where a NaN OHLC row would become `Decimal('NaN')` prices.
+    """
     raw = _raw_yahoo_frame()
     raw.loc[raw.index[1], ["Open", "High", "Low", "Close"]] = float("nan")
 
@@ -203,7 +206,8 @@ def test_load_and_bars_use_the_injected_download_function() -> None:
 
 def test_load_batches_multiple_assets_into_one_download_call() -> None:
     """The whole point: filtering a large universe must not fire one `yf.download`
-    per ticker -- `load()` fetches every requested asset in a single call."""
+    per ticker -- `load()` fetches every requested asset in a single call.
+    """
     calls: list[list[str]] = []
     MSFT = Asset("MSFT")
 
@@ -229,7 +233,8 @@ def test_load_skips_a_ticker_yahoo_has_no_data_for_without_failing_the_batch(
     case, e.g. a delisted symbol) must not take down the other tickers in the same
     call, must come back as "no data" rather than raising, and must be logged as a
     WARNING through this project's own logging rather than left to yfinance's raw
-    stdout notice."""
+    stdout notice.
+    """
     GONE = Asset("GONE")
 
     def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
@@ -251,7 +256,8 @@ def test_bars_lazy_fetch_logs_a_warning_when_yahoo_has_no_data(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The lazy single-asset fetch path (`bars()` without a prior `load()`) must
-    log the same WARNING as the batch path when Yahoo returns no data at all."""
+    log the same WARNING as the batch path when Yahoo returns no data at all.
+    """
     GONE = Asset("GONE")
 
     def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
@@ -306,7 +312,8 @@ def test_an_injected_download_raising_module_not_found_is_wrapped() -> None:
     CLAUDE.md about lazy yfinance import) -- reproduced via an injected
     `download` so the test doesn't depend on yfinance actually being absent
     from the environment (it may be installed for an unrelated extra, e.g.
-    `batch-universe`)."""
+    `batch-universe`).
+    """
 
     def missing_yfinance(symbol: str, **kwargs: object) -> pd.DataFrame:
         raise ModuleNotFoundError("No module named 'yfinance'")
@@ -330,7 +337,8 @@ def test_a_malformed_raw_frame_raises_backtest_data_error() -> None:
 def test_load_honors_its_own_start_and_end_arguments() -> None:
     """load()'s start/end must reach the download call, not the constructor's
     fixed window -- CachedDataSource trusts load()'s own window when it derives
-    a cache file's path."""
+    a cache file's path.
+    """
     calls: list[dict] = []
 
     def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
@@ -467,7 +475,8 @@ def test_sessions_skip_a_market_holiday_that_has_no_daily_bar() -> None:
 def test_sessions_reuse_an_already_loaded_calendar_frame_without_refetching() -> None:
     """`sessions()` must not introduce a redundant fetch: the runner pre-loads the
     benchmark (SPY by default) before asking for sessions, so the calendar frame is
-    already cached by then."""
+    already cached by then.
+    """
     calls: list[list[str]] = []
 
     def fake_download(symbols: list[str], **kwargs: object) -> pd.DataFrame:
@@ -486,7 +495,8 @@ def test_sessions_reuse_an_already_loaded_calendar_frame_without_refetching() ->
 
 def test_constructing_the_source_fetches_nothing() -> None:
     """The lazy contract: neither `__init__` nor the calendar derivation may fetch
-    until something is actually asked for."""
+    until something is actually asked for.
+    """
     calls: list[str] = []
 
     def fake_download(symbol: str, **kwargs: object) -> pd.DataFrame:
@@ -506,7 +516,8 @@ def test_concurrent_fetches_are_serialized() -> None:
     Firing many `yf.download` calls at once races yfinance's shared session/crumb
     handling and trips Yahoo's rate limiting -- surfacing as the whole backtest
     stalling partway through the universe. `YahooBacktestData` must serialize its
-    downloads so only one is ever in flight."""
+    downloads so only one is ever in flight.
+    """
     import threading
     import time
 

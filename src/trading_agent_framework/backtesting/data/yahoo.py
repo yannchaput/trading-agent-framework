@@ -45,7 +45,8 @@ DownloadFn = Callable[..., "pd.DataFrame"]
 
 class YahooBacktestData(BacktestDataSource):
     """Daily OHLCV from Yahoo Finance. Only `timestep="day"` is supported (design
-    spec, section 4.1 -- Yahoo has no usable minute history)."""
+    spec, section 4.1 -- Yahoo has no usable minute history).
+    """
 
     name = "yahoo"
 
@@ -206,7 +207,7 @@ class YahooBacktestData(BacktestDataSource):
         return df
 
     def _download_end(self) -> str:
-        """yfinance's `end` is exclusive: today's date plus one day includes today."""
+        """Yfinance's `end` is exclusive: today's date plus one day includes today."""
         return (self._today() + timedelta(days=1)).isoformat()
 
     def _real_download(self) -> DownloadFn:
@@ -216,7 +217,8 @@ class YahooBacktestData(BacktestDataSource):
 def _trim_to_window(frame: pd.DataFrame, end: datetime) -> pd.DataFrame:
     """Drop rows whose session date is after `end`'s date (inclusive end, by DATE --
     the backtesting rule), so a download that ran through today shows nothing past
-    the requested window."""
+    the requested window.
+    """
     if frame.empty:
         return frame
     return cast("pd.DataFrame", frame[frame.index.date <= end.date()])
@@ -328,7 +330,8 @@ def _later_split_factor(splits: pd.Series | None, index: pd.Index) -> pd.Series:
 
 def traded_series(frame: pd.DataFrame) -> tuple[list[float], list[float]] | None:
     """The `traded_close` and `traded_volume` columns as float lists, or None unless
-    the frame carries both (an `auto_adjust=True` parse has neither)."""
+    the frame carries both (an `auto_adjust=True` parse has neither).
+    """
     if not all(column in frame.columns for column in TRADED_COLUMNS):
         return None
     return (

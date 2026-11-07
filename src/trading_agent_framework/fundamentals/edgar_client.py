@@ -32,10 +32,12 @@ _SAFE_CHARS = re.compile(r"[^A-Za-z0-9_.=-]+")
 
 
 def _company_facts_url(cik: str) -> str:
+    """URL of a company's XBRL facts file."""
     return f"{SEC_DATA_BASE_URL}/api/xbrl/companyfacts/CIK{cik}.json"
 
 
 def _submissions_url(cik: str) -> str:
+    """URL of a company's filing submissions file."""
     return f"{SEC_DATA_BASE_URL}/submissions/CIK{cik}.json"
 
 
@@ -50,6 +52,14 @@ class SecEdgarClient:
         min_request_interval_seconds: float = 0.2,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        """Create the client.
+
+        Args:
+            user_agent: Contact string SEC requires on every request.
+            cache_dir: Directory for cached responses.
+            min_request_interval_seconds: Minimum spacing between requests, to respect SEC rate limits.
+            transport: HTTP transport override, used by tests.
+        """
         if not user_agent or not user_agent.strip():
             raise ConfigurationError("Missing or blank SEC_EDGAR_USER_AGENT environment variable")
         self.user_agent = user_agent
@@ -64,19 +74,24 @@ class SecEdgarClient:
         self._client.close()
 
     def __enter__(self) -> SecEdgarClient:
+        """Return the client for use in a `with` block."""
         return self
 
     def __exit__(self, *exc_info: object) -> None:
+        """Close the client on leaving a `with` block."""
         self.close()
 
     def _headers(self) -> dict[str, str]:
+        """Request headers carrying the required User-Agent."""
         return {"User-Agent": self.user_agent, "Accept-Encoding": "gzip, deflate"}
 
     def _cache_path(self, *parts: str) -> Path:
+        """Cache file path for `parts`, with unsafe characters replaced."""
         safe = [_SAFE_CHARS.sub("_", str(part)).strip("_") for part in parts]
         return self.cache_dir.joinpath(*safe)
 
     def _rate_limit(self) -> None:
+        """Sleep long enough to keep the minimum spacing between requests."""
         elapsed = time.monotonic() - self._last_request_at
         if elapsed < self.min_request_interval_seconds:
             time.sleep(self.min_request_interval_seconds - elapsed)
@@ -125,6 +140,7 @@ class SecEdgarClient:
 
     @staticmethod
     def _read_cached_json(cache_path: Path) -> dict[str, Any] | None:
+        """Read a cached JSON file; `None` when missing or unreadable."""
         if not cache_path.exists():
             return None
         try:
@@ -137,6 +153,7 @@ class SecEdgarClient:
 
     @staticmethod
     def _cache_is_stale(cache_path: Path, as_of: datetime | None, max_age_days: int | None) -> bool:
+        """Whether the cached file is older than `max_age_days` relative to `as_of`."""
         if as_of is None or max_age_days is None:
             return False
         if as_of.tzinfo is None:
@@ -144,6 +161,7 @@ class SecEdgarClient:
         return is_stale(datetime.fromtimestamp(cache_path.stat().st_mtime, tz=UTC), as_of, max_age_days)
 
     def get_text(self, url: str, cache_key: tuple[str, ...]) -> str:
+        """Fetch a text document, using the cache when present."""
         cache_path = self._cache_path(*cache_key)
         if cache_path.exists():
             return cache_path.read_text(encoding="utf-8", errors="replace")
@@ -159,6 +177,7 @@ class SecEdgarClient:
         return text
 
     def ticker_to_cik(self, symbol: str) -> str:
+        """Zero-padded CIK for `symbol`; raise when the ticker is unknown."""
         payload = self.get_json(SEC_COMPANY_TICKERS_URL, ("company_tickers.json",))
         try:
             return sec.parse_company_tickers(payload, symbol)
@@ -166,6 +185,7 @@ class SecEdgarClient:
             raise FundamentalsNotFoundError(str(exc)) from exc
 
     def get_company_facts_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = DEFAULT_MAX_AGE_DAYS) -> dict[str, Any]:
+        """A company's XBRL facts, cached and refreshed when older than `max_age_days` at `as_of`."""
         return self.get_json(_company_facts_url(cik), ("companyfacts", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def fetch_company_facts_payload(self, cik: str) -> dict[str, Any]:
@@ -173,6 +193,7 @@ class SecEdgarClient:
         return self.fetch_json(_company_facts_url(cik))
 
     def get_submissions_payload(self, cik: str, *, as_of: datetime | None = None, max_age_days: int | None = DEFAULT_MAX_AGE_DAYS) -> dict[str, Any]:
+        """A company's filing submissions, cached and refreshed when older than `max_age_days` at `as_of`."""
         return self.get_json(_submissions_url(cik), ("submissions", f"CIK{cik}.json"), as_of=as_of, max_age_days=max_age_days)
 
     def get_submissions_page(self, name: str) -> dict[str, Any]:
@@ -184,6 +205,7 @@ class SecEdgarClient:
         return self.fetch_json(_submissions_url(cik))
 
     def get_filing_text(self, cik: str, accession_number: str, primary_document: str) -> str:
+        """Text of a filing's primary document."""
         url = sec.filing_url(cik, accession_number, primary_document)
         return self.get_text(url, ("filings", cik, accession_number, primary_document))
 

@@ -1,7 +1,8 @@
 """`PlaceholderBroker`: what `main.py` builds a strategy with in backtesting mode, before
 `run_backtest` swaps in the real `BacktestBroker`. It only carries the strategy name and a
 simulated clock and touches no network -- building a live broker just to start a backtest used
-to reconfigure the live Alpaca account, and would need IB Gateway running under `BROKER=ibkr`."""
+to reconfigure the live Alpaca account, and would need IB Gateway running under `BROKER=ibkr`.
+"""
 
 from __future__ import annotations
 
@@ -24,56 +25,74 @@ _EPOCH = datetime(1970, 1, 1, tzinfo=UTC)  # never read: run_backtest replaces t
 
 
 def _unavailable() -> NoReturn:
+    """Raise `BrokerError`: the real backtest broker does not exist yet."""
     raise BrokerError("not available before the backtest starts")
 
 
 class PlaceholderBroker(Broker):
+    """Stand-in broker used before the backtest starts; every call raises `BrokerError`."""
     name: ClassVar[str] = "placeholder"
 
     def __init__(self, strategy_name: str) -> None:
+        """Create the placeholder with an empty simulated clock."""
         super().__init__(strategy_name, clock=BacktestClock(start=_EPOCH, sessions=[]), is_paper=True)
 
     def _conform_order(self, order: Order) -> Order:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def _submit_order(self, order: Order) -> Order:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def cancel_order(self, order: Order) -> None:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def pull_order(self, identifier: str) -> Order | None:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def pull_positions(self) -> list[Position]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def get_account(self) -> AccountBalances:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def sync_open_orders(self) -> list[Order]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()
 
     def get_bars(self, assets: Sequence[Asset], length: int, timestep: str = "day", *, include_after_hours: bool = True) -> dict[Asset, Bars]:
+        """Unavailable before the backtest starts; always raises `BrokerError`."""
         _unavailable()

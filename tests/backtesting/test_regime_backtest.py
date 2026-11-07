@@ -1,5 +1,6 @@
 """The market regime in a backtest: `run_backtesting` widens the warmup so the regime exists from the first
-session, and a session's value never sees a bar that closes after the refresh."""
+session, and a session's value never sees a bar that closes after the refresh.
+"""
 
 from __future__ import annotations
 

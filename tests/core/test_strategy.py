@@ -128,7 +128,8 @@ def test_add_line_records_an_indicator_line_in_backtesting() -> None:
 
 def test_final_statuses_includes_unknown_so_it_never_blocks_a_wait() -> None:
     """UNKNOWN is what map_status returns for an unrecognised Alpaca status; it must
-    count as final or wait_for_order_execution would block on it for the full timeout."""
+    count as final or wait_for_order_execution would block on it for the full timeout.
+    """
     assert OrderStatus.UNKNOWN in _FINAL_STATUSES
 
 

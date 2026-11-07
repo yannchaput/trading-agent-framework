@@ -418,7 +418,8 @@ def test_max_volatility_filters_new_entries_but_never_forces_a_holding_out(tmp_p
 
 def _cheap_adjusted(growth: float, *, traded: bool) -> DailySeries:
     """Adjusted closes ending near $8 (under min_price) with an adjusted dollar volume of ~$40M (over min_dollar_volume), so only
-    `min_price` can drop it; the traded columns, when given, are the ~$160 and 1e6 shares it really traded at."""
+    `min_price` can drop it; the traded columns, when given, are the ~$160 and 1e6 shares it really traded at.
+    """
     real = _series(growth)
     adjusted = [close / 20 for close in real.closes]
     if traded:

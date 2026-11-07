@@ -62,7 +62,8 @@ def test_compute_metrics_sortino_incorporates_a_nonzero_risk_free_rate() -> None
     though the design spec (section 6.5) requires it for Sharpe/Sortino/Treynor. Every
     other golden-value test in this file uses risk_free_rate=0.0, where the bug is
     invisible (the zero threshold is correct either way) -- this test uses a nonzero
-    rate and hand-computes the expected ratio independently of vectorbt."""
+    rate and hand-computes the expected ratio independently of vectorbt.
+    """
     returns = _returns()
     risk_free_rate = 0.02
     periods = 252

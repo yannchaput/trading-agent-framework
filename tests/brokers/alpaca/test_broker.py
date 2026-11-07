@@ -79,7 +79,8 @@ def test_submit_order_is_tracked_before_the_broker_call_closing_the_stream_race(
     """A trade-update event can arrive on the stream thread before `submit_order`'s
     REST response is processed. The order must be discoverable (via client_order_id,
     since the broker-assigned identifier isn't known yet) at the moment the broker
-    call is made, or that event is silently dropped."""
+    call is made, or that event is silently dropped.
+    """
     client = FakeTradingClient()
     client.submit_response = make_alpaca_order(id=_BROKER_ORDER_ID)
     broker = AlpacaBroker("momentum", client)
@@ -284,7 +285,8 @@ def test_start_stream_blocks_until_the_websocket_reports_running() -> None:
     own thread after start() spawns it. If start() returned immediately, a
     strategy could submit an order before the subscription is live and miss
     that order's "new" trade update -- there is no replay for events that
-    happened before a stream subscribed."""
+    happened before a stream subscribed.
+    """
     client = FakeTradingClient()
     stream = MagicMock()
     stream._running = False

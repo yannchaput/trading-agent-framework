@@ -152,7 +152,8 @@ def month_universe(history: UniverseHistory, day: date, *, exclude: Collection[s
     """The history's list for `day`'s month, minus `exclude`, in rank order.
 
     A month the history lacks raises `FatalStrategyError`: the executor would swallow anything else as a failed tick and
-    drop the review without a trace in the results."""
+    drop the review without a trace in the results.
+    """
     try:
         month_list = history.on(day)
     except UniverseHistoryError as exc:

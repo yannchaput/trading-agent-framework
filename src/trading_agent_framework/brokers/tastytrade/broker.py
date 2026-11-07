@@ -72,6 +72,7 @@ class _Unknown:
 
 
 class TastytradeBroker(Broker):
+    """Broker implementation for a Tastytrade account (REST orders plus an account streamer)."""
     name: ClassVar[str] = "tastytrade"
 
     def __init__(
@@ -89,6 +90,18 @@ class TastytradeBroker(Broker):
         stream_connect: Callable[[str], StreamSocket] | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Build the broker around an authenticated session, the account and an Alpaca market-data source.
+
+        Args:
+            strategy_name: Name that prefixes every client order id.
+            session: Authenticated Tastytrade REST session.
+            account_number: Account the broker trades.
+            streamer_url: URL of the account streamer websocket.
+            market_data: Alpaca-backed market data used for prices, quotes and bars.
+            tracker: Order tracker; a fresh one is created when omitted.
+            clock: Market clock; defaults to the market-data calendar clock.
+            is_paper: Whether the account is a sandbox account.
+        """
         super().__init__(
             strategy_name,
             tracker,
@@ -143,9 +156,11 @@ class TastytradeBroker(Broker):
 
     @property
     def account_number(self) -> str:
+        """Account number the broker trades."""
         return self._account_number
 
     def _path(self, suffix: str) -> str:
+        """Build an account-scoped REST path from `suffix`."""
         return f"/accounts/{self._account_number}{suffix}"
 
     def configure_account(self) -> None:
@@ -156,11 +171,13 @@ class TastytradeBroker(Broker):
         logger.info("Tastytrade account %s checked (sandbox=%s)", self._account_number, self.is_paper)
 
     def get_account(self) -> AccountBalances:
+        """Fetch the account balances."""
         return account.parse_balances(self._session.get(self._path("/balances")))
 
     # --- orders ----------------------------------------------------------------------
 
     def _fractional_eligible(self, asset: Asset) -> bool:
+        """Whether `asset` can be traded in fractional shares (cached per symbol)."""
         symbol = asset.symbol
         if symbol not in self._eligible:
             path = f"/instruments/equities/{quote(orders.to_tastytrade_symbol(symbol), safe='')}"
@@ -176,6 +193,7 @@ class TastytradeBroker(Broker):
         return self._eligible[symbol]
 
     def _conform_order(self, order: Order) -> Order:
+        """Conform `order` to Tastytrade's rules, resolving notional orders to whole shares when the asset is not fractional."""
         eligible = self._fractional_eligible(order.asset)
         last_price = self._market_data.get_last_price(order.asset) if order.notional is not None and not eligible else None
         return orders.conform_order(order, fractional_eligible=eligible, last_price=last_price)
@@ -202,6 +220,7 @@ class TastytradeBroker(Broker):
             return False
 
     def _submit_order(self, order: Order) -> Order:
+        """Submit `order` to Tastytrade with a deterministic external identifier so an unconfirmed write can be reconciled later."""
         order.client_order_id = self._external_identifier(order)
         body = orders.build_order_json(order)
         external = order.client_order_id
@@ -231,6 +250,7 @@ class TastytradeBroker(Broker):
         return order
 
     def _fail(self, order: Order, message: str, *, cause: BaseException | None = None) -> NoReturn:
+        """Mark `order` as errored, untrack it and raise a `BrokerError` (the order is updated before raising)."""
         order.set_error(message)  # BEFORE raising -- lumibot's contract
         self.tracker.untrack(order)
         raise BrokerError(f"Tastytrade order {order.identifier} failed: {message}") from cause
@@ -297,6 +317,7 @@ class TastytradeBroker(Broker):
         raise BrokerUncertainError(message)
 
     def _tt_id(self, order: Order) -> str:
+        """The Tastytrade order id behind `order`; raise `BrokerError` when the stream has not reported one."""
         tt_id = self._events.tt_id_of(order)
         if tt_id is None:
             raise BrokerError(f"no Tastytrade order id for {order.identifier}")
@@ -326,6 +347,7 @@ class TastytradeBroker(Broker):
         raise AssertionError("unreachable")
 
     def _still_arriving(self, tt_id: str) -> bool:
+        """Whether Tastytrade still reports the order as in transit (not yet routed)."""
         try:
             return orders.is_still_arriving(self._session.get(self._path(f"/orders/{tt_id}")))
         except BrokerError:
@@ -333,6 +355,7 @@ class TastytradeBroker(Broker):
             return False
 
     def cancel_order(self, order: Order) -> None:
+        """Cancel `order` once its Tastytrade id is known."""
         self._require_resolved(order, "cancel")
         tt_id = self._tt_id(order)
         self._write_once_arrived(tt_id, lambda: self._session.delete(self._path(f"/orders/{tt_id}")))
@@ -405,6 +428,7 @@ class TastytradeBroker(Broker):
         raise BrokerUncertainError(message)
 
     def _known_replacement(self, order: Order, current: str) -> Mapping[str, Any]:
+        """Fetch the live replacement of `current` after an ambiguous modify, or the original snapshot when none exists."""
         try:
             snapshot = self._with_id(self._session.get(self._path(f"/orders/{current}")))
         except BrokerError:
@@ -438,6 +462,7 @@ class TastytradeBroker(Broker):
             logger.exception("Re-reading Tastytrade order %s after a failed replace failed", tt_id)
 
     def pull_order(self, identifier: str) -> Order | None:
+        """Fetch one order by identifier from the recent order history."""
         self._resolve_unknown_writes()
         external = orders.external_identifier_for(self.strategy_name, identifier)
         items = self._session.get_all(self._path("/orders"), params={"sort": "Desc"}, max_items=1000)
@@ -459,15 +484,18 @@ class TastytradeBroker(Broker):
         return parsed
 
     def pull_positions(self) -> list[Position]:
+        """Fetch the open positions belonging to this strategy's account."""
         items = self._session.get(self._path("/positions")).get("items") or []
         parsed = (orders.parse_position(item, self.strategy_name) for item in items)
         return [p for p in parsed if p is not None]
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        """Close `fraction` of the position in `asset`; `None` when flat."""
         position = next((p for p in self.pull_positions() if p.asset == asset), None)
         return self._close(position, fraction) if position is not None else None
 
     def _close(self, position: Position, fraction: Decimal) -> Order | None:
+        """Sell `fraction` of a long `position`; shorts are refused because the account is a cash account."""
         asset = position.asset
         if position.side is PositionSide.SHORT:
             raise BrokerError(f"cannot close the short position in {asset.symbol}: shorts cannot exist on a cash account, check the account")
@@ -479,6 +507,7 @@ class TastytradeBroker(Broker):
         return self.submit_order(Order(self.strategy_name, asset, side, OrderType.MARKET, quantity=quantity))
 
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        """Cancel open orders (by default), then close every position; return the closing orders."""
         if cancel_orders:
             for item in self._session.get_all(self._path("/orders/live")):
                 if item.get("cancellable"):
@@ -502,6 +531,7 @@ class TastytradeBroker(Broker):
         return closed
 
     def sync_open_orders(self) -> list[Order]:
+        """Adopt this strategy's live Tastytrade orders into the tracker after a restart."""
         adopted: list[Order] = []
         being_replaced: list[tuple[str, dict[str, Any]]] = []  # originals whose replacement is the live order
         for item in self._session.get_all(self._path("/orders/live")):
@@ -585,6 +615,7 @@ class TastytradeBroker(Broker):
         return entry.misses >= _CONFIRMED_MISSES
 
     def _resolve_submit(self, entry: _Unknown) -> None:
+        """Settle a submit whose outcome was unknown by checking whether the order reached Tastytrade."""
         order = entry.order
         if self._events.tt_id_of(order) is not None or not order.is_active():  # the stream adopted it, or it ended
             self._unknown.pop(order.identifier, None)
@@ -612,6 +643,7 @@ class TastytradeBroker(Broker):
         logger.error("Tastytrade order %s failed: %s", order.identifier, message)
 
     def _resolve_modify(self, entry: _Unknown) -> None:
+        """Settle a modify whose outcome was unknown by checking which order is now live."""
         order, tt_id, previous = entry.order, entry.tt_id, entry.previous
         assert tt_id is not None
         assert previous is not None
@@ -641,17 +673,21 @@ class TastytradeBroker(Broker):
     # --- market data, clock, news (Alpaca) ---------------------------------------------
 
     def news_provider(self) -> NewsProvider | None:
+        """The news provider, built lazily from its factory; `None` when none is configured."""
         if self._news_provider is None and self._news_provider_factory is not None:
             self._news_provider = self._news_provider_factory()
         return self._news_provider
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Last traded price for `asset`, from market data."""
         return self._market_data.get_last_price(asset)
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Last traded prices for several assets, from market data."""
         return self._market_data.get_last_prices(assets)
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """Latest quote for `asset`, from market data."""
         return self._market_data.get_quote(asset)
 
     def get_bars(
@@ -662,11 +698,13 @@ class TastytradeBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Fetch bars ending at the broker clock's current time."""
         return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     # --- stream ----------------------------------------------------------------------
 
     def start_stream(self) -> None:
+        """Start the account streamer thread."""
         self._stream.start()
 
     def wait_for_stream(self, timeout: float) -> bool:
@@ -679,6 +717,7 @@ class TastytradeBroker(Broker):
         return self._stream.last_error
 
     def stop_stream(self, timeout: float = 5.0) -> None:
+        """Stop the account streamer, waiting up to `timeout` seconds."""
         try:
             self._stream.stop(timeout)
         finally:

@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class _PendingOrder:
+    """An accepted order waiting to fill, with the last bar time it was evaluated against."""
     order: Order
     asset: Asset
     last_evaluated: datetime
@@ -78,6 +79,18 @@ class BacktestBroker(Broker):
         tracker: OrderTracker | None = None,
         news_source: NewsProvider | None = None,
     ) -> None:
+        """Create a simulated broker over a historical data source.
+
+        Args:
+            strategy_name: Name that prefixes every client order id.
+            data_source: Point-in-time historical data; the only source of prices.
+            clock: Simulated clock driving the run.
+            budget: Starting cash.
+            timestep: Bar size orders fill against (`day` or `minute`).
+            fees: Fee schedule applied to fills; none when omitted.
+            slippage: Fractional price slippage applied against the trader.
+            tracker: Order tracker; a fresh one is created when omitted.
+        """
         super().__init__(strategy_name, tracker, clock=clock, is_paper=True)
         self._data_source = data_source
         self._timestep = timestep
@@ -92,9 +105,11 @@ class BacktestBroker(Broker):
     # --- Broker ABC: orders ------------------------------------------------------------
 
     def _conform_order(self, order: Order) -> Order:
+        """Return `order` unchanged: there is no venue tick rounding to simulate."""
         return order  # no broker-specific tick rounding to simulate
 
     def _submit_order(self, order: Order) -> Order:
+        """Validate and accept `order` as pending; it fills on a later bar."""
         if order.notional is not None:
             raise OrderValidationError("backtesting only supports quantity-based orders, not notional orders")
         if order.order_type is OrderType.TRAIL and (order.trail_price is None) == (order.trail_percent is None):
@@ -123,16 +138,20 @@ class BacktestBroker(Broker):
         return order
 
     def cancel_order(self, order: Order) -> None:
+        """Drop a pending order and record the cancellation."""
         self._pending.pop(order.identifier, None)
         self.tracker.process_trade_event(order, OrderEvent.CANCELED)
 
     def pull_order(self, identifier: str) -> Order | None:
+        """Look an order up in the tracker by identifier."""
         return self.tracker.get_tracked_order(identifier)
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
+        """Up to `limit` tracked orders."""
         return self.tracker.get_all_tracked_orders()[:limit]
 
     def pull_positions(self) -> list[Position]:
+        """The simulated open positions."""
         return list(self._positions.values())
 
     def news_provider(self) -> NewsProvider | None:
@@ -164,6 +183,7 @@ class BacktestBroker(Broker):
         return AccountBalances(cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash)
 
     def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
+        """Replace a pending order with one carrying new limit/stop prices."""
         if order.identifier not in self._pending:
             raise BacktestError(f"order {order.identifier} is not pending; cannot modify")
         replacement = dataclasses.replace(
@@ -191,6 +211,7 @@ class BacktestBroker(Broker):
         self._data_source.load(assets, start, end, timestep)
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        """Sell `fraction` of the position in `asset` at market; `None` when flat."""
         position = self._positions.get(asset)
         if position is None:
             return None
@@ -200,6 +221,7 @@ class BacktestBroker(Broker):
         return self.submit_order(order)
 
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        """Cancel pending orders (by default) and close every position."""
         if cancel_orders:
             for pending in list(self._pending.values()):
                 self.cancel_order(pending.order)
@@ -211,18 +233,22 @@ class BacktestBroker(Broker):
         return closed
 
     def sync_open_orders(self) -> list[Order]:
+        """Return no orders: a fresh backtest has no prior state to adopt."""
         return []  # a fresh backtest has no prior state to adopt
 
     # --- Broker ABC: market data --------------------------------------------------------
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Close of the latest bar at or before the simulated now; `None` without data."""
         bar = self._latest_bar(asset, self.clock.now())
         return bar.close if bar is not None else None
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Last bar close for each asset."""
         return {asset: self.get_last_price(asset) for asset in assets}
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """A synthetic quote built from the latest bar; `None` without data."""
         bar = self._latest_bar(asset, self.clock.now())
         if bar is None:
             return None
@@ -243,6 +269,7 @@ class BacktestBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Historical bars up to the simulated now, never past it."""
         result: dict[Asset, Bars] = {}
         for asset in assets:
             if include_after_hours or timestep != "minute":
@@ -277,9 +304,11 @@ class BacktestBroker(Broker):
             request *= 2
 
     def start_stream(self) -> None:
+        """Do nothing: a backtest has no order stream."""
         pass
 
     def stop_stream(self, timeout: float = 5.0) -> None:
+        """Do nothing: a backtest has no order stream."""
         pass
 
     # --- shared bar lookup -----------------------------------------------------------------
@@ -324,6 +353,7 @@ class BacktestBroker(Broker):
         return bars
 
     def _latest_bar_with_time(self, asset: Asset, cutoff: datetime) -> tuple[fills.Bar, datetime] | None:
+        """The newest bar at or before `cutoff` with its timestamp; `None` without data."""
         bars = self._source_bars(asset, cutoff, 1, self._timestep)
         if bars is None or bars.df.empty:
             return None
@@ -337,13 +367,16 @@ class BacktestBroker(Broker):
         return bar, cast(Any, bars.df.index)[-1].to_pydatetime()
 
     def _latest_bar(self, asset: Asset, cutoff: datetime) -> fills.Bar | None:
+        """The newest bar at or before `cutoff`; `None` without data."""
         found = self._latest_bar_with_time(asset, cutoff)
         return None if found is None else found[0]
 
     def _portfolio_value(self, cutoff: datetime) -> Decimal:
+        """Cash plus positions valued at the latest bars up to `cutoff`."""
         return self._cash + self._positions_value(cutoff)
 
     def _positions_value(self, cutoff: datetime) -> Decimal:
+        """Market value of all positions at the latest bars up to `cutoff`."""
         total = Decimal(0)
         for asset, position in self._positions.items():
             bar = self._latest_bar(asset, cutoff)
@@ -554,6 +587,7 @@ class BacktestBroker(Broker):
         return None
 
     def _fill(self, order: Order, raw_price: Decimal, bar_time: datetime) -> None:
+        """Execute `order` at `raw_price`: apply slippage and fees, move cash, update positions and the ledger."""
         assert order.quantity is not None  # notional orders are rejected at submission
         execution_price, fee, notional = self._execution_terms(order, raw_price)
         quantity = order.quantity
@@ -580,6 +614,7 @@ class BacktestBroker(Broker):
         self.tracker.process_trade_event(order, OrderEvent.FILLED, price=execution_price, filled_quantity=quantity)
 
     def _apply_to_position(self, asset: Asset, side: OrderSide, quantity: Decimal, price: Decimal) -> None:
+        """Update the held quantity and average price after a fill."""
         existing = self._positions.get(asset)
         held = existing.quantity if existing is not None else Decimal(0)
         new_quantity = held + quantity if side is OrderSide.BUY else held - quantity
@@ -604,6 +639,7 @@ class BacktestBroker(Broker):
         )
 
     def _sample_equity(self, cutoff: datetime) -> None:
+        """Record an equity sample (cash, positions value) in the ledger at `cutoff`."""
         positions_value = self._positions_value(cutoff)
         self.ledger.record_equity(
             EquitySample(

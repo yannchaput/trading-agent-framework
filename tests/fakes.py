@@ -64,7 +64,8 @@ _NOW = datetime(2024, 1, 1, tzinfo=UTC)
 
 def make_alpaca_order(**overrides: object) -> alpaca_models.Order:
     """Build a real `alpaca.trading.models.Order` with sensible defaults for
-    every required field, merged with `**overrides`."""
+    every required field, merged with `**overrides`.
+    """
     defaults: dict[str, object] = {
         "id": uuid4(),
         "client_order_id": "cid-1",
@@ -91,7 +92,8 @@ def make_alpaca_order(**overrides: object) -> alpaca_models.Order:
 
 def make_alpaca_position(**overrides: object) -> alpaca_models.Position:
     """Build a real `alpaca.trading.models.Position` with sensible defaults for
-    every required field, merged with `**overrides`."""
+    every required field, merged with `**overrides`.
+    """
     defaults: dict[str, object] = {
         "asset_id": uuid4(),
         "symbol": "AAPL",
@@ -446,7 +448,8 @@ def make_session(day: date, open_at: time = time(9, 30), close_at: time = time(1
 
 def weekday_sessions(first_day: date, count: int) -> list[MarketSession]:
     """`count` regular 09:30-16:00 sessions on consecutive weekdays from
-    `first_day`."""
+    `first_day`.
+    """
     sessions: list[MarketSession] = []
     day = first_day
     while len(sessions) < count:
@@ -813,7 +816,8 @@ def make_ib_summary(
 
 class FakeIB:
     """Stand-in for `ib_async.IB`: the methods `IbkrConnection`/`IbkrBroker` call, real `eventkit`
-    events, and real `ib_async` objects in and out. Tests configure and drive it directly."""
+    events, and real `ib_async` objects in and out. Tests configure and drive it directly.
+    """
 
     def __init__(self, *, accounts: Sequence[str] = ("DU123",)) -> None:
         self.orderStatusEvent = IbEvent("orderStatusEvent")

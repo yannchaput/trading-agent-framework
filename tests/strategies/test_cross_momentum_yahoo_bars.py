@@ -41,7 +41,8 @@ def _yahoo_frame(sessions, *, close=50.0, volume=1_000_000.0, last=YESTERDAY, cl
 
 def _raw_unadjusted_frame(sessions=300, *, close=50.0, volume=1_000_000.0, last=YESTERDAY) -> pd.DataFrame:
     """One ticker as yfinance returns it with `auto_adjust=False, actions=True`: raw OHLC (split-adjusted only), Adj Close,
-    Volume, Dividends and Stock Splits."""
+    Volume, Dividends and Stock Splits.
+    """
     index = pd.bdate_range(end=last, periods=sessions)
     values = [close] * sessions
     return pd.DataFrame(

@@ -63,7 +63,8 @@ def test_close_position_request_rejects_fractions_outside_zero_one(fraction: Dec
 
 def test_close_position_request_bounds_percentage_to_nine_decimal_places() -> None:
     """Alpaca's `percentage` field caps at 9dp; a repeating fraction must be quantized,
-    not passed through with arbitrary Decimal precision."""
+    not passed through with arbitrary Decimal precision.
+    """
     request = orders.build_close_position_request(Decimal(1) / Decimal(3))
     assert request.percentage is not None
     whole, _, decimals = request.percentage.partition(".")

@@ -117,6 +117,7 @@ def parse_company_tickers(payload: dict[str, Any], symbol: str) -> str:
 
 
 def parse_dt(value: Any) -> datetime | None:
+    """Parse a datetime or ISO string; `None` when it cannot be parsed."""
     if isinstance(value, datetime):
         return value
     if isinstance(value, date):
@@ -134,6 +135,7 @@ def parse_dt(value: Any) -> datetime | None:
 
 
 def _same_tz(value: datetime, reference: datetime) -> datetime:
+    """Give a naive `value` the timezone of `reference`."""
     if value.tzinfo is None and reference.tzinfo is not None:
         return value.replace(tzinfo=reference.tzinfo)
     if value.tzinfo is not None and reference.tzinfo is None:
@@ -142,6 +144,7 @@ def _same_tz(value: datetime, reference: datetime) -> datetime:
 
 
 def _candidate_sort_key(row: dict[str, Any], tags: list[str] | None = None) -> tuple[Any, ...]:
+    """Sort key that prefers the most recent period, then the preferred form type and tag."""
     form_priority = _FORM_PRIORITY.get(str(row.get("form") or "").upper(), 1)
     tag_priority = 0
     if tags:
@@ -204,6 +207,7 @@ def unit_rows(facts: dict[str, Any], tag: str, unit: str, forms: frozenset[str])
 
 
 def _debt_row(row: dict[str, Any]) -> dict[str, Any]:
+    """A debt fact reduced to its end date, value and filing date."""
     return {"end": row["end"], "value": row["val"], "filed": row["filed"]}
 
 
@@ -261,6 +265,7 @@ def compact_company_facts(payload: dict[str, Any], *, as_of: datetime, max_facts
 
 
 def _statement_anchor(field_candidates: dict[str, list[dict[str, Any]]]) -> dict[str, Any] | None:
+    """The candidate that anchors a statement: the one all other fields should match in period."""
     candidates = [row for rows in field_candidates.values() for row in rows]
     if not candidates:
         return None
@@ -268,6 +273,7 @@ def _statement_anchor(field_candidates: dict[str, list[dict[str, Any]]]) -> dict
 
 
 def _same_statement_period(candidate: dict[str, Any], anchor: dict[str, Any]) -> bool:
+    """Whether `candidate` belongs to the same filing or period as `anchor`."""
     candidate_accn = str(candidate.get("accession_number") or "").strip()
     anchor_accn = str(anchor.get("accession_number") or "").strip()
     if candidate_accn and anchor_accn and candidate_accn == anchor_accn:
@@ -294,6 +300,7 @@ def _period(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _a_year_before(end: datetime, other_end: datetime) -> bool:
+    """Whether `end` is about one year before `other_end`, within the period tolerance."""
     return abs((end - other_end).days - _YEAR_DAYS) <= _PERIOD_TOLERANCE_DAYS
 
 
@@ -390,7 +397,8 @@ def total_debt(gaap: dict[str, Any], *, end: str, as_of: datetime, unit: str = "
 
 def balance_sheet(payload: dict[str, Any], *, as_of: datetime) -> dict[str, dict[str, Any]]:
     """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`) in the statement's reporting
-    currency, never a current portion."""
+    currency, never a current portion.
+    """
     values = statement_values(payload, {**BALANCE_SHEET_TAGS, "debt": []}, as_of=as_of, ifrs_tag_map=IFRS_BALANCE_SHEET_TAGS)
     gaap = payload.get("facts", {}).get("us-gaap", {})
     end = next((value["end"] for value in values.values() if value.get("end")), None)
@@ -471,12 +479,14 @@ def parse_filings(
 
 
 def filing_url(cik: str, accession_number: str, primary_document: str) -> str:
+    """URL of a filing's primary document on SEC EDGAR."""
     cik_int = str(int(str(cik).lstrip("0") or "0"))
     accession_clean = accession_number.replace("-", "")
     return f"{SEC_ARCHIVES_BASE_URL}{cik_int}/{accession_clean}/{primary_document}"
 
 
 def _iso_date(value: Any) -> date | None:
+    """`value` as a date from an ISO string; `None` when malformed."""
     try:
         return date.fromisoformat(str(value))
     except ValueError:

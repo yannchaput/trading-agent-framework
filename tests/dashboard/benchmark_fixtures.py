@@ -1,5 +1,6 @@
 """Hand-built vLLM benchmark results trees, shaped like the real
-../benchmark-vllm-models/results/20260927-132243 run (meta.json, summary.json, <key>.jsonl)."""
+../benchmark-vllm-models/results/20260927-132243 run (meta.json, summary.json, <key>.jsonl).
+"""
 
 from __future__ import annotations
 
@@ -106,7 +107,8 @@ def _write_jsonl(path: Path, lines: list[dict[str, Any] | str]) -> None:
 def build_results_tree(base: Path) -> Path:
     """LATEST (glm + qwen3627b, complete, one malformed .jsonl line, one timeout),
     OLDER (glm + gptoss where gptoss did not run), IN_PROGRESS (no summary.json),
-    a non-timestamp folder and a stray file. Returns `base`."""
+    a non-timestamp folder and a stray file. Returns `base`.
+    """
     latest = base / LATEST
     write_json(
         latest / "meta.json",
@@ -206,7 +208,8 @@ def add_switched_run(base: Path) -> Path:
     models ran and `gptoss` -- not `glm` -- wins overall. Added on top of `build_results_tree`
     only by the test that needs it, so a run-switch test can assert the drill-down's default
     model is genuinely recomputed for the newly-selected run (not the only valid choice, as
-    OLDER's single ran model would be, and not LATEST's winner either)."""
+    OLDER's single ran model would be, and not LATEST's winner either).
+    """
     run_dir = base / SWITCHED
     write_json(
         run_dir / "meta.json",

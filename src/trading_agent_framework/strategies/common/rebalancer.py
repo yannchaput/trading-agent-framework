@@ -89,7 +89,8 @@ class Rebalancer:
     def _long_positions(self, *, warn: bool = False) -> list:
         """The long positions with a positive quantity. IBKR and Tastytrade report a short as a POSITIVE quantity with
         `side=SHORT`, and a sell against it would open more short, so a short is never a holding here: `warn` logs each one
-        (the order path asks for it; the read-only views stay quiet)."""
+        (the order path asks for it; the read-only views stay quiet).
+        """
         positions = []
         for position in self._strategy.get_positions():
             if position.quantity <= 0:

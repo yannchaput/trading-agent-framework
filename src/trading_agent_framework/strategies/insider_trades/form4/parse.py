@@ -28,6 +28,7 @@ _TRADE_CODES = frozenset({"P", "S"})
 
 @dataclass(frozen=True, slots=True)
 class Owner:
+    """A reporting owner on a Form 4 and the relationship they declare to the issuer."""
     cik: str
     name: str
     is_director: bool
@@ -38,10 +39,12 @@ class Owner:
 
     @property
     def is_insider(self) -> bool:
+        """Whether the owner is a director or an officer."""
         return self.is_director or self.is_officer
 
     @property
     def role(self) -> str:
+        """The owner's roles joined as text (for example director, officer title)."""
         parts: list[str] = []
         if self.is_officer:
             parts.append(self.officer_title or "officer")
@@ -54,6 +57,7 @@ class Owner:
 
 @dataclass(frozen=True, slots=True)
 class Form4Trade:
+    """One non-derivative transaction row of a Form 4."""
     accession: str
     filed: date
     ticker: str
@@ -70,6 +74,7 @@ class Form4Trade:
 
     @property
     def dollars(self) -> Decimal:
+        """Transaction value: shares times price."""
         return self.shares * self.price
 
     @property
@@ -81,6 +86,7 @@ class Form4Trade:
 
 @dataclass(frozen=True, slots=True)
 class Form4Filing:
+    """A parsed Form 4: the issuer, its owners and the transactions."""
     accession: str
     filed: date
     ticker: str
@@ -98,19 +104,23 @@ class Form4Filing:
 
 
 def _text(node: ElementTree.Element | None, path: str) -> str:
+    """Stripped text at `path` under `node`; empty when missing."""
     found = node.find(path) if node is not None else None
     return (found.text or "").strip() if found is not None else ""
 
 
 def _flag(node: ElementTree.Element | None, path: str) -> bool:
+    """Whether the element at `path` is a true flag (`1` or `true`)."""
     return _text(node, path).lower() in ("1", "true")
 
 
 def _value(row: ElementTree.Element, path: str) -> str:
+    """Text of the `value` child at `path` in a transaction row."""
     return _text(row, f"{path}/value")
 
 
 def _decimal(row: ElementTree.Element, path: str) -> Decimal | None:
+    """The `value` at `path` as a `Decimal`; `None` when blank or not a number."""
     raw = _value(row, path)
     try:
         return Decimal(raw) if raw else None
@@ -119,6 +129,7 @@ def _decimal(row: ElementTree.Element, path: str) -> Decimal | None:
 
 
 def _day(row: ElementTree.Element, path: str) -> date | None:
+    """The `value` at `path` as a date; `None` when blank or malformed."""
     raw = _value(row, path)[:10]  # some filings carry a UTC offset after the date
     try:
         return date.fromisoformat(raw) if raw else None
@@ -127,6 +138,7 @@ def _day(row: ElementTree.Element, path: str) -> date | None:
 
 
 def _owner(node: ElementTree.Element) -> Owner:
+    """Build an `Owner` from a reporting-owner element."""
     relationship = node.find("reportingOwnerRelationship")
     return Owner(
         cik=_text(node, "reportingOwnerId/rptOwnerCik"),
@@ -146,6 +158,7 @@ def _row_footnotes(row: ElementTree.Element, footnotes: dict[str, str]) -> tuple
 
 
 def parse_form4(xml: str, *, accession: str, filed: date, ticker: str) -> Form4Filing:
+    """Parse Form 4 XML into a `Form4Filing`; raise when the document is malformed."""
     try:
         root = ElementTree.fromstring(xml)
     except ElementTree.ParseError as exc:

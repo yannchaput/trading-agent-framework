@@ -49,6 +49,7 @@ async def _place_and_wait(ib: Any, contract: Contract, ib_order: Any, timeout: f
     messages: list[str] = []
 
     def capture(req_id: int, error_code: int, error_string: str, _contract: Any) -> None:
+        """Collect IBKR error messages addressed to this order id."""
         # ib_order.orderId is mutated in place by placeOrder before it registers the trade or
         # fires anything, so it is already correct however early IBKR answers -- subscribing
         # before placeOrder() (rather than after) is what makes that safe.
@@ -68,6 +69,7 @@ async def _place_and_wait(ib: Any, contract: Contract, ib_order: Any, timeout: f
 
 
 class IbkrBroker(Broker):
+    """Broker implementation for Interactive Brokers through an IB Gateway connection."""
     name: ClassVar[str] = "ibkr"
 
     def __init__(
@@ -83,6 +85,18 @@ class IbkrBroker(Broker):
         news_provider_factory: Callable[[], NewsProvider] | None = None,
         ack_timeout: float = 5.0,
     ) -> None:
+        """Build the broker around a gateway connection and an Alpaca market-data source.
+
+        Args:
+            strategy_name: Name that prefixes every client order id.
+            connection: Connected IB Gateway session.
+            market_data: Alpaca-backed market data used for prices, quotes and bars.
+            client_id: IB API client id of this connection.
+            tracker: Order tracker; a fresh one is created when omitted.
+            clock: Market clock; defaults to the market-data calendar clock.
+            is_paper: Whether the account is a paper account.
+            news_provider_factory: Builds the news provider on first use.
+        """
         super().__init__(
             strategy_name,
             tracker,
@@ -135,6 +149,7 @@ class IbkrBroker(Broker):
 
     @property
     def account_id(self) -> str:
+        """The single managed account id, resolved lazily; raise if the login manages several."""
         if self._account_id is None:
             accounts = self._connection.call(lambda ib: ib.managedAccounts())
             if len(accounts) != 1:
@@ -143,10 +158,12 @@ class IbkrBroker(Broker):
         return cast(str, self._account_id)
 
     def _summary(self) -> list[Any]:
+        """Fetch the account summary rows from the gateway."""
         account_id = self.account_id
         return self._connection.call(lambda ib: ib.accountSummaryAsync(account_id))
 
     def get_account(self) -> AccountBalances:
+        """Fetch the account balances."""
         return account.parse_account(self._summary(), self.account_id)
 
     def configure_account(self) -> None:
@@ -157,9 +174,11 @@ class IbkrBroker(Broker):
     # --- orders ----------------------------------------------------------------------
 
     def _conform_order(self, order: Order) -> Order:
+        """Conform `order` to IBKR's rules."""
         return orders.conform_order(order)
 
     def _qualified(self, asset: Asset) -> Contract:
+        """Resolve `asset` to a qualified IBKR contract, cached per symbol."""
         contract = self._contracts.get(asset.symbol)
         if contract is None:
             results = self._connection.call(lambda ib: ib.qualifyContractsAsync(orders.build_contract(asset)))
@@ -170,6 +189,7 @@ class IbkrBroker(Broker):
         return contract
 
     def _submit_order(self, order: Order) -> Order:
+        """Place `order` through the gateway and wait for IBKR to accept or reject it."""
         if not order.client_order_id:
             order.client_order_id = orders.client_order_id_for(self.strategy_name, order.identifier)
         ib_order = orders.build_order(order)
@@ -207,6 +227,7 @@ class IbkrBroker(Broker):
         return order
 
     def _open_trade(self, order: Order) -> Trade:
+        """Find the open IBKR trade whose order reference matches `order`."""
         client_order_id = order.client_order_id
         trade = self._connection.call(lambda ib: next((t for t in ib.openTrades() if client_order_id and t.order.orderRef == client_order_id), None))
         if trade is None:
@@ -216,6 +237,7 @@ class IbkrBroker(Broker):
         return trade
 
     def cancel_order(self, order: Order) -> None:
+        """Cancel the open trade behind `order`."""
         trade = self._open_trade(order)
         self._connection.call(lambda ib: ib.cancelOrder(trade.order))
 
@@ -230,6 +252,7 @@ class IbkrBroker(Broker):
         trade = self._open_trade(order)
 
         def replace(ib: Any) -> Trade:
+            """Apply the new prices to the open trade and re-place it."""
             if limit_price is not None:
                 trade.order.lmtPrice = float(limit_price)
             if stop_price is not None:
@@ -248,6 +271,7 @@ class IbkrBroker(Broker):
         return order
 
     def pull_order(self, identifier: str) -> Order | None:
+        """Look an order up by identifier among recent orders."""
         return next((o for o in self.pull_orders(limit=10_000) if o.identifier == identifier), None)
 
     def pull_orders(self, limit: int = 100) -> list[Order]:
@@ -256,11 +280,13 @@ class IbkrBroker(Broker):
         return [orders.parse_trade(t, self.strategy_name) for t in trades][-limit:]
 
     def pull_positions(self) -> list[Position]:
+        """Fetch the portfolio items as positions."""
         items = self._connection.call(lambda ib: ib.portfolio())
         parsed = (orders.parse_portfolio_item(item, self.strategy_name) for item in items)
         return [p for p in parsed if p is not None]
 
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
+        """Close `fraction` of the position in `asset`; `None` when flat."""
         position = next((p for p in self.pull_positions() if p.asset == asset), None)
         if position is None:
             return None
@@ -272,12 +298,14 @@ class IbkrBroker(Broker):
         return self.submit_order(Order(self.strategy_name, asset, side, OrderType.MARKET, quantity=quantity))
 
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
+        """Cancel everything (by default) and close every position."""
         if cancel_orders:
             self._connection.call(lambda ib: ib.reqGlobalCancel())
         closed = (self.close_position(p.asset) for p in self.pull_positions())
         return [o for o in closed if o is not None]
 
     def sync_open_orders(self) -> list[Order]:
+        """Adopt this strategy's open IBKR orders into the tracker after a restart."""
         trades = self._connection.call(lambda ib: ib.reqAllOpenOrdersAsync())
         adopted: list[Order] = []
         for trade in trades:
@@ -299,17 +327,21 @@ class IbkrBroker(Broker):
     # --- market data, clock, news (Alpaca) ---------------------------------------------
 
     def news_provider(self) -> NewsProvider | None:
+        """The news provider, built lazily from its factory; `None` when none is configured."""
         if self._news_provider is None and self._news_provider_factory is not None:
             self._news_provider = self._news_provider_factory()
         return self._news_provider
 
     def get_last_price(self, asset: Asset) -> Decimal | None:
+        """Last traded price for `asset`, from market data."""
         return self._market_data.get_last_price(asset)
 
     def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        """Last traded prices for several assets, from market data."""
         return self._market_data.get_last_prices(assets)
 
     def get_quote(self, asset: Asset) -> Quote | None:
+        """Latest quote for `asset`, from market data."""
         return self._market_data.get_quote(asset)
 
     def get_bars(
@@ -320,14 +352,17 @@ class IbkrBroker(Broker):
         *,
         include_after_hours: bool = True,
     ) -> dict[Asset, Bars]:
+        """Fetch bars ending at the broker clock's current time."""
         return self._market_data.get_bars(assets, length, timestep, end=self.clock.now(), include_after_hours=include_after_hours)
 
     # --- stream ----------------------------------------------------------------------
 
     def start_stream(self) -> None:
+        """Register the order-event handlers on the gateway connection."""
         self._connection.call(lambda ib: self._events.register(ib))
 
     def stop_stream(self, timeout: float = 5.0) -> None:
+        """Unregister the order-event handlers, waiting up to `timeout` seconds."""
         try:
             # reconnect=False: a lost Gateway connection at teardown should fail fast, never
             # trigger a slow reconnect-and-reconcile after the strategy may already be done.

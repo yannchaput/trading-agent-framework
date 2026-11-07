@@ -42,7 +42,8 @@ if TYPE_CHECKING:
 
 class AlpacaTradingCalendarClient(Protocol):
     """The one trading-client method this module needs -- narrower than the full
-    `orders.AlpacaTradingClient` Protocol since this module never submits orders."""
+    `orders.AlpacaTradingClient` Protocol since this module never submits orders.
+    """
 
     def get_calendar(self, filters: GetCalendarRequest) -> list[object]: ...
 
@@ -53,7 +54,8 @@ class AlpacaBacktestData(BacktestDataSource):
     lazy-fetch path, which carries no window of its own, uses that fixed window;
     `load()` always honors its own caller-supplied `start`/`end`). The calendar cache
     backing `sessions()` is NOT fixed to that window, though: it grows on demand to
-    cover the union of every range it's ever been queried with (see `sessions()`)."""
+    cover the union of every range it's ever been queried with (see `sessions()`).
+    """
 
     def __init__(
         self,

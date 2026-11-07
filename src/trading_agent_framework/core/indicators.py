@@ -25,7 +25,8 @@ _BARS_PER_LENGTH = 3
 
 def default_bars(kwargs: Mapping[str, Any]) -> int:
     """Bars fetched when the caller passes no `bars`: 3x the indicator's own `length`
-    (warm-up for smoothed indicators), never fewer than 50."""
+    (warm-up for smoothed indicators), never fewer than 50.
+    """
     return max(_MIN_BARS, int(kwargs.get("length", _MIN_BARS)) * _BARS_PER_LENGTH)
 
 
@@ -35,9 +36,11 @@ class IndicatorRow:
     __slots__ = ("_values",)
 
     def __init__(self, values: Mapping[str, float | None]) -> None:
+        """Store the indicator values by column name."""
         self._values = dict(values)
 
     def __getattr__(self, name: str) -> float | None:
+        """Indicator value by attribute name; raise `AttributeError` for unknown or private names."""
         if name.startswith("_"):
             raise AttributeError(name)
         for key, value in self._values.items():
@@ -46,12 +49,15 @@ class IndicatorRow:
         raise AttributeError(f"no column {name!r}; columns are {list(self._values)}")
 
     def __getitem__(self, key: str) -> float | None:
+        """Indicator value by column name."""
         return self._values[key]
 
     def as_dict(self) -> dict[str, float | None]:
+        """The values as a plain dict."""
         return dict(self._values)
 
     def __repr__(self) -> str:
+        """Developer-friendly representation listing the values."""
         return f"IndicatorRow({self._values!r})"
 
 
@@ -62,9 +68,11 @@ class Indicators:
     """`strategy.indicators`: any pandas-ta-classic indicator by name, plus `custom`."""
 
     def __init__(self, strategy: Strategy) -> None:
+        """Bind the indicators to a strategy, which supplies the bars."""
         self._strategy = strategy
 
     def __getattr__(self, name: str) -> Callable[..., IndicatorValue]:
+        """Resolve any pandas-ta indicator name to a callable evaluated on the strategy's bars."""
         if name.startswith("_"):
             raise AttributeError(name)
         function = getattr(_pandas_ta(), name, None)
@@ -72,11 +80,13 @@ class Indicators:
             raise AttributeError(f"pandas_ta_classic has no indicator named {name!r}; use indicators.custom(name, fn, asset, ...) for your own")
 
         def compute(df: pd.DataFrame, **kwargs: Any) -> object:
+            """Run the pandas-ta function on the OHLCV columns."""
             series = {column: df[column] for column in _OHLCV}
             series["open_"] = series["open"]  # pandas-ta-classic's name for ~20 indicators
             return function(**series, **kwargs)
 
         def indicator(asset: Asset | str, timestep: str = "day", **kwargs: Any) -> IndicatorValue:
+            """Evaluate the indicator for `asset` at `timestep` and return its latest value."""
             return self._evaluate(name, compute, asset, timestep, kwargs)
 
         indicator.__name__ = name
@@ -103,6 +113,7 @@ class Indicators:
         timestep: str,
         kwargs: Mapping[str, Any],
     ) -> IndicatorValue:
+        """Fetch bars, run `compute`, and reduce the result to its latest value."""
         options = dict(kwargs)
         count = options.pop("bars", None)
         include_after_hours = options.pop("include_after_hours", True)
@@ -115,12 +126,14 @@ class Indicators:
 
 
 def _pandas_ta() -> Any:
+    """Import pandas-ta lazily, keeping `core` imports light."""
     import pandas_ta_classic  # deferred: keeps `import trading_agent_framework.core` light
 
     return pandas_ta_classic
 
 
 def _latest(name: str, result: object) -> IndicatorValue:
+    """Latest value of an indicator result: a number, or a row for multi-column results."""
     import pandas as pd
 
     if result is None:  # pandas-ta returns None when there are too few bars
@@ -135,6 +148,7 @@ def _latest(name: str, result: object) -> IndicatorValue:
 
 
 def _number(value: object) -> float | None:
+    """Convert a pandas scalar to a float; `None` for missing values."""
     import pandas as pd
 
     return None if pd.isna(value) else float(value)  # type: ignore # ty: ignore[invalid-argument-type]

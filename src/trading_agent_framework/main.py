@@ -28,8 +28,7 @@ def _refuse_tastytrade_sandbox() -> None:
 
 
 def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strategies) -> None:
-    """
-    Load and run the selected strategy.
+    """Load and run the selected strategy.
 
     Args:
         console (Console): the standard output
@@ -63,8 +62,7 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strateg
 
 
 def main() -> None:
-    """
-    Main entry point of the program.
+    """Main entry point of the program.
     It checks the command-line arguments for the strategy name and trading mode, validates them, and then runs the selected strategy.
     """
     # Temporary bootstrap logger: root has no handlers until setup_strategy_logging

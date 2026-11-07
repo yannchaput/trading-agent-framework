@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 class Strategies(StrEnum):
+    """Names of the strategies that can be started from the command line."""
     BILL_ACKMAN = auto()
     BULL_BEAR = auto()
     CONGRESS_TRADES = auto()
@@ -54,34 +55,42 @@ def _build_with_universe(strategy_class: Callable[..., Strategy], broker: Broker
 
 
 def _build_cross_momentum(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the cross-momentum strategy over the point-in-time universe."""
     return _build_with_universe(CrossMomentumStrategy, broker, mode, point_in_time=True)
 
 
 def _build_news_binary(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the news-binary strategy."""
     return NewsBinaryStrategy(broker=broker, mode=mode)
 
 
 def _build_vwap_pullback(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the VWAP-pullback strategy over the universe."""
     return _build_with_universe(VwapPullbackStrategy, broker, mode)
 
 
 def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the Bill Ackman strategy over the universe."""
     return _build_with_universe(BillAckmanStrategy, broker, mode)
 
 
 def _build_bull_bear(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the bull/bear strategy over the point-in-time universe."""
     return _build_with_universe(BullBearStrategy, broker, mode, point_in_time=True)
 
 
 def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the congress-trades strategy."""
     return CongressTradesStrategy(broker=broker, mode=mode)
 
 
 def _build_insider_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the insider-trades strategy."""
     return InsiderTradesStrategy(broker=broker, mode=mode)
 
 
 def _build_earnings_drift(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the earnings-drift strategy over the universe."""
     return _build_with_universe(EarningsDriftStrategy, broker, mode)
 
 
@@ -112,8 +121,7 @@ _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
 
 
 def build_strategy(strategy: Strategies, broker: Broker, mode: TradingMode) -> Strategy | None:
-    """
-    Build a strategy instance from a strategy name, Broker and trading mode.
+    """Build a strategy instance from a strategy name, Broker and trading mode.
 
     Args:
         strategy (Strategies): The strategy name.

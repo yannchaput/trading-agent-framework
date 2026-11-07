@@ -68,6 +68,7 @@ _GLM_ARGUMENT = re.compile(r"\s*<arg_key>(.*?)</arg_key>\s*<arg_value>(.*?)</arg
 
 
 def _is_glm_model(model_name: str | None) -> bool:
+    """Whether the model name belongs to the GLM family."""
     return bool(model_name) and "glm" in model_name.lower()  # ty: ignore[unresolved-attribute]
 
 
@@ -220,6 +221,7 @@ class AgentManager:
     """`strategy.agents`: a named registry of LangChain agents built from this framework's tools."""
 
     def __init__(self, credentials_source: Callable[[], LLMCredentials]) -> None:
+        """Create the manager; credentials are read lazily through `credentials_source`."""
         self._credentials_source = credentials_source
         self._agents: dict[str, AgentHandle] = {}
         self._telemetry_now: Callable[[], datetime] | None = None
@@ -274,6 +276,7 @@ class AgentManager:
 
         @wrap_model_call
         def repair_pseudo_tool_call(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Turn tool calls the model wrote as plain text into real tool calls."""
             response = handler(request)
             ai_message = next((m for m in reversed(response.result) if isinstance(m, AIMessage)), None)
             if ai_message is None or ai_message.tool_calls:
@@ -306,6 +309,7 @@ class AgentManager:
 
         @wrap_model_call
         def force_tool_choice(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Force the model to call the tool currently required, if any."""
             tool_name = current_forced_tool()
             if tool_name is not None and not any(isinstance(m, AIMessage) for m in request.messages):
                 request = request.override(tool_choice=tool_name)
@@ -330,14 +334,18 @@ class AgentManager:
         counted = frozenset(tool_names) - frozenset(exempt)
 
         class ToolBudgetLimit(ToolCallLimitMiddleware):
+            """Tool-call limit that counts only the budgeted tools."""
             def __init__(self) -> None:
+                """Start with a zero limit; `AgentHandle.run` sets the real limit for each run."""
                 super().__init__(run_limit=0)  # the base class wants a limit; `AgentHandle.run` sets the real one per run
                 self.run_limit = None
 
             def _matches_tool_filter(self, tool_call: Any) -> bool:
+                """Whether the tool call counts against the budget."""
                 return tool_call["name"] in counted
 
             def after_model(self, state: Any, runtime: Any) -> Any:
+                """Apply the budget after each model turn."""
                 update = super().after_model(state, runtime)
                 # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs). 
                 # If it did call a tool, but the run limit was reached, the code below replace the base's generic refusal with one that names the agent's own tools and the ones it must finish with.
@@ -370,6 +378,7 @@ class AgentManager:
 
         @wrap_model_call
         def end_after_final_tool(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """End the run once a final tool has returned."""
             for message in reversed(request.messages):  # the tool results since the model's last turn
                 if getattr(message, "type", None) != "tool":
                     break
@@ -391,6 +400,7 @@ class AgentManager:
 
         @wrap_model_call
         def send_reasoning_effort(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Send the reasoning effort to the server, dropping it for good if the server refuses it."""
             if self._reasoning_effort_refused:
                 return handler(request)
             try:
@@ -417,6 +427,7 @@ class AgentManager:
 
         @wrap_model_call
         def send_thinking_budget(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Send the thinking budget to the server, dropping it for good if the server refuses it."""
             if self._thinking_budget_refused:
                 return handler(request)
             extra_body = {**(getattr(request.model, "extra_body", None) or {}), **(request.model_settings.get("extra_body") or {}), "thinking_token_budget": budget}
@@ -434,10 +445,12 @@ class AgentManager:
         return send_thinking_budget
 
     def _telemetry_middleware(self, agent_name: str) -> Any:
+        """Middleware that records every model call for `agent_name`."""
         from langchain.agents.middleware import wrap_model_call
 
         @wrap_model_call
         def record_call(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Time the model call and record it."""
             started = time.perf_counter()
             response = handler(request)
             self._record_call(agent_name, request.model, response, (time.perf_counter() - started) * 1000)
@@ -446,6 +459,7 @@ class AgentManager:
         return record_call
 
     def _record_call(self, agent_name: str, chat_model: Any, response: Any, latency_ms: float) -> None:
+        """Record one model call's usage and latency in the telemetry store."""
         assert self._telemetry_now is not None
         ai_message = _last_ai_message(response)
         usage = usage_from_message(ai_message)
@@ -576,6 +590,7 @@ class AgentManager:
         return handle
 
     def _resolve_model(self, model: str | BaseChatModel | None, timeout_seconds: float | None, temperature: float | None = None) -> Any:
+        """Resolve a model name (or ready chat model) to a chat model with the run's timeout and temperature."""
         if model is not None and not isinstance(model, str):
             return model  # already a chat-model instance -- used as-is, LLMCredentials and timeout_seconds untouched
 
@@ -606,7 +621,9 @@ class AgentManager:
             raise AgentError(f"could not build chat model {model_id!r}: {exc}") from exc
 
     def __getitem__(self, name: str) -> AgentHandle:
+        """The agent registered under `name`."""
         return self._agents[name]
 
     def __contains__(self, name: str) -> bool:
+        """Whether an agent is registered under `name`."""
         return name in self._agents

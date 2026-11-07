@@ -112,7 +112,8 @@ def test_rejection_message() -> None:
 
 def test_a_normal_ioc_fok_cancel_is_not_a_rejection() -> None:
     """A `Cancelled`/`ApiCancelled` status with no error-code log entry is IOC/FOK doing its
-    normal job (didn't fill, so it cancelled), never a submit-time rejection."""
+    normal job (didn't fill, so it cancelled), never a submit-time rejection.
+    """
     assert orders.rejection_message(make_ib_trade(status="Cancelled")) is None
     assert orders.rejection_message(make_ib_trade(status="ApiCancelled")) is None
     assert orders.rejection_message(make_ib_trade(status="Cancelled", log_message="Order Canceled - reason:")) is None
