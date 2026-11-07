@@ -210,6 +210,7 @@ class MemoryStore:
             strategy_name: Strategy whose memory this is.
             now: Strategy-clock time, so backtests never read the wall clock.
             wall_clock: Real time, used only for audit timestamps.
+            fresh: Delete any existing database first, to start the run with an empty memory.
         """
         self.db_path = db_path
         self.strategy_name = strategy_name
@@ -488,9 +489,7 @@ class MemoryStore:
         model_call_id: str | None = None,
         retrieval_id: str | None = None,
     ) -> dict[str, Any]:
-        """Record a submitted order (`order.submitted`, history only), linked to the decision
-        recorded in the same model call.
-        """
+        """Record a submitted order (`order.submitted`, history only), linked to the decision recorded in the same model call."""
         symbol = order.asset.symbol.upper()
         size = str(order.quantity) if order.quantity is not None else f"${order.notional}"
         text = f"Submitted order {order.side} {size} {symbol} as {order.order_type}"
@@ -607,8 +606,9 @@ class MemoryStore:
         max_chars_per_item: int = 900,
         update_open_thesis_outcomes: bool = True,
     ) -> dict[str, Any]:
-        """The memory summary injected into agent prompts: open theses, validated lessons and the
-        retrieval policy. Also records a daily `thesis.outcome_observed` for each held open thesis.
+        """The memory summary injected into agent prompts: open theses, validated lessons and the retrieval policy.
+
+        Also records a daily `thesis.outcome_observed` for each held open thesis.
         """
         held_by_symbol: dict[str, HeldPosition] = {}
         for position in held:

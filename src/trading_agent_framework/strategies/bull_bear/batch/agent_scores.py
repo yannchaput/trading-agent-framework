@@ -44,8 +44,10 @@ class Returns:
 
 
 def scored_reviews(reviews: Sequence[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
-    """The reviews whose calls count: not abandoned (an execution-stage abandonment keeps its verdicts, but its book
-    never fully traded) and with a debate set (another strategy's records have none).
+    """The reviews whose calls count.
+
+    Not abandoned (an execution-stage abandonment keeps its verdicts, but its book never fully traded) and with a debate
+    set (another strategy's records have none).
     """
     return [review for review in reviews if not review.get("abandoned") and review.get("debate_set")]
 
@@ -61,8 +63,9 @@ def forward_returns(
     calendar: Sequence[date],
     horizons: Sequence[int] = HORIZONS,
 ) -> Returns:
-    """Each scored review's candidates, at each horizon: entry at the open of the first `calendar` session strictly
-    after the review date, exit at the open `horizon` sessions later. A candidate with no open on either day, or a
+    """Each scored review's candidates, at each horizon: entry at the open of the first `calendar` session strictly after the review date, exit at the open `horizon` sessions later.
+
+    A candidate with no open on either day, or a
     review the calendar does not reach back to (the session that followed it is not in the calendar), is dropped and
     counted; an exit past the last session is immature, counted apart.
     """
@@ -187,8 +190,10 @@ _AGENTS: tuple[tuple[str, tuple[str, ...], tuple[str, str], Callable[[Mapping[st
 
 
 def score_agents(reviews: Sequence[Mapping[str, Any]], returns: Returns, horizons: Sequence[int] = HORIZONS) -> RunScores:
-    """Each agent's calls against the excess returns: pooled group stats, and a spread computed per review (a review
-    missing either group is skipped and counted), averaged across reviews, with a t-stat across reviews.
+    """Each agent's calls against the excess returns.
+
+    Pooled group stats, and a spread computed per review (a review missing either group is skipped and counted), averaged
+    across reviews, with a t-stat across reviews.
     """
     excess = {(row.review, row.symbol, row.horizon): row.excess for row in returns.rows}
     counted = scored_reviews(reviews)
@@ -228,9 +233,10 @@ def score_agents(reviews: Sequence[Mapping[str, Any]], returns: Returns, horizon
 
 
 def newey_west_t(values: Sequence[float], *, lags: int) -> float | None:
-    """t-stat of the mean of `values`, with a Newey-West (Bartlett) long-run variance over `lags` lags scaled by
-    n / (n - 1): at 0 lags this is the textbook t, the mean over (sample standard deviation / root n). None under two
-    values or with no variance.
+    """t-stat of the mean of `values`, with a Newey-West (Bartlett) long-run variance over `lags` lags.
+
+    The variance is scaled by n / (n - 1): at 0 lags this is the textbook t, the mean over (sample standard deviation /
+    root n). None under two values or with no variance.
     """
     n = len(values)
     if n < 2:

@@ -47,6 +47,15 @@ class Scanner:
     """Finds and tracks setups: stage 1 once per session, stage 2 + setup state machine every tick."""
 
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, universe: Sequence[str], *, benchmark: str = "SPY", preload: Preload | None = None) -> None:
+        """Create the scanner.
+
+        Args:
+            strategy: Strategy whose data and clock are used.
+            params: Strategy parameters.
+            universe: Symbols scanned (the cross_momentum universe file's list).
+            benchmark: Symbol relative strength is measured against.
+            preload: Fetches the minute bars of the universe in one go (backtests); None live, where the broker fetches on demand.
+        """
         self._strategy = strategy
         self._params = params
         self._universe = list(universe)  # the cross_momentum universe file's symbols

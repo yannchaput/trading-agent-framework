@@ -26,7 +26,18 @@ if TYPE_CHECKING:
 
 
 class KnownFilingsSource(Protocol):
-    def known(self, as_of: datetime) -> KnownFilings: ...
+    """What the research tools need from the disclosure source."""
+
+    def known(self, as_of: datetime) -> KnownFilings:
+        """Return what is known about the politician on a date.
+
+        Args:
+            as_of: Timezone-aware time; only filings filed before its market date count.
+
+        Returns:
+            The yearly report, the trades filed since and the filings behind them.
+        """
+        ...
 
 
 def congress_research_tools(strategy: "Strategy", source: KnownFilingsSource) -> list[Callable[..., dict[str, Any]]]:  # noqa: UP037

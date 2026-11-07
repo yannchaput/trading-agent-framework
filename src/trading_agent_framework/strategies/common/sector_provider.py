@@ -13,6 +13,7 @@ class SectorProvider:
     """
 
     def __init__(self) -> None:
+        """Create a provider with an empty cache."""
         self._cache: dict[str, str] = {}
 
     def get_sector(self, symbol: str) -> str:

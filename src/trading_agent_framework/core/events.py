@@ -22,6 +22,15 @@ _FILL_EVENTS = frozenset({OrderEvent.FILLED, OrderEvent.PARTIALLY_FILLED})
 
 @dataclass(frozen=True, slots=True)
 class QueuedOrderEvent:
+    """An order event waiting for the executor to dispatch it to the strategy.
+
+    Attributes:
+        order: The order the event is about.
+        event: What happened to it.
+        price: Fill price of the latest fill, for fill events.
+        quantity: Fill quantity of the latest fill, for fill events.
+    """
+
     order: Order
     event: OrderEvent
     price: Decimal | None = None
@@ -32,10 +41,24 @@ class OrderEventQueue:
     """Thread-safe FIFO of order events, doubling as an `OrderTracker` listener."""
 
     def __init__(self, wake: threading.Event) -> None:
+        """Create an empty queue.
+
+        Args:
+            wake: Event set whenever an order event is queued, to wake the executor from its wait.
+        """
         self._queue: queue.SimpleQueue[QueuedOrderEvent] = queue.SimpleQueue()
         self._wake = wake
 
     def __call__(self, order: Order, event: OrderEvent) -> None:
+        """Queue an order event (called from the broker's stream thread).
+
+        For fill events the latest fill's price and quantity are read now, because later fills append more transactions
+        before the executor drains the queue.
+
+        Args:
+            order: The order the event is about.
+            event: What happened to it.
+        """
         price = quantity = None
         if event in _FILL_EVENTS and order.transactions:
             # Read now: later fills append more transactions before the executor drains.
@@ -45,6 +68,11 @@ class OrderEventQueue:
         self._wake.set()
 
     def drain(self) -> Iterator[QueuedOrderEvent]:
+        """Pop queued events until the queue is empty.
+
+        Yields:
+            Each queued event, oldest first.
+        """
         while True:
             try:
                 yield self._queue.get_nowait()

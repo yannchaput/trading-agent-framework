@@ -329,8 +329,9 @@ class Strategy:
         style: str = "solid",
         plot_name: str = "default_plot",
     ) -> None:
-        """Record a charted value at the current simulated time (lumibot-compatible
-        signature). No-op outside backtesting.
+        """Record a charted value at the current simulated time (lumibot-compatible signature).
+
+        No-op outside backtesting.
         """
         if not self.is_backtesting:
             return

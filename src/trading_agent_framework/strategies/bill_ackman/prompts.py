@@ -77,6 +77,14 @@ TRADER_SYSTEM = (
 
 
 def researcher_task(top_n: int) -> str:
+    """Build the researcher's task message.
+
+    Args:
+        top_n: Number of ideas to rank and submit.
+
+    Returns:
+        The task text.
+    """
     return f"Rank your best {top_n} ideas from the candidates in the context, best first, then submit them. The current datetime is in the context."
 
 

@@ -1,3 +1,5 @@
+"""Agent tools of the congress_trades strategy."""
+
 from typing import TYPE_CHECKING
 
 from trading_agent_framework.utils.package_helper import get_version

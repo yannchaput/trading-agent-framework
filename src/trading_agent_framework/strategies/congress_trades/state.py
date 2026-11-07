@@ -25,6 +25,18 @@ STATE_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class CongressState:
+    """What congress_trades carries from one run to the next.
+
+    Attributes:
+        processed: DocIDs of the yearly report and PTRs the last completed run was built from.
+        holdings: Ticker -> `{tier, value_low, value_high}` after that run.
+        target: Ticker -> weight of that run's portfolio.
+        traded: Tickers ever ordered by this strategy.
+        pending_trade: Orders left unfilled that a later tick retries, if any.
+        abandoned_streak: Abandoned runs in a row.
+        last_run: ISO date of the last completed run.
+    """
+
     processed: list[str] = field(default_factory=list)  # DocIDs of the yearly report and PTRs the last completed run was built from
     holdings: dict[str, dict[str, int]] = field(default_factory=dict)  # ticker -> {tier, value_low, value_high} after that run
     target: dict[str, float] = field(default_factory=dict)  # ticker -> weight of that run's portfolio
@@ -69,6 +81,8 @@ def _decode(raw: dict[str, Any]) -> CongressState:
 
 
 class StateStore(JsonStateStore[CongressState]):
+    """JSON store of the congress_trades state."""
+
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
         """`fresh` wipes the file at construction; used in backtests so one run never inherits the last."""
         super().__init__(path, version=STATE_VERSION, empty=CongressState, decode=_decode, encode=asdict, log=logger, fresh=fresh)

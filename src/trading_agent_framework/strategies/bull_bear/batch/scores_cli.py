@@ -1,5 +1,6 @@
-"""`uv run bull-bear-scores <run_dir> [<run_dir>...]`: the bull, the bear, the judge and its strengths of bull_bear backtest runs,
-scored against forward returns (`agent_scores.py`), runs side by side.
+"""`uv run bull-bear-scores <run_dir> [<run_dir>...]`: score bull_bear backtest runs, side by side.
+
+The bull, the bear, the judge and its strengths of each run, scored against forward returns (`agent_scores.py`).
 
 Reads each run's `reviews.jsonl` itself (a strategy package never imports the dashboard), fetches daily opens from
 Yahoo through `YahooDailyBars` (SPY's bars are the session calendar) and prints the report. Read-only: nothing is
@@ -53,6 +54,15 @@ _TITLES = {
 
 @dataclass(frozen=True, slots=True)
 class RunReport:
+    """The scores of one backtest run.
+
+    Attributes:
+        name: Run directory name.
+        scores: The run's agent scores.
+        reviews: Number of scored reviews.
+        malformed: Unreadable lines in reviews.jsonl.
+    """
+
     name: str
     scores: RunScores
     reviews: int  # scored reviews
@@ -60,6 +70,16 @@ class RunReport:
 
 
 def main(argv: Sequence[str] | None = None, *, download: DownloadFn | None = None, today: date | None = None) -> int:
+    """Run the `bull-bear-scores` command.
+
+    Args:
+        argv: Command-line arguments; `sys.argv[1:]` when omitted.
+        download: Replacement for the Yahoo download (injected in tests).
+        today: Replacement for today's date (injected in tests).
+
+    Returns:
+        The process exit code: 0 on success, 1 when Yahoo data is unavailable.
+    """
     parser = argparse.ArgumentParser(
         prog="bull-bear-scores",
         description="Score the bull, the bear, the judge and its strengths of bull_bear backtest runs against forward returns (Yahoo opens, 5 and 20 sessions).",
@@ -103,8 +123,10 @@ def read_reviews(path: Path) -> tuple[list[dict[str, Any]], int]:
 
 
 def fetch_opens(runs: Sequence[Sequence[Mapping[str, Any]]], *, today: date, download: DownloadFn | None = None) -> tuple[dict[str, dict[date, float]], list[date]]:
-    """{symbol: {session date: open}} for every candidate of every run plus SPY, from one Yahoo download spanning 7 days
-    before the first review to 40 days after the last (capped at today), and SPY's sessions as the calendar.
+    """`{symbol: {session date: open}}` for every candidate of every run plus SPY.
+
+    From one Yahoo download spanning 7 days before the first review to 40 days after the last (capped at today), and SPY's
+    sessions as the calendar.
 
     Raises YahooDataError when the download fails or has no SPY.
     """

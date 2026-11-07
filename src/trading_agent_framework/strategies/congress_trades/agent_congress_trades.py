@@ -57,6 +57,15 @@ class CongressTradesStrategy(Strategy):
         source: SourceLike | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the strategy.
+
+        Args:
+            broker: Broker the strategy trades through.
+            mode: Trading mode.
+            settings: Strategy parameters; the defaults when omitted.
+            source: Disclosure source (injected in tests); the House Clerk source is built in `initialize` when omitted.
+            **kwargs: Passed on to `Strategy`.
+        """
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or CongressParams()
         self._source = source  # injected in tests; the real Clerk source is built in `initialize`

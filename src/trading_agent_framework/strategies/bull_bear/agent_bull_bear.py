@@ -83,6 +83,18 @@ class BullBearStrategy(Strategy):
         fundamentals_of: Callable[[str, datetime], Mapping[str, Any]] | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the strategy.
+
+        Args:
+            broker: Broker the strategy trades through.
+            mode: Trading mode.
+            universe: Tickers the weekly review draws candidates from.
+            settings: Strategy parameters; the defaults when omitted.
+            bars_source: Daily-bars source for paper/live (injected in tests); backtests read the data source.
+            sector_of: Maps a ticker to its sector (injected in tests); a cached yfinance lookup when omitted.
+            fundamentals_of: Maps a ticker and a time to its fundamentals (injected in tests); SEC EDGAR when omitted.
+            **kwargs: Passed on to `Strategy`.
+        """
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or BullBearParams()
         # Recorded in settings.json, so the news-on and news-off runs, and runs with another thinking budget or output cap, can be told apart.
@@ -220,12 +232,35 @@ class BullBearStrategy(Strategy):
     # --- order events: logged here only (the base hooks and the executor stay silent for the other strategies) -------
 
     def on_new_order(self, order: Order) -> None:
+        """Log a newly accepted order.
+
+        Args:
+            order: The order the broker accepted.
+        """
         self.log_info(f"new order: {order.side.value} {_size(order.quantity)} {order.asset.symbol} ({order.order_type.value}, id {order.identifier})")
 
     def on_partially_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Log a partial fill.
+
+        Args:
+            position: The position after the fill, or None if there is none.
+            order: The order that was partially filled.
+            price: Price of this fill.
+            quantity: Quantity of this fill.
+            multiplier: Contract multiplier (1 for stocks).
+        """
         self.log_info(f"order partially filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
 
     def on_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Log a complete fill.
+
+        Args:
+            position: The position after the fill, or None if there is none.
+            order: The order that was filled.
+            price: Price of the last fill.
+            quantity: Quantity of the last fill.
+            multiplier: Contract multiplier (1 for stocks).
+        """
         self.log_info(f"order filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
 
     def _market_date(self) -> date:

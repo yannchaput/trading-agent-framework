@@ -8,6 +8,28 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class InsiderParams:
+    """Parameters of the insider_trades strategy.
+
+    Attributes:
+        watchlist: The stocks the strategy may hold: insiders' Form 4 trades are read for these only.
+        signal_window_days: How far back, in days, an insider trade still counts as a signal.
+        history_years: The labelling look-back in calendar years (it also decides how far back `load_window` loads the
+            Form 4s).
+        max_total_weight: Largest sum of stock weights, as a fraction of portfolio value; the rest stays cash.
+        min_weight: Smallest weight of one stock; must be at least `rebalance_band`.
+        max_position_weight: Largest weight of one stock.
+        min_buy_holding_fraction: An open-market buy counts as a signal from this fraction of the insider's holding up.
+        min_sell_holding_fraction: An open-market sale counts as a signal from this fraction of the insider's holding up.
+        weight_tolerance: Slack, as a fraction of portfolio value, when a submitted weight is checked against a limit.
+        rebalance_band: Drift, as a fraction of portfolio value, below which a position is left alone.
+        min_trade_pct: Smallest order, as a fraction of portfolio value.
+        max_trade_retries: Later ticks that re-run the trading stage after orders were left unfilled (0 disables).
+        max_consecutive_abandoned: Abandoned runs in a row that abort a backtest.
+        reason_max_chars: Longest `reason` a submit tool accepts.
+        agent_temperature: Sampling temperature of the agents; None leaves the LLM server's default.
+        order_wait_seconds: How long `check_orders` waits for the orders to reach a final state.
+    """
+
     watchlist: tuple[str, ...] = ("AAPL", "MSFT", "JPM", "BAC", "XOM", "CVX", "PFE", "INTC", "F", "KO")  # the stocks the strategy may hold: insiders' Form 4 trades are read for these only
     signal_window_days: int = 30  # how far back, in days, an insider trade still counts as a signal
     history_years: int = 3  # the labelling look-back in calendar years (it also decides how far back `load_window` loads the Form 4s)
@@ -31,6 +53,11 @@ class InsiderParams:
         return self.max_total_weight / len(self.watchlist)
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         floats = (
             self.max_total_weight,
             self.min_weight,

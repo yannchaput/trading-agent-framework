@@ -153,10 +153,27 @@ UNAVAILABLE_NOTE = "research unavailable"
 
 
 def researcher_task(symbol: str, max_chars: int) -> str:
+    """Build the researcher's task message.
+
+    Args:
+        symbol: Stock to research.
+        max_chars: Longest note the researcher may submit.
+
+    Returns:
+        The task text.
+    """
     return f"Research {symbol}: its fact sheet is in the context. Then submit your note on {symbol} (at most {max_chars} characters). The current datetime is in the context."
 
 
 def bull_task(max_chars: int) -> str:
+    """Build the bull's task message.
+
+    Args:
+        max_chars: Longest argument the bull may submit per stock.
+
+    Returns:
+        The task text.
+    """
     return (
         "Make the bull case for every stock in the context and submit it. "
         f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
@@ -164,6 +181,14 @@ def bull_task(max_chars: int) -> str:
 
 
 def bear_task(max_chars: int) -> str:
+    """Build the bear's task message.
+
+    Args:
+        max_chars: Longest argument the bear may submit per stock.
+
+    Returns:
+        The task text.
+    """
     return (
         "Make the bear case for every stock in the context and submit it. "
         f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
@@ -171,6 +196,14 @@ def bear_task(max_chars: int) -> str:
 
 
 def judge_task(max_chars: int) -> str:
+    """Build the judge's task message.
+
+    Args:
+        max_chars: Longest reason the judge may submit per verdict.
+
+    Returns:
+        The task text.
+    """
     return (
         "Give your verdict, in or out, on every stock in the context and submit them. "
         f"Each reason is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."

@@ -24,4 +24,13 @@ def decimal_of(raw: object, what: str) -> Decimal:
 
 
 def optional_decimal(raw: object, what: str) -> Decimal | None:
+    """Convert an optional payload value to Decimal.
+
+    Args:
+        raw: The value from the payload, or None.
+        what: Field name, used in the error message.
+
+    Returns:
+        The value as Decimal, or None when absent.
+    """
     return None if raw is None else decimal_of(raw, what)

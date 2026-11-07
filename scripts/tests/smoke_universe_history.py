@@ -49,6 +49,15 @@ TOP_N = 1200
 
 
 def check_nvda_in_2017_06(history: UniverseHistory, bars_dir: Path) -> tuple[bool, str]:
+    """Check that NVDA is in the 2017-06 list.
+
+    Args:
+        history: The built universe history.
+        bars_dir: Directory of the cached per-symbol bars.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     symbols = history.months[CHECK_MONTH]
     if "NVDA" not in symbols:
         return False, f"NVDA is not among the {len(symbols)} symbols of {CHECK_MONTH}"
@@ -56,6 +65,15 @@ def check_nvda_in_2017_06(history: UniverseHistory, bars_dir: Path) -> tuple[boo
 
 
 def check_prices_in_2017_06(history: UniverseHistory, bars_dir: Path) -> tuple[bool, str]:
+    """Check that every symbol of the 2017-06 list traded at the minimum price or more before the month.
+
+    Args:
+        history: The built universe history.
+        bars_dir: Directory of the cached per-symbol bars.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     below: list[str] = []
     for symbol in history.months[CHECK_MONTH]:
         frame = parse_yahoo_frame(pd.read_parquet(bars_dir / f"{symbol}.parquet"))
@@ -68,11 +86,29 @@ def check_prices_in_2017_06(history: UniverseHistory, bars_dir: Path) -> tuple[b
 
 
 def check_at_most_top_n(history: UniverseHistory, bars_dir: Path) -> tuple[bool, str]:
+    """Check that no month's list is longer than the top-N limit.
+
+    Args:
+        history: The built universe history.
+        bars_dir: Directory of the cached per-symbol bars.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     largest_month, largest = max(((month, len(symbols)) for month, symbols in history.months.items()), key=lambda item: item[1])
     return largest <= TOP_N, f"the longest list has {largest} symbols ({largest_month}), the limit is {TOP_N}"
 
 
 def check_universe_moves(history: UniverseHistory, bars_dir: Path) -> tuple[bool, str]:
+    """Check that the universe changes over time: some symbols of the first month are gone from the latest list.
+
+    Args:
+        history: The built universe history.
+        bars_dir: Directory of the cached per-symbol bars.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     latest = max(history.months)
     gone = sorted(set(history.months[CHECK_MONTH]) - set(history.months[latest]))
     return bool(gone), f"{len(gone)} symbol(s) of {CHECK_MONTH} are not in {latest}'s list (e.g. {', '.join(gone[:5]) or 'none'})"
@@ -100,6 +136,11 @@ def run_checks(history: UniverseHistory, bars_dir: Path) -> bool:
 
 
 def main() -> int:
+    """Build the point-in-time universe history in a temporary file and run the checks on it.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     end = date.today().replace(day=1)
     with tempfile.TemporaryDirectory() as tmp:
         try:

@@ -34,20 +34,53 @@ class RebalanceParams(Protocol):
     """What the rebalancer reads from a strategy's parameters (`AckmanParams`, `BullBearParams`)."""
 
     @property
-    def parking_symbol(self) -> str: ...
+    def parking_symbol(self) -> str:
+        """Return the instrument unallocated money is parked in.
+
+        Returns:
+            The parking ticker.
+        """
+        ...
 
     @property
-    def rebalance_band(self) -> float: ...
+    def rebalance_band(self) -> float:
+        """Return the drift tolerated before a position is traded.
+
+        Returns:
+            The band, as a fraction of portfolio value.
+        """
+        ...
 
     @property
-    def min_trade_pct(self) -> float: ...
+    def min_trade_pct(self) -> float:
+        """Return the smallest trade worth sending.
+
+        Returns:
+            The minimum trade size, as a fraction of portfolio value.
+        """
+        ...
 
     @property
-    def cash_buffer(self) -> float: ...
+    def cash_buffer(self) -> float:
+        """Return the share of the portfolio kept in cash.
+
+        Returns:
+            The buffer, as a fraction of portfolio value.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class PlacedOrder:
+    """One order sent by a rebalance.
+
+    Attributes:
+        symbol: Ticker.
+        side: `buy` or `sell`.
+        quantity: Shares ordered.
+        confirmed: False when the broker could not say whether it took the order (it is kept, never resent).
+    """
+
     symbol: str
     side: str  # "buy" or "sell"
     quantity: float
@@ -78,7 +111,16 @@ def _estimated_pnl(price: float, cost: float, quantity: float) -> str:
 
 
 class Rebalancer:
+    """Rebalances the account toward target weights: sells go out before the buys they fund."""
+
     def __init__(self, strategy: Strategy, params: RebalanceParams, *, fill_wait_seconds: float = 30.0) -> None:
+        """Create a rebalancer.
+
+        Args:
+            strategy: Strategy whose account, positions and orders are used.
+            params: Rebalance band, minimum trade size, cash buffer and parking instrument.
+            fill_wait_seconds: How long the buys wait for this run's sells to fill (paper/live only).
+        """
         self._strategy = strategy
         self._params = params
         self._fill_wait_seconds = fill_wait_seconds  # how long the buys wait for this run's sells to fill (paper/live only)
@@ -87,7 +129,9 @@ class Rebalancer:
     # --- what is held ----------------------------------------------------------------------------
 
     def _long_positions(self, *, warn: bool = False) -> list:
-        """The long positions with a positive quantity. IBKR and Tastytrade report a short as a POSITIVE quantity with
+        """The long positions with a positive quantity.
+
+        IBKR and Tastytrade report a short as a POSITIVE quantity with
         `side=SHORT`, and a sell against it would open more short, so a short is never a holding here: `warn` logs each one
         (the order path asks for it; the read-only views stay quiet).
         """

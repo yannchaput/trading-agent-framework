@@ -23,6 +23,8 @@ from trading_agent_framework.strategies.vwap_pullback.parameters import VwapPull
 
 
 class SetupState(StrEnum):
+    """Where a symbol's setup stands in the day: watch, impulse, pullback, triggered, in trade, done or broken."""
+
     WATCH = "watch"  # tracked, no impulse yet
     IMPULSE = "impulse"  # strong move off the open; watching for a pullback
     PULLBACK = "pullback"  # orderly retracement above VWAP; watching for resumption

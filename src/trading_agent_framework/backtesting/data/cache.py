@@ -1,4 +1,6 @@
-"""Read-through parquet cache wrapping any `BacktestDataSource`. First `load()` fetches
+"""Read-through parquet cache wrapping any `BacktestDataSource`.
+
+First `load()` fetches
 and writes; a later `load()` for the same window is network-free -- the case that
 matters most when iterating on an agent prompt against a fixed backtest period.
 """
@@ -19,11 +21,11 @@ from trading_agent_framework.utils.errors import BacktestDataError
 
 
 class CachedDataSource(BacktestDataSource):
-    """Wraps `inner`, caching each asset's fetched window at
-    `<cache_dir>/<inner.name>/<symbol>_<timestep>_<start>_<end>.parquet` plus a
-    `.meta.json` sidecar recording provenance (provider, symbol, fetch time, row count)
-    -- `inner` may revise its data over time (e.g. Yahoo's retroactive dividend
-    adjustments), so a cached file is a frozen, dated snapshot on purpose. A parquet file written before the traded
+    """Wraps `inner`, caching each asset's fetched window as a frozen, dated parquet snapshot.
+
+    Files live at `<cache_dir>/<inner.name>/<symbol>_<timestep>_<start>_<end>.parquet` plus a `.meta.json` sidecar recording
+    provenance (provider, symbol, fetch time, row count). `inner` may revise its data over time (e.g. Yahoo's retroactive
+    dividend adjustments), so a cached file is a frozen, dated snapshot on purpose. A parquet file written before the traded
     columns existed carries none, so a warm-cache rerun scores on the adjusted filters until the file is deleted.
     """
 

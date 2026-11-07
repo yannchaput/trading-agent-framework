@@ -11,6 +11,14 @@ _ENGLISH = "Write everything in English: your reasons and every tool argument, e
 
 
 def researcher_system(politician: str) -> str:
+    """Build the research analyst's system prompt.
+
+    Args:
+        politician: Whose disclosures the book mirrors.
+
+    Returns:
+        The prompt text.
+    """
     return (
         f"You are the research analyst of a book that mirrors the US stock holdings of {politician}, from the House Clerk's public "
         "financial disclosures. Your job is to establish what she owns today.\n\n"
@@ -36,6 +44,14 @@ def researcher_system(politician: str) -> str:
 
 
 def portfolio_system(politician: str) -> str:
+    """Build the portfolio manager's system prompt.
+
+    Args:
+        politician: Whose holdings the book mirrors.
+
+    Returns:
+        The prompt text.
+    """
     return (
         f"You are the portfolio manager of a book that mirrors the US stock holdings of {politician}. You turn her holdings into "
         "target weights for our account.\n\n"
@@ -57,6 +73,11 @@ def portfolio_system(politician: str) -> str:
 
 
 def trader_system() -> str:
+    """Build the trader's system prompt.
+
+    Returns:
+        The prompt text.
+    """
     return (
         "You are the trader of a long-only stock account. Place the orders that move the account to the target portfolio in the "
         "context, then check that every order filled.\n\n"

@@ -1,6 +1,7 @@
-"""Manual one-off probe of the Tastytrade SANDBOX: settles what the API docs leave open before the
-Tastytrade broker's order code is written (docs/superpowers/specs/2026-10-15-tastytrade-broker-design.md,
-section 11).
+"""Manual one-off probe of the Tastytrade SANDBOX.
+
+Settles what the API docs leave open before the Tastytrade broker's order code is written
+(docs/superpowers/specs/2026-10-15-tastytrade-broker-design.md, section 11).
 
 NOT part of the automated suite and not a smoke test (`run_smoke_tests.sh` only runs smoke_*.py).
 Run it once by hand, then paste its whole output into the implementation session:
@@ -153,6 +154,11 @@ def _cleanup(client: httpx.Client, orders: str, account: str, known_order_ids: l
 
 
 def main() -> int:
+    """Run the probe against the Tastytrade sandbox and print what the API answers.
+
+    Returns:
+        0 when skipped (no credentials) or finished, 1 when the sandbox refuses the token request.
+    """
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
         return 0

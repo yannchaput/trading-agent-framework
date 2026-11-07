@@ -1,5 +1,4 @@
-"""Provider-agnostic backtest data source: the seam a future IBKR implementation
-plugs into, and the only thing `BacktestBroker` depends on for prices and sessions.
+"""Provider-agnostic backtest data source: the seam a future IBKR implementation plugs into, and the only thing `BacktestBroker` depends on for prices and sessions.
 
 `bars()` is the no-look-ahead chokepoint (design spec, section 5): its `cutoff`
 parameter is always `clock.now()`, and every returned row's index value is that
@@ -30,7 +29,9 @@ FULL_HISTORY = 10_000_000  # "return every bar you have" sentinel for bars(..., 
 
 
 class BacktestDataSource(ABC):
-    """Bars and sessions for a backtest run. Never imports a broker; `BacktestBroker`
+    """Bars and sessions for a backtest run.
+
+    Never imports a broker; `BacktestBroker`
     depends on this, never the reverse.
     """
 
@@ -38,14 +39,17 @@ class BacktestDataSource(ABC):
 
     @abstractmethod
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
-        """Pre-fetch and cache `assets` for [start, end]. Optional to call; `bars()`
+        """Pre-fetch and cache `assets` for [start, end].
+
+        Optional to call; `bars()`
         fetches lazily for any asset it hasn't seen.
         """
 
     @abstractmethod
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
-        """The last `length` bars closed at or before `cutoff`, oldest first, indexed
-        by bar CLOSE time. None if the asset has no data at all.
+        """The last `length` bars closed at or before `cutoff`, oldest first, indexed by bar CLOSE time.
+
+        None if the asset has no data at all.
         """
 
     @abstractmethod

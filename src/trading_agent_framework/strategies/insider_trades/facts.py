@@ -27,17 +27,42 @@ if TYPE_CHECKING:
 
 
 class KnownSource(Protocol):
-    def known(self, as_of: datetime) -> KnownInsiderData: ...
+    """What the facts need from the Form 4 source."""
+
+    def known(self, as_of: datetime) -> KnownInsiderData:
+        """Return the Form 4 filings known on a date.
+
+        Args:
+            as_of: Timezone-aware time the lookup is made as of.
+
+        Returns:
+            The filings per ticker, and the tickers whose download failed.
+        """
+        ...
 
 
 class InsiderFacts:
+    """Computes the facts the agents see about each watchlist stock, from Form 4 filings known on the strategy clock's day."""
+
     def __init__(self, strategy: Strategy, source: KnownSource, params: InsiderParams) -> None:
+        """Create the facts provider.
+
+        Args:
+            strategy: Strategy whose clock dates the facts.
+            source: Form 4 source.
+            params: Strategy parameters (signal window, look-back).
+        """
         self.strategy = strategy
         self.source = source
         self.params = params
         self._cached: tuple[date, KnownInsiderData] | None = None
 
     def today(self) -> date:
+        """Return today's market date.
+
+        Returns:
+            The strategy clock's date in the market timezone.
+        """
         return self.strategy.clock.now().astimezone(MARKET_TZ).date()
 
     def known(self) -> KnownInsiderData:
@@ -62,9 +87,25 @@ class InsiderFacts:
         return label_trades(trades, trades, years=self.params.history_years)
 
     def window(self, ticker: str) -> list[Labelled]:
+        """Return a stock's trades inside the signal window.
+
+        Args:
+            ticker: Ticker.
+
+        Returns:
+            The labelled trades of the last `signal_window_days` days.
+        """
         return window_trades(self.labelled(ticker), today=self.today(), window_days=self.params.signal_window_days)
 
     def facts(self, ticker: str) -> StockFacts:
+        """Summarise a stock's insider activity.
+
+        Args:
+            ticker: Ticker.
+
+        Returns:
+            The dollars bought and sold, the insiders behind them and the stock's class (buying, selling or none).
+        """
         today = self.today()
         window_start = today - timedelta(days=self.params.signal_window_days)
         return summarise(ticker, self.window(ticker), today=today, window_start=window_start)

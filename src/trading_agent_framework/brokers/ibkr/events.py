@@ -26,17 +26,34 @@ _NEW_FROM = frozenset({OrderStatus.UNPROCESSED, OrderStatus.SUBMITTED})
 
 
 class IbkrOrderEvents:
+    """Feeds IBKR order and execution events into the `OrderTracker`."""
+
     def __init__(self, tracker: OrderTracker) -> None:
+        """Create the event handler.
+
+        Args:
+            tracker: Order tracker that receives the updates.
+        """
         self._tracker = tracker
         self._applied_exec_ids: set[str] = set()
         self._lock = threading.Lock()
 
     def register(self, ib: Any) -> None:
+        """Subscribe to the gateway's order events.
+
+        Args:
+            ib: The `ib_async` client.
+        """
         ib.orderStatusEvent += self.on_order_status
         ib.execDetailsEvent += self.on_exec_details
         ib.errorEvent += self.on_error
 
     def unregister(self, ib: Any) -> None:
+        """Unsubscribe from the gateway's order events.
+
+        Args:
+            ib: The `ib_async` client.
+        """
         ib.orderStatusEvent -= self.on_order_status
         ib.execDetailsEvent -= self.on_exec_details
         ib.errorEvent -= self.on_error
@@ -47,6 +64,15 @@ class IbkrOrderEvents:
         return self._tracker.get_tracked_order_by_client_order_id(order_ref)
 
     def on_order_status(self, trade: Any) -> bool:
+        """Handle an order-status change.
+
+        Args:
+            trade: The `ib_async` trade whose status changed.
+
+        Returns:
+            True if the change was applied to a tracked order; False when it was ignored (unknown order, duplicate or an
+            order still being submitted).
+        """
         event = orders.map_status_event(trade.orderStatus.status)
         order = self._find(trade.order.orderRef)
         if event is None or order is None:
@@ -64,6 +90,15 @@ class IbkrOrderEvents:
         return True
 
     def on_exec_details(self, trade: Any, fill: Any) -> bool:
+        """Handle an execution report.
+
+        Args:
+            trade: The trade the execution belongs to.
+            fill: The execution.
+
+        Returns:
+            True if the fill was applied to a tracked order.
+        """
         return self.apply_fill(fill)
 
     def apply_fill(self, fill: Any) -> bool:
@@ -88,6 +123,14 @@ class IbkrOrderEvents:
         return True
 
     def on_error(self, req_id: int, error_code: int, error_string: str, contract: Any) -> None:
+        """Log a gateway message: informational notices at debug level, anything else as a warning.
+
+        Args:
+            req_id: Request id the message answers.
+            error_code: IB message code.
+            error_string: Message text.
+            contract: Contract the message is about.
+        """
         if error_code in INFO_CODES:
             logger.debug("IB Gateway notice %s: %s", error_code, error_string)
             return

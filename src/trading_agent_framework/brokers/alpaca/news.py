@@ -19,11 +19,26 @@ if TYPE_CHECKING:
 
 
 class AlpacaNewsProvider:
+    """News provider backed by Alpaca's news API."""
+
     def __init__(self, client: market_data.AlpacaNewsClient) -> None:
+        """Create a provider.
+
+        Args:
+            client: Alpaca news client.
+        """
         self._client = client
 
     @classmethod
     def from_credentials(cls, creds: AlpacaCredentials) -> AlpacaNewsProvider:
+        """Build a provider from credentials.
+
+        Args:
+            creds: News credentials (`ALPACA_NEWS_*`).
+
+        Returns:
+            A provider with its own news client.
+        """
         return cls(cast("market_data.AlpacaNewsClient", build_news_client(creds)))
 
     def get_news(
@@ -36,6 +51,22 @@ class AlpacaNewsProvider:
         include_content: bool = False,
         sort: str | None = None,
     ) -> list[dict[str, object]]:
+        """Fetch news articles.
+
+        Args:
+            symbols: Tickers to filter on; all news when empty.
+            start: Earliest publication time.
+            end: Latest publication time.
+            limit: Maximum number of articles.
+            include_content: Whether to include the article body.
+            sort: Sort order (`asc` or `desc`), the API default when None.
+
+        Returns:
+            One dict per article.
+
+        Raises:
+            BrokerError: If the request fails.
+        """
         request = market_data.build_news_request(symbols, start=start, end=end, limit=limit, include_content=include_content, sort=sort)
         try:
             response = self._client.get_news(request)
@@ -45,8 +76,9 @@ class AlpacaNewsProvider:
 
 
 def lazy_news_provider(credentials: Callable[[], AlpacaCredentials]) -> Callable[[], AlpacaNewsProvider]:
-    """A factory reading the news credentials only when first called, so a strategy that never
-    searches news needs no `ALPACA_NEWS_*`. Missing credentials become `BrokerError`, which the
+    """A factory reading the news credentials only when first called, so a strategy that never searches news needs no `ALPACA_NEWS_*`.
+
+    Missing credentials become `BrokerError`, which the
     news tool turns into `{"error": ...}`.
     """
 

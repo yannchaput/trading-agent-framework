@@ -1,3 +1,5 @@
+"""cross_momentum: cross-sectional momentum ranking with a risk overlay, no LLM."""
+
 from trading_agent_framework.utils import get_version
 
 from .agent_cross_momentum import CrossMomentumStrategy

@@ -17,6 +17,39 @@ _EPS = 1e-9  # 10 x 0.098 is a hair above 0.98 in floating point
 
 @dataclass(frozen=True, slots=True)
 class BullBearParams:
+    """Parameters of the bull_bear strategy.
+
+    Attributes:
+        retention_rank: A holding ranked worse (or unranked) is a forced exit; above `candidate_count`.
+        candidate_count: The top ranks the judge rules on every review (plus the holdings ranked up to `retention_rank`).
+        max_book_size: Most stocks the judge may put in.
+        stock_weight: Weight of every stock in the book, whatever its strength (fraction of portfolio value): a full book
+            of 10 makes 98%, a shorter one parks the rest.
+        cash_buffer: Share of the portfolio never invested (fees, fill drift).
+        rebalance_band: Drift that triggers a trade.
+        min_trade_pct: Smallest order.
+        parking_symbol: Where unspent money goes.
+        research_tool_budget: Tool calls per researcher run; `submit_note` is exempt.
+        research_news: Give the researcher its news tool; False for the news-off comparison run.
+        max_agent_steps: LangGraph steps one agent run may take before it counts as a loop and abandons the review.
+        judge_memory_budget: Memory tool calls per judge run; `submit_verdicts` is exempt.
+        note_max_chars: The length the researcher is asked for in a submitted note.
+        note_hard_max_chars: The length the recorder refuses above.
+        argument_max_chars: The bull's and the bear's submitted argument.
+        reason_max_chars: The judge's submitted reason per verdict.
+        reentry_cooldown_reviews: Completed reviews a stock the judge sold stays out of the candidates.
+        max_consecutive_abandoned: Abandoned reviews in a row that abort a backtest.
+        agent_temperature: Sampling temperature of all four agents; None leaves the LLM server's default.
+        thinking_token_budget: Reasoning tokens per model call for the researcher, bull and bear; None for no budget.
+        judge_thinking_token_budget: The judge's own budget; None means no budget for the judge.
+        max_output_tokens: Output tokens per model call, reasoning included (researcher, bull and bear); None for no cap.
+        judge_max_output_tokens: The judge's own cap; None means no cap for the judge.
+        rebalance_time: Market time (ET) of the weekly review.
+        rebalance_weekday: 0 is Monday ... 4 is Friday.
+        yahoo_retry_delays: Seconds before each new attempt at an unusable Yahoo batch.
+        min_yahoo_coverage: Share of the universe a Yahoo batch must cover.
+    """
+
     retention_rank: int = 35  # a holding ranked worse (or unranked) is a forced exit; above candidate_count
     candidate_count: int = 15  # the top ranks the judge rules on every review (plus the holdings ranked up to retention_rank)
     max_book_size: int = 10  # most stocks the judge may put in
@@ -64,6 +97,11 @@ class BullBearParams:
     min_yahoo_coverage: float = 0.5  # share of the universe a Yahoo batch must cover
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         floats = (self.stock_weight, self.cash_buffer, self.rebalance_band, self.min_trade_pct, self.min_yahoo_coverage)
         investable = 1 - self.cash_buffer
         try:

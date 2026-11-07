@@ -33,6 +33,8 @@ def _default_ib_factory() -> Any:
 
 
 class IbkrConnection:
+    """Connection to IB Gateway: an `ib_async` session running on its own event-loop thread, with call timeouts and reconnection."""
+
     def __init__(
         self,
         settings: IbkrSettings,
@@ -43,6 +45,16 @@ class IbkrConnection:
         reconnect_attempts: int = 3,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
+        """Create a connection (not yet connected).
+
+        Args:
+            settings: Host, port and client id of the gateway.
+            ib_factory: Builds the `ib_async` client (injected in tests).
+            call_timeout: Seconds a call may take before it fails.
+            connect_timeout: Seconds a connection attempt may take.
+            reconnect_attempts: Attempts made to restore a lost connection.
+            sleep: Waits between reconnection attempts.
+        """
         self._settings = settings
         self._ib_factory = ib_factory or _default_ib_factory
         self._call_timeout = call_timeout
@@ -65,6 +77,11 @@ class IbkrConnection:
         self._ib = self._run(lambda _: self._ib_factory(), self._call_timeout)
 
     def connect(self) -> None:
+        """Connect to the gateway.
+
+        Raises:
+            BrokerError: If the gateway cannot be reached.
+        """
         settings = self._settings
         try:
             self._run(
@@ -89,6 +106,7 @@ class IbkrConnection:
         return self._run(fn, timeout if timeout is not None else self._call_timeout)
 
     def disconnect(self) -> None:
+        """Disconnect and stop the event-loop thread; does nothing when never connected."""
         loop = self._loop
         if loop is None:
             return

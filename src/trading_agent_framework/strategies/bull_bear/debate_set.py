@@ -16,28 +16,60 @@ from trading_agent_framework.strategies.common.scoring import MomentumRow, Ranke
 
 @dataclass(frozen=True, slots=True)
 class DebateStock:
+    """A stock in the debate.
+
+    Attributes:
+        rank: Momentum rank (1 is the strongest).
+        row: The scored stock.
+        held: Whether the account holds it.
+    """
+
     rank: int
     row: MomentumRow
     held: bool
 
     @property
     def symbol(self) -> str:
+        """Return the ticker.
+
+        Returns:
+            The stock's symbol.
+        """
         return self.row.symbol
 
 
 @dataclass(frozen=True, slots=True)
 class ForcedExit:
+    """A holding that must be sold whatever the judge says.
+
+    Attributes:
+        symbol: Ticker.
+        reason: Why: `unranked`, `rank N` or `cooldown`.
+    """
+
     symbol: str
     reason: str  # "unranked", "rank N" or "cooldown"
 
 
 @dataclass(frozen=True, slots=True)
 class DebateSet:
+    """The stocks the agents debate in one review.
+
+    Attributes:
+        stocks: The candidates and the holdings kept in the debate, in rank order.
+        forced_exits: The holdings sold without a debate, by symbol.
+    """
+
     stocks: tuple[DebateStock, ...]  # in rank order
     forced_exits: tuple[ForcedExit, ...]  # by symbol
 
     @property
     def symbols(self) -> list[str]:
+        """Return the tickers in the debate.
+
+        Returns:
+            The symbols, in rank order.
+        """
         return [stock.symbol for stock in self.stocks]
 
     @property
@@ -46,6 +78,17 @@ class DebateSet:
         return sorted(stock.symbol for stock in self.stocks if stock.held)
 
     def stock(self, symbol: str) -> DebateStock:
+        """Look up a stock in the debate.
+
+        Args:
+            symbol: Ticker.
+
+        Returns:
+            The debate entry for the symbol.
+
+        Raises:
+            StopIteration: If the symbol is not in the debate.
+        """
         return next(stock for stock in self.stocks if stock.symbol == symbol)
 
 

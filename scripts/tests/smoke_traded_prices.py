@@ -54,6 +54,11 @@ def _window(start: date, end: date) -> tuple[datetime, datetime]:
 
 
 def check_nvda_2015() -> tuple[bool, str]:
+    """Check that NVDA's January 2015 traded close is the real price, while the adjusted close is far lower.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     start, end = _window(date(2015, 1, 1), date(2015, 1, 31))
     source = YahooBacktestData(start, end)
     asset = Asset("NVDA")
@@ -85,6 +90,11 @@ def _worst_relative_difference(left: pd.DataFrame, right: pd.DataFrame) -> float
 # values vary from one request to the next (up to 3.3e-04 between two back-to-back AAPL downloads),
 # so that difference is printed as information only and never fails the script.
 def check_rebuilt_adjusted_equal_yfinance() -> tuple[bool, str]:
+    """Check that the rebuilt adjusted bars equal yfinance's own `auto_adjust` on the same download.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     from yfinance.utils import auto_adjust
 
     # Through today, so every later split is covered (Yahoo adjusts to the download date).
@@ -118,6 +128,11 @@ def check_rebuilt_adjusted_equal_yfinance() -> tuple[bool, str]:
 
 
 def check_ko_2012_dollar_volume() -> tuple[bool, str]:
+    """Check that KO's 2012 traded dollar volume is above the adjusted one.
+
+    Returns:
+        A (passed, detail) pair; the detail is printed next to the verdict.
+    """
     start, end = _window(date(2012, 1, 1), date(2012, 12, 31))
     source = YahooBacktestData(start, end)
     asset = Asset("KO")
@@ -132,6 +147,11 @@ def check_ko_2012_dollar_volume() -> tuple[bool, str]:
 
 
 def main() -> int:
+    """Run the three checks and print PASS or FAIL for each.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     checks = (
         ("1. NVDA 2015 traded close vs adjusted close", check_nvda_2015),
         ("2. rebuilt adjusted bars equal yfinance auto_adjust on the same download (1e-9)", check_rebuilt_adjusted_equal_yfinance),

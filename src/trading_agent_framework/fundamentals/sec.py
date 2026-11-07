@@ -1,5 +1,4 @@
-"""Pure SEC EDGAR translation: CIK lookup, income-statement/balance-sheet tag maps, as-of
-candidate filtering and statement-period matching, filings parsing, URL building, HTML stripping.
+"""Pure SEC EDGAR translation: CIK lookup, income-statement/balance-sheet tag maps, as-of candidate filtering and statement-period matching, filings parsing, URL building, HTML stripping.
 
 No I/O, no state, no strategy/clock knowledge (same rules as `brokers/alpaca/market_data.py`).
 Ported and trimmed from lumibot's `SECFundamentals` (`lumibot/fundamentals/sec.py`).
@@ -396,9 +395,7 @@ def total_debt(gaap: dict[str, Any], *, end: str, as_of: datetime, unit: str = "
 
 
 def balance_sheet(payload: dict[str, Any], *, as_of: datetime) -> dict[str, dict[str, Any]]:
-    """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`) in the statement's reporting
-    currency, never a current portion.
-    """
+    """The balance sheet as of `as_of`; a US GAAP filer's `debt` is its total debt (`total_debt`) in the statement's reporting currency, never a current portion."""
     values = statement_values(payload, {**BALANCE_SHEET_TAGS, "debt": []}, as_of=as_of, ifrs_tag_map=IFRS_BALANCE_SHEET_TAGS)
     gaap = payload.get("facts", {}).get("us-gaap", {})
     end = next((value["end"] for value in values.values() if value.get("end")), None)

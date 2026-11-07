@@ -1,3 +1,5 @@
+"""Pure data entities (assets, orders, positions, quotes, bars, enums): no I/O and no broker knowledge."""
+
 from __future__ import annotations
 
 from trading_agent_framework.entities.account import AccountBalances

@@ -1,6 +1,4 @@
-"""Batch Stock Universe Builder
-=============================
-Runs once per month to compute the investable US stock universe.
+"""Batch Stock Universe Builder ============================= Runs once per month to compute the investable US stock universe.
 
 Sources:
   - NASDAQ public screener API — all stocks listed on NASDAQ, NYSE, and AMEX.
@@ -156,6 +154,14 @@ class RateLimitGate:
         now=time.monotonic,
         sleep=time.sleep,
     ) -> None:
+        """Create the gate.
+
+        Args:
+            initial_backoff: Seconds to pause after the first rate-limit hit.
+            max_backoff: Upper bound of the pause, which doubles on each consecutive hit.
+            now: Monotonic time source (injected in tests).
+            sleep: Waits for a number of seconds (injected in tests).
+        """
         self._initial_backoff = initial_backoff
         self._max_backoff = max_backoff
         self._backoff = initial_backoff
@@ -598,9 +604,7 @@ def get_extra_universe_symbols(
 
 
 def _filter_common_stocks(symbols: list[str], is_common_stock: Callable[[str], bool | None]) -> tuple[list[str], list[str]]:
-    """The symbols `is_common_stock` accepts, and those it could not answer (None), checked over `_MAX_CONCURRENT_YF`
-    workers like `screen_tickers`.
-    """
+    """The symbols `is_common_stock` accepts, and those it could not answer (None), checked over `_MAX_CONCURRENT_YF` workers like `screen_tickers`."""
     kept: list[str] = []
     failed: list[str] = []
     rejected = 0
@@ -631,8 +635,7 @@ def build_history_pool(
     fetch_vanguard_holdings: Callable[[], dict] = _fetch_vanguard_holdings,
     is_common_stock: Callable[[str], bool | None] = _is_common_stock,
 ) -> HistoryPool:
-    """The candidate symbols for the universe history (NASDAQ screener plus IWB/IWM/VTI, common stocks only) and the
-    candidates left unanswered.
+    """The candidate symbols for the universe history (NASDAQ screener plus IWB/IWM/VTI, common stocks only) and the candidates left unanswered.
 
     The candidates `is_common_stock` could not answer (None) are asked once more after a pause through the shared
     rate-limit gate (a throttled lookup looks like no answer). Raises `UniverseHistoryError` if any source fails or
@@ -877,8 +880,9 @@ def _load_traded_frames(symbols: list[str], bars_dir: Path) -> dict[str, pd.Data
 
 @contextmanager
 def _build_lock(cache_dir: Path) -> Iterator[None]:
-    """An exclusive `flock` on `<cache_dir>/.lock`, held for the block: two processes building at once would share the
-    cache's temp files and each save its own bars index over the other's files. Released when the process exits.
+    """An exclusive `flock` on `<cache_dir>/.lock`, held for the block: two processes building at once would share the cache's temp files and each save its own bars index over the other's files.
+
+    Released when the process exits.
     A caller that finds it held logs a warning and prints a line saying it waits, then blocks until the other build ends.
     """
     cache_dir.mkdir(parents=True, exist_ok=True)

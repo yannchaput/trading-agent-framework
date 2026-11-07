@@ -1,3 +1,5 @@
+"""Parameters of the cross-sectional momentum strategy."""
+
 ### Cross Sectional Momentum Strategy Parameters
 from trading_agent_framework.strategies.common.universe_params import MIN_DOLLAR_VOLUME, MIN_MARKET_CAP, MIN_PRICE
 

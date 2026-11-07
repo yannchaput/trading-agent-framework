@@ -14,6 +14,14 @@ from trading_agent_framework.utils.errors import ConfigurationError
 
 
 def parse_balances(data: Mapping[str, Any]) -> AccountBalances:
+    """Read the account balances from a Tastytrade balances payload.
+
+    Args:
+        data: The `data` mapping of the balances response.
+
+    Returns:
+        Cash, net liquidating value and equity buying power.
+    """
     return AccountBalances(
         cash=decimal_of(data.get("cash-balance"), "balance cash-balance"),
         portfolio_value=decimal_of(data.get("net-liquidating-value"), "balance net-liquidating-value"),

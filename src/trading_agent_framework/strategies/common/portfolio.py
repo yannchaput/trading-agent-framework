@@ -10,6 +10,13 @@ _EPS = 1e-9
 
 @dataclass(frozen=True, slots=True)
 class TargetPortfolio:
+    """Target allocation of a strategy.
+
+    Attributes:
+        weights: Stock -> fraction of portfolio value.
+        parking_weight: The parking instrument's share: 1 - cash_buffer - sum(weights).
+    """
+
     weights: dict[str, float]  # stock -> fraction of portfolio value
     parking_weight: float  # the parking instrument's share: 1 - cash_buffer - sum(weights)
 

@@ -10,6 +10,26 @@ from trading_agent_framework.strategies.bill_ackman.screen import ScreenParams
 
 @dataclass(frozen=True, slots=True)
 class AckmanParams:
+    """Parameters of the bill_ackman strategy.
+
+    Attributes:
+        screen: Parameters of the fundamentals quality screen.
+        research_top_n: Ideas the researcher submits.
+        max_positions: Stocks in the target portfolio; equal to `research_top_n`, so every surviving idea can be held.
+        max_weight: Largest weight of one stock, as a fraction of portfolio value.
+        min_weight: Smallest weight of one stock; must be at least `rebalance_band`.
+        cash_buffer: Share of portfolio value never invested (fees, fill drift).
+        forced_exit_fails: Consecutive `fail` verdicts that force a holding out.
+        reentry_cooldown_reviews: Completed reviews a forced exit stays out of the candidates and the allowed set
+            (0 disables).
+        rebalance_band: Drift, as a fraction of portfolio value, that triggers a trade.
+        min_trade_pct: Smallest order, as a fraction of portfolio value.
+        parking_symbol: Where unallocated money goes.
+        max_consecutive_abandoned: Abandoned reviews in a row that abort a backtest.
+        reason_max_chars: Longest `reason` a submit tool accepts.
+        agent_temperature: Sampling temperature of the three agents; None leaves the LLM server's default.
+    """
+
     screen: ScreenParams = field(default_factory=ScreenParams)
     research_top_n: int = 8  # ideas the researcher submits
     max_positions: int = 8  # stocks in the target portfolio; equal to research_top_n, so every surviving idea can be held
@@ -26,6 +46,11 @@ class AckmanParams:
     agent_temperature: float | None = 0.3  # sampling temperature of the three agents; None leaves the LLM server's default
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         floats = (self.max_weight, self.min_weight, self.cash_buffer, self.rebalance_band, self.min_trade_pct)
         problems = {
             "research_top_n must be at least 1": self.research_top_n < 1,

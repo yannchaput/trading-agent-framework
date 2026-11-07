@@ -17,7 +17,9 @@ _DEFAULT_LOOKBACK_DAYS = 7
 
 
 def _parse_bound(text: str, now: datetime, *, last_instant: bool) -> datetime:
-    """An ISO bound. A date alone (`2025-10-21`, what a model writes) is a whole day in the clock's timezone: its first
+    """An ISO bound.
+
+    A date alone (`2025-10-21`, what a model writes) is a whole day in the clock's timezone: its first
     instant for a start, its last for an end. Any other string keeps its own offset, or none (the caller refuses it).
     """
     try:

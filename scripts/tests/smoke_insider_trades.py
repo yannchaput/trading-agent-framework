@@ -39,6 +39,11 @@ SHOWN = 5
 
 
 def main() -> int:
+    """Load real Form 4 filings for AAPL and JPM and print the parsed trades and labels (read-only).
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if ENV_FILE.is_file():
         load_dotenv(ENV_FILE, override=True)
     user_agent = os.environ.get("SEC_EDGAR_USER_AGENT", "")

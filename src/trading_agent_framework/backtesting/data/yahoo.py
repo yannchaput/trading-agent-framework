@@ -1,6 +1,6 @@
-"""`BacktestDataSource` backed by yfinance daily OHLCV -- the default provider
-(design spec, section 4.2): consolidated tape, official closing-auction closes,
-decades of free history. `yfinance` is imported lazily so a strategy that never
+"""`BacktestDataSource` backed by yfinance daily OHLCV -- the default provider (design spec, section 4.2): consolidated tape, official closing-auction closes, decades of free history.
+
+`yfinance` is imported lazily so a strategy that never
 backtests with Yahoo data never pays for its 12 transitive dependencies.
 """
 
@@ -44,7 +44,9 @@ DownloadFn = Callable[..., "pd.DataFrame"]
 
 
 class YahooBacktestData(BacktestDataSource):
-    """Daily OHLCV from Yahoo Finance. Only `timestep="day"` is supported (design
+    """Daily OHLCV from Yahoo Finance.
+
+    Only `timestep="day"` is supported (design
     spec, section 4.1 -- Yahoo has no usable minute history).
     """
 
@@ -63,6 +65,16 @@ class YahooBacktestData(BacktestDataSource):
         # wall-clock cutoffs in data tools); frames are trimmed back to the window.
         today: Callable[[], date] = date.today,
     ) -> None:
+        """Create a source over a fixed window.
+
+        Args:
+            start: First day of the window.
+            end: Last day of the window.
+            download: Replacement for `yfinance.download` (injected in tests).
+            calendar_symbol: Symbol whose bars define the trading calendar.
+            today: Supplies the DOWNLOAD end date only (never a decision cutoff); the download reaches today so split rows
+                cover splits after the window.
+        """
         self._today = today
         self._start = start
         self._end = end
@@ -78,13 +90,12 @@ class YahooBacktestData(BacktestDataSource):
         self._download_lock = threading.Lock()
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
-        """Batch-fetch `assets` in one `download` call instead of one per ticker --
-        a strategy filtering a large universe (e.g. cross_momentum, hundreds of
-        tickers) calling this once up front avoids ever falling back to `bars()`'s
-        lazy per-asset fetch from its own thread pool, which would otherwise fire many
-        concurrent `yf.download` calls, race yfinance's shared session/crumb handling,
-        and trip Yahoo's rate limiting -- surfacing as the whole backtest stalling
-        partway through the universe rather than a clean error.
+        """Batch-fetch `assets` in one `download` call instead of one per ticker.
+
+        A strategy filtering a large universe (e.g. cross_momentum, hundreds of tickers) calling this once up front avoids
+        ever falling back to `bars()`'s lazy per-asset fetch from its own thread pool, which would otherwise fire many
+        concurrent `yf.download` calls, race yfinance's shared session/crumb handling, and trip Yahoo's rate limiting --
+        surfacing as the whole backtest stalling partway through the universe rather than a clean error.
         """
         missing = [asset for asset in assets if asset not in self._frames]
         if not missing:
@@ -114,6 +125,20 @@ class YahooBacktestData(BacktestDataSource):
             self._frames[asset] = frame
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        """Return the daily bars visible at a cutoff, fetching them lazily.
+
+        Args:
+            asset: Instrument to read.
+            cutoff: Latest bar close the caller may see; later bars are never returned.
+            length: Maximum number of bars, counted back from the cutoff.
+            timestep: Bar size (`day` or `minute`).
+
+        Returns:
+            The visible bars, or None when there are none at or before the cutoff.
+
+        Raises:
+            BacktestDataError: If `timestep` is not `day`.
+        """
         if timestep != "day":
             raise BacktestDataError(f"YahooBacktestData only supports timestep='day', got {timestep!r}")
         df = self._frames.get(asset)
@@ -127,8 +152,7 @@ class YahooBacktestData(BacktestDataSource):
         return Bars(asset=asset, timestep=timestep, df=visible.tail(length))
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
-        """One 9:30-16:00 ET session per ACTUAL daily bar in [start, end] (design spec,
-        section 4.1: "One 9:30-16:00 ET session per daily bar").
+        """One 9:30-16:00 ET session per ACTUAL daily bar in [start, end] (design spec, section 4.1: "One 9:30-16:00 ET session per daily bar").
 
         Dates come from `CALENDAR_SYMBOL`'s own fetched bar index, not from iterating
         weekdays: a weekday iteration counts the ~9 market holidays a year as trading
@@ -201,10 +225,7 @@ class YahooBacktestData(BacktestDataSource):
 
 
 def _trim_to_window(frame: pd.DataFrame, end: datetime) -> pd.DataFrame:
-    """Drop rows whose session date is after `end`'s date (inclusive end, by DATE --
-    the backtesting rule), so a download that ran through today shows nothing past
-    the requested window.
-    """
+    """Drop rows whose session date is after `end`'s date (inclusive end, by DATE -- the backtesting rule), so a download that ran through today shows nothing past the requested window."""
     if frame.empty:
         return frame
     return cast("pd.DataFrame", frame[frame.index.date <= end.date()])
@@ -230,8 +251,9 @@ def yfinance_download() -> DownloadFn:
 
 
 def extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
-    """Slice one ticker's OHLCV out of a batched `download(symbols, group_by="ticker")`
-    result. Columns come back as a `(ticker, field)` MultiIndex -- `raw[symbol]` drops
+    """Slice one ticker's OHLCV out of a batched `download(symbols, group_by="ticker")` result.
+
+    Columns come back as a `(ticker, field)` MultiIndex -- `raw[symbol]` drops
     the ticker level, leaving the same flat shape `parse_yahoo_frame` already expects
     from a single-ticker download. A symbol Yahoo had no data for at all is simply
     absent from the batch rather than raising; `load()` logs a WARNING for it and
@@ -247,9 +269,7 @@ def extract_ticker_frame(raw: pd.DataFrame, symbol: str) -> pd.DataFrame:
 
 
 def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
-    """Pure: normalise a yfinance download into `Bars.df` shape, indexed by bar CLOSE
-    (each daily row's session date at 16:00 ET -- yfinance's own index is that
-    session's date, naive).
+    """Pure: normalise a yfinance download into `Bars.df` shape, indexed by bar CLOSE (each daily row's session date at 16:00 ET -- yfinance's own index is that session's date, naive).
 
     Rows with a NaN in any OHLCV column are dropped. yfinance legitimately emits them
     (trading halts, delistings, gaps in a multi-ticker frame), and they are not merely
@@ -300,8 +320,9 @@ def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def _later_split_factor(splits: pd.Series | None, index: pd.Index) -> pd.Series:
-    """Pure: per row, the product of the split ratios on rows strictly AFTER it (1.0
-    when none, or when the frame carries no `Stock Splits`). `splits` holds the ratio
+    """Pure: per row, the product of the split ratios on rows strictly AFTER it (1.0 when none, or when the frame carries no `Stock Splits`).
+
+    `splits` holds the ratio
     on an ex-date and 0.0 (or NaN) on every other row, so those read as 1.0. A traded
     close is the unadjusted close times this factor; a traded volume is divided by it.
     """
@@ -315,9 +336,7 @@ def _later_split_factor(splits: pd.Series | None, index: pd.Index) -> pd.Series:
 
 
 def traded_series(frame: pd.DataFrame) -> tuple[list[float], list[float]] | None:
-    """The `traded_close` and `traded_volume` columns as float lists, or None unless
-    the frame carries both (an `auto_adjust=True` parse has neither).
-    """
+    """The `traded_close` and `traded_volume` columns as float lists, or None unless the frame carries both (an `auto_adjust=True` parse has neither)."""
     if not all(column in frame.columns for column in TRADED_COLUMNS):
         return None
     return (

@@ -17,6 +17,14 @@ from trading_agent_framework.agents.telemetry import usage_from_message
 
 @dataclass(frozen=True, slots=True)
 class ToolCallRecord:
+    """One tool call made during an agent run.
+
+    Attributes:
+        name: Tool name.
+        args: Arguments the model passed.
+        result: The tool's return value as text.
+    """
+
     name: str
     args: dict[str, Any]
     result: str
@@ -24,6 +32,20 @@ class ToolCallRecord:
 
 @dataclass(frozen=True, slots=True)
 class AgentRunResult:
+    """What an agent run produced.
+
+    Attributes:
+        output: The model's final answer.
+        tool_calls: Every tool call made, in order.
+        finish_reason: How the run's last model call ended (`stop`, `tool_calls` or `length`); None where the provider
+            reports nothing. `length` means the output cap or context window was hit, so a reasoning model may have spent
+            everything on thinking.
+        input_tokens: Prompt tokens of that last call.
+        output_tokens: Completion tokens of that call, which the output cap bounds.
+        reasoning_tokens: The reasoning share of the completion tokens.
+        total_tokens: Prompt plus completion tokens.
+    """
+
     output: str
     tool_calls: list[ToolCallRecord]
     # How the run's last model call ended, `None` where the provider reports nothing: `finish_reason` is "stop",

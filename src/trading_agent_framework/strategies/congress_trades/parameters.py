@@ -8,6 +8,26 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class CongressParams:
+    """Parameters of the congress_trades strategy.
+
+    Attributes:
+        politician: Whose disclosures are followed: the exact first and last name as the Clerk lists them.
+        max_holdings: Holdings the research agent may submit.
+        max_positions: Stocks in the target portfolio.
+        max_total_weight: Largest sum of stock weights, as a fraction of portfolio value; the rest stays cash.
+        max_position_weight: Largest weight of one stock.
+        min_weight: Smallest weight of one stock; must be at least `rebalance_band`.
+        tier_weight_base: The suggested weight of a holding is `tier_weight_base ** tier`: one value tier up weighs this
+            many times more.
+        rebalance_band: Drift, as a fraction of portfolio value, below which a position is left alone.
+        min_trade_pct: Smallest order, as a fraction of portfolio value.
+        max_trade_retries: Later ticks that re-run the trading stage after orders were left unfilled (0 disables).
+        max_consecutive_abandoned: Abandoned runs in a row that abort a backtest.
+        reason_max_chars: Longest `reason` a submit tool accepts.
+        agent_temperature: Sampling temperature of the three agents; None leaves the LLM server's default.
+        order_wait_seconds: How long `check_orders` waits for the orders to reach a final state.
+    """
+
     politician: str = "Nancy Pelosi"  # "Josh Gottheimer"  # "Warren Davidson", "Nancy Pelosi"  # whose disclosures are followed: the exact first and last name as the Clerk lists them
     max_holdings: int = 20  # holdings the research agent may submit
     max_positions: int = 15  # stocks in the target portfolio
@@ -24,6 +44,11 @@ class CongressParams:
     order_wait_seconds: float = 60.0  # how long `check_orders` waits for the orders to reach a final state
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         floats = (self.max_total_weight, self.max_position_weight, self.min_weight, self.rebalance_band, self.min_trade_pct, self.order_wait_seconds, self.tier_weight_base)
         finite = all(math.isfinite(value) for value in floats)
         problems = {

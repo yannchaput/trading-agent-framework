@@ -1,5 +1,4 @@
-"""Concrete `Broker` implementation wiring the Alpaca trading client, order
-translation helpers (`orders.py`), and `OrderTracker` into real I/O.
+"""Concrete `Broker` implementation wiring the Alpaca trading client, order translation helpers (`orders.py`), and `OrderTracker` into real I/O.
 
 `AlpacaBroker` itself performs no translation logic: it delegates every bit of
 that to the pure functions in `orders.py` (global constraint 4) and only adds
@@ -83,6 +82,8 @@ class AlpacaBroker(Broker):
             is_paper: Whether the account is a paper account.
             data_client: Alpaca market-data client.
             news_client: Alpaca news client.
+            market_data: Market-data source; built from `data_client` and the trading client when omitted.
+            news_provider_factory: Builds the news provider on first use, for when no `news_client` was given.
         """
         super().__init__(
             strategy_name,

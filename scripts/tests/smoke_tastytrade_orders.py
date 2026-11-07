@@ -122,6 +122,11 @@ def _report(results: list[tuple[str, bool]]) -> int:
 
 
 def main() -> int:
+    """Place, modify and cancel orders on the Tastytrade sandbox and check the broker's reading of them.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
         return 0

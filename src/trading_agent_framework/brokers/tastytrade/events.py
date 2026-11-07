@@ -27,7 +27,15 @@ _NEW_FROM = frozenset({OrderStatus.UNPROCESSED, OrderStatus.SUBMITTED})
 
 
 class TastytradeOrderEvents:
+    """Applies Tastytrade account-streamer order messages to the `OrderTracker`, mapping Tastytrade order ids to ours."""
+
     def __init__(self, tracker: OrderTracker, strategy_name: str | None = None) -> None:
+        """Create the event handler.
+
+        Args:
+            tracker: Order tracker that receives the updates.
+            strategy_name: Strategy used to recognise our own orders that are not tracked.
+        """
         self._tracker = tracker
         self._strategy_name = strategy_name  # only to recognise our own orders that we do not track
         # Reentrant, held across a whole apply(): the stream thread and the strategy thread
@@ -67,6 +75,14 @@ class TastytradeOrderEvents:
                 self._seen_fills.update((tt_id, f.fill_id) for f in orders.parse_fills(snapshot))
 
     def tt_id_of(self, order: Order) -> str | None:
+        """Look up the current Tastytrade id of an order.
+
+        Args:
+            order: One of our orders.
+
+        Returns:
+            The live Tastytrade order id, or None if the order was never registered.
+        """
         with self._lock:
             return self._current.get(order.identifier)
 
@@ -84,10 +100,21 @@ class TastytradeOrderEvents:
             return tt_id
 
     def abort_replace(self, tt_id: str) -> None:
+        """Cancel a pending replace.
+
+        Args:
+            tt_id: Tastytrade id of the replacement that was never accepted.
+        """
         with self._lock:
             self._superseded.discard(tt_id)
 
     def finish_replace(self, order: Order, new_tt_id: str) -> None:
+        """Record that a replace went through.
+
+        Args:
+            order: The order that was replaced.
+            new_tt_id: Tastytrade id of the replacement, which is now the live one.
+        """
         with self._lock:
             self._current[order.identifier] = new_tt_id
             self._orders[new_tt_id] = order

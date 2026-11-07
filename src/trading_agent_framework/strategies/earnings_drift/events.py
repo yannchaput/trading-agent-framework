@@ -23,6 +23,15 @@ SESSION_CLOSE = time(16, 0)
 
 @dataclass(frozen=True, slots=True)
 class EarningsEvent:
+    """An earnings release found in the SEC submissions.
+
+    Attributes:
+        symbol: Ticker.
+        accepted_at: When the SEC accepted the filing (timezone-aware).
+        accession_number: SEC accession number.
+        primary_document: Name of the filing's primary document.
+    """
+
     symbol: str
     accepted_at: datetime  # aware
     accession_number: str
@@ -65,6 +74,14 @@ def earnings_events(symbol: str, payloads: Iterable[Mapping[str, Any]]) -> list[
 
 
 def session_close(day: date) -> datetime:
+    """Build the close time of a session.
+
+    Args:
+        day: Session date.
+
+    Returns:
+        A timezone-aware datetime at the session close in the market timezone.
+    """
     return datetime.combine(day, SESSION_CLOSE, tzinfo=MARKET_TZ)
 
 
@@ -109,6 +126,15 @@ def news_window(reaction_day: date, trading_dates: Sequence[date], now: datetime
 
 
 def release_timing(accepted_at: datetime, reaction_day: date) -> str:
+    """Say when in the day a release came out.
+
+    Args:
+        accepted_at: When the filing was accepted.
+        reaction_day: The first session that can react to it.
+
+    Returns:
+        `after_close` if accepted before the reaction day, else `before_open` or `during_session`.
+    """
     local = accepted_at.astimezone(MARKET_TZ)
     if local.date() < reaction_day:
         return "after_close"

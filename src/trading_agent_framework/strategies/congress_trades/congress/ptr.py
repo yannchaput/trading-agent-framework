@@ -44,6 +44,17 @@ _TAG_FIRST = re.compile(r"^(?:\[[A-Z]{2}\]|\([A-Z][A-Z0-9.\-]{0,9}\)\s*(?:\[[A-Z
 
 @dataclass(frozen=True, slots=True)
 class FilingRef:
+    """A filing listed in the Clerk's yearly index.
+
+    Attributes:
+        doc_id: Clerk document id.
+        member: "First Last", no honorific or suffix.
+        kind: `ptr` (periodic transaction report) or `annual`.
+        filed: Filing date.
+        year: The Clerk's Year field, which is also the index it is listed in: the reporting year of an annual report
+            (filed the next spring).
+    """
+
     doc_id: str
     member: str  # "First Last", no honorific or suffix
     kind: str  # "ptr" | "annual"
@@ -53,6 +64,21 @@ class FilingRef:
 
 @dataclass(frozen=True, slots=True)
 class Transaction:
+    """One stock trade of a periodic transaction report.
+
+    Attributes:
+        doc_id: Filing the row comes from.
+        owner: `self`, `spouse`, `joint` or `dependent`.
+        ticker: Ticker.
+        asset_name: Name as printed in the filing.
+        side: `buy`, `sell` or `sell_partial`.
+        transaction_date: Date of the trade.
+        notification_date: Date the member was notified.
+        amount_low: Lower bound of the amount band, in dollars.
+        amount_high: Upper bound of the amount band, in dollars.
+        filed: Filing date.
+    """
+
     doc_id: str
     owner: str  # "self" | "spouse" | "joint" | "dependent"
     ticker: str
@@ -67,6 +93,13 @@ class Transaction:
 
 @dataclass(frozen=True, slots=True)
 class PtrParse:
+    """Result of reading a periodic transaction report.
+
+    Attributes:
+        transactions: The stock trades found.
+        skipped_non_stock: Rows not turned into a transaction: options, bonds, funds, exchanges, rows that did not parse.
+    """
+
     transactions: list[Transaction]
     skipped_non_stock: int  # rows not turned into a transaction: options, bonds, funds, exchanges, rows that did not parse
 

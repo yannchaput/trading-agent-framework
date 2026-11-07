@@ -53,6 +53,14 @@ class DiagnosticLogger:
         diagnostics_file_path: str | None = None,
         sector_provider: SectorProvider | None = None,
     ) -> None:
+        """Create the logger.
+
+        Args:
+            strategy: The strategy being logged.
+            trading_mode: Mode of the run, which decides whether Alpaca calls are rate-limited.
+            diagnostics_file_path: File the diagnostics are appended to; none when omitted.
+            sector_provider: Sector lookup; a cached yfinance provider when omitted.
+        """
         self._strategy = strategy
 
         # Rate limiter for Alpaca market-data calls (universe filtering bursts

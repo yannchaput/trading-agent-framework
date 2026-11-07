@@ -27,6 +27,11 @@ _DESK_RULES = (
 
 
 def researcher_system() -> str:
+    """Build the research analyst's system prompt.
+
+    Returns:
+        The prompt text.
+    """
     return (
         "You are the research analyst of a book that follows what the officers and directors of a few US companies do with their "
         "own company's stock, from their Form 4 filings. Your one job, in this run, is to verify the labels that code put on the "
@@ -51,6 +56,14 @@ def researcher_system() -> str:
 
 
 def trader_system(params: InsiderParams) -> str:
+    """Build the trader's system prompt.
+
+    Args:
+        params: Strategy parameters, whose weight limits are quoted in the prompt.
+
+    Returns:
+        The prompt text.
+    """
     return (
         "You are the trader of a long-only stock account that follows insider activity in a watchlist of stocks. You do two things "
         "in order: set the target weight of every watchlist stock, then place the orders that bring the account to it and check "
@@ -81,6 +94,11 @@ def trader_system(params: InsiderParams) -> str:
 
 
 def trader_retry_system() -> str:
+    """Build the system prompt of a trader retrying unfilled orders.
+
+    Returns:
+        The prompt text.
+    """
     return (
         "You are the trader of a long-only stock account. An earlier run set the target weights and placed orders that are not "
         "all done. Your one job is to place the orders that still bring the account to that target, then check that they filled. "

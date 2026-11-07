@@ -54,6 +54,8 @@ SYMBOLS = [
 
 
 class SmokeTestFailure(Exception):
+    """Raised when a check of the smoke test fails."""
+
     pass
 
 
@@ -74,6 +76,11 @@ def _check(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    """Run the fundamentals quality screen against real SEC and Yahoo data (read-only).
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     if not ENV_FILE.exists():
         print(f"{ENV_FILE} not found; SEC_EDGAR_USER_AGENT must then come from the environment.")

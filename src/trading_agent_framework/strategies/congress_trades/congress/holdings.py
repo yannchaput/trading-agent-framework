@@ -29,6 +29,17 @@ _SIDE_ORDER = {"buy": 0, "sell_partial": 1, "sell": 1}  # same-day trades: buys 
 
 @dataclass(frozen=True, slots=True)
 class Holding:
+    """An estimated holding: the yearly report's band moved by the trades filed since.
+
+    Attributes:
+        ticker: Ticker.
+        asset_name: Name as printed in the filings.
+        value_low: Lower bound of the estimated value, in dollars.
+        value_high: Upper bound of the estimated value, in dollars.
+        tier: Value tier (a higher tier is a bigger holding).
+        sources: DocIDs of the filings behind the estimate.
+    """
+
     ticker: str
     asset_name: str
     value_low: Decimal
@@ -38,6 +49,11 @@ class Holding:
 
     @property
     def midpoint(self) -> Decimal:
+        """Return the middle of the estimated range.
+
+        Returns:
+            `(value_low + value_high) / 2`, in dollars.
+        """
         return (self.value_low + self.value_high) / 2
 
 

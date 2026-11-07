@@ -40,6 +40,11 @@ NEWS_LIMIT = DriftParams().news_limit  # the scanner's per-query limit; it reads
 
 
 def main() -> int:
+    """Load real earnings events and Benzinga surprises for the universe and print them (read-only).
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if ENV_FILE.is_file():
         load_dotenv(ENV_FILE, override=True)
     user_agent = os.environ.get("SEC_EDGAR_USER_AGENT", "")

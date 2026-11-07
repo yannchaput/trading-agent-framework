@@ -15,6 +15,16 @@ REJECT_REASONS = ("already_held", "no_surprise_data", "eps_miss", "no_bars", "we
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
+    """An earnings release that passed the gates.
+
+    Attributes:
+        event: The release.
+        reaction_day: The first session that reacted to it.
+        surprise: The EPS and sales surprise picked for it.
+        reaction: The reaction-day features.
+        headlines: (ET minute, headline) pairs: the picked one first, then the others oldest first, at most 5.
+    """
+
     event: EarningsEvent
     reaction_day: date
     surprise: PickedSurprise
@@ -23,6 +33,11 @@ class Candidate:
 
     @property
     def symbol(self) -> str:
+        """Return the ticker.
+
+        Returns:
+            The release's symbol.
+        """
         return self.event.symbol
 
 

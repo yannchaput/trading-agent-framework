@@ -45,10 +45,27 @@ _TIME_IN_FORCE: dict[TimeInForce, str] = {
 
 
 def build_contract(asset: Asset) -> Stock:
+    """Build the IBKR contract of an asset.
+
+    Args:
+        asset: The instrument.
+
+    Returns:
+        A stock contract on the configured exchange and currency.
+    """
     return Stock(asset.symbol, EXCHANGE, CURRENCY)
 
 
 def client_order_id_for(strategy_name: str, identifier: str) -> str:
+    """Build the order reference sent to IBKR.
+
+    Args:
+        strategy_name: Strategy that owns the order.
+        identifier: Order identifier within the strategy.
+
+    Returns:
+        `<strategy>:<identifier>`.
+    """
     return f"{strategy_name}:{identifier}"
 
 
@@ -139,6 +156,14 @@ _PARSED_TIME_IN_FORCE: dict[str, TimeInForce] = {ib: ours for ours, ib in _TIME_
 
 
 def map_status(status: str) -> OrderStatus:
+    """Map an IBKR order status to the framework's.
+
+    Args:
+        status: IBKR status string.
+
+    Returns:
+        The matching status, or UNKNOWN for an unrecognised one.
+    """
     return _STATUS.get(status, OrderStatus.UNKNOWN)
 
 
@@ -148,6 +173,15 @@ def map_status_event(status: str) -> OrderEvent | None:
 
 
 def identifier_from_order_ref(order_ref: str, strategy_name: str) -> str | None:
+    """Recover the order identifier from an order reference.
+
+    Args:
+        order_ref: Reference as sent to IBKR.
+        strategy_name: Strategy whose prefix must match.
+
+    Returns:
+        The identifier, or None when the reference belongs to another strategy or has none.
+    """
     prefix = f"{strategy_name}:"
     if order_ref.startswith(prefix) and len(order_ref) > len(prefix):
         return order_ref[len(prefix) :]
@@ -155,12 +189,29 @@ def identifier_from_order_ref(order_ref: str, strategy_name: str) -> str | None:
 
 
 def to_decimal(value: float | Decimal | None) -> Decimal | None:
+    """Convert an IBKR number to Decimal.
+
+    Args:
+        value: A float, Decimal or None.
+
+    Returns:
+        The value, or None for None, NaN and IBKR's "unset" sentinel.
+    """
     if value is None or math.isnan(value) or value == UNSET_DOUBLE:
         return None
     return Decimal(str(value))
 
 
 def parse_trade(trade: Trade, strategy_name: str) -> Order:
+    """Convert an `ib_async` trade into an `Order`.
+
+    Args:
+        trade: The trade as reported by the gateway.
+        strategy_name: Strategy used to recognise our own order references.
+
+    Returns:
+        The order; orders not placed by this framework get an `ibkr:<permId>` identifier.
+    """
     ib_order = trade.order
     order_type, forced_tif = _PARSED_ORDER_TYPES.get(ib_order.orderType, (OrderType.MARKET, None))
     identifier = identifier_from_order_ref(ib_order.orderRef, strategy_name)
@@ -189,6 +240,15 @@ def parse_trade(trade: Trade, strategy_name: str) -> Order:
 
 
 def parse_portfolio_item(item: PortfolioItem, strategy_name: str) -> Position | None:
+    """Convert an `ib_async` portfolio item into a `Position`.
+
+    Args:
+        item: The portfolio item.
+        strategy_name: Strategy that owns the position.
+
+    Returns:
+        The position (a short has a positive quantity and side SHORT), or None when the quantity is zero.
+    """
     quantity = to_decimal(item.position) or Decimal(0)
     if quantity == 0:
         return None
@@ -206,7 +266,9 @@ def parse_portfolio_item(item: PortfolioItem, strategy_name: str) -> Position | 
 
 
 def _is_rejection(trade: Trade) -> bool:
-    """`Inactive` is IBKR's own-initiative rejection status, always a rejection. `Cancelled`/
+    """`Inactive` is IBKR's own-initiative rejection status, always a rejection.
+
+    `Cancelled`/
     `ApiCancelled` only count as a rejection when the log also carries a real IBKR error code --
     an IOC/FOK order that simply didn't fill cancels the exact same way, with no error at all.
     """

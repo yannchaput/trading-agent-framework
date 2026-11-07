@@ -31,7 +31,20 @@ class FredSeriesClient(Protocol):
         observation_end: object = None,
         realtime_start: object = None,
         realtime_end: object = None,
-    ) -> Any: ...
+    ) -> Any:
+        """Fetch one FRED series.
+
+        Args:
+            series_id: FRED series identifier.
+            observation_start: First observation date.
+            observation_end: Last observation date.
+            realtime_start: Start of the real-time (vintage) period.
+            realtime_end: End of the real-time (vintage) period.
+
+        Returns:
+            The series, as a pandas Series indexed by observation date.
+        """
+        ...
 
 
 def _default_fred_client() -> FredSeriesClient:

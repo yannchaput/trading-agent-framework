@@ -25,4 +25,18 @@ class NewsProvider(Protocol):
         limit: int = 10,
         include_content: bool = False,
         sort: str | None = None,
-    ) -> list[dict[str, object]]: ...
+    ) -> list[dict[str, object]]:
+        """Fetch news articles published up to `end`.
+
+        Args:
+            symbols: Tickers to filter on; all news when empty.
+            start: Earliest publication time.
+            end: Latest publication time; callers pass the strategy clock's now so a backtest never sees the future.
+            limit: Maximum number of articles.
+            include_content: Whether to include the article body.
+            sort: Sort order, the provider's default when None.
+
+        Returns:
+            One dict per article.
+        """
+        ...

@@ -27,6 +27,15 @@ class DataUnavailable(Exception):
 
 @dataclass(frozen=True, slots=True)
 class DailySeries:
+    """A stock's daily history.
+
+    Attributes:
+        closes: Adjusted closes, oldest first.
+        volumes: Adjusted volumes, same rows.
+        traded_closes: The close as traded, same rows as `closes`; None when the source carries none.
+        traded_volumes: The volume as traded, same rows; None when the source carries none.
+    """
+
     closes: list[float]  # oldest first
     volumes: list[float]
     traded_closes: list[float] | None = None  # the close and volume as traded, same rows as `closes`; None when the source carries none
@@ -34,7 +43,19 @@ class DailySeries:
 
 
 class DailyBars(Protocol):
-    def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]: ...
+    """Source of the daily history of a universe."""
+
+    def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
+        """Load the daily history of the universe.
+
+        Args:
+            universe: Tickers to load.
+            held: Held tickers, which a batch source must be able to serve.
+
+        Returns:
+            The history per ticker; a ticker without a usable history is absent.
+        """
+        ...
 
 
 def _series(bars: Bars, today: date) -> DailySeries | None:
@@ -67,6 +88,16 @@ class YahooBars:
         retry_delays: Sequence[float],
         min_coverage: float,
     ) -> None:
+        """Create a source over one Yahoo batch.
+
+        Args:
+            source: Batched daily-bars source.
+            today: Returns the current session date.
+            sleep: Waits between attempts at an unusable batch.
+            warn: Logs a warning.
+            retry_delays: Seconds before each new attempt.
+            min_coverage: Share of the universe the batch must cover.
+        """
         self._source = source
         self._today = today
         self._sleep = sleep
@@ -75,6 +106,18 @@ class YahooBars:
         self._min_coverage = min_coverage
 
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
+        """Load the daily history of the universe.
+
+        Args:
+            universe: Tickers to load.
+            held: Held tickers, which the batch must include.
+
+        Returns:
+            The history per ticker; a ticker without a usable history is absent.
+
+        Raises:
+            DataUnavailable: If the batch stays unusable after every retry.
+        """
         try:
             bars = fetch_usable_batch(
                 self._source,
@@ -106,11 +149,27 @@ class GateBars:
     """
 
     def __init__(self, fetch: Callable[[str, int], Bars | None], *, today: Callable[[], date], warn: Callable[[str], None]) -> None:
+        """Create a source that fetches symbol by symbol.
+
+        Args:
+            fetch: Returns the bars of a symbol for a number of sessions, or None.
+            today: Returns the current session date.
+            warn: Logs a warning.
+        """
         self._fetch = fetch
         self._today = today
         self._warn = warn
 
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
+        """Load the daily history of the universe, one symbol at a time.
+
+        Args:
+            universe: Tickers to load.
+            held: Held tickers (unused: every ticker is fetched on its own).
+
+        Returns:
+            The history per ticker; a ticker that fails or has no bars is skipped with a warning.
+        """
         today = self._today()
         result: dict[str, DailySeries] = {}
         for symbol in universe:

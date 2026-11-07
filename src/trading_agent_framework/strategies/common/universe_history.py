@@ -1,5 +1,4 @@
-"""The point-in-time stock universe: for each month, the top-N US stocks ranked only on data dated before that
-month's first session.
+"""The point-in-time stock universe: for each month, the top-N US stocks ranked only on data dated before that month's first session.
 
 cross_momentum and bull_bear backtest on a universe file built today, which holds today's winners and so leaks
 the future into every past date. A `UniverseHistory` instead carries one list per month, each ranked on the
@@ -49,7 +48,9 @@ def _month_keys(start: date, end: date) -> list[str]:
 
 @dataclass(frozen=True)
 class UniverseHistory:
-    """The monthly universe lists and the parameters they were built with. `months` maps "YYYY-MM" to that month's
+    """The monthly universe lists and the parameters they were built with.
+
+    `months` maps "YYYY-MM" to that month's
     symbols, best first.
 
     `pool_date`, `pool_size`, `unanswered` and `bars_absent` describe the candidate pool of the LATEST build, which
@@ -92,6 +93,11 @@ class UniverseHistory:
         return sorted(symbols)
 
     def to_json(self) -> dict[str, Any]:
+        """Serialise the history.
+
+        Returns:
+            A JSON-ready mapping with the build parameters, counts and each month's symbols.
+        """
         return {
             "built": self.built.isoformat(),
             "pool_date": self.pool_date.isoformat(),
@@ -107,6 +113,14 @@ class UniverseHistory:
 
     @classmethod
     def from_json(cls, data: Mapping[str, Any]) -> UniverseHistory:
+        """Rebuild a history from its JSON form.
+
+        Args:
+            data: Mapping as produced by `to_json`.
+
+        Returns:
+            The history.
+        """
         return cls(
             built=date.fromisoformat(data["built"]),
             pool_date=date.fromisoformat(data["pool_date"]),

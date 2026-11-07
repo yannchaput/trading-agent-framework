@@ -43,6 +43,11 @@ class RunRef:
         return cls(strategy_name=strategy_name, run_ts=run_ts, mode=mode, path=path)
 
     def __repr__(self) -> str:
+        """Return a compact description of the run.
+
+        Returns:
+            `RunRef(<strategy>, <timestamp>, <mode>)`.
+        """
         return f"RunRef({self.strategy_name}, {self.run_ts}, {self.mode})"
 
 
@@ -80,9 +85,7 @@ class Settings(BaseModel):
 
 
 class MetricSet(BaseModel):
-    """All scalar performance metrics from metrics.json (backtesting.report.write_metrics
-    writes this keyed exactly by these field names; see tests/backtesting/dashboard_contract.py).
-    """
+    """All scalar performance metrics from metrics.json (backtesting.report.write_metrics writes this keyed exactly by these field names; see tests/backtesting/dashboard_contract.py)."""
 
     total_return_strategy: float = 0.0
     total_return_benchmark: float = 0.0
@@ -149,6 +152,11 @@ class RunIndex:
         return groups
 
     def strategy_names(self) -> list[str]:
+        """Return the strategies present in the benchmark.
+
+        Returns:
+            Sorted, de-duplicated strategy names.
+        """
         return sorted(set(r.strategy_name for r in self.runs))
 
 
@@ -165,6 +173,17 @@ class BenchmarkRunRef:
 
     @classmethod
     def from_path(cls, path: Path) -> BenchmarkRunRef:
+        """Build a reference from a benchmark run directory.
+
+        Args:
+            path: Run directory, named `YYYYMMDD-HHMMSS`.
+
+        Returns:
+            The reference, with `started_at` parsed from the directory name.
+
+        Raises:
+            ValueError: If the directory name is not a benchmark timestamp.
+        """
         try:
             started_at = datetime.strptime(path.name, "%Y%m%d-%H%M%S")
         except ValueError as exc:
@@ -174,6 +193,14 @@ class BenchmarkRunRef:
 
 @dataclass(frozen=True)
 class ScenarioScore:
+    """How a model fared on one benchmark scenario.
+
+    Attributes:
+        passed: Number of repeats that passed.
+        runs: Number of repeats run.
+        mean_partial: Mean partial-credit score across the repeats.
+    """
+
     passed: int
     runs: int
     mean_partial: float
@@ -208,6 +235,18 @@ class BenchmarkModel:
 
 @dataclass(frozen=True)
 class BenchmarkRun:
+    """One vLLM benchmark run, as read from its result files.
+
+    Attributes:
+        ref: Where the run lives on disk.
+        started_at: When the run started.
+        finished_at: When it finished; None while it is still running.
+        repeats: Repeats per scenario.
+        timeout_s: Per-run timeout in seconds.
+        scenarios: Scenario ids in `meta.json` order, e.g. `reasoning.rsi_signal`.
+        models: Per-model summaries, in `summary.json` order.
+    """
+
     ref: BenchmarkRunRef
     started_at: datetime
     finished_at: datetime | None
@@ -224,6 +263,14 @@ class BenchmarkRun:
 
 @dataclass(frozen=True)
 class Check:
+    """One check of a scenario run.
+
+    Attributes:
+        type: Kind of check.
+        passed: Whether it passed.
+        reason: Why it passed or failed.
+    """
+
     type: str
     passed: bool
     reason: str
@@ -248,5 +295,12 @@ class ScenarioRun:
 
 @dataclass(frozen=True)
 class ScenarioRuns:
+    """The recorded runs of one scenario.
+
+    Attributes:
+        runs: The valid run records.
+        skipped_lines: Lines of the whole file that were not valid records.
+    """
+
     runs: tuple[ScenarioRun, ...]
     skipped_lines: int  # lines of the whole file that were not valid records

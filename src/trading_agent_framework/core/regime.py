@@ -22,6 +22,16 @@ _VOL_EPSILON = 1e-12  # float noise between equal volatilities must not read as 
 
 @dataclass(frozen=True, slots=True)
 class RegimeParameters:
+    """Thresholds of the market-regime classifier.
+
+    Attributes:
+        sma_fast: Window of the fast simple moving average, in sessions.
+        sma_slow: Window of the slow simple moving average, in sessions.
+        vol_window: Window of the realised-volatility estimate, in sessions.
+        vol_lookback: Number of volatility readings the percentile is taken over.
+        vol_percentile: Percentile above which volatility counts as high; strictly between 0 and 1.
+    """
+
     sma_fast: int = 50
     sma_slow: int = 200
     vol_window: int = 20
@@ -29,6 +39,11 @@ class RegimeParameters:
     vol_percentile: float = 0.80
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: If the windows or the percentile are out of range.
+        """
         if not 1 <= self.sma_fast < self.sma_slow:
             raise ValueError(f"need 1 <= sma_fast < sma_slow, got {self.sma_fast} and {self.sma_slow}")
         if self.vol_window < 2:

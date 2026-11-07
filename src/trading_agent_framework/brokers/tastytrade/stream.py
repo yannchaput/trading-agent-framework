@@ -83,6 +83,10 @@ class TastytradeAccountStream:
             token: Returns a fresh session token for each connection.
             on_order: Called with every order message.
             on_reconnect: Called after a reconnect so orders missed meanwhile can be reconciled.
+            connect: Opens the websocket for a URL (injected in tests).
+            clock: Monotonic time source for the connect deadline and the heartbeat schedule.
+            wait: Waits between reconnection attempts and returns True if the stream was stopped meanwhile; defaults to
+                waiting on the stream's own stop event.
         """
         self._url = url
         self._account_number = account_number

@@ -22,6 +22,11 @@ ENV_FILE = find_project_root() / "env" / ".env.alpaca.integration-tests"
 
 
 def main() -> int:
+    """Read the Tastytrade sandbox account, its positions and the market data around it (read-only).
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
         return 0

@@ -18,10 +18,23 @@ class RunLog:
     """
 
     def __init__(self, path: Path | Callable[[], Path | None] | None, *, what: str = "run log") -> None:
+        """Create a log.
+
+        Args:
+            path: File to append to; a callable returning the path (or None) is read at each write. None disables the log.
+            what: Name used in the warning when a write fails.
+        """
         self._path = path
         self._what = what
 
     def append(self, record: dict[str, Any]) -> None:
+        """Append one record as a JSON line.
+
+        A write failure is logged as a warning and never raised.
+
+        Args:
+            record: JSON-serialisable mapping; unserialisable values are written as strings.
+        """
         path = self._path() if callable(self._path) else self._path
         if path is None:
             return

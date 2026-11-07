@@ -27,6 +27,7 @@ DEFAULT_PAGE = "Backtesting"
 
 
 def main():
+    """Streamlit entry point: configure the page, apply the theme and run the top navigation."""
     st.set_page_config(  # must be the first Streamlit call
         page_title="Yann's Trading Bots",
         page_icon="📊",

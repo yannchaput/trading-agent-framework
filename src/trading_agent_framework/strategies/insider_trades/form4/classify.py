@@ -21,6 +21,8 @@ from trading_agent_framework.strategies.insider_trades.form4.parse import Form4T
 
 
 class Label(StrEnum):
+    """How a trade is read against the insider's own history."""
+
     ROUTINE = "routine"
     OPPORTUNISTIC = "opportunistic"
     UNCLASSIFIED = "unclassified"
@@ -28,6 +30,15 @@ class Label(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Labelled:
+    """A trade with the label code gave it.
+
+    Attributes:
+        trade: The Form 4 trade.
+        label: Routine, opportunistic or unclassified.
+        rule: The rule that decided the label.
+        months_by_year: Each look-back year -> the sorted distinct months the insider traded in.
+    """
+
     trade: Form4Trade
     label: Label
     rule: str

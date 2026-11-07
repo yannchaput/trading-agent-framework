@@ -56,6 +56,14 @@ class TradingFeeFactory:
     """One broker's fee model: its per-order commission plus the regulatory fees every broker passes on."""
 
     def __init__(self, broker: BrokerKind) -> None:
+        """Create the fee schedule of a broker.
+
+        Args:
+            broker: Broker whose commission schedule applies.
+
+        Raises:
+            ConfigurationError: If no fee schedule exists for the broker.
+        """
         commission = COMMISSIONS.get(broker)
         if commission is None:
             raise ConfigurationError(f"No trading fee schedule for BROKER={broker.value}")
@@ -69,6 +77,11 @@ class TradingFeeFactory:
 
     @property
     def broker(self) -> BrokerKind:
+        """Return the broker this schedule belongs to.
+
+        Returns:
+            The broker kind.
+        """
         return self._broker
 
     def fees(self, *, buy_shares: Decimal, sell_shares: Decimal, buy_value: Decimal, sell_value: Decimal) -> TradeFees:

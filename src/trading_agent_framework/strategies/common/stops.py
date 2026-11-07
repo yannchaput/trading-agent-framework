@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 
 class StopRelease(StrEnum):
+    """Outcome of trying to release a trade's protective stop."""
+
     GONE = "gone"  # no stop id, or the broker does not know the order
     FILLED = "filled"  # the stop sold the shares: the trade is already out
     RELEASED = "released"  # cancelled (or already ended unfilled): `Release.order` may hold a partial fill to book
@@ -27,6 +29,15 @@ class StopRelease(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Release:
+    """Result of releasing a protective stop.
+
+    Attributes:
+        status: What happened to the stop.
+        order: The stop order as last seen, which may hold a partial fill to book.
+        error: Why the release failed, for FAILED.
+        timed_out: FAILED only: the cancel was sent but not confirmed in time (the id was un-expected).
+    """
+
     status: StopRelease
     order: Order | None = None
     error: str | None = None

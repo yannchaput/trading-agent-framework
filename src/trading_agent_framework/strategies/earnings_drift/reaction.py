@@ -18,6 +18,23 @@ from trading_agent_framework.utils.clock import MARKET_TZ
 
 @dataclass(frozen=True, slots=True)
 class ReactionFeatures:
+    """Features of the earnings-reaction day.
+
+    Attributes:
+        gap_pct: Gap at the open against the previous close, in percent.
+        return_pct: Close-to-close return of the day, in percent.
+        abnormal_pct: Return minus the benchmark's.
+        hold_ratio: Share of the day's gain still held at the close; None when the high is not above the previous close.
+        close_location: Where the close sits in the day's range.
+        rel_volume: Volume relative to the baseline average.
+        dollar_volume_20d: Average dollar volume over 20 sessions.
+        runup_20d_pct: Run-up over the 20 sessions before the reaction, in percent; None when there is not enough history.
+        runup_60d_pct: Run-up over the 60 sessions before the reaction, in percent; None when there is not enough history.
+        atr14_pct: 14-day average true range, in percent of the close; None when there is not enough history.
+        close: Close of the reaction day.
+        reaction_low: Low of the reaction day.
+    """
+
     gap_pct: float
     return_pct: float
     abnormal_pct: float
@@ -33,6 +50,17 @@ class ReactionFeatures:
 
 
 def bar_dates(frame: pd.DataFrame) -> list[date]:
+    """List the session dates of a daily-bar frame.
+
+    Args:
+        frame: Daily bars indexed by timezone-aware timestamps.
+
+    Returns:
+        The dates in the market timezone, in frame order.
+
+    Raises:
+        ValueError: If the index is not timezone-aware.
+    """
     index = pd.DatetimeIndex(frame.index)
     if index.tz is None:
         raise ValueError("daily bars must be indexed by tz-aware timestamps")

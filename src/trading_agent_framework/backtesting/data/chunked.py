@@ -44,8 +44,9 @@ def chunk_window(index: int, start: datetime, end: datetime) -> tuple[datetime, 
 
 
 class YearChunkedData(BacktestDataSource):
-    """Minute bars from a source built for the current chunk only; day bars and sessions from one source over
-    the whole window. `inner` builds a source for a `(start, end)` window (e.g. the `AlpacaBacktestData` class).
+    """Minute bars from a source built for the current chunk only; day bars and sessions from one source over the whole window.
+
+    `inner` builds a source for a `(start, end)` window (e.g. the `AlpacaBacktestData` class).
 
     The current chunk follows the latest `cutoff` any `bars()` call has passed: a backtest clock only moves
     forward, and the scanner reads its daily bars before preloading minutes, so the position is on the right
@@ -53,6 +54,13 @@ class YearChunkedData(BacktestDataSource):
     """
 
     def __init__(self, start: datetime, end: datetime, *, inner: Callable[[datetime, datetime], BacktestDataSource]) -> None:
+        """Create a source for a long window.
+
+        Args:
+            start: First day of the window.
+            end: Last day of the window.
+            inner: Factory building the underlying source for a (start, end) window.
+        """
         self._start = start
         self._end = end
         self._inner = inner
@@ -74,12 +82,34 @@ class YearChunkedData(BacktestDataSource):
         source.load(assets, fetch_start, fetch_end, timestep)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        """Return the bars visible at a cutoff.
+
+        Day bars come from the whole-window source; minute bars from the chunk covering the cutoff.
+
+        Args:
+            asset: Instrument to read.
+            cutoff: Latest bar close the caller may see; later bars are never returned.
+            length: Maximum number of bars, counted back from the cutoff.
+            timestep: Bar size (`day` or `minute`).
+
+        Returns:
+            The visible bars, or None when there are none at or before the cutoff.
+        """
         with self._lock:
             self._position = max(self._position, cutoff)
             source = self._whole if timestep != "minute" else self._minute_for(cutoff)
         return source.bars(asset, cutoff, length, timestep)
 
     def sessions(self, start: datetime, end: datetime) -> list[MarketSession]:
+        """List the trading sessions in a range.
+
+        Args:
+            start: First day of the range.
+            end: Last day of the range.
+
+        Returns:
+            The sessions, from the whole-window source.
+        """
         return self._whole.sessions(start, end)
 
     def _minute_for(self, cutoff: datetime) -> BacktestDataSource:

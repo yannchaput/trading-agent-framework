@@ -96,6 +96,7 @@ def require_search_news_before(tools: list[Callable[..., dict[str, Any]]]) -> li
     @functools.wraps(search_news)
     def wrapped_search_news(*args: Any, **kwargs: Any) -> dict[str, Any]:
         """Intercept search_news to watch for the grounding call (include_content=True).
+
         Set 'grounded' if the call happened.
         """
         result = search_news(*args, **kwargs)

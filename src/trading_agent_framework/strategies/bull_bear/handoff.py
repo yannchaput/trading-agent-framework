@@ -122,8 +122,10 @@ def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_
 
 
 def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
-    """`text` cut to at most `max_chars`, never reworded: the longest run of whole sentences that fits, if it has
-    at least `min_chars`; otherwise a cut at a word with a trailing ellipsis (or hard, when there is no space).
+    """`text` cut to at most `max_chars`, never reworded.
+
+    The longest run of whole sentences that fits, if it has at least `min_chars`; otherwise a cut at a word with a trailing
+    ellipsis (or hard, when there is no space).
     """
     text = text.strip()
     if len(text) <= max_chars:

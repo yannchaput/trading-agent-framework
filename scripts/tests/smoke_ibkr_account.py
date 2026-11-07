@@ -24,6 +24,11 @@ ENV_FILE = find_project_root() / "env" / ".env.ibkr.integration-tests"
 
 
 def main() -> int:
+    """Read the account from the paper IB Gateway (read-only); refuses to run unless `BROKER=ibkr` and the account is paper.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
         return 0

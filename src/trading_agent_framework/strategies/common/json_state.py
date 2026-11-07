@@ -46,18 +46,50 @@ def atomic_write_json(path: Path, payload: Any, *, log: ColorLogger, what: str =
 
 
 def is_int(value: Any) -> bool:
+    """Tell integers from booleans.
+
+    Args:
+        value: Any decoded JSON value.
+
+    Returns:
+        True for an int that is not a bool (`bool` is an `int` subclass in Python).
+    """
     return isinstance(value, int) and not isinstance(value, bool)
 
 
 def is_weight(value: Any) -> bool:
+    """Check a portfolio weight.
+
+    Args:
+        value: Any decoded JSON value.
+
+    Returns:
+        True for a finite number (not a bool) between 0 and 1 inclusive.
+    """
     return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value <= 1
 
 
 def valid_strings(value: Any) -> bool:
+    """Check a list of strings.
+
+    Args:
+        value: Any decoded JSON value.
+
+    Returns:
+        True if it is a list whose items are all strings.
+    """
     return isinstance(value, list) and all(isinstance(item, str) for item in value)
 
 
 def valid_weights(value: Any) -> bool:
+    """Check a symbol-to-weight mapping.
+
+    Args:
+        value: Any decoded JSON value.
+
+    Returns:
+        True if it is a dict of string keys to valid weights.
+    """
     return isinstance(value, dict) and all(isinstance(k, str) and is_weight(v) for k, v in value.items())
 
 
@@ -66,7 +98,9 @@ class InvalidState(ValueError):
 
 
 class JsonStateStore[S]:
-    """One state dataclass in one JSON file. `decode` gets the whole file dict (version included) and raises `InvalidState` (or a
+    """One state dataclass in one JSON file.
+
+    `decode` gets the whole file dict (version included) and raises `InvalidState` (or a
     ValueError/KeyError/TypeError/AttributeError) when it is not valid; `encode` gives the fields saved beside the version.
     """
 
@@ -82,6 +116,18 @@ class JsonStateStore[S]:
         accepts: Collection[int] | None = None,
         fresh: bool = False,
     ) -> None:
+        """Open the store for one state file.
+
+        Args:
+            path: State file.
+            version: Version written on save.
+            empty: Builds the state used when there is no usable file.
+            decode: Builds the state from the decoded JSON object.
+            encode: Turns the state into a JSON object.
+            log: Logger for warnings about unreadable files.
+            accepts: Versions that may be read; only `version` when omitted.
+            fresh: Delete any existing file first, to start the run with an empty state.
+        """
         self._path = path
         self._version = version
         self._empty = empty
@@ -94,6 +140,11 @@ class JsonStateStore[S]:
 
     @property
     def path(self) -> Path:
+        """Return the state file's path.
+
+        Returns:
+            The path given at construction.
+        """
         return self._path
 
     def load(self) -> S:

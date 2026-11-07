@@ -54,18 +54,27 @@ class AlwaysOpenClock(MarketClock):
     """One session opening now and closing in an hour, whatever the real calendar says."""
 
     def __init__(self) -> None:
+        """Create a clock with one session that opens now and lasts an hour."""
         start = self.now()
         self._session = MarketSession(open=start, close=start + timedelta(hours=1))
 
     def next_session(self) -> MarketSession | None:
+        """Return the only session while it is open.
+
+        Returns:
+            The session, or None once it has closed.
+        """
         return self._session if self._session.close > self.now() else None
 
 
 class SmokeStrategy(Strategy):
+    """Strategy that submits, modifies and cancels one resting limit order, and records every hook it receives."""
+
     sleeptime = "30S"
     minutes_before_closing = 0
 
     def initialize(self) -> None:
+        """Reset the records of hooks, errors and the order."""
         self.vars.hooks = []
         self.vars.errors = []
         self.vars.order = None
@@ -77,6 +86,7 @@ class SmokeStrategy(Strategy):
         self.log_info(f"hook: {hook}")
 
     def on_trading_iteration(self) -> None:
+        """Submit the order on the first iteration, modify it on the second, cancel it and stop on the third."""
         self._record("on_trading_iteration")
         iteration = self.vars.hooks.count("on_trading_iteration")
         if iteration == 1:
@@ -92,15 +102,31 @@ class SmokeStrategy(Strategy):
             self.stop()
 
     def on_new_order(self, order: Order) -> None:
+        """Record the hook.
+
+        Args:
+            order: The accepted order.
+        """
         self._record("on_new_order")
 
     def on_canceled_order(self, order: Order) -> None:
+        """Record the hook.
+
+        Args:
+            order: The canceled order.
+        """
         self._record("on_canceled_order")
 
     def on_strategy_end(self) -> None:
+        """Record the hook."""
         self._record("on_strategy_end")
 
     def on_bot_crash(self, error: BaseException) -> None:
+        """Record the failure so it fails the run (the executor catches hook failures and keeps trading).
+
+        Args:
+            error: The exception the executor caught.
+        """
         # The executor catches hook failures and keeps trading; record them so they fail the run.
         self.vars.errors.append(repr(error))
         self.log_error(f"hook failed: {error!r}")
@@ -126,6 +152,13 @@ def _failures(strategy: SmokeStrategy) -> list[str]:
 
 
 def main() -> int:
+    """Run the strategy lifecycle against the paper account; skipped outside regular trading hours.
+
+    Refuses to run on a live account.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     load_dotenv(ENV_FILE, override=True)
     creds = AlpacaCredentials.for_trading()
     if not creds.is_paper:

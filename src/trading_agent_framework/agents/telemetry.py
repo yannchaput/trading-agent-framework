@@ -15,6 +15,15 @@ from typing import Any
 
 @dataclass(frozen=True, slots=True)
 class Usage:
+    """Token counts of one model call; a field is None where the provider reports nothing.
+
+    Attributes:
+        input_tokens: Prompt tokens.
+        output_tokens: Completion tokens.
+        reasoning_tokens: The reasoning share of the completion tokens.
+        total_tokens: Prompt plus completion tokens.
+    """
+
     input_tokens: int | None
     output_tokens: int | None
     reasoning_tokens: int | None

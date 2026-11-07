@@ -35,6 +35,15 @@ def parse_account(response: object) -> AccountBalances:
 
 
 def build_calendar_request(start: date, end: date) -> GetCalendarRequest:
+    """Build an Alpaca market-calendar request.
+
+    Args:
+        start: First day of the range.
+        end: Last day of the range.
+
+    Returns:
+        The request for that range.
+    """
     return GetCalendarRequest(start=start, end=end)
 
 

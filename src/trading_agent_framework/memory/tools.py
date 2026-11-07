@@ -93,6 +93,7 @@ class RunMemo:
     """
 
     def __init__(self) -> None:
+        """Create an empty once-per-run guard."""
         self._lock = threading.Lock()
         self._run_id: str | None = None
         self._results: dict[Hashable, dict[str, Any]] = {}
@@ -104,6 +105,20 @@ class RunMemo:
         call: Callable[[], dict[str, Any]],
         on_repeat: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        """Run `call` once per key within a run.
+
+        A repeat of the same key in the same run returns the first result instead of calling again. A result holding an
+        `error` is not remembered, so a corrected retry goes through.
+
+        Args:
+            run_id: Identifier of the current run; a new one forgets earlier results. None disables the guard.
+            key: Identifies the call (for example its arguments).
+            call: Produces the result when the key has not been seen.
+            on_repeat: Maps the first result to what a repeat returns; the first result is returned as-is when None.
+
+        Returns:
+            The result of `call`, or the first result (mapped by `on_repeat`) for a repeat.
+        """
         if run_id is None:
             return call()
         with self._lock:

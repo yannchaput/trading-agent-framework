@@ -118,7 +118,9 @@ def _int_setting(source: Mapping[str, str], name: str, default: int) -> int:
 
 
 class BrokerKind(StrEnum):
-    """Which broker trades in paper/live mode (`BROKER`). In backtesting it only picks the
+    """Which broker trades in paper/live mode (`BROKER`).
+
+    In backtesting it only picks the
     simulated fee schedule (`brokers/fees.py`); the broker itself is always `BacktestBroker`.
     """
 
@@ -150,7 +152,9 @@ class BrokerSettings:
 
 @dataclass(frozen=True, slots=True)
 class AlpacaCredentials:
-    """One Alpaca key pair. Each component reads its OWN group -- trading, news or data --
+    """One Alpaca key pair.
+
+    Each component reads its OWN group -- trading, news or data --
     and groups never fall back to each other.
     """
 
@@ -170,8 +174,9 @@ class AlpacaCredentials:
 
     @classmethod
     def for_data(cls, env: Mapping[str, str] | None = None) -> AlpacaCredentials:
-        """`ALPACA_DATA_API_*`: prices, bars and the calendar (paper/live, every broker) and
-        `AlpacaBacktestData`. `ALPACA_DATA_IS_PAPER` picks the endpoint the calendar call uses.
+        """`ALPACA_DATA_API_*`: prices, bars and the calendar (paper/live, every broker) and `AlpacaBacktestData`.
+
+        `ALPACA_DATA_IS_PAPER` picks the endpoint the calendar call uses.
         """
         return cls._read(env, "ALPACA_DATA_API", paper_variable="ALPACA_DATA_IS_PAPER")
 
@@ -211,8 +216,10 @@ class IbkrSettings:
 
 @dataclass(frozen=True, slots=True)
 class TastytradeSettings:
-    """Tastytrade OAuth credentials and the account to trade. `is_paper` picks the sandbox hosts:
-    sandbox and production credentials are separate OAuth applications and never work against each other.
+    """Tastytrade OAuth credentials and the account to trade.
+
+    `is_paper` picks the sandbox hosts: sandbox and production credentials are separate OAuth applications and never work
+    against each other.
     """
 
     client_secret: str = field(repr=False)

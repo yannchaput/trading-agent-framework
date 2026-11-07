@@ -1,5 +1,4 @@
-"""Pure Alpaca order translation logic: status/event mapping, price conforming,
-and pre-submission validation.
+"""Pure Alpaca order translation logic: status/event mapping, price conforming, and pre-submission validation.
 
 This module holds no I/O, no state, and no client instances -- it is a
 collection of module-level functions and constants operating on our own
@@ -63,8 +62,7 @@ logger = logging.getLogger(__name__)
 
 
 class AlpacaTradingClient(Protocol):
-    """Structural contract for what `AlpacaBroker` actually calls on a
-    `alpaca.trading.client.TradingClient` (or a hand-written test double).
+    """Structural contract for what `AlpacaBroker` actually calls on a `alpaca.trading.client.TradingClient` (or a hand-written test double).
 
     A real `TradingClient` satisfies this automatically (structural typing);
     a fake only needs to implement the methods below, not inherit anything.
@@ -179,9 +177,7 @@ ALPACA_EVENT_MAP: MappingProxyType[str, OrderEvent | None] = MappingProxyType(
 
 
 def _normalize_key(raw: object) -> str:
-    """Reduce a raw status/event -- a plain string or a `(str, Enum)` member -- to
-    the lowercase string used as a map key.
-    """
+    """Reduce a raw status/event -- a plain string or a `(str, Enum)` member -- to the lowercase string used as a map key."""
     value = getattr(raw, "value", raw)
     return str(value).lower()
 
@@ -268,8 +264,7 @@ _OPENING_CLOSING_ORDER_TYPES = frozenset({OrderType.MARKET, OrderType.LIMIT})
 
 
 def validate_order(order: Order) -> None:
-    """Enforce Alpaca server-side order rules that alpaca-py's pydantic request
-    models do not check.
+    """Enforce Alpaca server-side order rules that alpaca-py's pydantic request models do not check.
 
     Covers exactly four rules -- deliberately not an attempt to mirror every
     Alpaca constraint, which is how lumibot grew its dead code. Raises
@@ -393,8 +388,7 @@ _SENTINEL = object()
 
 
 def _field(response: object, name: str, default: object = None) -> object:
-    """Read `name` off `response`, whether it's an attribute-bearing object
-    (a real alpaca-py model) or a plain Mapping (a raw dict payload).
+    """Read `name` off `response`, whether it's an attribute-bearing object (a real alpaca-py model) or a plain Mapping (a raw dict payload).
 
     getattr's own default only kicks in when the attribute is genuinely
     missing, never when it is present but None -- so a present-but-None
@@ -418,8 +412,7 @@ def _to_decimal(value: object) -> Decimal | None:
 
 
 def parse_broker_order(response: object, strategy_name: str) -> Order | None:
-    """Parse an Alpaca order response (a real `alpaca.trading.models.Order`
-    instance or an equivalent raw dict) into our `Order` entity.
+    """Parse an Alpaca order response (a real `alpaca.trading.models.Order` instance or an equivalent raw dict) into our `Order` entity.
 
     Returns None -- logging a warning -- only when both `qty` and `notional`
     are absent, which shouldn't happen for a real order. This deliberately
@@ -476,16 +469,12 @@ def parse_broker_order(response: object, strategy_name: str) -> Order | None:
 
 
 def parse_broker_orders(responses: Iterable[object], strategy_name: str) -> list[Order]:
-    """Parse an iterable of broker order responses, dropping any that
-    `parse_broker_order` returns None for.
-    """
+    """Parse an iterable of broker order responses, dropping any that `parse_broker_order` returns None for."""
     return [order for order in (parse_broker_order(response, strategy_name) for response in responses) if order is not None]
 
 
 def parse_broker_position(response: object, strategy_name: str) -> Position:
-    """Parse an Alpaca position response (a real `alpaca.trading.models.Position`
-    instance or an equivalent raw dict) into our `Position` entity.
-    """
+    """Parse an Alpaca position response (a real `alpaca.trading.models.Position` instance or an equivalent raw dict) into our `Position` entity."""
     quantity = _to_decimal(_field(response, "qty"))
     # alpaca.trading.models.Position.qty is a required field -- unlike an Order,
     # which can be notional-only, a position always has a share quantity.
@@ -504,7 +493,9 @@ def parse_broker_position(response: object, strategy_name: str) -> Position:
 
 
 def parse_close_all_responses(responses: Iterable[object], strategy_name: str) -> list[Order]:
-    """Orders placed by close_all_positions. Each response `body` is either an order or a
+    """Orders placed by close_all_positions.
+
+    Each response `body` is either an order or a
     FailedClosePositionDetails (code/message, no id); failures are logged and skipped.
     """
     closed: list[Order] = []

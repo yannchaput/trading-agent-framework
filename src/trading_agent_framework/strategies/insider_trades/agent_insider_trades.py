@@ -60,6 +60,15 @@ class InsiderTradesStrategy(Strategy):
         source: SourceLike | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the strategy.
+
+        Args:
+            broker: Broker the strategy trades through.
+            mode: Trading mode.
+            settings: Strategy parameters; the defaults when omitted.
+            source: Form 4 source (injected in tests); the EDGAR source is built in `initialize` when omitted.
+            **kwargs: Passed on to `Strategy`.
+        """
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or InsiderParams()
         self._source = source  # injected in tests; the real EDGAR source is built in `initialize`

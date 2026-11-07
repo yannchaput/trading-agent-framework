@@ -111,6 +111,13 @@ class SplitHistory:
         fetch: Callable[[str], list[Split]] | None = None,
         wall_clock: Callable[[], datetime] | None = None,
     ) -> None:
+        """Create the split history.
+
+        Args:
+            cache_file: JSON file the split history is cached in.
+            fetch: Returns the splits of a symbol (injected in tests); Yahoo when omitted.
+            wall_clock: Real time, used to date cache entries; UTC now when omitted.
+        """
         self._cache_file = cache_file
         self._fetch = fetch or _fetch_from_yahoo
         self._wall_clock = wall_clock or (lambda: datetime.now(UTC))

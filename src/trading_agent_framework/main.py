@@ -1,3 +1,5 @@
+"""Command-line entry point: `agent <strategy> <live|paper|backtesting>`."""
+
 import logging
 import sys
 
@@ -63,6 +65,7 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strateg
 
 def main() -> None:
     """Main entry point of the program.
+
     It checks the command-line arguments for the strategy name and trading mode, validates them, and then runs the selected strategy.
     """
     # Temporary bootstrap logger: root has no handlers until setup_strategy_logging

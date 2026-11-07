@@ -41,6 +41,11 @@ def _wait_for(order: Order, statuses: set[OrderStatus], seconds: float = 20.0) -
 
 
 def main() -> int:
+    """Place and manage orders on the paper IB Gateway; refuses to run unless `BROKER=ibkr` and the account is paper.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     if not ENV_FILE.is_file():
         print(f"SKIP: credentials file not found: {ENV_FILE}")
         return 0

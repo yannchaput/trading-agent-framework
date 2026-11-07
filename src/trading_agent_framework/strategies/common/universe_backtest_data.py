@@ -35,8 +35,9 @@ logger = logging.getLogger(__name__)
 
 
 def universe_parameters(history: UniverseHistory) -> dict[str, Any]:
-    """What a point-in-time backtest records in `parameters["universe"]` (so `settings.json` shows it): the history's
-    build and pool counts, plus `preload_missing`, which the data source updates once the bars are loaded.
+    """What a point-in-time backtest records in `parameters["universe"]` (so `settings.json` shows it).
+
+    The history's build and pool counts, plus `preload_missing`, which the data source updates once the bars are loaded.
     """
     return {
         "mode": "point_in_time",
@@ -63,6 +64,16 @@ class UniverseBacktestData(YahooBacktestData):
         calendar_symbol: str = CALENDAR_SYMBOL,
         today: Callable[[], date] = date.today,
     ) -> None:
+        """Create the data source.
+
+        Args:
+            start: First day of the window.
+            end: Last day of the window.
+            record: Mapping updated with `preload_missing` once the bars are loaded, for `settings.json`.
+            download: Replacement for `yfinance.download` (injected in tests).
+            calendar_symbol: Symbol whose bars define the trading calendar.
+            today: Supplies the DOWNLOAD end date only (never a decision cutoff).
+        """
         super().__init__(start, end, download=download, calendar_symbol=calendar_symbol, today=today)
         self._record = record
         self._missing: set[str] = set()
@@ -73,6 +84,17 @@ class UniverseBacktestData(YahooBacktestData):
         return sorted(self._missing)
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
+        """Load the bars of many assets in batches, retrying the ones that come back empty.
+
+        Args:
+            assets: Assets to load; those already loaded are skipped.
+            start: First day to load.
+            end: Last day to load.
+            timestep: Bar size.
+
+        Raises:
+            UniverseHistoryError: If yfinance is missing, or more than the allowed fraction of symbols stay empty.
+        """
         todo = [asset.symbol for asset in assets if asset not in self._frames]
         if not todo:
             return

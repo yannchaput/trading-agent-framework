@@ -21,6 +21,15 @@ def _round(value: float | None, digits: int) -> float | None:
 
 
 def fact_sheet(candidate: Candidate, max_quantity: int) -> dict[str, Any]:
+    """Build the fact sheet the agent reads about a candidate.
+
+    Args:
+        candidate: The candidate with its surprise, price reaction and headlines.
+        max_quantity: Largest quantity the desk would accept for it.
+
+    Returns:
+        A JSON-ready dict with the release time, EPS and sales surprise, reaction figures and headlines.
+    """
     surprise, reaction = candidate.surprise.surprise, candidate.reaction
     sales = None
     if surprise.sales_actual is not None and surprise.sales_estimate is not None:

@@ -28,6 +28,14 @@ _MARGIN_TOLERANCE = Decimal("1.05")  # a cash account's buying power is its sett
 
 
 def is_paper_account(account_id: str) -> bool:
+    """Tell paper accounts from live ones.
+
+    Args:
+        account_id: IBKR account id.
+
+    Returns:
+        True if the id carries the paper-account prefix.
+    """
     return account_id.startswith(PAPER_ACCOUNT_PREFIX)
 
 
@@ -46,6 +54,15 @@ def _amount(tags: dict[str, AccountValue], tag: str) -> Decimal:
 
 
 def parse_account(values: Iterable[AccountValue], account_id: str) -> AccountBalances:
+    """Read the account balances from IBKR account values.
+
+    Args:
+        values: Account values reported by the gateway.
+        account_id: Account the values must belong to.
+
+    Returns:
+        Cash, net liquidation value and buying power.
+    """
     tags = _tags(values, account_id)
     return AccountBalances(
         cash=_amount(tags, "TotalCashValue"),

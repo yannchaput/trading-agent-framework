@@ -1,10 +1,10 @@
-"""Batch script: extract drawdown episodes from diagnostics.parquet.
+r"""Batch script: extract drawdown episodes from diagnostics.parquet.
 
 Reads a diagnostics.parquet file produced by CrossMomentumStrategyV23
 and prints the worst drawdown episodes with risk snapshots to the console.
 
 Usage:
-    uv run python -m lumibot_trading_agent.strategies.candidates.cross_momentum.batch_diagnostics_drawdown_episodes \\
+    uv run python -m lumibot_trading_agent.strategies.candidates.cross_momentum.batch_diagnostics_drawdown_episodes \
         logs/agent_cross_momentum_v23/backtesting/2024-01-01_120000_backtesting/diagnostics.parquet
 """
 
@@ -21,6 +21,10 @@ from trading_agent_framework.strategies.cross_momentum.risk_diagnostics import (
 
 
 def main() -> None:
+    """Run the script: print the worst drawdown episodes of a diagnostics file.
+
+    Reads the parquet path from the first command-line argument and exits with status 1 when it is missing or does not exist.
+    """
     if len(sys.argv) < 2:
         print("Usage: python batch_diagnostics_drawdown_episodes.py <path/to/diagnostics.parquet>")
         raise SystemExit(1)

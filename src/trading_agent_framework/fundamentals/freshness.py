@@ -19,4 +19,14 @@ DEFAULT_MAX_AGE_DAYS = 1
 
 
 def is_stale(fetched_at: datetime, as_of: datetime, max_age_days: int) -> bool:
+    """Whether a cached fetch is too old to use.
+
+    Args:
+        fetched_at: When the data was fetched.
+        as_of: The reference time (the strategy clock's now, never the wall clock).
+        max_age_days: Maximum age, in days.
+
+    Returns:
+        True if `fetched_at` is more than `max_age_days` before `as_of`.
+    """
     return fetched_at < as_of - timedelta(days=max_age_days)

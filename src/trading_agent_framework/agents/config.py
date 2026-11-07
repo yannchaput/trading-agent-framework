@@ -17,6 +17,8 @@ _CHAT_COMPLETIONS_SUFFIX = "/chat/completions"
 
 
 class ReasoningEffort(StrEnum):
+    """Reasoning effort sent to the model with every agent call (`xhigh` is the most thinking)."""
+
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
@@ -35,6 +37,16 @@ def normalize_base_url(url: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class LLMCredentials:
+    """Connection settings for the OpenAI-compatible LLM server.
+
+    Attributes:
+        base_url: Server URL, normalised to end in `/v1`.
+        api_key: API key; a placeholder when the server needs none. Never shown in `repr`.
+        default_model: Model to use when the strategy does not name one.
+        max_input_tokens: The server's context window (vLLM `max_model_len`), for history compaction; None when unknown.
+        reasoning_effort: Sent as `reasoning_effort` with every model call; None sends nothing (the server default applies).
+    """
+
     base_url: str
     api_key: str = field(repr=False)
     default_model: str | None = None
@@ -45,6 +57,19 @@ class LLMCredentials:
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> LLMCredentials:
+        """Build the credentials from environment variables.
+
+        Reads `LLM_BASE_URL` (required), `LLM_API_KEY`, `LLM_MODEL`, and the optional context-window and reasoning-effort variables.
+
+        Args:
+            env: Mapping to read instead of `os.environ` (tests).
+
+        Returns:
+            The credentials, with a blank `LLM_MODEL` read as unset and a missing key replaced by a placeholder.
+
+        Raises:
+            ConfigurationError: If `LLM_BASE_URL` is missing or blank.
+        """
         source = env if env is not None else os.environ
 
         base_url = source.get("LLM_BASE_URL")

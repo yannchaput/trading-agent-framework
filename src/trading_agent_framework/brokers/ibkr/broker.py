@@ -1,5 +1,4 @@
-"""`IbkrBroker`: IBKR (TWS API via IB Gateway) for trading, account and positions; Alpaca for
-market data, the calendar and news.
+"""`IbkrBroker`: IBKR (TWS API via IB Gateway) for trading, account and positions; Alpaca for market data, the calendar and news.
 
 Wiring only: translation lives in the pure `orders`/`account` modules, threads and asyncio in
 `IbkrConnection`, and event handling in `IbkrOrderEvents`.
@@ -97,6 +96,7 @@ class IbkrBroker(Broker):
             clock: Market clock; defaults to the market-data calendar clock.
             is_paper: Whether the account is a paper account.
             news_provider_factory: Builds the news provider on first use.
+            ack_timeout: Seconds to wait for the gateway to acknowledge a submitted order before reporting it.
         """
         super().__init__(
             strategy_name,

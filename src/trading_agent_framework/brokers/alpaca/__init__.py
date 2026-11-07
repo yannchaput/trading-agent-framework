@@ -1,3 +1,5 @@
+"""Alpaca broker: trading client, order stream, market clock and rate limiter."""
+
 from __future__ import annotations
 
 from trading_agent_framework.brokers.alpaca.alpaca_support import AlpacaApiRateLimiter

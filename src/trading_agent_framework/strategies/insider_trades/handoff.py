@@ -29,12 +29,27 @@ NOTE, TARGET, REPORT = "note", "target", "report"
 
 @dataclass(frozen=True, slots=True)
 class Note:
+    """The research agent's verdict on one stock.
+
+    Attributes:
+        summary: One short paragraph: who traded, what, and how it reads.
+        overrides: The labels the agent changed, each with its reason.
+    """
+
     summary: str
     overrides: tuple[Override, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class TargetWeight:
+    """One target weight the trader submits.
+
+    Attributes:
+        ticker: Ticker.
+        weight: Fraction of portfolio value.
+        reason: Why this weight; required when it is not the even weight.
+    """
+
     ticker: str
     weight: float  # a fraction of portfolio value
     reason: str | None
@@ -166,6 +181,11 @@ class InsiderRecorder(SubmitRecorder):
     TOOL_NAMES = {NOTE: "submit_note", TARGET: "submit_target", REPORT: "submit_trade_report"}
 
     def __init__(self, params: InsiderParams) -> None:
+        """Create the recorder.
+
+        Args:
+            params: Strategy parameters, which hold the limits submissions are checked against.
+        """
         super().__init__()
         self._params = params
         self._fetched: set[str] = set()
@@ -174,6 +194,11 @@ class InsiderRecorder(SubmitRecorder):
         self.report: list[OrderReport] | None = None
 
     def expect_note(self, facts: StockFacts) -> None:
+        """Arm the recorder for the research stage of one stock.
+
+        Args:
+            facts: The stock's facts, which the submitted overrides are checked against.
+        """
         self._fetched = set()
         self.note = None
         self._arm(NOTE, {"facts": facts})

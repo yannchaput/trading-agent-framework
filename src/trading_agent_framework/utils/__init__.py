@@ -1,3 +1,5 @@
+"""Small helpers shared across the package: errors, clock types, package version."""
+
 from .package_helper import get_version
 
 __version__ = get_version("trading_agent_framework")

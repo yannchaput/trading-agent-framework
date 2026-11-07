@@ -1,3 +1,5 @@
+"""Small shared helpers: thread capacity, log directories, fractional quantities, buying-power error parsing."""
+
 from __future__ import annotations
 
 import json

@@ -43,8 +43,7 @@ PICKER_COLUMNS = ("Decision", "Regime")
 
 
 def render_scorecard_table(runs_data: list[dict], key: str = "scorecard_table") -> tuple[list[int], pd.DataFrame]:
-    """Render the scorecard comparison table with a "Select" checkbox column (for navigating
-    to Run Detail / Side-by-side) and editable, colored Decision and Regime pickers.
+    """Render the scorecard comparison table with a "Select" checkbox column (for navigating to Run Detail / Side-by-side) and editable, colored Decision and Regime pickers.
 
     st.dataframe's native row-click selection and an editable per-cell picker can't coexist in
     one widget, so this uses st.data_editor throughout: "Select" replaces row-click selection,
@@ -158,6 +157,12 @@ def benchmark_summary_frame(models: Sequence[BenchmarkModel], categories: Sequen
 
 
 def render_benchmark_summary_table(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> None:
+    """Render the benchmark summary table, one row per model with a progress bar per score column.
+
+    Args:
+        models: Models of the benchmark run.
+        categories: Scenario categories, each shown as its own score column next to the overall score.
+    """
     frame = benchmark_summary_frame(models, categories)
     score_columns = ["Overall", *(category.capitalize() for category in categories)]
     column_config = {column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%") for column in score_columns}

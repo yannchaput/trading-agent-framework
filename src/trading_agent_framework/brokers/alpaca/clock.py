@@ -12,22 +12,43 @@ from trading_agent_framework.utils.errors import BrokerError
 
 
 class AlpacaMarketClock(MarketClock):
-    """Sessions (early closes included) come from Alpaca's calendar, fetched about ten
-    trading days at a time and refetched once every cached session has closed.
+    """Sessions (early closes included) come from Alpaca's calendar, fetched about ten trading days at a time and refetched once every cached session has closed.
+
     Nothing is fetched until the first `next_session()` call.
     """
 
     LOOKAHEAD_DAYS = 14
 
     def __init__(self, client: AlpacaTradingClient, now: Callable[[], datetime] | None = None) -> None:
+        """Create a clock over the Alpaca calendar.
+
+        Args:
+            client: Trading client used to fetch the calendar.
+            now: Replacement time source (tests); the wall clock in the market timezone when omitted.
+        """
         self._client = client
         self._now = now
         self._sessions: list[MarketSession] = []
 
     def now(self) -> datetime:
+        """Return the current time.
+
+        Returns:
+            The injected time source's value, else the wall clock in the market timezone.
+        """
         return self._now() if self._now is not None else super().now()
 
     def next_session(self) -> MarketSession:
+        """Find the session that has not closed yet.
+
+        Refreshes the cached calendar from Alpaca when the cache holds no such session.
+
+        Returns:
+            The first session closing after now.
+
+        Raises:
+            BrokerError: If the calendar has no later session.
+        """
         now = self.now()
         session = self._first_session_closing_after(now)
         if session is None:

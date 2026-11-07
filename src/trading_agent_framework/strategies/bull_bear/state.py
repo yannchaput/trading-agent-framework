@@ -34,6 +34,15 @@ _VERDICTS = {"in", "out"}
 
 @dataclass(frozen=True, slots=True)
 class BullBearState:
+    """What bull_bear carries from one review to the next.
+
+    Attributes:
+        last_completed_review: ISO market date of the last completed review.
+        abandoned_streak: Abandoned reviews in a row.
+        verdicts: Symbol -> the judge's latest `{verdict, reason, date, strength}`; no strength on a version-2 verdict.
+        cooldowns: Symbol -> completed reviews it stays out of the candidates.
+    """
+
     last_completed_review: str | None = None  # ISO market date of the last completed review
     abandoned_streak: int = 0  # abandoned reviews in a row
     verdicts: dict[str, dict[str, str]] = field(default_factory=dict)  # symbol -> the judge's latest {verdict, reason, date, strength}; no strength on a version-2 verdict
@@ -48,8 +57,10 @@ def _valid_dates(raw: dict[str, Any]) -> bool:
 
 
 def _valid_verdict(entry: Any, version: int) -> bool:
-    """One `verdicts` entry: {verdict, reason, date} in version 2; in version 3 also a `strength`, which may be absent (a version-2 verdict
-    not judged again) but, when there, is a known one (never weak on an `in`).
+    """One `verdicts` entry: {verdict, reason, date} in version 2; in version 3 also a `strength`.
+
+    The strength may be absent (a version-2 verdict not judged again) but, when there, is a known one (never weak on an
+    `in`).
     """
     allowed = _VERDICT_KEYS if version == _UNRATED_VERSION else _VERDICT_KEYS | {"strength"}
     if not isinstance(entry, dict) or not _VERDICT_KEYS <= set(entry) <= allowed or not all(isinstance(value, str) for value in entry.values()) or entry["verdict"] not in _VERDICTS:
@@ -86,5 +97,13 @@ def _decode(raw: dict[str, Any]) -> BullBearState:
 
 
 class StateStore(JsonStateStore[BullBearState]):
+    """JSON store of the bull_bear state."""
+
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
+        """Open the store.
+
+        Args:
+            path: State file.
+            fresh: Delete any existing file first, so a backtest never inherits the last run's state.
+        """
         super().__init__(path, version=STATE_VERSION, empty=BullBearState, decode=_decode, encode=asdict, log=logger, accepts={_PICKER_VERSION, _UNRATED_VERSION, STATE_VERSION}, fresh=fresh)

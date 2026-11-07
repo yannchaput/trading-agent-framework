@@ -50,6 +50,13 @@ class Desk:
     """
 
     def __init__(self, strategy: Strategy, params: VwapPullbackParameters, *, trade_log: Callable[[], Path | None] = lambda: None) -> None:
+        """Create the desk.
+
+        Args:
+            strategy: Strategy whose broker receives the orders.
+            params: Strategy parameters.
+            trade_log: Returns the file closed trades are appended to as JSON lines, or None to not log them.
+        """
         self._strategy = strategy
         self._params = params
         self._trade_log = RunLog(trade_log, what="trade log")  # where closed trades are appended as JSON lines (no path: not logged)
@@ -328,7 +335,9 @@ class Desk:
         return self._strategy.get_order(trade.stop_order_id) if trade.stop_order_id is not None else None
 
     def _stop_for_flatten(self, trade: Trade) -> tuple[Order | None, bool]:
-        """The trade's stop and whether the lookup worked. A lookup that fails leaves the stop's state unknown: the flatten
+        """The trade's stop and whether the lookup worked.
+
+        A lookup that fails leaves the stop's state unknown: the flatten
         must neither raise (the other trades would never be flattened) nor read it as "no stop" (that would sell shares a live
         stop still covers).
         """
@@ -560,8 +569,7 @@ class Desk:
             self._market_sell(trade, free, reason)
 
     def close_unknown_positions(self) -> None:
-        """After a restart: cancel this strategy's open orders in symbols no trade of the session knows, then close the
-        positions those orders pointed at.
+        """After a restart: cancel this strategy's open orders in symbols no trade of the session knows, then close the positions those orders pointed at.
 
         An order left from before a restart (an entry, a stop) has no trade to manage it, whether or not its symbol is
         held yet. A position without an order of ours is not ours to touch: the account may be shared.

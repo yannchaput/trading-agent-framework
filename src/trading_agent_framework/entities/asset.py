@@ -1,3 +1,5 @@
+"""Tradable instrument entity."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,4 +15,9 @@ class Asset:
     asset_type: AssetType = AssetType.STOCK
 
     def __str__(self) -> str:
+        """Return the asset's symbol.
+
+        Returns:
+            The ticker symbol.
+        """
         return self.symbol

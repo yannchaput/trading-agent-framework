@@ -1,3 +1,5 @@
+"""House Clerk disclosures: the Clerk client and the source that turns filings into holdings."""
+
 from trading_agent_framework.strategies.congress_trades.congress.clerk_client import ClerkClient
 from trading_agent_framework.strategies.congress_trades.congress.source import CongressSource
 from trading_agent_framework.utils.package_helper import get_version

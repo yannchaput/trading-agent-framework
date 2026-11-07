@@ -17,6 +17,15 @@ FAIL = "fail"
 
 @dataclass(frozen=True, slots=True)
 class HysteresisOutcome:
+    """Result of applying the fail hysteresis to a review.
+
+    Attributes:
+        fail_counts: After this review, for holdings that have failed and not recovered (forced exits included).
+        forced_exits: Holdings to sell in full, in `holdings` order.
+        pending: Holdings that failed but are below the threshold, in `holdings` order.
+        allowed: What the trader may choose from: ranked survivors, other surviving holdings, pending fails.
+    """
+
     fail_counts: dict[str, int]  # after this review, for holdings that have failed and not recovered (forced exits included)
     forced_exits: list[str]  # holdings to sell in full, in `holdings` order
     pending: list[str]  # holdings that failed but are below the threshold, in `holdings` order

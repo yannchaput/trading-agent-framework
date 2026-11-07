@@ -37,6 +37,13 @@ def build_command(python: str, app_file: Path, argv: Sequence[str]) -> list[str]
 
 
 def main():
+    """Launch the Streamlit dashboard (`uv run dashboard`).
+
+    Passes the command-line arguments through to the app and exits with Streamlit's exit code.
+
+    Raises:
+        ImportError: If the dashboard extra (Streamlit) is not installed.
+    """
     import subprocess
     import sys
 

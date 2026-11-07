@@ -304,7 +304,9 @@ class StrategyExecutor:
             return f"unavailable ({exc})"
 
     def _refresh_regime(self) -> None:
-        """Once per session, also on a mid-session start. A framework step, not a strategy hook: a failure is
+        """Once per session, also on a mid-session start.
+
+        A framework step, not a strategy hook: a failure is
         logged and the session carries on, without `on_bot_crash`.
         """
         try:
@@ -313,8 +315,9 @@ class StrategyExecutor:
             logger.exception("Market regime refresh failed for strategy %s", self.strategy.name)
 
     def _settle_unknown_orders(self) -> None:
-        """Before every tick: let the broker decide the orders whose submission outcome is unknown, then deliver the events that
-        produces, so the tick sees the outcome. A framework step, not a strategy hook: a failure is logged and the tick still
+        """Before every tick: let the broker decide the orders whose submission outcome is unknown, then deliver the events that produces, so the tick sees the outcome.
+
+        A framework step, not a strategy hook: a failure is logged and the tick still
         runs, without `on_bot_crash` (the same rule as `_refresh_regime`).
         """
         try:

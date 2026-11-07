@@ -85,7 +85,8 @@ class Desk:
             params: Guardrail thresholds.
             state: Persisted trades.
             save: Callback that persists the state.
-            trade_log: Run log receiving each decision record.
+            trade_log: Run log receiving one record per closed trade.
+            decision_log: Run log receiving one record per agent decision (buy or skip), with the candidate's features.
         """
         self._strategy = strategy
         self._params = params

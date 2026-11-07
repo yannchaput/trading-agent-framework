@@ -28,6 +28,12 @@ class AlpacaApiRateLimiter:
     """Thread-safe token bucket that spaces out Alpaca API calls."""
 
     def __init__(self, trading_mode: TradingMode, calls_per_minute: float = DEFAULT_CALLS_PER_MINUTE):
+        """Create a limiter.
+
+        Args:
+            trading_mode: Mode of the run; the limiter does nothing in backtesting, which reads local data.
+            calls_per_minute: Maximum Alpaca API calls per minute.
+        """
         self._interval = 60.0 / calls_per_minute
         self._lock = threading.Lock()
         self._last = 0.0

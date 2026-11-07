@@ -49,7 +49,16 @@ def _parse_fetched_at(value: object) -> datetime | None:
 
 
 class AnnualFiguresStore:
+    """Annual SEC figures per company, cached on disk and refreshed when older than the allowed age."""
+
     def __init__(self, client: SecEdgarClient, cache_dir: Path, *, wall_clock: Callable[[], datetime] | None = None) -> None:
+        """Create the store.
+
+        Args:
+            client: SEC EDGAR client.
+            cache_dir: Directory holding the cached figures.
+            wall_clock: Real time, used only to date cache entries; UTC now when omitted.
+        """
         self._client = client
         self._cache_dir = cache_dir
         self._wall_clock = wall_clock or (lambda: datetime.now(UTC))

@@ -30,13 +30,46 @@ _ANNUAL_LOOKBACK_YEARS = 5  # index years searched for a readable yearly report,
 
 
 class ClerkLike(Protocol):
-    def year_index_xml(self, year: int, as_of: datetime) -> str: ...
+    """What the source needs from the House Clerk client."""
 
-    def filing_text(self, ref: FilingRef) -> str: ...
+    def year_index_xml(self, year: int, as_of: datetime) -> str:
+        """Fetch the Clerk's index of one year's filings.
+
+        Args:
+            year: Index year.
+            as_of: Time the fetch is made as of (cache freshness; never the wall clock).
+
+        Returns:
+            The index as XML text.
+        """
+        ...
+
+    def filing_text(self, ref: FilingRef) -> str:
+        """Fetch the text of one filing.
+
+        Args:
+            ref: The filing, as listed in the index.
+
+        Returns:
+            The filing's extracted text.
+        """
+        ...
 
 
 @dataclass(frozen=True, slots=True)
 class KnownFilings:
+    """Everything known about a politician on a date.
+
+    Attributes:
+        annual_ref: The newest yearly report known.
+        period_end: The date that report's holdings are as of.
+        assets: Holdings of that report.
+        transactions: Trades filed since the report.
+        refs: The yearly report and every PTR since it, newest filing first.
+        unparsed_filings: Image-only filings that were skipped.
+        skipped_non_stock: Rows that were not stock holdings or trades (options, bonds, rows that did not parse).
+    """
+
     annual_ref: FilingRef
     period_end: date
     assets: list[AssetHolding]
@@ -47,7 +80,15 @@ class KnownFilings:
 
 
 class CongressSource:
+    """Reads one politician's disclosures from the House Clerk, as known on a date."""
+
     def __init__(self, client: ClerkLike, politician: str) -> None:
+        """Create the source.
+
+        Args:
+            client: House Clerk client.
+            politician: Exact first and last name as the Clerk lists them.
+        """
         self._client = client
         self._politician = politician
 

@@ -8,6 +8,37 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class DriftParams:
+    """Parameters of the earnings_drift strategy.
+
+    Attributes:
+        agent_enabled: False for baseline mode, where every gated candidate is bought at `default_trail_percent`.
+        max_positions: Most positions held at once.
+        max_holding_sessions: Sessions from the entry fill through the review, both included.
+        min_trail_percent: Lowest trailing stop, in percent (8 = 8%), as Alpaca and IBKR take them.
+        default_trail_percent: Trailing stop used in baseline mode.
+        max_trail_percent: Widest trailing stop.
+        min_abnormal_pct: Reaction-day return minus the benchmark's, as a fraction.
+        min_hold_ratio: Smallest share of the reaction-day gain held into the close.
+        min_close_location: Smallest position of the close within the day's range.
+        min_rel_volume: Smallest volume relative to the baseline.
+        min_price: Lowest price accepted.
+        min_dollar_volume: Lowest dollar volume, on consolidated (SIP) volume as backtests read it.
+        live_volume_share: Paper/live bars are IEX's ~2-3% of consolidated volume: `min_dollar_volume` is scaled by this.
+        volume_baseline_sessions: Sessions the relative volume is measured against.
+        bars_lookback_sessions: Daily bars read per name: the 60-session run-up plus margin.
+        news_limit: Articles per event symbol, read oldest first over the reaction session.
+        event_lookback_days: Older SEC submission pages are read back to the cycle's date minus this.
+        live_bar_delay_seconds: Paper/live wait after the close, so the daily bar is final.
+        cancel_wait_seconds: How long a cancel is waited for.
+        tool_budget_per_item: Tool calls per candidate or holding in one agent run (order tools and skip exempt).
+        agent_temperature: Sampling temperature of the agent; None leaves the LLM server's default.
+        max_consecutive_agent_failures: Agent failures in a row that abort a backtest.
+        max_consecutive_hollow_scans: Scans in a row with mostly failed SEC loads that abort a backtest.
+        sec_hollow_fraction: Share of failed SEC loads that makes a scan hollow.
+        sec_hollow_min_failures: Fewest failed loads for a scan to count as hollow.
+        reason_max_chars: A longer reason is cut before it is logged or kept as a thesis.
+    """
+
     agent_enabled: bool = True  # False: baseline mode, every gated candidate is bought at default_trail_percent
     max_positions: int = 8
     max_holding_sessions: int = 10  # sessions from the entry fill through the review, both included
@@ -36,6 +67,11 @@ class DriftParams:
     reason_max_chars: int = 300  # a longer reason is cut before it is logged or kept as a thesis
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         floats = (
             self.min_trail_percent,
             self.default_trail_percent,

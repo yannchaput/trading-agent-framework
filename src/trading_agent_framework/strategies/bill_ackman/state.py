@@ -24,6 +24,17 @@ STATE_VERSION = 2
 
 @dataclass(frozen=True, slots=True)
 class ReviewState:
+    """What bill_ackman carries from one review to the next.
+
+    Attributes:
+        last_review: ISO date of the last completed review.
+        fail_counts: Holding -> consecutive fails (always >= 1).
+        last_ranking: The last ranking, best first.
+        last_verdicts: Symbol -> `{verdict, reason, concern, date}`.
+        abandoned_streak: Abandoned reviews in a row.
+        cooldowns: Symbol -> completed reviews it stays out (always >= 1).
+    """
+
     last_review: str | None = None  # ISO date of the last completed review
     fail_counts: dict[str, int] = field(default_factory=dict)  # holding -> consecutive fails (always >= 1)
     last_ranking: list[str] = field(default_factory=list)
@@ -81,6 +92,8 @@ def _decode(raw: dict[str, Any]) -> ReviewState:
 
 
 class StateStore(JsonStateStore[ReviewState]):
+    """JSON store of the bill_ackman state."""
+
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
         """`fresh` wipes the file at construction; used in backtests so one run never inherits the last."""
         super().__init__(path, version=STATE_VERSION, empty=ReviewState, decode=_decode, encode=asdict, log=logger, fresh=fresh)

@@ -30,23 +30,75 @@ logger = ColorLogger(logging.getLogger(__name__), "QualityScreen")
 class FiguresSource(Protocol):
     """What the screen needs from `AnnualFiguresStore`."""
 
-    def cik(self, symbol: str) -> str | None: ...
+    def cik(self, symbol: str) -> str | None:
+        """Look up a company's CIK.
 
-    def figures(self, symbol: str, *, as_of: datetime, max_age_days: int) -> dict[str, Any] | None: ...
+        Args:
+            symbol: Ticker.
 
-    def sic(self, symbol: str, *, as_of: datetime, max_age_days: int) -> int | None: ...
+        Returns:
+            The CIK, or None for a ticker SEC does not know.
+        """
+        ...
+
+    def figures(self, symbol: str, *, as_of: datetime, max_age_days: int) -> dict[str, Any] | None:
+        """Read a company's annual figures as known on a date.
+
+        Args:
+            symbol: Ticker.
+            as_of: Only filings filed before this date count.
+            max_age_days: Age after which cached figures are fetched again.
+
+        Returns:
+            The reduced annual figures, or None when there are none.
+        """
+        ...
+
+    def sic(self, symbol: str, *, as_of: datetime, max_age_days: int) -> int | None:
+        """Read a company's industry code.
+
+        Args:
+            symbol: Ticker.
+            as_of: Date the lookup is made as of.
+            max_age_days: Age after which the cached code is fetched again.
+
+        Returns:
+            The SIC code, or None when unknown.
+        """
+        ...
 
 
 class SplitSource(Protocol):
     """What the screen needs from `SplitHistory`."""
 
-    def splits(self, symbol: str, *, max_age_days: int) -> list[Split]: ...
+    def splits(self, symbol: str, *, max_age_days: int) -> list[Split]:
+        """Read a company's split history.
 
-    def flush(self) -> None: ...
+        Args:
+            symbol: Ticker.
+            max_age_days: Age after which the cached history is fetched again.
+
+        Returns:
+            The splits, oldest first.
+        """
+        ...
+
+    def flush(self) -> None:
+        """Write any unsaved split history to disk."""
+        ...
 
 
 class QualityScreen:
+    """Ranks companies on fundamentals: simple, predictable, cash-generative, lightly indebted and reasonably priced."""
+
     def __init__(self, store: FiguresSource, splits: SplitSource, *, params: ScreenParams | None = None) -> None:
+        """Create the screen.
+
+        Args:
+            store: Annual figures, CIK and SIC lookups.
+            splits: Split history.
+            params: Screen parameters; the defaults when omitted.
+        """
         self._store = store
         self._splits = splits
         self.params = params or ScreenParams()

@@ -1,3 +1,5 @@
+"""Latest bid/ask quote entity."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,6 +22,11 @@ class Quote:
 
     @property
     def mid(self) -> Decimal | None:
+        """Return the mid price between bid and ask.
+
+        Returns:
+            ``(bid + ask) / 2``, or None when either side of the book is empty.
+        """
         if self.bid is None or self.ask is None:
             return None
         return (self.bid + self.ask) / 2

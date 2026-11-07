@@ -1,6 +1,4 @@
-"""Cross-Sectional Momentum Strategy (V5)
---------------------------------------
-Fractional share support — floor-based quantities in rebalance().
+"""Cross-Sectional Momentum Strategy (V5) -------------------------------------- Fractional share support — floor-based quantities in rebalance().
 
 V5 baseline — copy of V2 with fractional share support (floor-based
 quantities in rebalance()).
@@ -165,6 +163,16 @@ class CrossMomentumStrategy(Strategy):
         bars_source: YahooDailyBars | None = None,
         **kwargs,
     ):
+        """Create the strategy.
+
+        Args:
+            broker: Broker the strategy trades through.
+            mode: Trading mode.
+            universe: Tickers ranked; required in paper/live, while a backtest reads the point-in-time history instead.
+            diagnostics_file_path: File the rebalance diagnostics are written to; none when omitted.
+            bars_source: Yahoo daily-bars source for paper/live (injected in tests); a backtest reads the data gate.
+            **kwargs: Passed on to `Strategy`.
+        """
         super().__init__(broker, mode=mode, **kwargs)
         self.parameters = {**CONFIG, **self.parameters}
 
@@ -854,6 +862,10 @@ class CrossMomentumStrategy(Strategy):
     # ── Main iteration ────────────────────────────────────────────────────────
 
     def on_trading_iteration(self):
+        """Run one trading iteration: record the day's equity, then rebalance when the schedule says it is due.
+
+        In paper/live it first checks that the universe file is recent and does nothing when it is missing or stale.
+        """
         super().on_trading_iteration()
 
         # Record daily equity for realized-vol tracking

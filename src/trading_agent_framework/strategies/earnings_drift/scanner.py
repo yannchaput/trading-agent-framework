@@ -33,6 +33,16 @@ _MAX_HEADLINES = 5
 
 @dataclass
 class ScanResult:
+    """Result of one scan.
+
+    Attributes:
+        today: The market date scanned.
+        trading_dates: Sessions known up to today, oldest first.
+        candidates: Candidates that passed the gates, best abnormal return first.
+        rejections: Symbol -> reason it was rejected.
+        hollow: True when so many SEC loads failed that the scan cannot be trusted.
+    """
+
     today: date
     trading_dates: list[date]
     candidates: list[Candidate] = field(default_factory=list)  # best abnormal return first
@@ -41,6 +51,8 @@ class ScanResult:
 
 
 class Scanner:
+    """Finds the earnings-reaction candidates of a cycle: events from the SEC, reactions from daily bars, then the gates."""
+
     def __init__(
         self,
         strategy: Strategy,
@@ -68,6 +80,14 @@ class Scanner:
         self._load_as_of: Callable[[], datetime | None] = load_as_of or (lambda: None)
 
     def prepare(self, held: Collection[str]) -> ScanResult:
+        """Scan for candidates.
+
+        Args:
+            held: Tickers already held, which are not candidates.
+
+        Returns:
+            The candidates, the rejections and whether the scan was hollow.
+        """
         strategy, params = self._strategy, self._params
         now = strategy.clock.now()
         today = now.astimezone(MARKET_TZ).date()

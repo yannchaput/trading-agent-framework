@@ -24,9 +24,7 @@ _BARS_PER_LENGTH = 3
 
 
 def default_bars(kwargs: Mapping[str, Any]) -> int:
-    """Bars fetched when the caller passes no `bars`: 3x the indicator's own `length`
-    (warm-up for smoothed indicators), never fewer than 50.
-    """
+    """Bars fetched when the caller passes no `bars`: 3x the indicator's own `length` (warm-up for smoothed indicators), never fewer than 50."""
     return max(_MIN_BARS, int(kwargs.get("length", _MIN_BARS)) * _BARS_PER_LENGTH)
 
 

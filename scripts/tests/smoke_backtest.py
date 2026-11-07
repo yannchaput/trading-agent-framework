@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Manual smoke test: run a trivial buy-and-hold strategy through
-Strategy.run_backtesting() against real Yahoo Finance data, over a short recent
-window, and print the resulting metrics and output files.
+"""Manual smoke test: run a trivial buy-and-hold strategy through Strategy.run_backtesting().
+
+Runs against real Yahoo Finance data over a short recent window, and prints the resulting metrics and output files.
 
 Excluded from `tests/` on purpose (see scripts/tests/smoke_alpaca_data.py and its
 siblings for the same convention) -- this hits the real network (Yahoo Finance) and is
@@ -32,10 +32,13 @@ AAPL = Asset("AAPL")
 
 
 class BuyAndHold(Strategy):
+    """Buys AAPL with 90% of the cash on the first iteration and holds it."""
+
     sleeptime = "1D"
     benchmark_symbol = "SPY"
 
     def on_trading_iteration(self) -> None:
+        """Buy AAPL on the first iteration; do nothing afterwards."""
         if self.first_iteration:
             price = self.get_last_price(AAPL)
             if price is not None:
@@ -49,6 +52,11 @@ class SmokeTestFailure(Exception):
 
 
 def main() -> int:
+    """Run the buy-and-hold backtest and print its metrics and output files.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     try:
         print("Building placeholder broker...")
 

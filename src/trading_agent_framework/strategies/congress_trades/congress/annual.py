@@ -24,6 +24,14 @@ from trading_agent_framework.utils.errors import CongressDataError
 
 @dataclass(frozen=True, slots=True)
 class Band:
+    """A value band of the disclosure form.
+
+    Attributes:
+        low: Lower bound in dollars.
+        high: Upper bound in dollars; None for the open-ended top band.
+        label: The band as printed on the form.
+    """
+
     low: Decimal
     high: Decimal | None  # None = open-ended (the top band)
     label: str
@@ -65,6 +73,18 @@ _OVER = re.compile(r"Over\s+\$([\d,]+)")
 
 @dataclass(frozen=True, slots=True)
 class AssetHolding:
+    """A stock held on the period end of a yearly report.
+
+    Attributes:
+        doc_id: Filing the row comes from.
+        owner: `self`, `spouse`, `joint` or `dependent`.
+        ticker: Ticker.
+        asset_name: Name as printed in the filing.
+        value_low: Lower bound of the value band, in dollars.
+        value_high: Upper bound of the value band, in dollars.
+        tier: Value tier (a higher tier is a bigger holding).
+    """
+
     doc_id: str
     owner: str  # "self" | "spouse" | "joint" | "dependent"
     ticker: str
@@ -76,6 +96,13 @@ class AssetHolding:
 
 @dataclass(frozen=True, slots=True)
 class AnnualParse:
+    """Result of reading a yearly report.
+
+    Attributes:
+        assets: The stock holdings found.
+        skipped_non_stock: Tagged rows not read as a stock holding: options, bonds, funds, rows with no value or ticker.
+    """
+
     assets: list[AssetHolding]
     skipped_non_stock: int  # tagged rows not read as a stock holding: options, bonds, funds, rows with no value or ticker
 

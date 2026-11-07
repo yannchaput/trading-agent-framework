@@ -1,6 +1,6 @@
-"""Orchestrates one backtest run end to end: builds the simulated clock/broker, runs
-the strategy through the (unmodified) executor, computes metrics, and writes the
-report. The only module that wires `Strategy` to the backtesting subsystem --
+"""Orchestrates one backtest run end to end: builds the simulated clock/broker, runs the strategy through the (unmodified) executor, computes metrics, and writes the report.
+
+The only module that wires `Strategy` to the backtesting subsystem --
 `Strategy.run_backtesting()` (a later task) is a thin wrapper around `run_backtest`.
 
 Clock-driving invariant (carried forward from Task 8's review of
@@ -178,9 +178,7 @@ def run_backtest(
 
 
 def _require_aware(**moments: datetime) -> None:
-    """Reject naive `start`/`end` with a message that names the offending argument and
-    shows the fix, rather than letting a downstream comparison fail obscurely.
-    """
+    """Reject naive `start`/`end` with a message that names the offending argument and shows the fix, rather than letting a downstream comparison fail obscurely."""
     naive = [name for name, value in moments.items() if value.tzinfo is None or value.tzinfo.utcoffset(value) is None]
     if naive:
         raise BacktestError(
@@ -210,10 +208,10 @@ def _run(
     news_source: NewsProvider | None = None,
     agent_telemetry: bool = True,
 ) -> BacktestResult:
-    """The unvalidated body of `run_backtest` -- see that function's docstring for the
-    full contract, including `warmup_trading_days`'s scope: it widens only the eager
-    `data_source.load(...)` call below (benchmark plus `preload_assets`), never
-    `sessions()`/the clock.
+    """The unvalidated body of `run_backtest`.
+
+    See that function's docstring for the full contract, including `warmup_trading_days`'s scope: it widens only the eager
+    `data_source.load(...)` call below (benchmark plus `preload_assets`), never `sessions()`/the clock.
 
     `warmup_days` is `warmup.warmup_calendar_days(warmup_trading_days)`, already
     computed (and validated) once by `run_backtest` -- `warmup_trading_days` itself
@@ -367,8 +365,7 @@ def _fee_totals(fills: Sequence[FillRecord], fees: TradingFeeFactory | None) -> 
 
 
 def _session_equity_series(session_samples: Sequence[EquitySample]) -> pd.Series:
-    """The `portfolio_value` curve of `_session_equity_samples`'s output, as a float
-    `pd.Series` indexed by session close -- the shape `compute_metrics` wants.
+    """The `portfolio_value` curve of `_session_equity_samples`'s output, as a float `pd.Series` indexed by session close -- the shape `compute_metrics` wants.
 
     Kept deliberately thin: the reduction itself lives in `_session_equity_samples` so
     that `report.write_equity` and `compute_metrics` consume the *same* rows rather

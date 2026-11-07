@@ -1,4 +1,5 @@
 """Factory method returning a tuple for backend start and end time.
+
 The factory provides prebuilt configurations.
 """
 
@@ -9,7 +10,7 @@ from trading_agent_framework.utils.clock import MARKET_TZ
 
 
 class PredefinedWindow(StrEnum):
-    """Backtesting periods predefined time Windows"""
+    """Predefined time windows for backtesting periods."""
 
     DECADE = "decade"
     SEMI_DECADE = "5y"
@@ -22,6 +23,17 @@ class PredefinedWindow(StrEnum):
 
 
 def backtest_window(window: PredefinedWindow) -> tuple[datetime, datetime]:
+    """Resolve a predefined window to dates.
+
+    Args:
+        window: The predefined window.
+
+    Returns:
+        The (start, end) pair, both timezone-aware at midnight in the market timezone.
+
+    Raises:
+        ValueError: If the window is not a known one.
+    """
     match window:
         case PredefinedWindow.DECADE:
             return (datetime(2016, 1, 1, tzinfo=MARKET_TZ), datetime(2026, 10, 5, tzinfo=MARKET_TZ))

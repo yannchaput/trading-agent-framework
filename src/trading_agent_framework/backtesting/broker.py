@@ -1,5 +1,6 @@
-"""`Broker` implementation simulating fills against a `BacktestDataSource`, with no
-network calls. Cash and positions are Decimal-exact. Order submission here tracks the
+"""`Broker` implementation simulating fills against a `BacktestDataSource`, with no network calls.
+
+Cash and positions are Decimal-exact. Order submission here tracks the
 order and queues it for the next bar; `on_advance`/`process_pending` (this module,
 added alongside the fill engine) are what actually fill it -- see the module's second
 half below the "--- fills" marker.
@@ -91,6 +92,7 @@ class BacktestBroker(Broker):
             fees: Fee schedule applied to fills; none when omitted.
             slippage: Fractional price slippage applied against the trader.
             tracker: Order tracker; a fresh one is created when omitted.
+            news_source: News provider served to the agent's news tool; an Alpaca provider is built lazily when omitted.
         """
         super().__init__(strategy_name, tracker, clock=clock, is_paper=True)
         self._data_source = data_source
@@ -315,10 +317,10 @@ class BacktestBroker(Broker):
     # --- shared bar lookup -----------------------------------------------------------------
 
     def _source_bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
-        """THE gate (design spec, section 5.2): the single place this broker -- and so
-        the strategy, whose every price request funnels through `get_bars`,
-        `get_last_price`, `get_quote` or the fill engine -- reads a
-        `BacktestDataSource`, plus the spec's defensive assertion on what comes back.
+        """THE gate (design spec, section 5.2): the single place this broker reads a `BacktestDataSource`.
+
+        Every price request the strategy makes funnels through `get_bars`, `get_last_price`, `get_quote` or the fill engine to here.
+        Also applies the spec's defensive assertion on what comes back.
 
         `bars()` is contractually "the last `length` bars closed at or before
         `cutoff`", and every source enforces that itself. This re-checks it anyway,

@@ -1,3 +1,5 @@
+"""Exception hierarchy of the framework."""
+
 from __future__ import annotations
 
 

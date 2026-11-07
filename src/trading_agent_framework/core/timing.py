@@ -21,6 +21,11 @@ class SleepTime:
     sessions: int | None = None
 
     def __post_init__(self) -> None:
+        """Validate that exactly one of `interval` and `sessions` is set.
+
+        Raises:
+            ValueError: If both or neither are set.
+        """
         if (self.interval is None) == (self.sessions is None):
             raise ValueError("SleepTime needs exactly one of interval or sessions")
 

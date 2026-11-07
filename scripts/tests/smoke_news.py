@@ -47,6 +47,11 @@ def _check(condition: bool, message: str) -> None:
 
 
 def main() -> int:
+    """Call the news tool against the real Alpaca news API.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     creds = _load_credentials()
     broker = AlpacaBroker.from_credentials(STRATEGY_NAME, trading=creds, data=AlpacaCredentials.for_data(), news=AlpacaCredentials.for_news, with_stream=False)
     strategy = Strategy(broker)

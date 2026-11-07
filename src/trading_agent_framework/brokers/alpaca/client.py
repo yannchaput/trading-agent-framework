@@ -48,12 +48,28 @@ def _with_timeout[T](client: T) -> T:
 
 
 def build_trading_client(creds: AlpacaCredentials) -> TradingClient:
+    """Build the Alpaca trading client.
+
+    Args:
+        creds: Trading credentials (`ALPACA_API_*`).
+
+    Returns:
+        A client for the paper or live endpoint, with a request timeout applied.
+    """
     from alpaca.trading.client import TradingClient
 
     return _with_timeout(TradingClient(api_key=creds.api_key, secret_key=creds.api_secret, paper=creds.is_paper))
 
 
 def build_trading_stream(creds: AlpacaCredentials) -> TradingStream:
+    """Build the Alpaca trade-updates websocket.
+
+    Args:
+        creds: Trading credentials (`ALPACA_API_*`).
+
+    Returns:
+        A stream for the paper or live endpoint.
+    """
     from alpaca.trading.stream import TradingStream
 
     return TradingStream(api_key=creds.api_key, secret_key=creds.api_secret, paper=creds.is_paper)

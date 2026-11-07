@@ -87,6 +87,19 @@ def apply_filters(
 
 @dataclass(frozen=True, slots=True)
 class MomentumInputs:
+    """The facts one stock's momentum score and filters are computed from.
+
+    Attributes:
+        price: The last completed close, as it traded when the traded series is given (read only by `min_price`).
+        ret_12_1m: Return over the last 12 months skipping the latest month.
+        ret_6_1m: Return over the last 6 months skipping the latest month.
+        ret_3m: Return over the last 3 months.
+        volatility: Annualized, over `volatility_window` sessions; None when it cannot be computed.
+        avg_dollar_volume: 20-session average dollar volume (traded close x traded volume per session when given; read
+            only by `min_dollar_volume`).
+        trading_days: Number of completed sessions the figures rest on.
+    """
+
     price: float  # the last completed close, as it traded when the traded series is given (read only by `min_price`)
     ret_12_1m: float
     ret_6_1m: float
@@ -142,6 +155,16 @@ def momentum_inputs(
 
 @dataclass(frozen=True, slots=True)
 class MomentumRow:
+    """A stock that passed the filters, with its score.
+
+    Attributes:
+        symbol: Ticker.
+        inputs: The facts the score is computed from.
+        volatility: `inputs.volatility`, known to be finite and above zero.
+        score: Momentum score.
+        closes: The completed closes scored, oldest first (the fact sheet reads them).
+    """
+
     symbol: str
     inputs: MomentumInputs
     volatility: float  # `inputs.volatility`, known to be finite and above zero
@@ -175,6 +198,13 @@ def score_stock(
 
 @dataclass(frozen=True, slots=True)
 class RankedRow:
+    """A scored stock with its rank.
+
+    Attributes:
+        rank: 1 is the strongest momentum.
+        row: The scored stock.
+    """
+
     rank: int  # 1 = the strongest momentum
     row: MomentumRow
 

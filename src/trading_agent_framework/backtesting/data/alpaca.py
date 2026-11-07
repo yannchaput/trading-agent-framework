@@ -1,6 +1,6 @@
-"""`BacktestDataSource` backed by Alpaca bars, reusing the existing pure
-`brokers/alpaca/market_data.py` translation and `brokers/alpaca/account.py`'s
-calendar parsing. Exact sessions (early closes included) -- the choice when exact
+"""`BacktestDataSource` backed by Alpaca bars, reusing the existing pure `brokers/alpaca/market_data.py` translation and `brokers/alpaca/account.py`'s calendar parsing.
+
+Exact sessions (early closes included) -- the choice when exact
 sessions matter more than Yahoo's decades of free history (design spec, section 4.2).
 
 The feed is SIP by default (every exchange): IEX alone is ~2-3% of volume, so a thin
@@ -41,20 +41,27 @@ if TYPE_CHECKING:
 
 
 class AlpacaTradingCalendarClient(Protocol):
-    """The one trading-client method this module needs -- narrower than the full
-    `orders.AlpacaTradingClient` Protocol since this module never submits orders.
-    """
+    """The one trading-client method this module needs -- narrower than the full `orders.AlpacaTradingClient` Protocol since this module never submits orders."""
 
-    def get_calendar(self, filters: GetCalendarRequest) -> list[object]: ...
+    def get_calendar(self, filters: GetCalendarRequest) -> list[object]:
+        """Fetch the market calendar.
+
+        Args:
+            filters: Calendar request holding the date range.
+
+        Returns:
+            One calendar entry per trading day in the range.
+        """
+        ...
 
 
 class AlpacaBacktestData(BacktestDataSource):
-    """Exact Alpaca calendar sessions; SIP (or IEX) daily/minute bars, fetched lazily per asset
-    over the fixed `[start, end]` window given at construction (`bars()`'s own
-    lazy-fetch path, which carries no window of its own, uses that fixed window;
-    `load()` always honors its own caller-supplied `start`/`end`). The calendar cache
-    backing `sessions()` is NOT fixed to that window, though: it grows on demand to
-    cover the union of every range it's ever been queried with (see `sessions()`).
+    """Exact Alpaca calendar sessions; SIP (or IEX) daily/minute bars, fetched lazily per asset.
+
+    Bars cover the fixed `[start, end]` window given at construction (`bars()`'s own lazy-fetch path, which carries no
+    window of its own, uses that fixed window; `load()` always honors its own caller-supplied `start`/`end`). The calendar
+    cache backing `sessions()` is NOT fixed to that window, though: it grows on demand to cover the union of every range
+    it's ever been queried with (see `sessions()`).
     """
 
     def __init__(
@@ -66,6 +73,18 @@ class AlpacaBacktestData(BacktestDataSource):
         client: market_data.AlpacaStockDataClient | None = None,
         trading_client: AlpacaTradingCalendarClient | None = None,
     ) -> None:
+        """Create a source over a fixed window.
+
+        Args:
+            start: First day of the window.
+            end: Last day of the window.
+            feed: Alpaca market-data feed, `iex` or `sip`.
+            client: Stock data client; built from the environment's credentials when omitted (injected in tests).
+            trading_client: Trading client used for the calendar; built from the environment when omitted.
+
+        Raises:
+            ValueError: If `feed` is neither `iex` nor `sip`.
+        """
         if feed not in ("iex", "sip"):
             raise ValueError(f"unknown feed {feed!r}: expected 'iex' or 'sip'")
         self._feed = feed
@@ -101,12 +120,11 @@ class AlpacaBacktestData(BacktestDataSource):
         self._client_lock = threading.Lock()
 
     def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
-        """Batch-fetch `assets` in one Alpaca request instead of one per ticker --
-        mirrors `YahooBacktestData.load()`: a strategy filtering a large universe
-        (e.g. cross_momentum, hundreds of tickers) calling this once up front gets a
-        single `get_stock_bars` call rather than falling back to `bars()`'s lazy
-        per-asset fetch for each one. Already-cached assets are skipped, same as
-        `YahooBacktestData.load()`.
+        """Batch-fetch `assets` in one Alpaca request instead of one per ticker.
+
+        Mirrors `YahooBacktestData.load()`: a strategy filtering a large universe (e.g. cross_momentum, hundreds of tickers)
+        calling this once up front gets a single `get_stock_bars` call rather than falling back to `bars()`'s lazy per-asset
+        fetch for each one. Already-cached assets are skipped, same as `YahooBacktestData.load()`.
         """
         missing = [asset for asset in assets if (asset, timestep) not in self._frames]
         if not missing:
@@ -114,6 +132,17 @@ class AlpacaBacktestData(BacktestDataSource):
         self._fetch_many(missing, timestep, start, end)
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
+        """Return the bars visible at a cutoff, fetching them lazily.
+
+        Args:
+            asset: Instrument to read.
+            cutoff: Latest bar close the caller may see; later bars are never returned.
+            length: Maximum number of bars, counted back from the cutoff.
+            timestep: Bar size (`day` or `minute`).
+
+        Returns:
+            The visible bars, or None when there are none at or before the cutoff.
+        """
         df = self._frames.get((asset, timestep))
         if df is None:
             df = self._fetch(asset, timestep, self._start, self._end)
@@ -184,11 +213,10 @@ class AlpacaBacktestData(BacktestDataSource):
         return self._frames.get((asset, timestep))
 
     def _fetch_many(self, assets: Sequence[Asset], timestep: str, start: datetime, end: datetime) -> None:
-        """Batch-fetch `assets`, chunked to `market_data.MAX_SYMBOLS_PER_REQUEST` per
-        Alpaca request -- the same `chunk_assets` split `AlpacaBroker.get_bars`/
-        `get_last_prices` already use, so a universe larger than one request's symbol
-        limit (e.g. cross_momentum's) still costs a handful of calls, not one per
-        ticker.
+        """Batch-fetch `assets`, chunked to `market_data.MAX_SYMBOLS_PER_REQUEST` per Alpaca request.
+
+        The same `chunk_assets` split `AlpacaBroker.get_bars`/`get_last_prices` already use, so a universe larger than one
+        request's symbol limit (e.g. cross_momentum's) still costs a handful of calls, not one per ticker.
         """
         import pandas as pd
 

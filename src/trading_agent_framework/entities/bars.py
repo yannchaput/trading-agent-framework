@@ -1,3 +1,5 @@
+"""OHLCV bar container wrapping a pandas frame."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,7 +35,20 @@ class Bars:
         return self.df
 
     def __len__(self) -> int:
+        """Return the number of bars.
+
+        Returns:
+            Row count of the underlying frame.
+        """
         return len(self.df)
 
     def __getitem__(self, key):
+        """Index into the underlying frame.
+
+        Args:
+            key: Any key accepted by ``DataFrame.__getitem__`` (a column name, a list of names, a boolean mask).
+
+        Returns:
+            The selected column(s) or rows.
+        """
         return self.df[key]

@@ -47,6 +47,8 @@ DEFAULT_POLITICIAN = "Nancy Pelosi"
 
 
 class SmokeTestFailure(Exception):
+    """Raised when a check of the smoke test fails."""
+
     pass
 
 
@@ -94,6 +96,13 @@ def diagnose(client: ClerkClient, user_agent: str, politician: str, now: datetim
 
 
 def main() -> int:
+    """Read a politician's real disclosures from the House Clerk and print the holdings, tiers and baseline weights.
+
+    The name comes from the first command-line argument; skipped when `CONGRESS_USER_AGENT` is not set.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     load_dotenv(ENV_FILE)
     user_agent = os.environ.get("CONGRESS_USER_AGENT", "")
     if not user_agent.strip():

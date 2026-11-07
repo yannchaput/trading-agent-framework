@@ -53,8 +53,16 @@ def identifier_from_external(external: str | None, strategy_name: str) -> str | 
 
 
 def to_tastytrade_symbol(symbol: str) -> str:
-    """Class shares: our (Alpaca's) `BRK.B` is Tastytrade's `BRK/B` (confirmed by the sandbox probe: `BRK.B` is
-    a 404, `BRK%2FB` resolves to `BRK/B`; the slash must be URL-encoded in a path, as `broker.py` does).
+    """Map a class-share symbol to Tastytrade's form: our (Alpaca's) `BRK.B` is Tastytrade's `BRK/B`.
+
+    Confirmed by the sandbox probe: `BRK.B` is a 404, `BRK%2FB` resolves to `BRK/B`; the slash must be URL-encoded in a
+    path, as `broker.py` does.
+
+    Args:
+        symbol: Ticker in Alpaca's notation (`.` separates the share class).
+
+    Returns:
+        The same ticker with `/` as the class separator.
     """
     return symbol.replace(".", "/")
 

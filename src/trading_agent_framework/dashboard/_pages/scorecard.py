@@ -14,8 +14,7 @@ from trading_agent_framework.dashboard.reader import (
 
 
 def _resolve_conflicting_decisions(rows: list[dict], table_key: str) -> bool:
-    """Persist any row whose Decision cell in the previous widget instance ended up holding more
-    than one tag, and report whether a correction was made.
+    """Persist any row whose Decision cell in the previous widget instance ended up holding more than one tag, and report whether a correction was made.
 
     Streamlit's ``MultiselectColumn`` lets a cell hold more than one tag; only one decision may
     apply per run, so a two-tag edit is resolved here to the option most recently added (Regime

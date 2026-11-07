@@ -1,18 +1,26 @@
+"""Enumerations shared by every broker: asset, order and position vocabulary."""
+
 from __future__ import annotations
 
 from enum import StrEnum
 
 
 class AssetType(StrEnum):
+    """Kind of tradable instrument."""
+
     STOCK = "stock"
 
 
 class OrderSide(StrEnum):
+    """Direction of an order."""
+
     BUY = "buy"
     SELL = "sell"
 
 
 class OrderType(StrEnum):
+    """Order execution style (market, limit, stop, stop-limit, trailing stop)."""
+
     MARKET = "market"
     LIMIT = "limit"
     STOP = "stop"
@@ -21,6 +29,8 @@ class OrderType(StrEnum):
 
 
 class TimeInForce(StrEnum):
+    """How long an order stays working before the broker cancels it."""
+
     DAY = "day"
     GTC = "gtc"
     OPG = "opg"
@@ -30,11 +40,15 @@ class TimeInForce(StrEnum):
 
 
 class PositionSide(StrEnum):
+    """Direction of an open position."""
+
     LONG = "long"
     SHORT = "short"
 
 
 class OrderStatus(StrEnum):
+    """Lifecycle state of an order, normalised across brokers."""
+
     UNPROCESSED = "unprocessed"
     SUBMITTED = "submitted"
     OPEN = "open"
@@ -49,6 +63,8 @@ class OrderStatus(StrEnum):
 
 
 class OrderEvent(StrEnum):
+    """Order lifecycle event delivered to strategy hooks."""
+
     NEW = "new"
     CANCELED = "canceled"
     FILLED = "fill"

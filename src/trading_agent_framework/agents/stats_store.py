@@ -56,11 +56,23 @@ def llm_stats_db_path(project_root: Path, strategy_name: str, mode: TradingMode)
 
 
 class LLMStatsStore:
-    """Append-only log of model calls. Each write opens a connection and closes it (WAL journal), so the
+    """Append-only log of model calls.
+
+    Each write opens a connection and closes it (WAL journal), so the
     file can be read by the dashboard or `sqlite3` while a run is writing.
     """
 
     def __init__(self, db_path: Path, *, run_id: str, fresh: bool = False) -> None:
+        """Open (creating if needed) the stats database for one run.
+
+        Args:
+            db_path: SQLite database file.
+            run_id: Identifier stored with every row of this run.
+            fresh: Delete any existing database (and its WAL files) first.
+
+        Raises:
+            LLMStatsError: If the directory or database cannot be prepared.
+        """
         self.db_path = db_path
         self.run_id = run_id
         try:
@@ -77,6 +89,11 @@ class LLMStatsStore:
             conn.executescript(_SCHEMA)
 
     def record(self, call: CallRecord) -> None:
+        """Store one model call.
+
+        Args:
+            call: The call's timing, token counts and tool-call count.
+        """
         with self._connect() as conn:
             conn.execute(
                 _INSERT,

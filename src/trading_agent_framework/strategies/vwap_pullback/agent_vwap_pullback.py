@@ -60,6 +60,15 @@ class VwapPullbackStrategy(Strategy):
         settings: VwapPullbackParameters | None = None,
         **kwargs: Any,
     ) -> None:
+        """Create the strategy.
+
+        Args:
+            broker: Broker the strategy trades through.
+            mode: Trading mode.
+            universe: Tickers scanned each session.
+            settings: Strategy parameters; the defaults when omitted.
+            **kwargs: Passed on to `Strategy`.
+        """
         super().__init__(broker, mode=mode, **kwargs)
         self.universe = list(universe)
         self.settings = settings or VwapPullbackParameters()

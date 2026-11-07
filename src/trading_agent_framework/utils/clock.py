@@ -25,6 +25,11 @@ class MarketSession:
     close: datetime
 
     def __post_init__(self) -> None:
+        """Validate the session bounds.
+
+        Raises:
+            ValueError: If either bound is naive, or `close` is not after `open`.
+        """
         if self.open.tzinfo is None or self.close.tzinfo is None:
             raise ValueError("MarketSession open/close must be tz-aware")
         if self.close <= self.open:
@@ -41,6 +46,11 @@ class MarketClock(ABC):
     max_wait_slice: float = 60.0
 
     def now(self) -> datetime:
+        """Return the current time.
+
+        Returns:
+            The current time as a timezone-aware datetime in the market timezone.
+        """
         return datetime.now(self.tz)
 
     def wait(self, seconds: float, wake: threading.Event) -> None:

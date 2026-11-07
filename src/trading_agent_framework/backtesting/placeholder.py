@@ -1,5 +1,6 @@
-"""`PlaceholderBroker`: what `main.py` builds a strategy with in backtesting mode, before
-`run_backtest` swaps in the real `BacktestBroker`. It only carries the strategy name and a
+"""`PlaceholderBroker`: what `main.py` builds a strategy with in backtesting mode, before `run_backtest` swaps in the real `BacktestBroker`.
+
+It only carries the strategy name and a
 simulated clock and touches no network -- building a live broker just to start a backtest used
 to reconfigure the live Alpaca account, and would need IB Gateway running under `BROKER=ibkr`.
 """

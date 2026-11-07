@@ -17,6 +17,15 @@ _FILING_TOOLS = ("get_filings", "get_filing_document")
 
 
 def desk_tools(desk: Desk) -> list[Callable[..., dict[str, Any]]]:
+    """Build the agent's order tools from the desk.
+
+    Args:
+        desk: The desk that applies the guardrails and sends the orders.
+
+    Returns:
+        The tools `buy`, `set_trailing_stop`, `sell` and `skip`.
+    """
+
     def buy(symbol: str, quantity: int, trail_percent: float, reason: str) -> dict[str, Any]:
         """Buy a candidate at the next open; a trailing stop of trail_percent (3-15) is placed when it fills."""
         return desk.buy(symbol, quantity, trail_percent, reason)

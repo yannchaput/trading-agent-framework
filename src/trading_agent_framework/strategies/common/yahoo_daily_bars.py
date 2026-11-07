@@ -29,7 +29,19 @@ DownloadFn = Callable[..., pd.DataFrame]
 
 
 class BarsSource(Protocol):
-    def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]: ...
+    """Where a strategy's daily bars come from in paper/live: one batch per scan."""
+
+    def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]:
+        """Fetch the daily bars of many symbols in one batch.
+
+        Args:
+            symbols: Tickers to fetch.
+            today: The current session date; the bar dated today is partial while the session is open.
+
+        Returns:
+            Bars per symbol; a symbol Yahoo has no usable data for is absent.
+        """
+        ...
 
 
 class UnusableBatch(Exception):
@@ -40,11 +52,19 @@ class YahooDailyBars:
     """Daily `Bars` per symbol from one batched Yahoo download."""
 
     def __init__(self, *, download: DownloadFn | None = None, history: int = HISTORY_BARS) -> None:
+        """Create a source.
+
+        Args:
+            download: Replacement for `yfinance.download` (injected in tests).
+            history: Number of daily bars to keep per symbol.
+        """
         self._download = download  # injected in tests; yfinance.download otherwise
         self._history = history
 
     def bars(self, symbols: Sequence[str], today: date) -> dict[str, Bars]:
-        """{symbol: bars} for the symbols Yahoo has data for, oldest first, each stamped at its session's close. The
+        """{symbol: bars} for the symbols Yahoo has data for, oldest first, each stamped at its session's close.
+
+        The
         bar dated `today` is included while the session is open: the caller drops it.
 
         Raises YahooDataError when the download fails or returns nothing at all (an outage, not a missing symbol). A

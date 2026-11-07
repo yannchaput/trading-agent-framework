@@ -1,5 +1,4 @@
-"""Alpaca trade-update websocket stream: the async handler (Task 15) and its
-background-thread lifecycle (Task 16).
+"""Alpaca trade-update websocket stream: the async handler (Task 15) and its background-thread lifecycle (Task 16).
 
 `AlpacaTradeStream` wraps an `alpaca.trading.stream.TradingStream`, translating
 each `TradeUpdate` it receives into a call against
@@ -39,6 +38,12 @@ class AlpacaTradeStream:
     """
 
     def __init__(self, tracker: OrderTracker, stream: TradingStream | None = None) -> None:
+        """Create the stream.
+
+        Args:
+            tracker: Order tracker that receives every trade update.
+            stream: Alpaca trading websocket; without one, `start()` raises `BrokerError`.
+        """
         self._tracker = tracker
         self._stream = stream
         self._thread: threading.Thread | None = None
@@ -86,8 +91,7 @@ class AlpacaTradeStream:
         return True
 
     def start(self, connect_timeout: float = DEFAULT_CONNECT_TIMEOUT_SECONDS) -> None:
-        """Subscribe the handler, run the websocket loop in a daemon thread, and
-        block until the connect/auth/subscribe handshake actually completes.
+        """Subscribe the handler, run the websocket loop in a daemon thread, and block until the connect/auth/subscribe handshake actually completes.
 
         `stream.run()` spawns the handshake asynchronously and returns only when
         the loop stops -- if `start()` returned as soon as the thread was
@@ -112,6 +116,11 @@ class AlpacaTradeStream:
 
     @property
     def is_running(self) -> bool:
+        """Report whether the stream thread is alive.
+
+        Returns:
+            True while the websocket thread is running.
+        """
         return self._thread is not None and self._thread.is_alive()
 
     def stop(self, timeout: float = 5.0) -> None:

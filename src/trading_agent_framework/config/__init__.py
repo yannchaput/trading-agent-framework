@@ -1,3 +1,5 @@
+"""Environment and credential configuration: env file resolution, broker settings and Alpaca credentials."""
+
 from __future__ import annotations
 
 from trading_agent_framework.config.env import (

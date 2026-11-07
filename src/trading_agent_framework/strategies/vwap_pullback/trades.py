@@ -22,6 +22,8 @@ _CENT = Decimal("0.01")
 
 
 class TradeStatus(StrEnum):
+    """Lifecycle of a trade: pending, open or closed."""
+
     PENDING = "pending"  # entry order working, nothing filled
     OPEN = "open"  # entry (partly) filled: shares held, protected by a stop
     CLOSED = "closed"  # every share sold; moved to `TradeBook.closed`
@@ -49,6 +51,7 @@ class Trade:
     closed_at: datetime | None = None
 
     def __post_init__(self) -> None:
+        """Start the working stop at the initial stop."""
         # The working stop starts at the initial stop.
         if not self.stop_level:
             self.stop_level = self.stop_price
@@ -101,10 +104,16 @@ class TradeBook:
     """The session's trades: active ones by symbol (one per symbol), closed ones in order."""
 
     def __init__(self) -> None:
+        """Create an empty book."""
         self._active: dict[str, Trade] = {}  # PENDING and OPEN trades, one per symbol
         self.closed: list[Trade] = []
 
     def add(self, trade: Trade) -> None:
+        """Track a new trade.
+
+        Args:
+            trade: The trade, which replaces any active trade of the same symbol.
+        """
         self._active[trade.symbol] = trade
 
     def get(self, symbol: str) -> Trade | None:
@@ -112,12 +121,27 @@ class TradeBook:
         return self._active.get(symbol)
 
     def active(self) -> list[Trade]:
+        """Return the active trades.
+
+        Returns:
+            The PENDING and OPEN trades.
+        """
         return list(self._active.values())
 
     def open_trades(self) -> list[Trade]:
+        """Return the trades holding shares.
+
+        Returns:
+            The OPEN trades.
+        """
         return [t for t in self._active.values() if t.status is TradeStatus.OPEN]
 
     def pending(self) -> list[Trade]:
+        """Return the trades whose entry is still working.
+
+        Returns:
+            The PENDING trades.
+        """
         return [t for t in self._active.values() if t.status is TradeStatus.PENDING]
 
     def by_order_id(self, order_id: str) -> Trade | None:

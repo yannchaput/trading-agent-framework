@@ -166,6 +166,8 @@ def _build_system_prompt(*, symbols: Sequence[str], defensive_symbol: str, news_
 
 
 class NewsBinaryStrategy(Strategy):
+    """Strategy where an LLM agent researches market news and moves the book between SPY/QQQ and a defensive symbol."""
+
     AGENT_NAME = "news_binary_trader"
     TASK_PROMPT = "Research current broad-market news and rebalance if needed. The current datetime is in the context below."
 
@@ -185,6 +187,7 @@ class NewsBinaryStrategy(Strategy):
     }
 
     def initialize(self) -> None:
+        """Set the cadence and market-regime state, and create the news agent with its tools."""
         self.sleeptime = "3H" if self.is_backtesting else "1H"
         # Enable agent telemetry in live/trading
         # self.agent_telemetry = True
@@ -207,6 +210,10 @@ class NewsBinaryStrategy(Strategy):
         self.log_info(f"Agent run with system prompt: \n{system_prompt}")
 
     def on_trading_iteration(self) -> None:
+        """Run one tick: ask the agent to research the news and rebalance, then make sure a decision was recorded.
+
+        Does nothing on ticks that a backtest skips (`backtest_every_n_iterations`).
+        """
         self.vars.iteration_count += 1
         if self.is_backtesting and not self._backtest_iteration_is_due():
             return
@@ -313,11 +320,21 @@ class NewsBinaryStrategy(Strategy):
         snapshot["sessions_in_regime"] = self.vars.sessions_in_regime
 
     def _backtest_iteration_is_due(self) -> bool:
-        """Set the interval of iterations for backtesting (not to trade every day)"""
+        """Set the interval of iterations for backtesting (not to trade every day)."""
         count = self.vars.iteration_count
         return count == 1 or count % self.strategy_parameters["backtest_every_n_iterations"] == 0
 
     def run_backtesting(self, **overrides: Any):
+        """Run a backtest with this strategy's defaults.
+
+        Defaults: Alpaca minute bars, the strategy symbols preloaded and agent telemetry on.
+
+        Args:
+            **overrides: Replace any default, or pass any other `Strategy.run_backtesting` argument.
+
+        Returns:
+            What `Strategy.run_backtesting` returns.
+        """
         # use class strategy parameters as the strategy constructor is not run yet
         symbols = [*self.strategy_parameters["symbols"], self.strategy_parameters["defensive_symbol"]]
         defaults: dict[str, Any] = dict(

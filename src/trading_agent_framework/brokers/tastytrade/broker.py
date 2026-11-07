@@ -1,5 +1,4 @@
-"""`TastytradeBroker`: Tastytrade (REST API + account streamer) for trading, account and positions;
-Alpaca for market data, the calendar and news.
+"""`TastytradeBroker`: Tastytrade (REST API + account streamer) for trading, account and positions; Alpaca for market data, the calendar and news.
 
 Wiring only: translation lives in the pure `orders`/`account` modules, HTTP in `TastytradeSession`,
 the websocket in `TastytradeAccountStream`, and event handling in `TastytradeOrderEvents`.
@@ -102,6 +101,9 @@ class TastytradeBroker(Broker):
             tracker: Order tracker; a fresh one is created when omitted.
             clock: Market clock; defaults to the market-data calendar clock.
             is_paper: Whether the account is a sandbox account.
+            news_provider_factory: Builds the news provider on first use.
+            stream_connect: Opens the streamer websocket (injected in tests); the real websocket client when omitted.
+            sleep: Waits between resends of an order that is still arriving (injected in tests).
         """
         super().__init__(
             strategy_name,

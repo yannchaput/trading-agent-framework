@@ -29,6 +29,16 @@ HOLDINGS, TARGET, REPORT = "holdings", "target", "report"
 
 @dataclass(frozen=True, slots=True)
 class HoldingSubmission:
+    """One holding the research agent submits.
+
+    Attributes:
+        ticker: Ticker.
+        value_low: Lower bound of the value, in dollars.
+        value_high: Upper bound of the value, in dollars.
+        reason: Why the value was changed or the holding added; None for an unchanged baseline holding.
+        dropped: Whether the holding is removed from the baseline.
+    """
+
     ticker: str
     value_low: Decimal
     value_high: Decimal
@@ -38,6 +48,14 @@ class HoldingSubmission:
 
 @dataclass(frozen=True, slots=True)
 class TargetPosition:
+    """One target weight the portfolio manager submits.
+
+    Attributes:
+        ticker: Ticker.
+        weight: Fraction of portfolio value; 0 means the holding is dropped.
+        reason: Why this weight.
+    """
+
     ticker: str
     weight: float  # a fraction of portfolio value; 0 means the holding is dropped
     reason: str
@@ -186,10 +204,21 @@ class HandoffRecorder(SubmitRecorder):
     TOOL_NAMES = {HOLDINGS: "submit_holdings", TARGET: "submit_target", REPORT: "submit_trade_report"}
 
     def __init__(self, params: CongressParams) -> None:
+        """Create the recorder.
+
+        Args:
+            params: Strategy parameters, which hold the limits submissions are checked against.
+        """
         super().__init__()
         self._params = params
 
     def expect_holdings(self, known_tickers: Collection[str], baseline: Mapping[str, tuple[Decimal, Decimal]]) -> None:
+        """Arm the recorder for the research stage.
+
+        Args:
+            known_tickers: Tickers that appear in some filing; a submission naming another is refused.
+            baseline: Ticker -> (value_low, value_high) of the baseline holdings every submission must cover.
+        """
         self._arm(HOLDINGS, {"known_tickers": set(known_tickers), "baseline": dict(baseline)})
 
     def expect_target(self, holdings: Mapping[str, int]) -> None:

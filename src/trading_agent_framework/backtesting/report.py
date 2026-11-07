@@ -1,7 +1,7 @@
-"""Serialises a finished backtest run to disk: settings.json, metrics.json, and the
-three parquet time series (equity/trades/indicators). description.json is never
-written here -- it is the dashboard's own file, created only when a user adds a
-description through the dashboard UI.
+"""Serialises a finished backtest run to disk.
+
+Writes settings.json, metrics.json, and the three parquet time series (equity/trades/indicators). description.json is never
+written here -- it is the dashboard's own file, created only when a user adds a description through the dashboard UI.
 
 This is the codebase's second half of the third float boundary (design spec,
 section 7.2, alongside metrics.py): every value here is converted from the ledger's
@@ -118,12 +118,22 @@ def _write_json(path: Path, payload: dict[str, Any]) -> Path:
 
 
 def write_settings(run_dir: Path, settings: dict[str, Any]) -> Path:
+    """Write `settings.json`.
+
+    Args:
+        run_dir: The run's output directory.
+        settings: The run's settings (parameters, window, data source, ...).
+
+    Returns:
+        The path written.
+    """
     return _write_json(run_dir / "settings.json", settings)
 
 
 def write_metrics(run_dir: Path, metrics: dict[str, Any]) -> Path:
-    """Reshapes `metrics` (compute_metrics's output) into exactly the dashboard's
-    MetricSet field names plus `raw`. Fields MetricSet expects but that `metrics`
+    """Reshapes `metrics` (compute_metrics's output) into exactly the dashboard's MetricSet field names plus `raw`.
+
+    Fields MetricSet expects but that `metrics`
     doesn't contain (e.g. all the *_benchmark/relative fields on a benchmark-less
     run) are written as `null`. Any stray top-level key that isn't a known MetricSet
     field (e.g. a metric added to compute_metrics before this module is updated to
@@ -210,6 +220,15 @@ def write_equity(
 
 
 def write_trades(run_dir: Path, ledger: Ledger) -> Path:
+    """Write `trades.parquet` from the ledger's fills.
+
+    Args:
+        run_dir: The run's output directory.
+        ledger: The run's ledger.
+
+    Returns:
+        The path written.
+    """
     import pandas as pd
 
     rows = [
@@ -234,6 +253,15 @@ def write_trades(run_dir: Path, ledger: Ledger) -> Path:
 
 
 def write_indicators(run_dir: Path, ledger: Ledger) -> Path:
+    """Write `indicators.parquet` from the ledger's indicator lines.
+
+    Args:
+        run_dir: The run's output directory.
+        ledger: The run's ledger.
+
+    Returns:
+        The path written.
+    """
     import pandas as pd
 
     rows = [

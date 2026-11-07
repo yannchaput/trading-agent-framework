@@ -10,8 +10,10 @@ from collections.abc import Collection, Mapping
 
 
 def advance_cooldowns(current: Mapping[str, int], *, started: Collection[str], length: int) -> dict[str, int]:
-    """The cooldowns after a completed review: each running one counts down and is dropped after its last review,
-    and each stock in `started` begins one of `length` reviews (none when `length` is 0).
+    """The cooldowns after a completed review.
+
+    Each running one counts down and is dropped after its last review, and each stock in `started` begins one of `length`
+    reviews (none when `length` is 0).
     """
     running = {symbol: left - 1 for symbol, left in current.items() if left > 1}
     return {**running, **({symbol: length for symbol in started} if length > 0 else {})}

@@ -1,5 +1,6 @@
-"""vectorbt-based performance metrics: the dashboard's full `MetricSet` (design spec,
-section 6.5) computed from a returns series. The only module importing `vectorbt`, and
+"""vectorbt-based performance metrics: the dashboard's full `MetricSet` (design spec, section 6.5) computed from a returns series.
+
+The only module importing `vectorbt`, and
 only inside `compute_metrics` -- importing `backtesting.metrics` at module level must
 never pull vectorbt in.
 
@@ -47,8 +48,9 @@ def compute_metrics(
     timestep: str,
     risk_free_rate: float,
 ) -> dict[str, Any]:
-    """`returns`/`benchmark_returns`: daily fractional returns, float64, no NaNs (the
-    caller drops the first row of a pct_change() series). Returns a flat dict keyed
+    """`returns`/`benchmark_returns`: daily fractional returns, float64, no NaNs (the caller drops the first row of a pct_change() series).
+
+    Returns a flat dict keyed
     exactly by the dashboard's `MetricSet` field names, plus `raw.summary_tables`.
     """
     import vectorbt as vbt  # noqa: F401 -- registers the .vbt accessor on pd.Series

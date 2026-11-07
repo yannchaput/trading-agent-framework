@@ -99,6 +99,11 @@ def _wait_for_status(
 
 
 def main() -> int:
+    """Exercise broker orders and the trade-update stream against the paper account.
+
+    Returns:
+        The process exit code: 0 on success or when skipped, 1 on failure.
+    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",

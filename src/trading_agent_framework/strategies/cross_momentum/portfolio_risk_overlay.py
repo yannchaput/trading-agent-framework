@@ -32,6 +32,8 @@ _CORR_CRITICAL = 0.35
 
 
 class RiskState(Enum):
+    """Risk level of the portfolio overlay: normal, elevated or critical."""
+
     NORMAL = "normal"
     ELEVATED = "elevated"
     CRITICAL = "critical"

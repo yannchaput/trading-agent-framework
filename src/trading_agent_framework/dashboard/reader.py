@@ -60,16 +60,15 @@ def _save_settings_leaf(ref: RunRef, key: str, value: str | list[str]) -> None:
 
 
 def save_decision(ref: RunRef, decision: str) -> None:
-    """Write the dashboard decision ("discarded"/"study"/"validated", or "" to clear) into
-    settings.json's `dashboard_decision` leaf field, preserving every other key already there.
-    """
+    """Write the dashboard decision ("discarded"/"study"/"validated", or "" to clear) into settings.json's `dashboard_decision` leaf field, preserving every other key already there."""
     _save_settings_leaf(ref, "dashboard_decision", decision)
 
 
 def save_regime(ref: RunRef, regimes: list[str]) -> None:
-    """Write the dashboard regimes (any subset of "Bearish"/"Neutral"/"Bullish"/"All-Weather",
-    or [] to clear) into settings.json's `dashboard_regime` leaf field, preserving every other
-    key already there.
+    """Write the dashboard regimes into settings.json's `dashboard_regime` leaf field.
+
+    Takes any subset of "Bearish"/"Neutral"/"Bullish"/"All-Weather", or [] to clear; every other key already there is
+    preserved.
     """
     _save_settings_leaf(ref, "dashboard_regime", list(regimes))
 
@@ -157,7 +156,9 @@ def load_parameters(ref: RunRef) -> list[tuple[str, str, str]]:
 
 
 def _agent_rows(agents: dict[str, dict[str, Any]]) -> list[tuple[str, str, str]]:
-    """Model (with its temperature and reasoning effort) / Calls / Tokens / Latency rows per agent. Section names carry the agent's name when
+    """Model (with its temperature and reasoning effort) / Calls / Tokens / Latency rows per agent.
+
+    Section names carry the agent's name when
     there are several, so each agent's rows stay one contiguous group in the Parameters tab.
     """
     rows: list[tuple[str, str, str]] = []
@@ -372,10 +373,10 @@ def load_cumulative_returns(ref: RunRef) -> dict[str, Any] | None:
 
 
 def load_yearly_returns(ref: RunRef) -> list[dict[str, Any]] | None:
-    """Yearly strategy/benchmark returns, read directly from metrics.json's
-    `raw.summary_tables.eoy_returns_vs_benchmark` -- computed once, in
-    backtesting.metrics.compute_metrics, from the exact same returns series used for
-    every other headline metric on this page. No independent recomputation here.
+    """Yearly strategy/benchmark returns, read directly from metrics.json.
+
+    Taken from `raw.summary_tables.eoy_returns_vs_benchmark` -- computed once, in backtesting.metrics.compute_metrics, from
+    the exact same returns series used for every other headline metric on this page. No independent recomputation here.
     """
     metrics = load_metrics(ref)
     if metrics is None:
@@ -385,8 +386,7 @@ def load_yearly_returns(ref: RunRef) -> list[dict[str, Any]] | None:
 
 
 def load_trades_curve(ref: RunRef, budget: float) -> dict[str, Any] | None:
-    """Load filled trades from ``trades.parquet`` and reconstruct the
-    intra-trade portfolio value curve with buy/sell markers.
+    """Load filled trades from ``trades.parquet`` and reconstruct the intra-trade portfolio value curve with buy/sell markers.
 
     Returns a dict with two keys:
 

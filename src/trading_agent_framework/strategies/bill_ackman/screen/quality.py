@@ -1,5 +1,4 @@
-"""Pure quality screen: which companies were simple, predictable, cash-generative, lightly indebted and
-reasonably priced on a date, from annual SEC figures known on that date.
+"""Pure quality screen: which companies were simple, predictable, cash-generative, lightly indebted and reasonably priced on a date, from annual SEC figures known on that date.
 
 No I/O, no clock, no state (same rules as `annual_figures.py`). `assess` applies the numeric gates to one company's
 reduced annual figures (`annual_figures.annual_figures`); `rank` orders the companies that were also priced by free cash flow yield.
@@ -24,6 +23,22 @@ _REQUIRED_FLOWS = ("revenue", "operating_income", "operating_cash_flow", "capex"
 
 @dataclass(frozen=True, slots=True)
 class ScreenParams:
+    """Parameters of the quality screen.
+
+    Attributes:
+        years: Years of annual figures the screen reads (at least 2).
+        min_growth_years: Years of revenue growth required.
+        max_filing_age_months: Oldest annual filing, in months, still accepted.
+        max_net_debt_to_operating_income: Highest net debt over operating income accepted.
+        excluded_sic_ranges: Industry code ranges left out (utilities; finance, insurance, real estate).
+        top_n: Companies kept, best first.
+        max_age_days: Age, by `as_of`, after which annual SEC figures are fetched again.
+        split_max_age_days: Age, by the wall clock, after which the split history is fetched again (it must match today's
+            adjusted prices).
+        max_fetch_failure_ratio: Share of failed SEC fetches that aborts a screen.
+        hollow_min_sample: Symbols that must reach the SIC or split gate before its failure ratio can abort a screen.
+    """
+
     years: int = 5
     min_growth_years: int = 3
     max_filing_age_months: int = 18
@@ -36,6 +51,11 @@ class ScreenParams:
     hollow_min_sample: int = 5  # symbols that must reach the SIC or split gate before its failure ratio can abort a screen
 
     def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        Raises:
+            ValueError: Naming every parameter that is out of range.
+        """
         problems = {
             "years": self.years < 2,
             "min_growth_years": not 0 <= self.min_growth_years <= self.years - 1,
@@ -180,6 +200,24 @@ class Priced:
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
+    """A company that passed the screen.
+
+    Attributes:
+        symbol: Ticker.
+        rank: Position among the passing companies, best first.
+        sic: Industry code, or None when unknown.
+        market_cap: Market capitalisation.
+        fcf_yield: Free-cash-flow yield.
+        fcf_margin: Free-cash-flow margin.
+        operating_margin: Operating margin.
+        operating_margin_stdev: Standard deviation of the operating margin over the years read.
+        revenue_growth: Revenue growth.
+        net_debt_to_operating_income: Net debt over operating income.
+        debt_reported: Whether the filing reports debt at all.
+        fiscal_year_end: End of the latest fiscal year read.
+        filed: Date that year's report was filed.
+    """
+
     symbol: str
     rank: int
     sic: int | None
@@ -197,6 +235,13 @@ class Candidate:
 
 @dataclass(frozen=True, slots=True)
 class ScreenResult:
+    """Outcome of a screen.
+
+    Attributes:
+        candidates: Companies that passed every gate, best first.
+        rejections: Symbol -> reason of the first failed gate.
+    """
+
     candidates: list[Candidate]
     rejections: dict[str, str]  # symbol -> reason of the first failed gate
 

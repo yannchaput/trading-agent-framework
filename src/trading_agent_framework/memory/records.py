@@ -41,6 +41,14 @@ def safe_name(value: object) -> str:
 
 
 def normalize_symbol(value: object) -> str | None:
+    """Normalise a ticker to upper case.
+
+    Args:
+        value: Raw symbol; None and blank values are tolerated.
+
+    Returns:
+        The stripped, upper-cased symbol, or None when nothing is left.
+    """
     text = str(value or "").strip().upper()
     return text or None
 
@@ -51,10 +59,20 @@ def new_memory_id(kind: str) -> str:
 
 
 def new_event_id() -> str:
+    """Create an event identifier.
+
+    Returns:
+        A unique id prefixed `event_`.
+    """
     return f"event_{uuid4().hex}"
 
 
 def new_retrieval_id() -> str:
+    """Create a retrieval identifier.
+
+    Returns:
+        A unique id prefixed `retrieval_`.
+    """
     return f"retrieval_{uuid4().hex}"
 
 
@@ -64,10 +82,28 @@ def json_dumps(value: object) -> str:
 
 
 def json_loads(value: str | None, default: Any) -> Any:
+    """Parse a JSON text column.
+
+    Args:
+        value: JSON text, or None/empty.
+        default: Returned when `value` is None or empty.
+
+    Returns:
+        The decoded value, or `default`.
+    """
     return json.loads(value) if value else default
 
 
 def compact_text(value: object, *, limit: int) -> str:
+    """Strip a value to text and cut it to a length.
+
+    Args:
+        value: Anything; None becomes an empty string.
+        limit: Maximum length of the result, truncation suffix included.
+
+    Returns:
+        The text, ending in the truncation suffix when it was cut.
+    """
     text = str(value or "").strip()
     if len(text) <= limit:
         return text
@@ -132,6 +168,14 @@ def lean_item(item: Mapping[str, Any], *, max_chars: int) -> dict[str, Any]:
 
 
 def query_terms(query: str) -> list[str]:
+    """Split a search query into lower-case terms.
+
+    Args:
+        query: Free-text query.
+
+    Returns:
+        The whitespace-separated terms, lower-cased.
+    """
     return [term.lower() for term in query.split()]
 
 
