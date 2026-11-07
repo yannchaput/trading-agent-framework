@@ -27,6 +27,7 @@ _NO_FIGURES = "no SEC figures"
 
 class _SecClient(Protocol):
     """The slice of the SEC client the fundamentals need."""
+
     def ticker_to_cik(self, symbol: str) -> str:
         """Zero-padded CIK for `symbol`."""
         ...

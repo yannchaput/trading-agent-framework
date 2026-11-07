@@ -68,6 +68,7 @@ class Shortfall:
 @dataclass(frozen=True, slots=True)
 class Audit:
     """Result of auditing a run's orders against the target portfolio."""
+
     unfilled: list[OrderView]  # this run's orders that are not fully filled
     shortfalls: list[Shortfall]
     in_flight: list[str] = field(default_factory=list)  # owned stocks with an order still working at the broker (this run's or an earlier one's)
@@ -99,6 +100,7 @@ class DeskParams(Protocol):
 
 class TradeDesk:
     """Order desk that lets an agent trade toward a target portfolio under size, band and sell-first guardrails."""
+
     def __init__(self, strategy: "Strategy", params: DeskParams, *, log_tag: str) -> None:  # noqa: UP037
         """Bind the desk to a strategy and its guardrail parameters.
 
@@ -183,6 +185,7 @@ class TradeDesk:
 
     def tools(self) -> list[Callable[..., dict[str, Any]]]:
         """The order and check tools handed to the agent."""
+
         def place_order(symbol: str, side: str, quantity: float) -> dict[str, Any]:
             """Place a market order, side buy or sell, for a target-portfolio stock; sells first, quantity in shares (fractions allowed)."""
             return self._place(symbol, side, quantity)

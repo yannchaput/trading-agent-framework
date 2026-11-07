@@ -158,17 +158,21 @@ def test_defaults_are_the_spec_values():
     assert p.signal_window_days == 30 and p.history_years == 3
     assert p.even_weight == pytest.approx(0.095)
 
-@pytest.mark.parametrize("kwargs, message", [
-    ({"watchlist": ()}, "watchlist must not be empty"),
-    ({"watchlist": ("AAPL", "aapl")}, "watchlist must not repeat a ticker"),
-    ({"min_weight": 0.10}, "watchlist x min_weight must fit in max_total_weight"),
-    ({"max_position_weight": 0.05}, "the even weight must lie between min_weight and max_position_weight"),
-    ({"min_sell_holding_fraction": 0.0}, "holding fractions must be in (0, 1]"),
-    ({"min_buy_holding_fraction": 1.5}, "holding fractions must be in (0, 1]"),
-    ({"signal_window_days": 0}, "signal_window_days must be at least 1"),
-    ({"history_years": 0}, "history_years must be at least 1"),
-    ({"min_weight": 0.005}, "min_weight must be at least rebalance_band"),
-])
+
+@pytest.mark.parametrize(
+    "kwargs, message",
+    [
+        ({"watchlist": ()}, "watchlist must not be empty"),
+        ({"watchlist": ("AAPL", "aapl")}, "watchlist must not repeat a ticker"),
+        ({"min_weight": 0.10}, "watchlist x min_weight must fit in max_total_weight"),
+        ({"max_position_weight": 0.05}, "the even weight must lie between min_weight and max_position_weight"),
+        ({"min_sell_holding_fraction": 0.0}, "holding fractions must be in (0, 1]"),
+        ({"min_buy_holding_fraction": 1.5}, "holding fractions must be in (0, 1]"),
+        ({"signal_window_days": 0}, "signal_window_days must be at least 1"),
+        ({"history_years": 0}, "history_years must be at least 1"),
+        ({"min_weight": 0.005}, "min_weight must be at least rebalance_band"),
+    ],
+)
 def test_invalid_settings_are_refused(kwargs, message):
     with pytest.raises(ValueError, match=re.escape(message)):
         InsiderParams(**kwargs)
@@ -267,28 +271,35 @@ Rule strings (exact copy, shown to the researcher):
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-def test_same_month_three_years_running_is_routine():           # history: 2022-03, 2023-03, 2024-03; trade 2025-06
+def test_same_month_three_years_running_is_routine():  # history: 2022-03, 2023-03, 2024-03; trade 2025-06
     (l,) = label_trades([trade(date(2025, 6, 2))], history, years=3)
     assert l.label is Label.ROUTINE and l.rule == "routine: traded in March in each of 2022, 2023, 2024"
     assert l.months_by_year == {2022: (3,), 2023: (3,), 2024: (3,)}
 
-def test_every_year_but_never_the_same_month_is_opportunistic(): # 2022-01, 2023-05, 2024-11
+
+def test_every_year_but_never_the_same_month_is_opportunistic():  # 2022-01, 2023-05, 2024-11
     assert label.label is Label.OPPORTUNISTIC and label.rule == "opportunistic: traded in each of 2022, 2023, 2024, never in the same month every year"
 
-def test_a_missing_year_is_unclassified():                       # 2022-03, 2024-03
+
+def test_a_missing_year_is_unclassified():  # 2022-03, 2024-03
     assert label.label is Label.UNCLASSIFIED and label.rule == "unclassified: no trade in 2023"
 
-def test_a_plan_trade_is_routine_whatever_the_history():          # opportunistic history, trade.plan=True
+
+def test_a_plan_trade_is_routine_whatever_the_history():  # opportunistic history, trade.plan=True
     assert label.label is Label.ROUTINE and label.rule == "plan: the 10b5-1 box is checked"
 
-def test_trades_either_side_of_new_year_use_their_own_years():   # trades 2025-12-20 and 2026-01-05; history makes 2022-24 routine, 2023-25 opportunistic
+
+def test_trades_either_side_of_new_year_use_their_own_years():  # trades 2025-12-20 and 2026-01-05; history makes 2022-24 routine, 2023-25 opportunistic
     assert [l.label for l in labels] == [Label.ROUTINE, Label.OPPORTUNISTIC]
 
-def test_history_is_keyed_on_the_owner_cik_not_the_name():       # same CIK, names "COOK TIMOTHY D" and "Cook Tim"
+
+def test_history_is_keyed_on_the_owner_cik_not_the_name():  # same CIK, names "COOK TIMOTHY D" and "Cook Tim"
     assert label.label is Label.ROUTINE
 
-def test_another_insiders_trades_do_not_count():                 # same months, other CIK
+
+def test_another_insiders_trades_do_not_count():  # same months, other CIK
     assert label.label is Label.UNCLASSIFIED
+
 
 def test_buys_and_sales_both_count_as_history(): ...
 ```
@@ -408,7 +419,7 @@ Payload shapes (lean; whole dollars as `int`, fractions rounded to 4 decimals, d
 
 ```python
 def test_get_insider_trades_returns_code_labels_with_their_evidence(): ...
-def test_a_filing_dated_today_is_invisible_even_if_the_source_leaks_it(): ...   # source returns it anyway
+def test_a_filing_dated_today_is_invisible_even_if_the_source_leaks_it(): ...  # source returns it anyway
 def test_read_form4_refuses_an_accession_filed_today(): ...
 def test_footnotes_are_capped_at_500_characters(): ...
 def test_more_than_ten_trades_per_insider_are_cut_with_a_count(): ...
@@ -561,8 +572,8 @@ Prompt content (English, congress style, for a local model): the researcher's on
 - [ ] **Step 1: Write the tests**
 
 ```python
-def test_the_bot_checks_every_session_but_acts_only_on_changes(): ...      # filings on 3 dates + one expiry -> agents run on exactly those 4 sessions
-def test_the_agents_never_see_a_filing_before_its_filing_date(): ...       # the researcher's get_insider_trades on each day returns only filings filed before it
+def test_the_bot_checks_every_session_but_acts_only_on_changes(): ...  # filings on 3 dates + one expiry -> agents run on exactly those 4 sessions
+def test_the_agents_never_see_a_filing_before_its_filing_date(): ...  # the researcher's get_insider_trades on each day returns only filings filed before it
 def test_orders_go_out_once_and_fill_on_a_later_bar(): ...
 def test_a_dead_llm_aborts_a_real_backtest_instead_of_writing_a_flat_report(): ...
 ```

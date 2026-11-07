@@ -79,36 +79,47 @@ class AlpacaTradingClient(Protocol):
     def submit_order(self, order_data: OrderRequest) -> AlpacaOrderModel:
         """Submit an order request."""
         ...
+
     def cancel_order_by_id(self, order_id: str) -> None:
         """Cancel one order by id."""
         ...
+
     def get_orders(self, filter: GetOrdersRequest) -> list[AlpacaOrderModel]:
         """List orders matching `filter`."""
         ...
+
     def get_order_by_id(self, order_id: str) -> AlpacaOrderModel:
         """Fetch one order by id."""
         ...
+
     def get_all_positions(self) -> list[AlpacaPositionModel]:
         """List every open position."""
         ...
+
     def get_account(self) -> AlpacaTradeAccount:
         """Fetch the trading account."""
         ...
+
     def get_calendar(self, filters: GetCalendarRequest) -> list[AlpacaCalendarModel]:
         """Fetch market calendar days matching `filters`."""
         ...
+
     def replace_order_by_id(self, order_id: str, order_data: ReplaceOrderRequest) -> AlpacaOrderModel:
         """Replace an open order's prices."""
         ...
+
     def close_position(self, symbol_or_asset_id: str, close_options: ClosePositionRequest) -> AlpacaOrderModel:
         """Close (part of) one position."""
         ...
+
     def close_all_positions(self, cancel_orders: bool) -> list[AlpacaClosePositionResponse]:
         """Close every position, cancelling open orders if `cancel_orders`."""
         ...
+
     def get_account_configurations(self) -> AlpacaAccountConfiguration:
         """Fetch the account configuration."""
         ...
+
     def set_account_configurations(self, account_configurations: AlpacaAccountConfiguration) -> AlpacaAccountConfiguration:
         """Update the account configuration."""
         ...

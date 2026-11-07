@@ -1,5 +1,4 @@
-"""Utility functions for the cross-sectional momentum strategy.
-"""
+"""Utility functions for the cross-sectional momentum strategy."""
 
 from __future__ import annotations
 

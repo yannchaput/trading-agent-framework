@@ -328,17 +328,18 @@ In `HandoffRecorder.submit`, replace the final `else:` branch (the `validate_pic
 In `submit_tools`, add before the `return`, and add the tool to the returned dict:
 
 ```python
-    def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
-        """Submit one verdict per stock: objects with symbol, verdict (keep or veto) and one short reason."""
-        return recorder.submit(VERDICT, verdicts)
+def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Submit one verdict per stock: objects with symbol, verdict (keep or veto) and one short reason."""
+    return recorder.submit(VERDICT, verdicts)
 
-    return {
-        "submit_note": submit_note,
-        "submit_bull_case": submit_bull_case,
-        "submit_bear_case": submit_bear_case,
-        "submit_picks": submit_picks,
-        "submit_verdicts": submit_verdicts,
-    }
+
+return {
+    "submit_note": submit_note,
+    "submit_bull_case": submit_bull_case,
+    "submit_bear_case": submit_bear_case,
+    "submit_picks": submit_picks,
+    "submit_verdicts": submit_verdicts,
+}
 ```
 
 Update the `submit_tools` docstring to: `"""The submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""`
@@ -492,11 +493,11 @@ def test_the_book_defaults_debate_the_top_15() -> None:
 and add these rows to the `test_an_invalid_value_is_refused_with_a_reason` parameter list:
 
 ```python
-        ({"book_size": 30, "retention_rank": 40}, "book_size x min_weight must fit"),
-        ({"book_size": 4}, "book_size x max_weight must reach"),
-        ({"max_vetoes": 25}, "retention_rank must be above debate_size"),
-        ({"book_size": 0}, "book_size and max_vetoes must be at least 1"),
-        ({"max_vetoes": 0}, "book_size and max_vetoes must be at least 1"),
+(({"book_size": 30, "retention_rank": 40}, "book_size x min_weight must fit"),)
+(({"book_size": 4}, "book_size x max_weight must reach"),)
+(({"max_vetoes": 25}, "retention_rank must be above debate_size"),)
+(({"book_size": 0}, "book_size and max_vetoes must be at least 1"),)
+(({"max_vetoes": 0}, "book_size and max_vetoes must be at least 1"),)
 ```
 
 In `tests/strategies/bull_bear/test_bull_bear_debate_set.py`, replace every `shortlist_size=15` with `debate_size=15` (4 calls).
@@ -941,6 +942,7 @@ Replace the first assertion of `test_the_defaults_are_the_specs_and_valid` with:
 Replace the parameter list of `test_an_invalid_value_is_refused_with_a_reason` with:
 
 ```python
+(
     [
         ({"min_weight": 0.03}, "min_weight must be above rebalance_band"),
         ({"book_size": 30, "retention_rank": 40}, "book_size x min_weight must fit"),
@@ -957,6 +959,7 @@ Replace the parameter list of `test_an_invalid_value_is_refused_with_a_reason` w
         ({"yahoo_retry_delays": (60.0, -1.0)}, "yahoo_retry_delays"),
         ({"research_tool_budget": 0}, "research_tool_budget must be at least 1"),
     ],
+)
 ```
 
 Add:

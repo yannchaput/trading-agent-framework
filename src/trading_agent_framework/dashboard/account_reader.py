@@ -85,6 +85,7 @@ class AccountTradingClient(Protocol):
     def get(self, path: str, data: dict[str, Any] | str | None = None, **kwargs: Any) -> Any:
         """GET an Alpaca trading API path."""
         ...
+
     def get_all_positions(self) -> list[Position]:
         """List every open position."""
         ...
@@ -100,6 +101,7 @@ class BenchmarkBars(Protocol):
 
 class AccountDataClient(Protocol):
     """The slice of the Alpaca data client the dashboard reads."""
+
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet:
         """Fetch stock bars for the request."""
         ...

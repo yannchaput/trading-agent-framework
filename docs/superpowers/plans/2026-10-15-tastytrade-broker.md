@@ -860,7 +860,9 @@ def test_a_non_eligible_fraction_below_one_share_is_rejected() -> None:
 
 
 @pytest.mark.parametrize("eligible", [True, False])
-@pytest.mark.parametrize(("order_type", "prices"), [(OrderType.LIMIT, {"limit_price": D(150)}), (OrderType.STOP, {"stop_price": D(140)}), (OrderType.STOP_LIMIT, {"stop_price": D(140), "stop_limit_price": D(139)})])
+@pytest.mark.parametrize(
+    ("order_type", "prices"), [(OrderType.LIMIT, {"limit_price": D(150)}), (OrderType.STOP, {"stop_price": D(140)}), (OrderType.STOP_LIMIT, {"stop_price": D(140), "stop_limit_price": D(139)})]
+)
 def test_a_fractional_non_market_order_is_rejected(eligible: bool, order_type: OrderType, prices: dict[str, Decimal]) -> None:
     with pytest.raises(OrderValidationError, match="only supported for MARKET"):
         _conform(_order("4.57", order_type=order_type, **prices), eligible=eligible)
@@ -2779,7 +2781,7 @@ class TastytradeAccountStream:
     def _parse(raw: object) -> dict[str, Any]:
         try:
             message = json.loads(raw)  # ty: ignore[invalid-argument-type]
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             logger.warning("unreadable account-streamer message: %r", str(raw)[:200])
             return {}
         return message if isinstance(message, dict) else {}
@@ -2944,7 +2946,19 @@ def accept(*, order_id: int = 1001, status: str = "Routed", fills: tuple[dict[st
 
     def answer(json: dict[str, Any], params: Any) -> dict[str, Any]:
         leg = json["legs"][0]
-        return {"order": make_tt_order(order_id=order_id, status=status, external=json["external-identifier"], symbol=leg["symbol"], action=leg["action"], quantity=leg.get("quantity"), fills=fills, **{"order-type": json["order-type"]}), "buying-power-effect": {}}
+        return {
+            "order": make_tt_order(
+                order_id=order_id,
+                status=status,
+                external=json["external-identifier"],
+                symbol=leg["symbol"],
+                action=leg["action"],
+                quantity=leg.get("quantity"),
+                fills=fills,
+                **{"order-type": json["order-type"]},
+            ),
+            "buying-power-effect": {},
+        }
 
     return answer
 

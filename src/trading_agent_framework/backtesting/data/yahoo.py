@@ -103,21 +103,14 @@ class YahooBacktestData(BacktestDataSource):
                     group_by="ticker",
                 )
         except ImportError as exc:
-            raise BacktestDataError(
-                "yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra"
-            ) from exc
+            raise BacktestDataError("yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra") from exc
         except Exception as exc:
-            raise BacktestDataError(
-                f"failed to batch-fetch Yahoo data for {len(symbols)} tickers "
-                f"(starting {symbols[0]!r}): {exc}"
-            ) from exc
+            raise BacktestDataError(f"failed to batch-fetch Yahoo data for {len(symbols)} tickers (starting {symbols[0]!r}): {exc}") from exc
 
         for asset in missing:
             frame = _trim_to_window(parse_yahoo_frame(extract_ticker_frame(raw, asset.symbol)), end)
             if frame.empty:
-                logger.warning(
-                    "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
-                )
+                logger.warning("No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date())
             self._frames[asset] = frame
 
     def bars(self, asset: Asset, cutoff: datetime, length: int, timestep: str) -> Bars | None:
@@ -174,10 +167,7 @@ class YahooBacktestData(BacktestDataSource):
             df = self._frames.get(self._calendar_asset)
             if df is None:
                 df = self._fetch(self._calendar_asset, "day", self._start, self._end)
-            self._session_dates_cache = (
-                [] if df is None or df.empty
-                else [ts.astimezone(MARKET_TZ).date() for ts in df.index]
-            )
+            self._session_dates_cache = [] if df is None or df.empty else [ts.astimezone(MARKET_TZ).date() for ts in df.index]
         return self._session_dates_cache
 
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
@@ -194,15 +184,11 @@ class YahooBacktestData(BacktestDataSource):
                 )
             df = _trim_to_window(parse_yahoo_frame(raw), end)
         except ImportError as exc:
-            raise BacktestDataError(
-                "yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra"
-            ) from exc
+            raise BacktestDataError("yfinance is required for YahooBacktestData; install the 'backtesting-yahoo' extra") from exc
         except Exception as exc:
             raise BacktestDataError(f"failed to fetch Yahoo data for {asset.symbol}: {exc}") from exc
         if df.empty:
-            logger.warning(
-                "No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date()
-            )
+            logger.warning("No Yahoo data for %s in range %s to %s", asset.symbol, start.date(), end.date())
         self._frames[asset] = df
         return df
 

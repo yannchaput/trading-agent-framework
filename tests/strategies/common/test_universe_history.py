@@ -268,7 +268,12 @@ def test_save_leaves_no_temp_file_and_never_a_partial_one(tmp_path: Path, monkey
 
 def _two_month_history() -> UniverseHistory:
     return UniverseHistory(
-        built=date(2024, 3, 1), pool_date=date(2024, 3, 1), top_n=3, min_price=10.0, min_dollar_volume=1.0, lookback=63,
+        built=date(2024, 3, 1),
+        pool_date=date(2024, 3, 1),
+        top_n=3,
+        min_price=10.0,
+        min_dollar_volume=1.0,
+        lookback=63,
         months={"2024-01": ("AAA", "SHV"), "2024-02": ("BBB", "AAA", "SPY")},
     )
 

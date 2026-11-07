@@ -9,8 +9,7 @@ from trading_agent_framework.utils.clock import MARKET_TZ
 
 
 class PredefinedWindow(StrEnum):
-    """Backtesting periods predefined time Windows
-    """
+    """Backtesting periods predefined time Windows"""
 
     DECADE = "decade"
     SEMI_DECADE = "5y"

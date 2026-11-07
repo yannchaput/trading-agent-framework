@@ -103,4 +103,3 @@ def test_several_holdings_are_handled_independently() -> None:
     assert outcome.pending == ["C"]
     assert outcome.fail_counts == {"B": 2, "C": 1}
     assert outcome.allowed == ["A", "C"]
-

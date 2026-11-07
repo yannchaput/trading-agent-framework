@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 class AlpacaMarketData:
     """Alpaca-backed market data (prices, quotes, bars) and market calendar shared by every broker."""
+
     def __init__(
         self,
         data_client: market_data.AlpacaStockDataClient | None,

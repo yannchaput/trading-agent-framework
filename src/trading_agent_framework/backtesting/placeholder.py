@@ -31,6 +31,7 @@ def _unavailable() -> NoReturn:
 
 class PlaceholderBroker(Broker):
     """Stand-in broker used before the backtest starts; every call raises `BrokerError`."""
+
     name: ClassVar[str] = "placeholder"
 
     def __init__(self, strategy_name: str) -> None:

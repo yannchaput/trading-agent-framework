@@ -45,6 +45,7 @@ AGENT_TRADER = "trader"
 
 class SourceLike(Protocol):
     """The filings source the pipeline reads, as a protocol so tests can fake it."""
+
     def known(self, as_of: datetime) -> KnownFilings:
         """The congressional filings known at `as_of`."""
         ...
@@ -56,6 +57,7 @@ class SourceLike(Protocol):
 
 class CongressPipeline(ReviewPipeline[CongressState]):
     """Congress-trades review pipeline: find new disclosures, let the agent review them and trade the resulting portfolio."""
+
     LOG_PREFIX: ClassVar[str] = "[congress_trades] "
     WHAT: ClassVar[str] = "run"
     RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")

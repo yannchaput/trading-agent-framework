@@ -83,8 +83,10 @@ class CachedDataSource(BacktestDataSource):
             meta_path.write_text(
                 json.dumps(
                     {
-                        "provider": self.name, "symbol": asset.symbol,
-                        "fetched_at": datetime.now().isoformat(), "rows": len(bars.df),
+                        "provider": self.name,
+                        "symbol": asset.symbol,
+                        "fetched_at": datetime.now().isoformat(),
+                        "rows": len(bars.df),
                     },
                     indent=2,
                 ),
@@ -93,9 +95,7 @@ class CachedDataSource(BacktestDataSource):
         except OSError as exc:
             raise BacktestDataError(f"Failed to write cache file {path}: {exc}") from exc
 
-    def _read(
-        self, path: Path, asset: Asset, timestep: str, cutoff: datetime, length: int
-    ) -> Bars | None:
+    def _read(self, path: Path, asset: Asset, timestep: str, cutoff: datetime, length: int) -> Bars | None:
         """Read cached bars up to `cutoff`, at most `length` of them."""
         import pandas as pd
 

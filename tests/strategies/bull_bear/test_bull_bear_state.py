@@ -262,8 +262,7 @@ def test_old_files_load_unchanged(tmp_path: Path) -> None:
         cooldowns={"BBB": 3},
     )
     path.write_text(
-        '{"version": 2, "last_completed_review": "2026-10-06", "abandoned_streak": 1, '
-        '"verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, "cooldowns": {"BBB": 3}}'
+        '{"version": 2, "last_completed_review": "2026-10-06", "abandoned_streak": 1, "verdicts": {"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, "cooldowns": {"BBB": 3}}'
     )
     assert StateStore(path).load() == BullBearState(
         last_completed_review="2026-10-06", abandoned_streak=1, verdicts={"AAA": {"verdict": "in", "reason": "bull wins", "date": "2026-10-06"}}, cooldowns={"BBB": 3}

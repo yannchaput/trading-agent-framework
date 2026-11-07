@@ -234,18 +234,20 @@ In `src/trading_agent_framework/strategies/bill_ackman/pipeline.py`, replace lin
 In `src/trading_agent_framework/strategies/bill_ackman/prompts.py`, `TRADER_SYSTEM`, replace:
 
 ```python
-    "and reason, a pending_fail_count (a holding that failed once), its current_weight and its fact sheet. The names in "
-    "required failed once while held: each must stay in your portfolio at least at the minimum weight; you may reduce it, "
-    "and code sells it if it fails again. Names in forced_exits are sold by code and are not allowed.\n"
+"and reason, a pending_fail_count (a holding that failed once), its current_weight and its fact sheet. The names in"
+
+"required failed once while held: each must stay in your portfolio at least at the minimum weight; you may reduce it, "
+"and code sells it if it fails again. Names in forced_exits are sold by code and are not allowed.\n"
 ```
 
 with:
 
 ```python
-    "and reason, a pending_fail_count (a holding that failed once), its current_weight and its fact sheet. The names in "
-    "required are your current holdings that have not failed twice: each must stay in your portfolio at least at the "
-    "minimum weight; you may reduce it. Code sells a holding when it fails twice in a row. Names in forced_exits are sold "
-    "by code and are not allowed.\n"
+"and reason, a pending_fail_count (a holding that failed once), its current_weight and its fact sheet. The names in"
+
+"required are your current holdings that have not failed twice: each must stay in your portfolio at least at the "
+"minimum weight; you may reduce it. Code sells a holding when it fails twice in a row. Names in forced_exits are sold "
+"by code and are not allowed.\n"
 ```
 
 - [ ] **Step 8: Run the bill_ackman tests**

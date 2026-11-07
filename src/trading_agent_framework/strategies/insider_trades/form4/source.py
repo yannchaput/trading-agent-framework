@@ -31,6 +31,7 @@ _IGNORED_FORMS = frozenset({"4/A", "5", "5/A"})
 @dataclass(frozen=True, slots=True)
 class LoadReport:
     """Which tickers loaded and which failed in one load."""
+
     loaded: tuple[str, ...]  # the tickers that loaded
     failed: dict[str, str] = field(default_factory=dict)  # ticker -> error message
     ignored_forms: int = 0  # 4/A and 5 rows filed since the history start, seen and not read
@@ -40,6 +41,7 @@ class LoadReport:
 @dataclass(frozen=True, slots=True)
 class KnownInsiderData:
     """Form 4 filings known at a point in time, by ticker."""
+
     filings: dict[str, list[Form4Filing]]  # ticker -> filings filed strictly before the market date, oldest first; a failed ticker is absent
     failed: dict[str, str]  # ticker -> why its last load failed
 
@@ -47,6 +49,7 @@ class KnownInsiderData:
 @dataclass(frozen=True, slots=True)
 class _Row:
     """One filing row of the submissions index."""
+
     form: str
     filed: date
     accession: str
@@ -89,6 +92,7 @@ def _same_cik(left: str, right: str) -> bool:
 
 class Form4Source:
     """Form 4 filings for a watchlist, loaded from SEC EDGAR."""
+
     def __init__(self, client: SecEdgarClient, watchlist: Sequence[str]) -> None:
         """Create the source for a watchlist of tickers."""
         self._client = client

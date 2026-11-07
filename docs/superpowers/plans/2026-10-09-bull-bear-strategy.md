@@ -1116,16 +1116,8 @@ def build_debate_set(ranked: Sequence[RankedRow], holdings: Collection[str], *, 
     """`holdings` are the stocks held, the parking instrument excluded (`Rebalancer.holdings()`)."""
     held = set(holdings)
     rank_of = {entry.row.symbol: entry.rank for entry in ranked}
-    stocks = tuple(
-        DebateStock(entry.rank, entry.row, entry.row.symbol in held)
-        for entry in ranked
-        if entry.rank <= shortlist_size or (entry.row.symbol in held and entry.rank <= retention_rank)
-    )
-    forced = tuple(
-        ForcedExit(symbol, "unranked" if symbol not in rank_of else f"rank {rank_of[symbol]}")
-        for symbol in sorted(held)
-        if symbol not in rank_of or rank_of[symbol] > retention_rank
-    )
+    stocks = tuple(DebateStock(entry.rank, entry.row, entry.row.symbol in held) for entry in ranked if entry.rank <= shortlist_size or (entry.row.symbol in held and entry.rank <= retention_rank))
+    forced = tuple(ForcedExit(symbol, "unranked" if symbol not in rank_of else f"rank {rank_of[symbol]}") for symbol in sorted(held) if symbol not in rank_of or rank_of[symbol] > retention_rank)
     return DebateSet(stocks=stocks, forced_exits=forced)
 ```
 
@@ -1537,8 +1529,7 @@ def validate_bull_cases(raw: Any, *, expected: Sequence[str], max_chars: int) ->
 
 def validate_bear_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BearCase]:
     return [
-        BearCase(symbol, _one_of(item, "risk", symbol, LEVELS), _one_of(item, "concern", symbol, CONCERNS), _text(item, "argument", symbol, max_chars))
-        for symbol, item in _covering(raw, expected)
+        BearCase(symbol, _one_of(item, "risk", symbol, LEVELS), _one_of(item, "concern", symbol, CONCERNS), _text(item, "argument", symbol, max_chars)) for symbol, item in _covering(raw, expected)
     ]
 
 
@@ -2491,7 +2482,9 @@ class Harness:
         return [json.loads(line) for line in self.log_path.read_text(encoding="utf-8").splitlines()] if self.log_path.exists() else []
 
 
-def _harness(tmp_path: Path, *, held: dict[str, float] | None = None, series: dict[str, DailySeries] | None = None, params: BullBearParams | None = None, state: BullBearState | None = None) -> Harness:
+def _harness(
+    tmp_path: Path, *, held: dict[str, float] | None = None, series: dict[str, DailySeries] | None = None, params: BullBearParams | None = None, state: BullBearState | None = None
+) -> Harness:
     """Tuesday 2026-10-06 12:00, portfolio value 10,000; every stock costs 50, SHV 100; `held` maps a symbol to shares."""
     params = params or BullBearParams()
     held = held or {}
@@ -2895,7 +2888,9 @@ class ReviewPipeline:
         for symbol in symbols:
             self._recorder.expect_note(symbol)
             try:
-                self._run_stage("researcher", "submit_note", researcher_task(symbol, params.note_max_chars), {"current_datetime": moment, "fact_sheet": sheets[symbol]}, tool_budget=params.research_tool_budget)
+                self._run_stage(
+                    "researcher", "submit_note", researcher_task(symbol, params.note_max_chars), {"current_datetime": moment, "fact_sheet": sheets[symbol]}, tool_budget=params.research_tool_budget
+                )
             except ReviewAbandoned as exc:
                 strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
                 notes[symbol] = UNAVAILABLE_NOTE

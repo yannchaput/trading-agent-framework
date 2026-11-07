@@ -67,6 +67,7 @@ def _number(value: object) -> Decimal | None:
 
 class Desk:
     """Order desk for earnings drift: guardrailed buys, trailing stops and exits, with every decision logged."""
+
     def __init__(
         self,
         strategy: Strategy,

@@ -82,12 +82,14 @@ def _flow(value, start, end, prior=None, unit="USD", filed="2026-03-25", form="1
         row["prior_year"] = {"value": prior[0], "start": prior[1], "end": prior[2]}
     return row
 
+
 MU_INCOME = {
     "revenue": _flow(23.86e9, "2025-11-28", "2026-02-26", (8.05e9, "2024-11-29", "2025-02-27")),
     "operating_income": _flow(16.1e9, "2025-11-28", "2026-02-26", (2.0e9, "2024-11-29", "2025-02-27")),
     "free_cash_flow": _flow(8.54e9, "2025-08-29", "2026-02-26", (-0.075e9, "2024-08-30", "2025-02-27")),
 }
 MU_BALANCE = {"debt": {"value": 9.56e9, "unit": "USD", "filed": "2026-03-25", "end": "2026-02-26", "prior_year": {"value": 11.54e9, "end": "2025-02-27"}}}
+
 
 def test_the_fields_compare_the_latest_period_with_a_year_earlier():
     f = fundamentals_fields(MU_INCOME, MU_BALANCE, stale=False)

@@ -41,10 +41,7 @@ def test_momentum_exhaustion_needs_a_decline_that_ran_for_weeks() -> None:
     text = " ".join(prompts.BEAR_SYSTEM.split())
 
     # the fact sheet's figures are NEGATIVE below the high / over the month, so the thresholds are stated as negative numbers
-    assert (
-        "Use momentum_exhaustion only for a decline that ran for weeks: a drawdown_from_52w_high_pct of -15 or below "
-        "together with a return_1m_skip_1w_pct of -10 or below" in text
-    )
+    assert "Use momentum_exhaustion only for a decline that ran for weeks: a drawdown_from_52w_high_pct of -15 or below together with a return_1m_skip_1w_pct of -10 or below" in text
     assert "negative one-month return" not in text
     assert "still rising is never momentum_exhaustion" in text
     assert "strong trend is not a risk by itself" in text and "200-day average" in text and "three-month" in text
@@ -79,10 +76,7 @@ def test_every_agent_reads_the_fundamentals_fields_and_the_sources_rule() -> Non
         text = " ".join(system.split())
         for field in fields:
             assert field in text, field
-        assert (
-            "Sources can be wrong or stale: do not repeat a figure from a news item as fact when the fact sheet or a filing "
-            "says otherwise." in text
-        )
+        assert "Sources can be wrong or stale: do not repeat a figure from a news item as fact when the fact sheet or a filing says otherwise." in text
 
 
 def test_the_bear_rates_high_only_on_fundamental_evidence() -> None:
@@ -96,10 +90,7 @@ def test_the_bear_rates_high_only_on_fundamental_evidence() -> None:
     for fact in ("results", "a guidance cut", "a share issuance", "going-concern doubts", "a covenant breach", "a restatement", "an impairment"):
         assert fact in rule, fact
     assert "the company itself reports or files" in rule
-    assert (
-        "When the fact sheet's fundamentals are unavailable or stale, the company's own reported facts in the note are your evidence."
-        in text
-    )
+    assert "When the fact sheet's fundamentals are unavailable or stale, the company's own reported facts in the note are your evidence." in text
     assert "A fallen price with intact cash flow makes a company cheaper, not riskier." in text
     for concern in ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none"):
         assert concern in text, concern
@@ -132,10 +123,7 @@ def test_the_judge_puts_a_stock_out_on_a_fundamental_risk_not_on_news_from_other
     assert "Neither is news from others, already priced or not, whatever consequence the bear argues for it." in text
     assert "lasting consequence" not in text and "already reacted to" not in text
     assert "not a reason for out by itself" in text
-    assert (
-        "When the fact sheet's fundamentals are unavailable or stale, the company's own reported facts in the note are the evidence."
-        in text
-    )
+    assert "When the fact sheet's fundamentals are unavailable or stale, the company's own reported facts in the note are the evidence." in text
 
 
 @pytest.mark.parametrize("news", [True, False])

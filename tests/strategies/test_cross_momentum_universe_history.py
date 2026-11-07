@@ -198,8 +198,14 @@ def test_backtest_records_the_universe_in_parameters(recorder: Recorder, tmp_pat
     strategy.run_backtesting()
 
     assert strategy.parameters["universe"] == {
-        "mode": "point_in_time", "history_built": "2026-11-03", "pool_date": "2026-10-30", "top_n": 1200,
-        "pool_size": 0, "unanswered_count": 0, "bars_absent_count": 0, "preload_missing": 0,
+        "mode": "point_in_time",
+        "history_built": "2026-11-03",
+        "pool_date": "2026-10-30",
+        "top_n": 1200,
+        "pool_size": 0,
+        "unanswered_count": 0,
+        "bars_absent_count": 0,
+        "preload_missing": 0,
     }
     json.dumps(strategy.parameters["universe"])  # strictly serialisable: settings.json writes parameters out
 

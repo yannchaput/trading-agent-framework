@@ -46,6 +46,7 @@ class TastytradeHTTPError(BrokerError):
 
 class TastytradeSession:
     """Authenticated Tastytrade REST session: refreshes its token, retries safe reads and unwraps the `data` envelope."""
+
     def __init__(
         self,
         settings: TastytradeSettings,

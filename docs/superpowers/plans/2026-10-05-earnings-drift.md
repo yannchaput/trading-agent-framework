@@ -188,9 +188,7 @@ class DriftParams:
             "thresholds must be finite": not all(math.isfinite(value) for value in floats),
             "max_positions must be at least 1": self.max_positions < 1,
             "max_holding_sessions must be at least 1": self.max_holding_sessions < 1,
-            "trail percents must satisfy 0 < min <= default <= max <= 100": not (
-                0 < self.min_trail_percent <= self.default_trail_percent <= self.max_trail_percent <= 100
-            ),
+            "trail percents must satisfy 0 < min <= default <= max <= 100": not (0 < self.min_trail_percent <= self.default_trail_percent <= self.max_trail_percent <= 100),
             "min_hold_ratio must be in [0, 1]": not 0 <= self.min_hold_ratio <= 1,
             "min_close_location must be in [0, 1]": not 0 <= self.min_close_location <= 1,
             "min_rel_volume must be above 0": not self.min_rel_volume > 0,
@@ -202,10 +200,8 @@ class DriftParams:
             "event_lookback_days must be at least 0": self.event_lookback_days < 0,
             "live_bar_delay_seconds and cancel_wait_seconds must be at least 0": self.live_bar_delay_seconds < 0 or self.cancel_wait_seconds < 0,
             "tool_budget_per_item must be at least 1": self.tool_budget_per_item < 1,
-            "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None
-            and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
-            "max_consecutive_agent_failures and max_consecutive_hollow_scans must be at least 1": self.max_consecutive_agent_failures < 1
-            or self.max_consecutive_hollow_scans < 1,
+            "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
+            "max_consecutive_agent_failures and max_consecutive_hollow_scans must be at least 1": self.max_consecutive_agent_failures < 1 or self.max_consecutive_hollow_scans < 1,
             "sec_hollow_fraction must be in (0, 1]": not 0 < self.sec_hollow_fraction <= 1,
             "sec_hollow_min_failures must be at least 1": self.sec_hollow_min_failures < 1,
             "reason_max_chars must be at least 1": self.reason_max_chars < 1,
@@ -2548,7 +2544,7 @@ def _lean(order: Order) -> dict[str, Any]:
 def _number(value: object) -> Decimal | None:
     try:
         number = Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except InvalidOperation, ValueError:
         return None
     return number if number.is_finite() else None
 
@@ -3086,45 +3082,46 @@ Expected: FAIL with `AttributeError: 'Desk' object has no attribute 'set_trailin
 In the "agent tools" section, after `skip`:
 
 ```python
-    def set_trailing_stop(self, symbol: str, trail_percent: object, reason: str) -> dict[str, Any]:
-        with self._lock:
-            symbol = str(symbol).strip().upper()
-            trade = self._state.trades.get(symbol)
-            if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
-                return self._refuse("order_limits", f"set_trailing_stop {symbol}: no open position (or it is being sold)")
-            trail = _number(trail_percent)
-            low, high = self._params.min_trail_percent, self._params.max_trail_percent
-            if trail is None or not Decimal(str(low)) <= trail <= Decimal(str(high)):
-                return self._refuse("order_limits", f"set_trailing_stop {symbol}: trail_percent must be between {low} and {high} (got {trail_percent!r})")
-            if trail > trade.trail_percent:
-                return self._refuse("order_limits", f"set_trailing_stop {symbol}: tighten-only, {trail}% is wider than the current {trade.trail_percent}%")
-            if trail == trade.trail_percent:
-                return {"symbol": symbol, "trail_percent": float(trail), "status": "unchanged"}
-            released = self._release_stop(trade)
-            if released == ALREADY_CLOSED:
-                return {"status": ALREADY_CLOSED}
-            if released is not None:
-                return {"error": released}
-            old = trade.trail_percent
-            if self._submit_stop(trade, trail) is None:
-                self._protect(trade, old)
-                self._save_state()
-                return {"error": f"the new stop was refused; the {old}% trail was placed again"}
-            trade.trail_percent, trade.backstop = trail, False
-            self._log_decision(symbol, "trail", trail_percent=float(trail), reason=self._clip(reason))
+def set_trailing_stop(self, symbol: str, trail_percent: object, reason: str) -> dict[str, Any]:
+    with self._lock:
+        symbol = str(symbol).strip().upper()
+        trade = self._state.trades.get(symbol)
+        if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
+            return self._refuse("order_limits", f"set_trailing_stop {symbol}: no open position (or it is being sold)")
+        trail = _number(trail_percent)
+        low, high = self._params.min_trail_percent, self._params.max_trail_percent
+        if trail is None or not Decimal(str(low)) <= trail <= Decimal(str(high)):
+            return self._refuse("order_limits", f"set_trailing_stop {symbol}: trail_percent must be between {low} and {high} (got {trail_percent!r})")
+        if trail > trade.trail_percent:
+            return self._refuse("order_limits", f"set_trailing_stop {symbol}: tighten-only, {trail}% is wider than the current {trade.trail_percent}%")
+        if trail == trade.trail_percent:
+            return {"symbol": symbol, "trail_percent": float(trail), "status": "unchanged"}
+        released = self._release_stop(trade)
+        if released == ALREADY_CLOSED:
+            return {"status": ALREADY_CLOSED}
+        if released is not None:
+            return {"error": released}
+        old = trade.trail_percent
+        if self._submit_stop(trade, trail) is None:
+            self._protect(trade, old)
             self._save_state()
-            return {"symbol": symbol, "trail_percent": float(trail), "status": "stop replaced"}
+            return {"error": f"the new stop was refused; the {old}% trail was placed again"}
+        trade.trail_percent, trade.backstop = trail, False
+        self._log_decision(symbol, "trail", trail_percent=float(trail), reason=self._clip(reason))
+        self._save_state()
+        return {"symbol": symbol, "trail_percent": float(trail), "status": "stop replaced"}
 
-    def sell(self, symbol: str, reason: str) -> dict[str, Any]:
-        with self._lock:
-            symbol = str(symbol).strip().upper()
-            trade = self._state.trades.get(symbol)
-            if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
-                return self._refuse("order_limits", f"sell {symbol}: no open position (or it is being sold)")
-            result = self._exit(trade, "agent_sell")
-            if "error" not in result:
-                self._log_decision(symbol, "sell", reason=self._clip(reason))
-            return result
+
+def sell(self, symbol: str, reason: str) -> dict[str, Any]:
+    with self._lock:
+        symbol = str(symbol).strip().upper()
+        trade = self._state.trades.get(symbol)
+        if trade is None or trade.state is not TradeState.OPEN or trade.exit_order_id is not None:
+            return self._refuse("order_limits", f"sell {symbol}: no open position (or it is being sold)")
+        result = self._exit(trade, "agent_sell")
+        if "error" not in result:
+            self._log_decision(symbol, "sell", reason=self._clip(reason))
+        return result
 ```
 
 In the "order hooks" section, after `on_order_filled`:
@@ -3167,51 +3164,52 @@ In the "order hooks" section, after `on_order_filled`:
 In the internals section:
 
 ```python
-    def _release_stop(self, trade: Trade) -> str | None:
-        """Cancel the trade's working stop and wait for it: None once released, `ALREADY_CLOSED`, or an error message.
+def _release_stop(self, trade: Trade) -> str | None:
+    """Cancel the trade's working stop and wait for it: None once released, `ALREADY_CLOSED`, or an error message.
 
-        Brokers refuse a sell above held minus pending sells, so the stop must go before any other exit sell. If the
-        stop filled while the cancel was on its way (or before; its hook not seen yet), the trade is already out. The
-        wait dispatches order hooks; in a backtest the cancel is synchronous, so it returns without moving the clock.
-        """
-        order = self._lookup(trade.stop_order_id)
-        if order is None:
-            trade.stop_order_id = None
-            return None
+    Brokers refuse a sell above held minus pending sells, so the stop must go before any other exit sell. If the
+    stop filled while the cancel was on its way (or before; its hook not seen yet), the trade is already out. The
+    wait dispatches order hooks; in a backtest the cancel is synchronous, so it returns without moving the clock.
+    """
+    order = self._lookup(trade.stop_order_id)
+    if order is None:
+        trade.stop_order_id = None
+        return None
+    if order.is_filled():
+        return ALREADY_CLOSED
+    if order.is_active():
+        self._expected_cancels.add(order.identifier)
+        try:
+            self._strategy.cancel_order(order)
+        except BrokerError as exc:
+            self._expected_cancels.discard(order.identifier)
+            if order.is_filled():  # Alpaca raises when cancelling an already-filled order
+                return ALREADY_CLOSED
+            return f"could not cancel the stop: {exc}"
+        self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
         if order.is_filled():
             return ALREADY_CLOSED
         if order.is_active():
-            self._expected_cancels.add(order.identifier)
-            try:
-                self._strategy.cancel_order(order)
-            except BrokerError as exc:
-                self._expected_cancels.discard(order.identifier)
-                if order.is_filled():  # Alpaca raises when cancelling an already-filled order
-                    return ALREADY_CLOSED
-                return f"could not cancel the stop: {exc}"
-            self._strategy.wait_for_order_execution(order, timeout=self._params.cancel_wait_seconds)
-            if order.is_filled():
-                return ALREADY_CLOSED
-            if order.is_active():
-                return "the stop cancel was not confirmed in time; nothing else was changed"
-        trade.stop_order_id = None
-        self._book_partial(trade, order)
-        return None if trade.symbol in self._state.trades else ALREADY_CLOSED
+            return "the stop cancel was not confirmed in time; nothing else was changed"
+    trade.stop_order_id = None
+    self._book_partial(trade, order)
+    return None if trade.symbol in self._state.trades else ALREADY_CLOSED
 
-    def _exit(self, trade: Trade, exit_reason: str) -> dict[str, Any]:
-        """Release the stop, then a market sell of the whole trade at the next open; the stop goes back if the sell is refused."""
-        released = self._release_stop(trade)
-        if released == ALREADY_CLOSED:
-            return {"status": ALREADY_CLOSED}
-        if released is not None:
-            return {"error": released}
-        order = self._market_sell(trade, exit_reason)
-        if order is None:
-            self._protect(trade, trade.trail_percent)
-            self._save_state()
-            return {"error": "the sell was refused; the stop was placed again"}
+
+def _exit(self, trade: Trade, exit_reason: str) -> dict[str, Any]:
+    """Release the stop, then a market sell of the whole trade at the next open; the stop goes back if the sell is refused."""
+    released = self._release_stop(trade)
+    if released == ALREADY_CLOSED:
+        return {"status": ALREADY_CLOSED}
+    if released is not None:
+        return {"error": released}
+    order = self._market_sell(trade, exit_reason)
+    if order is None:
+        self._protect(trade, trade.trail_percent)
         self._save_state()
-        return _lean(order)
+        return {"error": "the sell was refused; the stop was placed again"}
+    self._save_state()
+    return _lean(order)
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -3374,136 +3372,152 @@ Add `from trading_agent_framework.entities.enums import OrderSide, OrderType` an
 `self._ignored_orphans: set[str] = set()` in `__init__`, then add a "cycle guardrails" section:
 
 ```python
-    # --- cycle guardrails ------------------------------------------------------------------------
+# --- cycle guardrails ------------------------------------------------------------------------
 
-    def reconcile(self) -> list[str]:
-        """Settle what hooks missed, adopt orphans, sell what reached the max holding period, back up the stops."""
-        with self._lock:
-            self._settle_missed()
-            self._close_vanished()
-            self._adopt_orphans()
-            sold: list[str] = []
-            for trade in sorted(self._open_trades(), key=lambda t: t.symbol):
-                held = self._sessions_held(trade)
-                if held < self._params.max_holding_sessions:
-                    continue
-                self._strategy.log_warning(f"guardrail max_hold: {trade.symbol} held {held} sessions; selling at the next open")
-                if "error" not in self._exit(trade, "max_hold"):
-                    sold.append(trade.symbol)
-            self.ensure_stops()
-            self._save_state()
-            return sold
 
-    def ensure_stops(self) -> None:
-        """Every open trade not being sold has a working stop: a missing one is placed again (`stop_backstop`)."""
-        with self._lock:
-            for trade in list(self._open_trades()):
-                stop = self._lookup(trade.stop_order_id)
-                if stop is not None and stop.is_active():
-                    continue
-                if stop is not None and stop.is_filled():
-                    self._close(trade, stop)
-                    continue
-                if stop is not None:
-                    self._book_partial(trade, stop)
-                if trade.symbol not in self._state.trades:
-                    continue
-                trade.stop_order_id = None
-                self._strategy.log_warning(f"guardrail stop_backstop: {trade.symbol} has no working stop; placing a {trade.trail_percent}% trail")
-                trade.backstop = True
-                self._protect(trade, trade.trail_percent)
-            self._save_state()
-
-    def _settle_missed(self) -> None:
-        """Apply fills and ends whose hooks never reached the desk (a restart, a dropped event)."""
-        for trade in list(self._state.trades.values()):
-            if trade.state is TradeState.PENDING:
-                order = self._lookup(trade.entry_order_id)
-                if order is None:
-                    self._state.trades.pop(trade.symbol, None)
-                    self._strategy.log_warning(f"[earnings_drift] entry {trade.entry_order_id} for {trade.symbol} is unknown to the broker; trade dropped")
-                elif order.is_filled() or (not order.is_active() and order.filled_quantity > 0):
-                    self._entry_filled(trade, order)
-                elif not order.is_active():
-                    self._state.trades.pop(trade.symbol, None)
-                    detail = f": {order.error_message}" if order.error_message else ""
-                    self._strategy.log_warning(f"[earnings_drift] entry for {trade.symbol} ended {order.status.value} unfilled{detail}")
+def reconcile(self) -> list[str]:
+    """Settle what hooks missed, adopt orphans, sell what reached the max holding period, back up the stops."""
+    with self._lock:
+        self._settle_missed()
+        self._close_vanished()
+        self._adopt_orphans()
+        sold: list[str] = []
+        for trade in sorted(self._open_trades(), key=lambda t: t.symbol):
+            held = self._sessions_held(trade)
+            if held < self._params.max_holding_sessions:
                 continue
-            for attribute in ("stop_order_id", "exit_order_id"):
-                if trade.symbol not in self._state.trades:
-                    break
-                order_id = getattr(trade, attribute)
-                if order_id is None:
-                    continue
-                order = self._lookup(order_id)
-                if order is not None and order.is_filled():
-                    self._close(trade, order)
-                elif order is None or not order.is_active():
-                    reason = (trade.exit_reason or "agent_sell") if attribute == "exit_order_id" else "trail"
-                    setattr(trade, attribute, None)
-                    if attribute == "exit_order_id":
-                        trade.exit_reason = None
-                    if order is not None:
-                        self._book_partial(trade, order, reason)
+            self._strategy.log_warning(f"guardrail max_hold: {trade.symbol} held {held} sessions; selling at the next open")
+            if "error" not in self._exit(trade, "max_hold"):
+                sold.append(trade.symbol)
+        self.ensure_stops()
+        self._save_state()
+        return sold
 
-    def _positions(self) -> dict[str, Position] | None:
-        try:
-            return {p.asset.symbol: p for p in self._strategy.get_positions() if p.quantity > 0}
-        except _DATA_ERRORS as exc:
-            self._strategy.log_warning(f"[earnings_drift] positions unavailable, orphans and vanished positions not checked: {exc}")
-            return None
 
-    def _close_vanished(self) -> None:
-        """An open trade whose position is gone (sold outside the strategy) is closed with reason `unknown`."""
-        positions = self._positions()
-        if positions is None:
-            return
+def ensure_stops(self) -> None:
+    """Every open trade not being sold has a working stop: a missing one is placed again (`stop_backstop`)."""
+    with self._lock:
         for trade in list(self._open_trades()):
-            if trade.symbol in positions:
-                continue
             stop = self._lookup(trade.stop_order_id)
             if stop is not None and stop.is_active():
-                self._expected_cancels.add(stop.identifier)
-                try:
-                    self._strategy.cancel_order(stop)
-                except BrokerError as exc:
-                    self._expected_cancels.discard(stop.identifier)
-                    self._strategy.log_warning(f"[earnings_drift] cancel of the stop of vanished {trade.symbol} failed: {exc}")
-            self._strategy.log_warning(f"[earnings_drift] the {trade.symbol} position is gone outside the strategy; trade closed as unknown")
-            record = {"symbol": trade.symbol, "entry_date": trade.opened_on.isoformat() if trade.opened_on else None, "entry_price": trade.entry_price}
-            self._trade_log.append({**record, "exit_date": self._now_date().isoformat(), "exit_price": None, "quantity": trade.quantity, "exit_reason": "unknown", "thesis": trade.thesis, "agent_enabled": self._params.agent_enabled})
-            self._state.trades.pop(trade.symbol, None)
+                continue
+            if stop is not None and stop.is_filled():
+                self._close(trade, stop)
+                continue
+            if stop is not None:
+                self._book_partial(trade, stop)
+            if trade.symbol not in self._state.trades:
+                continue
+            trade.stop_order_id = None
+            self._strategy.log_warning(f"guardrail stop_backstop: {trade.symbol} has no working stop; placing a {trade.trail_percent}% trail")
+            trade.backstop = True
+            self._protect(trade, trade.trail_percent)
+        self._save_state()
 
-    def _adopt_orphans(self) -> None:
-        """A long position with no trade: adopted when this strategy once traded the symbol, left alone (logged once) otherwise."""
-        positions = self._positions()
-        if positions is None:
-            return
-        active = [o for o in self._strategy.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
-        for symbol, position in sorted(positions.items()):
-            quantity = position.quantity
-            if symbol in self._state.trades:
+
+def _settle_missed(self) -> None:
+    """Apply fills and ends whose hooks never reached the desk (a restart, a dropped event)."""
+    for trade in list(self._state.trades.values()):
+        if trade.state is TradeState.PENDING:
+            order = self._lookup(trade.entry_order_id)
+            if order is None:
+                self._state.trades.pop(trade.symbol, None)
+                self._strategy.log_warning(f"[earnings_drift] entry {trade.entry_order_id} for {trade.symbol} is unknown to the broker; trade dropped")
+            elif order.is_filled() or (not order.is_active() and order.filled_quantity > 0):
+                self._entry_filled(trade, order)
+            elif not order.is_active():
+                self._state.trades.pop(trade.symbol, None)
+                detail = f": {order.error_message}" if order.error_message else ""
+                self._strategy.log_warning(f"[earnings_drift] entry for {trade.symbol} ended {order.status.value} unfilled{detail}")
+            continue
+        for attribute in ("stop_order_id", "exit_order_id"):
+            if trade.symbol not in self._state.trades:
+                break
+            order_id = getattr(trade, attribute)
+            if order_id is None:
                 continue
-            if symbol not in self._state.traded_symbols:
-                if symbol not in self._ignored_orphans:
-                    self._ignored_orphans.add(symbol)
-                    self._strategy.log_info(f"[earnings_drift] position {symbol} was never traded by this strategy; left alone")
-                continue
-            working = next((o for o in active if o.asset.symbol == symbol and o.order_type is OrderType.TRAIL), None)
-            trail = working.trail_percent if working is not None and working.trail_percent is not None else Decimal(str(self._params.default_trail_percent))
-            self._state.trades[symbol] = Trade(
-                symbol=symbol,
-                entry_order_id="",
-                trail_percent=trail,
-                thesis="adopted: a position without a trade record",
-                state=TradeState.OPEN,
-                quantity=quantity,
-                entry_price=position.avg_fill_price,
-                opened_on=self._now_date(),
-                stop_order_id=working.identifier if working is not None else None,
-                backstop=working is None,
-            )
-            self._strategy.log_warning(f"guardrail orphan: adopted {quantity} {symbol} with a {trail}% trailing stop")
+            order = self._lookup(order_id)
+            if order is not None and order.is_filled():
+                self._close(trade, order)
+            elif order is None or not order.is_active():
+                reason = (trade.exit_reason or "agent_sell") if attribute == "exit_order_id" else "trail"
+                setattr(trade, attribute, None)
+                if attribute == "exit_order_id":
+                    trade.exit_reason = None
+                if order is not None:
+                    self._book_partial(trade, order, reason)
+
+
+def _positions(self) -> dict[str, Position] | None:
+    try:
+        return {p.asset.symbol: p for p in self._strategy.get_positions() if p.quantity > 0}
+    except _DATA_ERRORS as exc:
+        self._strategy.log_warning(f"[earnings_drift] positions unavailable, orphans and vanished positions not checked: {exc}")
+        return None
+
+
+def _close_vanished(self) -> None:
+    """An open trade whose position is gone (sold outside the strategy) is closed with reason `unknown`."""
+    positions = self._positions()
+    if positions is None:
+        return
+    for trade in list(self._open_trades()):
+        if trade.symbol in positions:
+            continue
+        stop = self._lookup(trade.stop_order_id)
+        if stop is not None and stop.is_active():
+            self._expected_cancels.add(stop.identifier)
+            try:
+                self._strategy.cancel_order(stop)
+            except BrokerError as exc:
+                self._expected_cancels.discard(stop.identifier)
+                self._strategy.log_warning(f"[earnings_drift] cancel of the stop of vanished {trade.symbol} failed: {exc}")
+        self._strategy.log_warning(f"[earnings_drift] the {trade.symbol} position is gone outside the strategy; trade closed as unknown")
+        record = {"symbol": trade.symbol, "entry_date": trade.opened_on.isoformat() if trade.opened_on else None, "entry_price": trade.entry_price}
+        self._trade_log.append(
+            {
+                **record,
+                "exit_date": self._now_date().isoformat(),
+                "exit_price": None,
+                "quantity": trade.quantity,
+                "exit_reason": "unknown",
+                "thesis": trade.thesis,
+                "agent_enabled": self._params.agent_enabled,
+            }
+        )
+        self._state.trades.pop(trade.symbol, None)
+
+
+def _adopt_orphans(self) -> None:
+    """A long position with no trade: adopted when this strategy once traded the symbol, left alone (logged once) otherwise."""
+    positions = self._positions()
+    if positions is None:
+        return
+    active = [o for o in self._strategy.broker.tracker.get_active_orders() if o.side is OrderSide.SELL]
+    for symbol, position in sorted(positions.items()):
+        quantity = position.quantity
+        if symbol in self._state.trades:
+            continue
+        if symbol not in self._state.traded_symbols:
+            if symbol not in self._ignored_orphans:
+                self._ignored_orphans.add(symbol)
+                self._strategy.log_info(f"[earnings_drift] position {symbol} was never traded by this strategy; left alone")
+            continue
+        working = next((o for o in active if o.asset.symbol == symbol and o.order_type is OrderType.TRAIL), None)
+        trail = working.trail_percent if working is not None and working.trail_percent is not None else Decimal(str(self._params.default_trail_percent))
+        self._state.trades[symbol] = Trade(
+            symbol=symbol,
+            entry_order_id="",
+            trail_percent=trail,
+            thesis="adopted: a position without a trade record",
+            state=TradeState.OPEN,
+            quantity=quantity,
+            entry_price=position.avg_fill_price,
+            opened_on=self._now_date(),
+            stop_order_id=working.identifier if working is not None else None,
+            backstop=working is None,
+        )
+        self._strategy.log_warning(f"guardrail orphan: adopted {quantity} {symbol} with a {trail}% trailing stop")
 ```
 
 `ensure_stops()` (called at the end of `reconcile`) places the stop of an orphan adopted without a working sell.
@@ -3967,7 +3981,9 @@ def _run(tmp_path: Path, settings: DriftParams) -> tuple[EarningsDriftStrategy, 
     source.set_sessions(WINDOW)
     for symbol, rows in {"AAA": AAA, "BBB": BBB, "SPY": SPY}.items():
         source.set_bars(Asset(symbol), _frame(rows))
-    news = FakeNewsProvider({"AAA": [{"headline": "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", "created_at": (RELEASE + timedelta(minutes=1)).isoformat(), "symbols": ["AAA"]}]})
+    news = FakeNewsProvider(
+        {"AAA": [{"headline": "AAA Q3 EPS $1.52 Beats $1.20 Estimate, Sales $1.1B Beat $1B Estimate", "created_at": (RELEASE + timedelta(minutes=1)).isoformat(), "symbols": ["AAA"]}]}
+    )
     events = StaticEvents([EarningsEvent("AAA", RELEASE, "acc-AAA", "aaa.htm")])
     strategy = EarningsDriftStrategy(
         FakeBroker(FakeClock(WINDOW[0].open - timedelta(hours=1)), strategy_name="earnings_drift"),

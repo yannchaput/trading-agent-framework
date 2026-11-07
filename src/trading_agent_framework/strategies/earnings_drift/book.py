@@ -27,6 +27,7 @@ STATE_VERSION = 1
 
 class TradeState(StrEnum):
     """Lifecycle state of a trade: pending entry, open, or closed."""
+
     PENDING = "pending"  # entry submitted, not filled yet
     OPEN = "open"  # entry filled: shares held, protected by a stop (or being sold)
 
@@ -39,6 +40,7 @@ def _dec(value: Any) -> Decimal | None:
 @dataclass
 class Trade:
     """One earnings-drift trade: entry, trailing stop and exit orders with their prices and dates."""
+
     symbol: str
     entry_order_id: str
     trail_percent: Decimal
@@ -114,6 +116,7 @@ class Trade:
 @dataclass
 class DriftState:
     """Persisted state of the strategy: its trades and failure streak."""
+
     trades: dict[str, Trade] = field(default_factory=dict)  # symbol -> its pending or open trade
     agent_failure_streak: int = 0
     hollow_scan_streak: int = 0
@@ -155,6 +158,7 @@ def _encode(state: DriftState) -> dict[str, Any]:
 
 class StateStore(JsonStateStore[DriftState]):
     """JSON file store for the earnings-drift state."""
+
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
         """Open the store at `path`; `fresh` ignores any existing file."""
         super().__init__(path, version=STATE_VERSION, empty=DriftState, decode=_decode, encode=_encode, log=logger, fresh=fresh)

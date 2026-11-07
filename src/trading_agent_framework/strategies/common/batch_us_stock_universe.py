@@ -663,8 +663,7 @@ def build_history_pool(
         kept = [*kept, *recovered]
     if len(unanswered) > MAX_ABSENT_FRACTION * len(candidates):
         raise UniverseHistoryError(
-            f"yfinance gave no answer for {len(unanswered)} of {len(candidates)} candidates, above the {MAX_ABSENT_FRACTION:.0%} limit: "
-            f"Yahoo is failing (e.g. {', '.join(unanswered[:20])})"
+            f"yfinance gave no answer for {len(unanswered)} of {len(candidates)} candidates, above the {MAX_ABSENT_FRACTION:.0%} limit: Yahoo is failing (e.g. {', '.join(unanswered[:20])})"
         )
     if unanswered:
         logger.warning("yfinance gave no answer for %d candidates, left out of the history pool: %s", len(unanswered), ", ".join(unanswered))
@@ -692,12 +691,7 @@ _DEFAULT_HISTORY_CACHE = PROJECT_ROOT / "cache" / "universe_history"
 
 def _same_parameters(history: UniverseHistory) -> bool:
     """True when `history` was built with the parameters this build would use (else its months are not comparable)."""
-    return (
-        history.top_n == _HISTORY_TOP_N
-        and history.lookback == _HISTORY_LOOKBACK
-        and history.min_price == float(MIN_PRICE)
-        and history.min_dollar_volume == float(MIN_DOLLAR_VOLUME)
-    )
+    return history.top_n == _HISTORY_TOP_N and history.lookback == _HISTORY_LOOKBACK and history.min_price == float(MIN_PRICE) and history.min_dollar_volume == float(MIN_DOLLAR_VOLUME)
 
 
 def _load_pool(cache_dir: Path) -> tuple[date, HistoryPool] | None:
@@ -858,11 +852,7 @@ def _ensure_bars(
     bars_dir = cache_dir / "bars"
     bars_dir.mkdir(parents=True, exist_ok=True)
     index = _load_bars_index(bars_dir)
-    todo = [
-        symbol
-        for symbol in symbols
-        if symbol not in index or index[symbol][0] > window_start or index[symbol][1] < window_end or not (bars_dir / f"{symbol}.parquet").exists()
-    ]
+    todo = [symbol for symbol in symbols if symbol not in index or index[symbol][0] > window_start or index[symbol][1] < window_end or not (bars_dir / f"{symbol}.parquet").exists()]
     console.print(f"  Bars: {len(symbols) - len(todo)} symbols cached, {len(todo)} to download")
     absent = _download_symbols(todo, window_start, download_end, bars_dir, index, download, empty_is_failure=True)
     if absent:

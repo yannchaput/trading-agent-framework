@@ -5,6 +5,7 @@ from trading_agent_framework.utils.package_helper import get_version
 
 __all__ = ["BillAckmanStrategy"]
 
+
 def __dir__():
     return list(globals().keys()) + __all__
 

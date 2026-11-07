@@ -250,9 +250,7 @@ def test_a_filing_dated_the_day_before_is_visible():
 def test_the_only_filing_dated_the_review_day_is_unavailable():
     payload = _filed_payload((9e9, "2025-01-01", "2025-12-31", "2026-03-03"))
 
-    assert SecFundamentals(_FakeClient(payload))("AAA", datetime(2026, 3, 3, 12, 0, tzinfo=_NY)) == {
-        "fundamentals_unavailable": "no SEC figures"
-    }
+    assert SecFundamentals(_FakeClient(payload))("AAA", datetime(2026, 3, 3, 12, 0, tzinfo=_NY)) == {"fundamentals_unavailable": "no SEC figures"}
 
 
 def test_the_cutoff_is_the_start_of_the_day_in_the_as_of_timezone():

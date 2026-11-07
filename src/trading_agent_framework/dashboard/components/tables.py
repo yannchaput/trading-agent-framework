@@ -206,6 +206,7 @@ def render_reviews_table(ref: RunRef) -> None:
 
     if not loaded.records:
         return
+
     # The list holds indices into the records (two reviews may share a date), newest first so that the
     # selected one, the latest, is at the top of a long list.
     def label(index: int) -> str:

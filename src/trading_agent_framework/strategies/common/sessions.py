@@ -30,10 +30,7 @@ def parse_rebalance_time(value: str) -> time:
     except ValueError:
         raise ConfigurationError(f"rebalance_time must be a valid HH:MM in market time, got {value!r}") from None
     if not _REBALANCE_EARLIEST <= parsed < _REBALANCE_LATEST:
-        raise ConfigurationError(
-            f"rebalance_time must be at or after {_REBALANCE_EARLIEST:%H:%M} and before {_REBALANCE_LATEST:%H:%M} "
-            f"(market time), got {value!r}"
-        )
+        raise ConfigurationError(f"rebalance_time must be at or after {_REBALANCE_EARLIEST:%H:%M} and before {_REBALANCE_LATEST:%H:%M} (market time), got {value!r}")
     return parsed
 
 

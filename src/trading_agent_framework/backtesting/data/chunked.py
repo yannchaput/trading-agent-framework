@@ -88,10 +88,7 @@ class YearChunkedData(BacktestDataSource):
         if self._minute is not None and index < self._chunk:
             fetch_start, _ = chunk_window(self._chunk, self._start, self._end)
             if cutoff < fetch_start:
-                raise BacktestDataError(
-                    f"minute bars requested at {cutoff.isoformat()}, before the current chunk's window "
-                    f"(from {fetch_start.isoformat()}): a backtest clock never goes back a year"
-                )
+                raise BacktestDataError(f"minute bars requested at {cutoff.isoformat()}, before the current chunk's window (from {fetch_start.isoformat()}): a backtest clock never goes back a year")
             return self._minute
         return self._minute_source(index)
 

@@ -51,19 +51,25 @@ Expected: `Switched to a new branch`; `git status` shows only ` M TODO.md`.
 
 ```python
 def test_every_in_carries_a_strength_and_every_out_none() -> None:
-    v = validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": " Strong "},
-                           {"symbol": "BBB", "verdict": "out", "reason": "r"}], expected=["AAA", "BBB"], max_in=10, max_chars=300)
+    v = validate_verdicts(
+        [{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": " Strong "}, {"symbol": "BBB", "verdict": "out", "reason": "r"}], expected=["AAA", "BBB"], max_in=10, max_chars=300
+    )
     assert [x.strength for x in v.verdicts] == ["strong", None]
     assert v.strengths == {"AAA": "strong"}
 
-@pytest.mark.parametrize(("item", "message"), [
-    ({"symbol": "AAA", "verdict": "in", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
-    ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "high"}, "the strength for AAA must be one of strong, standard, weak"),
-    ({"symbol": "AAA", "verdict": "out", "reason": "r", "strength": "weak"}, "AAA is out: give a strength only to a stock you put in"),
-])
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        ({"symbol": "AAA", "verdict": "in", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "high"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "out", "reason": "r", "strength": "weak"}, "AAA is out: give a strength only to a stock you put in"),
+    ],
+)
 def test_a_missing_unknown_or_misplaced_strength_is_refused(item: dict, message: str) -> None:
     with pytest.raises(HandoffError, match=message):
         validate_verdicts([item], expected=["AAA"], max_in=10, max_chars=300)
+
 
 def test_a_changed_strength_needs_no_what_changed() -> None:
     v = validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}], expected=["AAA"], max_in=10, max_chars=300, previous={"AAA": "in"})
@@ -117,10 +123,12 @@ def test_the_judge_rates_each_in_by_the_balance_of_both_cases() -> None:
     assert "bull" in text and "bear" in text
     assert "no material risk" not in text and "risk-free" in text  # "a strong case does not need a risk-free stock"
 
+
 def test_the_judge_is_told_strength_sets_the_size_but_not_the_numbers() -> None:
     text = " ".join(prompts.JUDGE_SYSTEM.split())
     assert "largest position" in text and "stays in cash" in text
     assert not any(n in text for n in ("14", "0.14", "9%", "0.09", "4%", "0.04"))
+
 
 def test_the_judge_submits_a_strength_for_every_stock_it_puts_in() -> None:
     assert "strength (strong, standard or weak) for every stock you put in" in " ".join(prompts.JUDGE_SYSTEM.split())
@@ -190,24 +198,38 @@ Reworks Task 1's handoff (committed at `41b5a36`).
 
 ```python
 def test_every_verdict_carries_a_strength() -> None:
-    v = validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": " Strong "},
-                           {"symbol": "BBB", "verdict": "out", "reason": "r", "strength": "weak"}], expected=["AAA", "BBB"], max_in=10, max_chars=300)
+    v = validate_verdicts(
+        [{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": " Strong "}, {"symbol": "BBB", "verdict": "out", "reason": "r", "strength": "weak"}],
+        expected=["AAA", "BBB"],
+        max_in=10,
+        max_chars=300,
+    )
     assert [x.strength for x in v.verdicts] == ["strong", "weak"]
     assert v.strengths == {"AAA": "strong", "BBB": "weak"}
 
-@pytest.mark.parametrize(("item", "message"), [
-    ({"symbol": "AAA", "verdict": "in", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
-    ({"symbol": "AAA", "verdict": "out", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
-    ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "high"}, "the strength for AAA must be one of strong, standard, weak"),
-    ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}, "AAA is weak: a weak stock goes out"),
-])
+
+@pytest.mark.parametrize(
+    ("item", "message"),
+    [
+        ({"symbol": "AAA", "verdict": "in", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "out", "reason": "r"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "high"}, "the strength for AAA must be one of strong, standard, weak"),
+        ({"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}, "AAA is weak: a weak stock goes out"),
+    ],
+)
 def test_a_missing_unknown_or_weak_in_strength_is_refused(item: dict, message: str) -> None:
     with pytest.raises(HandoffError, match=message):
         validate_verdicts([item], expected=["AAA"], max_in=10, max_chars=300)
 
+
 def test_a_strong_or_standard_stock_may_still_be_out_and_a_changed_strength_needs_no_what_changed() -> None:
-    v = validate_verdicts([{"symbol": "AAA", "verdict": "out", "reason": "r", "strength": "strong"},
-                           {"symbol": "BBB", "verdict": "in", "reason": "r", "strength": "standard"}], expected=["AAA", "BBB"], max_in=10, max_chars=300, previous={"BBB": "in"})
+    v = validate_verdicts(
+        [{"symbol": "AAA", "verdict": "out", "reason": "r", "strength": "strong"}, {"symbol": "BBB", "verdict": "in", "reason": "r", "strength": "standard"}],
+        expected=["AAA", "BBB"],
+        max_in=10,
+        max_chars=300,
+        previous={"BBB": "in"},
+    )
     assert v.chosen == ("BBB",) and v.verdicts[1].what_changed is None
 ```
 Adapt the file's other verdict tests: every item (`in` AND `out`) carries a strength, `"standard"` unless the test is about strengths. Replace Task 1's tests that required "AAA is out: give a strength only to a stock you put in".
@@ -293,20 +315,25 @@ git commit -m "feat(bull_bear): the judge's prompt rates the whole debate then s
 ```python
 W = {"strong": 0.14, "standard": 0.09}
 
+
 def test_each_stock_gets_its_strengths_weight_in_input_order() -> None:
     assert strength_weights({"B": "standard", "A": "strong"}, weights=W, total=0.98) == pytest.approx({"B": 0.09, "A": 0.14})
     assert list(strength_weights({"B": "standard", "A": "strong"}, weights=W, total=0.98)) == ["B", "A"]
+
 
 def test_ten_strong_stocks_are_scaled_to_the_total_ratios_kept() -> None:
     w = strength_weights({f"S{i}": "strong" for i in range(10)}, weights=W, total=0.98)
     assert sum(w.values()) == pytest.approx(0.98) and all(x == pytest.approx(0.098) for x in w.values())
 
+
 def test_seven_strong_three_standard_scale_by_one_factor() -> None:
     w = strength_weights({**{f"S{i}": "strong" for i in range(7)}, **{f"T{i}": "standard" for i in range(3)}}, weights=W, total=0.98)
     assert w["T0"] == pytest.approx(0.09 * 0.98 / 1.25) and w["S0"] == pytest.approx(0.14 * 0.98 / 1.25)
 
+
 def test_a_book_under_the_total_is_not_scaled_up() -> None:
     assert sum(strength_weights({"A": "standard", "B": "standard"}, weights=W, total=0.98).values()) == pytest.approx(0.18)
+
 
 def test_no_stock_is_an_empty_book_and_an_unknown_or_weak_strength_is_an_error() -> None:
     assert strength_weights({}, weights=W, total=0.98) == {}

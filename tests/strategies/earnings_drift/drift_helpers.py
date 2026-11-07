@@ -86,9 +86,7 @@ class DeskRig:
         self.strategy = Strategy(self.broker, mode=TradingMode.BACKTESTING, project_root=tmp_path)
         self.state = DriftState()
         self.trades_path, self.decisions_path = tmp_path / "trades.jsonl", tmp_path / "decisions.jsonl"
-        self.desk = Desk(
-            self.strategy, params or DriftParams(), self.state, save=save or (lambda: None), trade_log=RunLog(lambda: self.trades_path), decision_log=RunLog(lambda: self.decisions_path)
-        )
+        self.desk = Desk(self.strategy, params or DriftParams(), self.state, save=save or (lambda: None), trade_log=RunLog(lambda: self.trades_path), decision_log=RunLog(lambda: self.decisions_path))
         self.day = 0
         self.delivered: set[str] = set()
         default = [make_candidate("AAA", day=RIG_DATES[0], close=100.0, reaction_low=99.0), make_candidate("BBB", day=RIG_DATES[0], close=50.0, abnormal_pct=0.04)]

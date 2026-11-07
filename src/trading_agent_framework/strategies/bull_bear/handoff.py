@@ -35,6 +35,7 @@ class NoteTooLong(HandoffError):
 @dataclass(frozen=True, slots=True)
 class Note:
     """A research note on one stock."""
+
     symbol: str
     note: str
 
@@ -42,6 +43,7 @@ class Note:
 @dataclass(frozen=True, slots=True)
 class BullCase:
     """The bull side's case for one stock: a conviction level and an argument."""
+
     symbol: str
     conviction: str  # one of LEVELS
     argument: str
@@ -50,6 +52,7 @@ class BullCase:
 @dataclass(frozen=True, slots=True)
 class BearCase:
     """The bear side's case against one stock: a conviction level and an argument."""
+
     symbol: str
     risk: str  # one of LEVELS
     concern: str  # one of CONCERNS
@@ -59,6 +62,7 @@ class BearCase:
 @dataclass(frozen=True, slots=True)
 class Verdict:
     """The judge's call on one stock."""
+
     symbol: str
     verdict: str  # one of VERDICTS
     reason: str
@@ -69,6 +73,7 @@ class Verdict:
 @dataclass(frozen=True, slots=True)
 class Verdicts:
     """The judge's verdicts for a batch of candidates."""
+
     verdicts: tuple[Verdict, ...]  # one per candidate, in submission order
 
     @property

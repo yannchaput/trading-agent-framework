@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 class Strategies(StrEnum):
     """Names of the strategies that can be started from the command line."""
+
     BILL_ACKMAN = auto()
     BULL_BEAR = auto()
     CONGRESS_TRADES = auto()

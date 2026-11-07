@@ -40,6 +40,7 @@ from trading_agent_framework.utils.errors import AgentError, ConfigurationError,
 
 class EarningsDriftStrategy(Strategy):
     """Earnings-drift strategy: an agent trades stocks whose earnings reaction suggests post-announcement drift."""
+
     sleeptime = "1D"  # on_trading_iteration raises a pending fatal error and, in paper/live, recovers the desk; the work is in after_market_closes
     minutes_after_closing = 0  # at the exact close: a backtest order then fills at the next open, not a session later
     AGENT_NAME = "drift"

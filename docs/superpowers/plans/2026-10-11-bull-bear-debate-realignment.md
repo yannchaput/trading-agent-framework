@@ -603,26 +603,28 @@ Add `from collections.abc import Callable` to the imports at the top of `sec.py`
 Replace `_statement`, `get_income_statement` and `get_balance_sheet` with:
 
 ```python
-    def _statement(symbol: str, build: Callable[..., dict[str, dict[str, Any]]]) -> dict[str, Any]:
-        as_of = strategy.clock.now()
-        try:
-            cik = edgar.ticker_to_cik(symbol)
-            payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
-        except FundamentalsError as exc:
-            return {"error": str(exc)}
-        values = build(payload, as_of=as_of)
-        result: dict[str, Any] = {"symbol": symbol.upper(), "as_of": as_of.isoformat(), "values": values}
-        if sec.is_stale_statement(values, as_of=as_of):
-            result["stale"] = True
-        return result
+def _statement(symbol: str, build: Callable[..., dict[str, dict[str, Any]]]) -> dict[str, Any]:
+    as_of = strategy.clock.now()
+    try:
+        cik = edgar.ticker_to_cik(symbol)
+        payload = edgar.get_company_facts_payload(cik, as_of=as_of, max_age_days=MAX_PAYLOAD_AGE_DAYS)
+    except FundamentalsError as exc:
+        return {"error": str(exc)}
+    values = build(payload, as_of=as_of)
+    result: dict[str, Any] = {"symbol": symbol.upper(), "as_of": as_of.isoformat(), "values": values}
+    if sec.is_stale_statement(values, as_of=as_of):
+        result["stale"] = True
+    return result
 
-    def get_income_statement(symbol: str) -> dict[str, Any]:
-        """Get a company's income statement and cash flow (revenue, net income, free cash flow, ...) with the prior year, as of now."""
-        return _statement(symbol, sec.income_statement)
 
-    def get_balance_sheet(symbol: str) -> dict[str, Any]:
-        """Get a company's balance sheet (assets, liabilities, total debt, ...) with the prior year, as of now."""
-        return _statement(symbol, sec.balance_sheet)
+def get_income_statement(symbol: str) -> dict[str, Any]:
+    """Get a company's income statement and cash flow (revenue, net income, free cash flow, ...) with the prior year, as of now."""
+    return _statement(symbol, sec.income_statement)
+
+
+def get_balance_sheet(symbol: str) -> dict[str, Any]:
+    """Get a company's balance sheet (assets, liabilities, total debt, ...) with the prior year, as of now."""
+    return _statement(symbol, sec.balance_sheet)
 ```
 
 - [ ] **Step 5: Run the tests**
@@ -1115,7 +1117,7 @@ def _judge(tools: dict[str, Callable[..., dict[str, Any]]], context: Any) -> Non
 ```
 
 ```python
-        settings=BullBearParams(candidate_count=6, max_book_size=5),  # six stocks: the judge rules on all six and puts five in
+settings = (BullBearParams(candidate_count=6, max_book_size=5),)  # six stocks: the judge rules on all six and puts five in
 ```
 
 - [ ] **Step 7: Run them to see them fail**
@@ -2100,8 +2102,7 @@ Expected: failures (`research_news` unknown, no `researcher_system`).
 def researcher_system(news: bool) -> str:
     """The researcher's prompt, with or without its news tool."""
     look_for = (
-        "Look for what the fact sheet cannot show: recent company news (results, guidance, deals, lawsuits, management "
-        "changes, analyst actions) and what the latest filings show"
+        "Look for what the fact sheet cannot show: recent company news (results, guidance, deals, lawsuits, management changes, analyst actions) and what the latest filings show"
         if news
         else "Look for what the fact sheet cannot show: what the latest filings show"
     )

@@ -22,6 +22,7 @@ from trading_agent_framework.strategies.insider_trades.form4.classify import Lab
 
 class SignalClass(StrEnum):
     """Overall insider signal for a stock: buying, selling or none."""
+
     BUYING = "buying"
     SELLING = "selling"
     NONE = "none"
@@ -30,6 +31,7 @@ class SignalClass(StrEnum):
 @dataclass(frozen=True, slots=True)
 class Override:
     """A manual correction to the label of an insider's trade."""
+
     insider_id: str  # the owner CIK
     from_label: Label
     to_label: Label
@@ -39,6 +41,7 @@ class Override:
 @dataclass(frozen=True, slots=True)
 class InsiderSummary:
     """One insider's buying and selling in the signal window, by label."""
+
     insider_id: str
     name: str
     role: str
@@ -57,6 +60,7 @@ class InsiderSummary:
 @dataclass(frozen=True, slots=True)
 class StockFacts:
     """A stock's insider activity over the signal window, summarised per insider."""
+
     ticker: str
     today: date
     window_start: date
@@ -78,12 +82,7 @@ def apply_overrides(labelled: Sequence[Labelled], overrides: Sequence[Override])
     """Apply the overrides in order. One relabels its insider's trades of `from_label`, never a plan trade (the plan fixed it in advance)."""
     result = list(labelled)
     for o in overrides:
-        result = [
-            replace(lt, label=o.to_label, rule=f"override: {o.reason}")
-            if lt.trade.owner_cik == o.insider_id and lt.label is o.from_label and not lt.trade.plan
-            else lt
-            for lt in result
-        ]
+        result = [replace(lt, label=o.to_label, rule=f"override: {o.reason}") if lt.trade.owner_cik == o.insider_id and lt.label is o.from_label and not lt.trade.plan else lt for lt in result]
     return result
 
 

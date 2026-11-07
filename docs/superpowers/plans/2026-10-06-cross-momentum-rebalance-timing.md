@@ -683,25 +683,28 @@ In `tests/strategies/test_cross_momentum_indicators.py`, add the imports
 length and answers `get_datetime`:
 
 ```python
-    def __init__(self, *, bars=None, raises=None, now=None):
-        self.parameters = {"min_trading_days": 250, "skip_days": 21, "volatility_window": 20}
-        self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
-        self._bars = bars
-        self._raises = raises
-        self._now = now or datetime(2026, 10, 6, 12, 0, tzinfo=MARKET_TZ)
-        self.requested_lengths: list[int] = []
-        self.warnings: list[str] = []
+def __init__(self, *, bars=None, raises=None, now=None):
+    self.parameters = {"min_trading_days": 250, "skip_days": 21, "volatility_window": 20}
+    self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
+    self._bars = bars
+    self._raises = raises
+    self._now = now or datetime(2026, 10, 6, 12, 0, tzinfo=MARKET_TZ)
+    self.requested_lengths: list[int] = []
+    self.warnings: list[str] = []
 
-    def get_historical_prices(self, ticker, length, timestep):
-        self.requested_lengths.append(length)
-        if self._raises is not None:
-            raise self._raises
-        return self._bars
 
-    def get_datetime(self):
-        return self._now
+def get_historical_prices(self, ticker, length, timestep):
+    self.requested_lengths.append(length)
+    if self._raises is not None:
+        raise self._raises
+    return self._bars
 
-    _market_date = CrossMomentumStrategy._market_date
+
+def get_datetime(self):
+    return self._now
+
+
+_market_date = CrossMomentumStrategy._market_date
 ```
 
 and append:
@@ -753,10 +756,11 @@ helper, and add a test that SPY's partial bar is dropped. Add `timedelta` to the
 Add to the class body:
 
 ```python
-    _market_date = CrossMomentumStrategy._market_date
+_market_date = CrossMomentumStrategy._market_date
 
-    def get_datetime(self):
-        return self._now
+
+def get_datetime(self):
+    return self._now
 ```
 
 then append:
@@ -1033,7 +1037,7 @@ def parse_rebalance_time(value: str) -> time:
     """`HH:MM` in market time (America/New_York): when the executor runs each session's iteration."""
     try:
         parsed = time.fromisoformat(value)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         raise ConfigurationError(f"rebalance_time must be HH:MM in market time, got {value!r}") from None
     if parsed.tzinfo is not None:
         raise ConfigurationError(f"rebalance_time is market time and takes no UTC offset, got {value!r}")
@@ -1123,6 +1127,7 @@ Write `<scratchpad>/replay_overlay.py` (scratchpad directory, never the repo) an
 
 ```python
 """Read-only: the 2026-10-06 targets on real IEX bars, with half the series a session short, through the new code."""
+
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 

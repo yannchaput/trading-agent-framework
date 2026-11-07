@@ -335,6 +335,7 @@ class AgentManager:
 
         class ToolBudgetLimit(ToolCallLimitMiddleware):
             """Tool-call limit that counts only the budgeted tools."""
+
             def __init__(self) -> None:
                 """Start with a zero limit; `AgentHandle.run` sets the real limit for each run."""
                 super().__init__(run_limit=0)  # the base class wants a limit; `AgentHandle.run` sets the real one per run
@@ -347,7 +348,7 @@ class AgentManager:
             def after_model(self, state: Any, runtime: Any) -> Any:
                 """Apply the budget after each model turn."""
                 update = super().after_model(state, runtime)
-                # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs). 
+                # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs).
                 # If it did call a tool, but the run limit was reached, the code below replace the base's generic refusal with one that names the agent's own tools and the ones it must finish with.
                 # "messages" is a list of ToolMessage objects : or each blocked call, a generic ToolMessage with status="error". If none, messages is empty.
                 if not update or not update.get("messages") or self.run_limit is None:

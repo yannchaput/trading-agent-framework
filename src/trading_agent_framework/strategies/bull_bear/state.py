@@ -87,6 +87,4 @@ def _decode(raw: dict[str, Any]) -> BullBearState:
 
 class StateStore(JsonStateStore[BullBearState]):
     def __init__(self, path: Path, *, fresh: bool = False) -> None:
-        super().__init__(
-            path, version=STATE_VERSION, empty=BullBearState, decode=_decode, encode=asdict, log=logger, accepts={_PICKER_VERSION, _UNRATED_VERSION, STATE_VERSION}, fresh=fresh
-        )
+        super().__init__(path, version=STATE_VERSION, empty=BullBearState, decode=_decode, encode=asdict, log=logger, accepts={_PICKER_VERSION, _UNRATED_VERSION, STATE_VERSION}, fresh=fresh)

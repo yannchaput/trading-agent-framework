@@ -897,9 +897,7 @@ def test_a_stock_with_two_causes_logs_both_in_one_line(tmp_path: Path, caplog: p
     with caplog.at_level(logging.INFO):
         rig.pipeline.run()
 
-    assert (
-        "[insider_trades]   AAA: new Form 4 filed 2025-11-10 (1 open-market trade); a Form 4 filed 2025-10-02 left the 30-day signal window"
-    ) in caplog.text
+    assert ("[insider_trades]   AAA: new Form 4 filed 2025-11-10 (1 open-market trade); a Form 4 filed 2025-10-02 left the 30-day signal window") in caplog.text
 
 
 def test_a_stored_note_that_cannot_be_read_back_is_logged_as_the_reason(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -922,9 +920,7 @@ def test_a_full_run_that_leaves_orders_working_names_them(tmp_path: Path, caplog
     with caplog.at_level(logging.INFO):
         _unfilled_first_run(rig)
 
-    assert (
-        "[trader] unfinished trade kept; it will be checked again on later days (up to 3): working: AAA, BBB, CCC, DDD, EEE; off target: none"
-    ) in caplog.text
+    assert ("[trader] unfinished trade kept; it will be checked again on later days (up to 3): working: AAA, BBB, CCC, DDD, EEE; off target: none") in caplog.text
 
 
 def test_a_check_names_the_working_stocks_and_says_it_is_still_unfinished(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -979,9 +975,7 @@ def test_a_change_logs_that_it_replaces_the_unfinished_trade(tmp_path: Path, cap
     with caplog.at_level(logging.INFO):
         rig.pipeline.run()
 
-    assert (
-        "[insider_trades] this change replaces the unfinished trade (after 0 earlier check(s)); orders still working count toward the new target"
-    ) in caplog.text
+    assert ("[insider_trades] this change replaces the unfinished trade (after 0 earlier check(s)); orders still working count toward the new target") in caplog.text
 
 
 def test_a_quiet_day_does_not_log_a_replaced_trade(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

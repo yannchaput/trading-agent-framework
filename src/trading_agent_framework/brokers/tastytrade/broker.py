@@ -73,6 +73,7 @@ class _Unknown:
 
 class TastytradeBroker(Broker):
     """Broker implementation for a Tastytrade account (REST orders plus an account streamer)."""
+
     name: ClassVar[str] = "tastytrade"
 
     def __init__(

@@ -37,9 +37,7 @@ class BacktestDataSource(ABC):
     name: str
 
     @abstractmethod
-    def load(
-        self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str
-    ) -> None:
+    def load(self, assets: Sequence[Asset], start: datetime, end: datetime, timestep: str) -> None:
         """Pre-fetch and cache `assets` for [start, end]. Optional to call; `bars()`
         fetches lazily for any asset it hasn't seen.
         """

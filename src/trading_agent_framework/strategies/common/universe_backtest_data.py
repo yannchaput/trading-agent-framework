@@ -124,4 +124,3 @@ class UniverseBacktestData(YahooBacktestData):
                 else:
                     loaded[symbol] = frame
         return empty
-

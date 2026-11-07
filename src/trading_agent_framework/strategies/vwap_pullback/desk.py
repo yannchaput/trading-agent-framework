@@ -276,8 +276,7 @@ class Desk:
             self._settle_entry(trade, order)
         elif order.identifier == trade.stop_order_id:
             self._strategy.log_warning(
-                f"the stop for {trade.symbol} ended cancelled and the desk was not waiting for it "
-                "(an outside cancel, or a cancel of its own that confirmed late); placing it again"
+                f"the stop for {trade.symbol} ended cancelled and the desk was not waiting for it (an outside cancel, or a cancel of its own that confirmed late); placing it again"
             )
             self._record_stop_partial(trade, order)
             trade.stop_order_id = None

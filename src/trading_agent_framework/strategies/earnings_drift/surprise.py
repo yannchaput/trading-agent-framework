@@ -44,6 +44,7 @@ def _surprise_pct(actual: Decimal, estimate: Decimal) -> float | None:
 @dataclass(frozen=True, slots=True)
 class Surprise:
     """Reported EPS and sales against their estimates for one earnings release."""
+
     eps_actual: Decimal
     eps_estimate: Decimal
     sales_actual: Decimal | None = None
@@ -82,6 +83,7 @@ class Surprise:
 @dataclass(frozen=True, slots=True)
 class PickedSurprise:
     """A surprise chosen for an event, with where it was found."""
+
     surprise: Surprise
     headline: str
     created_at: datetime

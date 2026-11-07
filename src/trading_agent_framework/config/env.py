@@ -130,6 +130,7 @@ class BrokerKind(StrEnum):
 @dataclass(frozen=True, slots=True)
 class BrokerSettings:
     """Which broker to use and whether its account is paper."""
+
     kind: BrokerKind
     is_paper: bool
 
@@ -251,6 +252,7 @@ class TastytradeSettings:
 @dataclass(frozen=True, slots=True)
 class FredCredentials:
     """Credentials for the FRED macro-data API."""
+
     api_key: str = field(repr=False)
 
     @classmethod

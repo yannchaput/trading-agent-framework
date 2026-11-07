@@ -34,9 +34,7 @@ def _yahoo_frame(sessions, *, close=50.0, volume=1_000_000.0, last=YESTERDAY, cl
     """One ticker as yfinance returns it: Open/High/Low/Close/Volume, a naive session-date index."""
     index = pd.bdate_range(end=last, periods=sessions)
     values = closes if closes is not None else [close] * sessions
-    return pd.DataFrame(
-        {"Open": values, "High": [v + 1 for v in values], "Low": [v - 1 for v in values], "Close": values, "Volume": [volume] * sessions}, index=index
-    )
+    return pd.DataFrame({"Open": values, "High": [v + 1 for v in values], "Low": [v - 1 for v in values], "Close": values, "Volume": [volume] * sessions}, index=index)
 
 
 def _raw_unadjusted_frame(sessions=300, *, close=50.0, volume=1_000_000.0, last=YESTERDAY) -> pd.DataFrame:
@@ -312,9 +310,7 @@ class FakeScanStrategy:
     def __init__(self, universe, bars_source, held=()):
         self.parameters = dict(CONFIG)
         self._held = list(held)
-        self.vars = SimpleNamespace(
-            universe=universe, target_closes={}, breadth=None, breadth_step=None, bars_source=bars_source, yahoo_bars={}
-        )
+        self.vars = SimpleNamespace(universe=universe, target_closes={}, breadth=None, breadth_step=None, bars_source=bars_source, yahoo_bars={})
         self.scanned: list[str] = []
         self.errors: list[str] = []
         self.warnings: list[str] = []

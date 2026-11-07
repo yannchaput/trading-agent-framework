@@ -78,10 +78,7 @@ def main(argv: Sequence[str] | None = None, *, download: DownloadFn | None = Non
     except YahooDataError as exc:
         print(f"bull-bear-scores: {exc}", file=sys.stderr)
         return 1
-    reports = [
-        RunReport(name, score_agents(records, forward_returns(records, opens, calendar)), len(scored_reviews(records)), malformed)
-        for name, records, malformed in loaded
-    ]
+    reports = [RunReport(name, score_agents(records, forward_returns(records, opens, calendar)), len(scored_reviews(records)), malformed) for name, records, malformed in loaded]
     print(format_report(reports))
     return 0
 

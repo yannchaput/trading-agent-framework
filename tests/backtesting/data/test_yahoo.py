@@ -28,8 +28,10 @@ def _raw_yahoo_frame() -> pd.DataFrame:
     index = pd.date_range("2026-01-05", periods=3, freq="B")
     return pd.DataFrame(
         {
-            "Open": [150.0, 151.0, 152.0], "High": [151.0, 152.0, 153.0],
-            "Low": [149.0, 150.0, 151.0], "Close": [150.5, 151.5, 152.5],
+            "Open": [150.0, 151.0, 152.0],
+            "High": [151.0, 152.0, 153.0],
+            "Low": [149.0, 150.0, 151.0],
+            "Close": [150.5, 151.5, 152.5],
             "Volume": [1000.0, 1100.0, 1200.0],
         },
         index=index,
@@ -41,10 +43,14 @@ def _raw_unadjusted_frame() -> pd.DataFrame:
     index = pd.date_range("2026-01-05", periods=5, freq="B")
     return pd.DataFrame(
         {
-            "Open": [49.0, 50.0, 51.0, 52.0, 53.0], "High": [51.0, 52.0, 53.0, 54.0, 55.0],
-            "Low": [48.0, 49.0, 50.0, 51.0, 52.0], "Close": [50.0, 51.0, 52.0, 53.0, 54.0],
-            "Adj Close": [45.0, 45.9, 46.8, 53.0, 54.0], "Volume": [2000.0, 2000.0, 1000.0, 1000.0, 1000.0],
-            "Dividends": [0.0, 0.0, 0.0, 0.5, 0.0], "Stock Splits": [0.0, 0.0, 2.0, 0.0, 0.0],
+            "Open": [49.0, 50.0, 51.0, 52.0, 53.0],
+            "High": [51.0, 52.0, 53.0, 54.0, 55.0],
+            "Low": [48.0, 49.0, 50.0, 51.0, 52.0],
+            "Close": [50.0, 51.0, 52.0, 53.0, 54.0],
+            "Adj Close": [45.0, 45.9, 46.8, 53.0, 54.0],
+            "Volume": [2000.0, 2000.0, 1000.0, 1000.0, 1000.0],
+            "Dividends": [0.0, 0.0, 0.0, 0.5, 0.0],
+            "Stock Splits": [0.0, 0.0, 2.0, 0.0, 0.0],
         },
         index=index,
     )
@@ -74,8 +80,12 @@ def test_a_reverse_split_and_two_splits_multiply() -> None:
     index = pd.date_range("2026-01-05", periods=5, freq="B")
     raw = pd.DataFrame(
         {
-            "Open": [10.0] * 5, "High": [10.0] * 5, "Low": [10.0] * 5, "Close": [10.0] * 5,
-            "Adj Close": [10.0] * 5, "Volume": [100.0] * 5,
+            "Open": [10.0] * 5,
+            "High": [10.0] * 5,
+            "Low": [10.0] * 5,
+            "Close": [10.0] * 5,
+            "Adj Close": [10.0] * 5,
+            "Volume": [100.0] * 5,
             "Stock Splits": [0.0, 0.1, 0.0, 3.0, 0.0],
         },
         index=index,
@@ -246,10 +256,7 @@ def test_load_skips_a_ticker_yahoo_has_no_data_for_without_failing_the_batch(
 
     assert source.bars(AAPL, END, 3, "day") is not None
     assert source.bars(GONE, END, 3, "day") is None
-    assert any(
-        record.levelno == logging.WARNING and "GONE" in record.getMessage()
-        for record in caplog.records
-    )
+    assert any(record.levelno == logging.WARNING and "GONE" in record.getMessage() for record in caplog.records)
 
 
 def test_bars_lazy_fetch_logs_a_warning_when_yahoo_has_no_data(
@@ -268,10 +275,7 @@ def test_bars_lazy_fetch_logs_a_warning_when_yahoo_has_no_data(
         result = source.bars(GONE, END, 3, "day")
 
     assert result is None
-    assert any(
-        record.levelno == logging.WARNING and "GONE" in record.getMessage()
-        for record in caplog.records
-    )
+    assert any(record.levelno == logging.WARNING and "GONE" in record.getMessage() for record in caplog.records)
 
 
 def test_load_already_cached_assets_makes_no_download_call() -> None:
@@ -393,7 +397,9 @@ def _assert_window_trimmed_and_scaled(source: YahooBacktestData) -> None:
 def test_a_split_after_the_window_scales_the_window_and_stays_invisible() -> None:
     window_end = datetime(2026, 1, 8, tzinfo=UTC)
     source = YahooBacktestData(
-        START, window_end, download=lambda *a, **k: _split_after_window_download(),
+        START,
+        window_end,
+        download=lambda *a, **k: _split_after_window_download(),
         today=lambda: date(2026, 3, 1),
     )
     source.load([AAPL], START, window_end, "day")
@@ -404,7 +410,9 @@ def test_a_split_after_the_window_scales_the_window_and_stays_invisible() -> Non
 def test_the_lazy_fetch_trims_to_the_constructor_window() -> None:
     window_end = datetime(2026, 1, 8, tzinfo=UTC)
     source = YahooBacktestData(
-        START, window_end, download=lambda *a, **k: _split_after_window_download(),
+        START,
+        window_end,
+        download=lambda *a, **k: _split_after_window_download(),
         today=lambda: date(2026, 3, 1),
     )
 
@@ -422,8 +430,10 @@ def _frame_for_dates(dates: list[str]) -> pd.DataFrame:
     n = len(dates)
     return pd.DataFrame(
         {
-            "Open": [150.0 + i for i in range(n)], "High": [151.0 + i for i in range(n)],
-            "Low": [149.0 + i for i in range(n)], "Close": [150.5 + i for i in range(n)],
+            "Open": [150.0 + i for i in range(n)],
+            "High": [151.0 + i for i in range(n)],
+            "Low": [149.0 + i for i in range(n)],
+            "Close": [150.5 + i for i in range(n)],
             "Volume": [1000.0] * n,
         },
         index=pd.DatetimeIndex([pd.Timestamp(d) for d in dates]),

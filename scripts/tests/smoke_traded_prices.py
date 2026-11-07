@@ -65,18 +65,13 @@ def check_nvda_2015() -> tuple[bool, str]:
     traded, adjusted = float(first["traded_close"]), float(first["close"])
     low, high = NVDA_2015_TRADED_RANGE
     ok = low <= traded <= high and adjusted < NVDA_2015_MAX_ADJUSTED_CLOSE
-    detail = (
-        f"NVDA {bars.df.index[0].date()}: traded_close ${traded:.2f} (want ${low:.0f}-${high:.0f}), "
-        f"adjusted close ${adjusted:.4f} (want under ${NVDA_2015_MAX_ADJUSTED_CLOSE:.0f})"
-    )
+    detail = f"NVDA {bars.df.index[0].date()}: traded_close ${traded:.2f} (want ${low:.0f}-${high:.0f}), adjusted close ${adjusted:.4f} (want under ${NVDA_2015_MAX_ADJUSTED_CLOSE:.0f})"
     return ok, detail
 
 
 def _download_raw(symbol: str, *, auto_adjust: bool, start: str, end: str) -> pd.DataFrame:
     kwargs = {} if auto_adjust else {"actions": True}
-    raw = yfinance_download()(
-        [symbol], start=start, end=end, auto_adjust=auto_adjust, progress=False, group_by="ticker", **kwargs
-    )
+    raw = yfinance_download()([symbol], start=start, end=end, auto_adjust=auto_adjust, progress=False, group_by="ticker", **kwargs)
     return extract_ticker_frame(raw, symbol)
 
 
@@ -116,10 +111,7 @@ def check_rebuilt_adjusted_equal_yfinance() -> tuple[bool, str]:
         plain = parse_yahoo_frame(_download_raw(symbol, auto_adjust=True, start="2023-01-01", end=end))
         plain = plain[plain.index.year == 2023]
         if list(plain.index) == list(rebuilt.index):
-            lines.append(
-                f"  INFO {symbol}: vs a separate auto_adjust=True download {_worst_relative_difference(rebuilt, plain):.2e} "
-                "(Yahoo's adjusted values vary between requests; not a failure)"
-            )
+            lines.append(f"  INFO {symbol}: vs a separate auto_adjust=True download {_worst_relative_difference(rebuilt, plain):.2e} (Yahoo's adjusted values vary between requests; not a failure)")
         else:
             lines.append(f"  INFO {symbol}: separate auto_adjust=True download has different dates; not compared")
     return ok, "\n      ".join(lines)
@@ -136,10 +128,7 @@ def check_ko_2012_dollar_volume() -> tuple[bool, str]:
     df = bars.df
     traded = float((df[TRADED_COLUMNS[0]] * df[TRADED_COLUMNS[1]]).mean())
     adjusted = float((df["close"] * df["volume"]).mean())
-    return traded > adjusted, (
-        f"KO 2012 ({len(df)} sessions): mean traded dollar volume ${traded / 1e6:.1f}M, "
-        f"adjusted ${adjusted / 1e6:.1f}M (ratio {traded / adjusted:.3f})"
-    )
+    return traded > adjusted, (f"KO 2012 ({len(df)} sessions): mean traded dollar volume ${traded / 1e6:.1f}M, adjusted ${adjusted / 1e6:.1f}M (ratio {traded / adjusted:.3f})")
 
 
 def main() -> int:

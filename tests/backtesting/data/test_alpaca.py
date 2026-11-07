@@ -34,11 +34,8 @@ def _sessions() -> list[MarketSession]:
 
 def test_reindex_to_bar_close_maps_daily_bars_to_their_sessions_close() -> None:
     df = pd.DataFrame(
-        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0],
-         "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
-        index=pd.DatetimeIndex(
-            [datetime(2026, 1, 5, tzinfo=MARKET_TZ), datetime(2026, 1, 6, tzinfo=MARKET_TZ)]
-        ),
+        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0], "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
+        index=pd.DatetimeIndex([datetime(2026, 1, 5, tzinfo=MARKET_TZ), datetime(2026, 1, 6, tzinfo=MARKET_TZ)]),
     )
     result = reindex_to_bar_close(df, "day", _sessions())
     assert list(result.index) == [_sessions()[0].close, _sessions()[1].close]  # early close respected
@@ -65,8 +62,7 @@ def test_reindex_to_bar_close_raises_when_a_daily_bars_date_has_no_session() -> 
     opens. There is no correct close time to re-index to, so it must fail loudly.
     """
     df = pd.DataFrame(
-        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0],
-         "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
+        {"open": [150.0, 151.0], "high": [151.0, 152.0], "low": [149.0, 150.0], "close": [150.5, 151.5], "volume": [1000.0, 1100.0]},
         index=pd.DatetimeIndex(
             # Jan 7 is absent from `_sessions()` -- exactly what a window filter that
             # drops a date the bars fetch kept produces.
@@ -91,11 +87,13 @@ def test_bars_are_reindexed_through_the_end_of_the_end_date_even_with_a_midnight
     """
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [
-        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06"),
+        make_alpaca_calendar("2026-01-05"),
+        make_alpaca_calendar("2026-01-06"),
     ]
     data_client = FakeStockHistoricalDataClient()
     data_client.bars["AAPL"] = [
-        bar_payload("2026-01-05T05:00:00Z", 150.0), bar_payload("2026-01-06T05:00:00Z", 151.0),
+        bar_payload("2026-01-05T05:00:00Z", 150.0),
+        bar_payload("2026-01-06T05:00:00Z", 151.0),
     ]
     midnight_end = datetime(2026, 1, 6, tzinfo=MARKET_TZ)  # outside market hours, not the 16:00 close
     source = AlpacaBacktestData(START, midnight_end, client=data_client, trading_client=trading_client)
@@ -125,7 +123,8 @@ def test_a_daily_bar_dated_outside_the_known_calendar_raises_through_the_public_
     trading_client.calendar_response = [make_alpaca_calendar("2026-01-05")]  # 2026-01-06 missing
     data_client = FakeStockHistoricalDataClient()
     data_client.bars["AAPL"] = [
-        bar_payload("2026-01-05T05:00:00Z", 150.0), bar_payload("2026-01-06T05:00:00Z", 151.0),
+        bar_payload("2026-01-05T05:00:00Z", 150.0),
+        bar_payload("2026-01-06T05:00:00Z", 151.0),
     ]
     end = datetime(2026, 1, 6, 16, 0, tzinfo=MARKET_TZ)
     source = AlpacaBacktestData(START, end, client=data_client, trading_client=trading_client)
@@ -137,13 +136,15 @@ def test_a_daily_bar_dated_outside_the_known_calendar_raises_through_the_public_
 def test_bars_fetches_and_reindexes_via_the_injected_clients() -> None:
     trading_client = FakeTradingClient()
     trading_client.calendar_response = [
-        make_alpaca_calendar("2026-01-05"), make_alpaca_calendar("2026-01-06", close_at="13:00"),
+        make_alpaca_calendar("2026-01-05"),
+        make_alpaca_calendar("2026-01-06", close_at="13:00"),
     ]
     data_client = FakeStockHistoricalDataClient()
     # Daily bars, realistically timestamped at midnight *market time* (EST here:
     # UTC-5, so 05:00Z), not a fixed 00:00:00Z -- see market_data.py:146.
     data_client.bars["AAPL"] = [
-        bar_payload("2026-01-05T05:00:00Z", 150.0), bar_payload("2026-01-06T05:00:00Z", 151.0),
+        bar_payload("2026-01-05T05:00:00Z", 150.0),
+        bar_payload("2026-01-06T05:00:00Z", 151.0),
     ]
     source = AlpacaBacktestData(START, END, client=data_client, trading_client=trading_client)
 
@@ -433,9 +434,7 @@ def test_concurrent_fetches_are_serialized() -> None:
         data_client.bars[ticker.symbol] = [bar_payload("2026-01-05T05:00:00Z", 150.0)]
     source = AlpacaBacktestData(START, END, client=data_client, trading_client=trading_client)
 
-    threads = [
-        threading_module.Thread(target=source.bars, args=(t, END, 1, "day")) for t in tickers
-    ]
+    threads = [threading_module.Thread(target=source.bars, args=(t, END, 1, "day")) for t in tickers]
     for th in threads:
         th.start()
     for th in threads:

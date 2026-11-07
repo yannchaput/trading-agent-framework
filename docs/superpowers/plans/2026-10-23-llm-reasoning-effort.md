@@ -55,7 +55,10 @@ def test_from_env_reasoning_effort_is_optional() -> None:
     assert LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1"}).reasoning_effort is None
 
 
-@pytest.mark.parametrize(("value", "expected"), [("xhigh", ReasoningEffort.XHIGH), (" XHIGH ", ReasoningEffort.XHIGH), ("low", ReasoningEffort.LOW), ("Medium", ReasoningEffort.MEDIUM), ("high", ReasoningEffort.HIGH), ("", None), ("   ", None)])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [("xhigh", ReasoningEffort.XHIGH), (" XHIGH ", ReasoningEffort.XHIGH), ("low", ReasoningEffort.LOW), ("Medium", ReasoningEffort.MEDIUM), ("high", ReasoningEffort.HIGH), ("", None), ("   ", None)],
+)
 def test_from_env_reads_reasoning_effort(value: str, expected: ReasoningEffort | None) -> None:
     credentials = LLMCredentials.from_env({"LLM_BASE_URL": "http://localhost:8000/v1", "LLM_REASONING_EFFORT": value})
     assert credentials.reasoning_effort == expected

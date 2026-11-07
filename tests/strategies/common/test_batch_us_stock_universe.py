@@ -566,8 +566,14 @@ def _fake_raw(symbol: str) -> pd.DataFrame:
         volumes = [float(before if day < pd.Timestamp(_FEB_FIRST) else after) for day in index]
     return pd.DataFrame(
         {
-            "Open": price, "High": price, "Low": price, "Close": price, "Adj Close": price,
-            "Volume": volumes, "Dividends": 0.0, "Stock Splits": 0.0,
+            "Open": price,
+            "High": price,
+            "Low": price,
+            "Close": price,
+            "Adj Close": price,
+            "Volume": volumes,
+            "Dividends": 0.0,
+            "Stock Splits": 0.0,
         },
         index=index,
     )
@@ -618,16 +624,24 @@ def no_sleep(monkeypatch: pytest.MonkeyPatch) -> FakeClock:
 
 def _ensure(tmp_path: Path, start: date, end: date, download: _FakeDownload, **kwargs: object) -> UniverseHistory:
     options = {
-        "path": tmp_path / "history.json", "cache_dir": tmp_path / "cache", "today": lambda: _TODAY,
-        "download": download, "pool": lambda: batch.HistoryPool(_pool(), []),
+        "path": tmp_path / "history.json",
+        "cache_dir": tmp_path / "cache",
+        "today": lambda: _TODAY,
+        "download": download,
+        "pool": lambda: batch.HistoryPool(_pool(), []),
     }
     return batch.ensure_universe_history(start, end, **{**options, **kwargs})
 
 
 def _saved_history(months: dict[str, tuple[str, ...]], **overrides: object) -> UniverseHistory:
     fields = {
-        "built": date(2024, 3, 1), "pool_date": date(2024, 3, 1), "top_n": 1200, "min_price": 10.0,
-        "min_dollar_volume": 20_000_000.0, "lookback": 63, "months": months,
+        "built": date(2024, 3, 1),
+        "pool_date": date(2024, 3, 1),
+        "top_n": 1200,
+        "min_price": 10.0,
+        "min_dollar_volume": 20_000_000.0,
+        "lookback": 63,
+        "months": months,
     }
     return UniverseHistory(**{**fields, **overrides})
 

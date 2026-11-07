@@ -313,8 +313,7 @@ class NewsBinaryStrategy(Strategy):
         snapshot["sessions_in_regime"] = self.vars.sessions_in_regime
 
     def _backtest_iteration_is_due(self) -> bool:
-        """Set the interval of iterations for backtesting (not to trade every day)
-        """
+        """Set the interval of iterations for backtesting (not to trade every day)"""
         count = self.vars.iteration_count
         return count == 1 or count % self.strategy_parameters["backtest_every_n_iterations"] == 0
 

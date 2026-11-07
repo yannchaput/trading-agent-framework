@@ -63,4 +63,3 @@ def apply_verdicts(
             allowed.append(symbol)
     allowed.extend(symbol for symbol in pending if symbol not in allowed)
     return HysteresisOutcome(fail_counts=counts, forced_exits=forced_exits, pending=pending, allowed=allowed)
-

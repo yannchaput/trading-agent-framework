@@ -39,6 +39,7 @@ QUALITY_REJECTIONS = frozenset({"insufficient_history", "stale_filing", "operati
 
 class ScreenLike(Protocol):
     """The quality screen the pipeline uses, as a protocol so tests can fake it."""
+
     def run(self, symbols: Sequence[str], *, as_of: datetime, price_of: Callable[[str], Decimal | None], top_n: int | None = None, label: str = "screen") -> ScreenResult:
         """Screen `symbols` as of `as_of` and return the top `top_n`."""
         ...
@@ -46,6 +47,7 @@ class ScreenLike(Protocol):
 
 class AckmanPipeline(ReviewPipeline[ReviewState]):
     """Bill Ackman review pipeline: screen quality stocks, let the agents rank and vet them, then execute the portfolio."""
+
     def __init__(
         self,
         *,
@@ -155,9 +157,7 @@ class AckmanPipeline(ReviewPipeline[ReviewState]):
             required = required[: params.max_positions]
         elif len(required) == params.max_positions:
             blocked = [symbol for symbol in allowed if symbol not in required]
-            strategy.log_info(
-                f"[book] full: {len(required)} holdings to keep fill max_positions ({params.max_positions}); blocked newcomers: {', '.join(blocked) or 'none'}"
-            )
+            strategy.log_info(f"[book] full: {len(required)} holdings to keep fill max_positions ({params.max_positions}); blocked newcomers: {', '.join(blocked) or 'none'}")
 
         # 8. Trader.
         positions = self._trader(now, allowed, required, ranked, verdicts, researcher_reasons, outcome, weights, sheets)
@@ -280,9 +280,7 @@ class AckmanPipeline(ReviewPipeline[ReviewState]):
         positions: list[PortfolioPosition] = []
         if allowed:
             self._recorder.expect_portfolio(allowed, required=required)
-            strategy.log_info(
-                f"[trader] {len(allowed)} allowed: {', '.join(allowed)}; required: {', '.join(required) or 'none'}; forced exits: {', '.join(outcome.forced_exits) or 'none'}"
-            )
+            strategy.log_info(f"[trader] {len(allowed)} allowed: {', '.join(allowed)}; required: {', '.join(required) or 'none'}; forced exits: {', '.join(outcome.forced_exits) or 'none'}")
             context = {
                 "current_datetime": now.isoformat(),
                 "allowed": [

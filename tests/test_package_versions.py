@@ -32,10 +32,7 @@ def _is_the_version_assignment(node: ast.stmt) -> bool:
 
 
 def _imports_get_version(tree: ast.Module) -> bool:
-    return any(
-        isinstance(node, ast.ImportFrom) and any(alias.name == "get_version" and alias.asname is None for alias in node.names)
-        for node in ast.walk(tree)
-    )
+    return any(isinstance(node, ast.ImportFrom) and any(alias.name == "get_version" and alias.asname is None for alias in node.names) for node in ast.walk(tree))
 
 
 def test_every_package_directory_has_an_init_file() -> None:

@@ -514,14 +514,18 @@ def test_the_screens_total_debt_sources_stay_usd_only() -> None:
 def test_revenue_tagged_including_assessed_tax_is_read() -> None:
     # Hecla (HL) and Lumentum (LITE) tag revenue only as RevenueFromContractWithCustomerIncludingAssessedTax: without it
     # the income statement had operating income but no revenue, so no growth and no margin.
-    payload = {"facts": {"us-gaap": {
-        **_facts(
-            "RevenueFromContractWithCustomerIncludingAssessedTax",
-            _flow(1_423_019_000, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26"),
-            _flow(930_000_000, "2024-01-01", "2024-12-31", "2026-02-17", "10-K", "a26"),
-        ),
-        **_facts("OperatingIncomeLoss", _flow(514_795_000, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
-    }}}
+    payload = {
+        "facts": {
+            "us-gaap": {
+                **_facts(
+                    "RevenueFromContractWithCustomerIncludingAssessedTax",
+                    _flow(1_423_019_000, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26"),
+                    _flow(930_000_000, "2024-01-01", "2024-12-31", "2026-02-17", "10-K", "a26"),
+                ),
+                **_facts("OperatingIncomeLoss", _flow(514_795_000, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
+            }
+        }
+    }
 
     values = sec.income_statement(payload, as_of=datetime(2026, 3, 1, tzinfo=UTC))
 
@@ -531,10 +535,14 @@ def test_revenue_tagged_including_assessed_tax_is_read() -> None:
 
 def test_a_filer_tagging_revenue_both_ways_keeps_the_net_figure() -> None:
     # Within one filing and period, the tag order decides: the net-of-tax ASC 606 tag stays ahead of the gross one.
-    payload = {"facts": {"us-gaap": {
-        **_facts("RevenueFromContractWithCustomerExcludingAssessedTax", _flow(100, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
-        **_facts("RevenueFromContractWithCustomerIncludingAssessedTax", _flow(104, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
-    }}}
+    payload = {
+        "facts": {
+            "us-gaap": {
+                **_facts("RevenueFromContractWithCustomerExcludingAssessedTax", _flow(100, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
+                **_facts("RevenueFromContractWithCustomerIncludingAssessedTax", _flow(104, "2025-01-01", "2025-12-31", "2026-02-17", "10-K", "a26")),
+            }
+        }
+    }
 
     values = sec.income_statement(payload, as_of=datetime(2026, 3, 1, tzinfo=UTC))
 

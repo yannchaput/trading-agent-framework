@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 class AgentLike(Protocol):
     """The slice of an agent handle the pipeline uses."""
+
     def run(self, task_prompt: str, *, context: Mapping[str, Any] | None = None, run_id: str | None = None, force_tool: str | None = None, tool_budget: int | None = None) -> AgentRunResult:
         """Run the agent on `task_prompt` and return its output."""
         ...
@@ -53,6 +54,7 @@ class StageAbandoned(Exception):
 @dataclass(frozen=True, slots=True)
 class RunOutcome:
     """What a pipeline run did: whether it completed and its record."""
+
     completed: bool
     abandoned_streak: int  # abandoned runs in a row after this one (0 after a completed run)
 

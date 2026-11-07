@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _PendingOrder:
     """An accepted order waiting to fill, with the last bar time it was evaluated against."""
+
     order: Order
     asset: Asset
     last_evaluated: datetime

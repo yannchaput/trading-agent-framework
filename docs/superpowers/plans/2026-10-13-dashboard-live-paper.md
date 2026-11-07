@@ -489,11 +489,7 @@ def daily_account_pnl(
 
     held = {symbol: shares for symbol, (shares, _) in book.holdings().items()}
     broker = {p.symbol: p.qty for p in positions}
-    mismatches = [
-        (symbol, held.get(symbol, 0.0), broker.get(symbol, 0.0))
-        for symbol in sorted(held.keys() | broker.keys())
-        if abs(held.get(symbol, 0.0) - broker.get(symbol, 0.0)) > 1e-6
-    ]
+    mismatches = [(symbol, held.get(symbol, 0.0), broker.get(symbol, 0.0)) for symbol in sorted(held.keys() | broker.keys()) if abs(held.get(symbol, 0.0) - broker.get(symbol, 0.0)) > 1e-6]
     return AccountPnl(
         days=days,
         realized_total=round(sum(d["realized"] for d in days), 2),
@@ -1484,10 +1480,7 @@ def page_account(mode: str) -> None:
     _render_metrics(pnl)
     if pnl.days:
         st.plotly_chart(account_pnl_chart(pnl.days), width="stretch")
-        st.caption(
-            "Realized: the P&L of that day's sales, net of fees, against the average cost. "
-            "Unrealized (hatched): the open positions at that day's close; today, at the current price."
-        )
+        st.caption("Realized: the P&L of that day's sales, net of fees, against the average cost. Unrealized (hatched): the open positions at that day's close; today, at the current price.")
     else:
         st.info("No fill history in this account: only today's unrealized P&L is known.")
     problems = _problems(pnl)

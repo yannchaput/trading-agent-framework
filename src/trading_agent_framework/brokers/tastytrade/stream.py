@@ -25,6 +25,7 @@ MAX_BACKOFF = 30.0
 
 class StreamSocket(Protocol):
     """The slice of a websocket the account stream needs."""
+
     def send(self, message: str) -> None:
         """Send one text message."""
         ...
@@ -61,6 +62,7 @@ def _default_connect(url: str) -> StreamSocket:
 
 class TastytradeAccountStream:
     """Background thread that keeps a Tastytrade account-streamer websocket subscribed and forwards order messages."""
+
     def __init__(
         self,
         url: str,

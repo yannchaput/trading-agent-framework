@@ -117,22 +117,37 @@ PTR text, whitespace collapsed, is a run of rows like
 ```python
 @dataclass(frozen=True, slots=True)
 class FilingRef:
-    doc_id: str; member: str; kind: str; filed: date; year: int   # kind: "ptr" | "annual"
+    doc_id: str
+    member: str
+    kind: str
+    filed: date
+    year: int  # kind: "ptr" | "annual"
+
 
 @dataclass(frozen=True, slots=True)
 class Transaction:
-    doc_id: str; owner: str; ticker: str; asset_name: str; side: str     # owner: self|spouse|joint|dependent; side: buy|sell|sell_partial
-    transaction_date: date; notification_date: date
-    amount_low: Decimal; amount_high: Decimal; filed: date
+    doc_id: str
+    owner: str
+    ticker: str
+    asset_name: str
+    side: str  # owner: self|spouse|joint|dependent; side: buy|sell|sell_partial
+    transaction_date: date
+    notification_date: date
+    amount_low: Decimal
+    amount_high: Decimal
+    filed: date
+
 
 @dataclass(frozen=True, slots=True)
 class PtrParse:
-    transactions: list[Transaction]; skipped_non_stock: int
+    transactions: list[Transaction]
+    skipped_non_stock: int
+
 
 def normalize_name(name: str) -> str: ...
-def parse_index(xml_text: str) -> list[FilingRef]: ...                  # xml.etree.ElementTree; raises CongressDataError
+def parse_index(xml_text: str) -> list[FilingRef]: ...  # xml.etree.ElementTree; raises CongressDataError
 def filings_for(refs, politician: str) -> list[FilingRef]: ...
-def parse_ptr(text: str, ref: FilingRef) -> PtrParse | None: ...         # None = image-only
+def parse_ptr(text: str, ref: FilingRef) -> PtrParse | None: ...  # None = image-only
 ```
 
   Collapse whitespace, `finditer` one compiled stock-row pattern, count every `[XX]` tag and report
@@ -182,7 +197,13 @@ $1,000,001-$5,000,000 band; flagged `open_ended`).
 ```python
 @dataclass(frozen=True, slots=True)
 class Holding:
-    ticker: str; asset_name: str; value_low: Decimal; value_high: Decimal; tier: int; sources: tuple[str, ...]   # DocIDs
+    ticker: str
+    asset_name: str
+    value_low: Decimal
+    value_high: Decimal
+    tier: int
+    sources: tuple[str, ...]  # DocIDs
+
 
 def reconstruct(assets: Sequence[AssetHolding], transactions: Sequence[Transaction], *, period_end: date) -> list[Holding]: ...
 def baseline_weights(holdings: Sequence[Holding], *, max_total: Decimal, max_position: Decimal) -> dict[str, Decimal]: ...
@@ -221,12 +242,16 @@ def baseline_weights(holdings: Sequence[Holding], *, max_total: Decimal, max_pos
 ```python
 @dataclass(frozen=True, slots=True)
 class KnownFilings:
-    annual: AnnualParse; ptrs: list[PtrParse]; refs: list[FilingRef]     # refs: every known annual+PTR of the politician
-    unparsed_filings: int; skipped_non_stock: int
+    annual: AnnualParse
+    ptrs: list[PtrParse]
+    refs: list[FilingRef]  # refs: every known annual+PTR of the politician
+    unparsed_filings: int
+    skipped_non_stock: int
+
 
 class CongressSource:
     def __init__(self, client, politician: str) -> None: ...
-    def known(self, as_of: datetime) -> KnownFilings: ...                      # filed strictly before as_of's market date
+    def known(self, as_of: datetime) -> KnownFilings: ...  # filed strictly before as_of's market date
     def new_since(self, known: KnownFilings, processed: Collection[str]) -> list[FilingRef]: ...
 ```
 

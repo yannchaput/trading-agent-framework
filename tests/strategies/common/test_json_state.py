@@ -74,7 +74,7 @@ def test_decode_error_message_suffix(tmp_path: Path, caplog: pytest.LogCaptureFi
     path = tmp_path / "s.json"
     path.write_text('{"version": 2}')  # InvalidState with no text: no suffix
     path2 = tmp_path / "t.json"
-    path2.write_text('[1]')  # not a dict
+    path2.write_text("[1]")  # not a dict
     store = JsonStateStore(path, version=2, empty=Box, decode=lambda raw: Box(n=raw["missing"]), encode=lambda s: {}, log=log)
     with caplog.at_level(logging.WARNING):
         assert store.load() == Box()

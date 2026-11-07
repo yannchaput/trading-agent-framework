@@ -26,6 +26,7 @@ _SESSIONS_PER_REVIEW = 5  # one review a week
 @dataclass(frozen=True, slots=True)
 class ForwardReturn:
     """One reviewed stock's forward return and its agent calls."""
+
     review: date
     symbol: str
     horizon: int  # sessions
@@ -36,6 +37,7 @@ class ForwardReturn:
 @dataclass(frozen=True, slots=True)
 class Returns:
     """Forward returns for every reviewed stock in a run."""
+
     rows: list[ForwardReturn]
     dropped: int  # candidate x horizon pairs with no entry or no exit open (no data, or a review before the calendar starts)
     immature: int = 0  # candidate x horizon pairs whose exit is past the last session: not yet knowable, not a data problem
@@ -98,6 +100,7 @@ def forward_returns(
 @dataclass(frozen=True, slots=True)
 class GroupStats:
     """Count and mean return statistics of one group of calls."""
+
     n: int
     mean_excess: float | None  # None when n == 0
     hit_rate: float | None  # share with a positive excess return
@@ -109,6 +112,7 @@ EMPTY_GROUP = GroupStats(0, None, None)
 @dataclass(frozen=True, slots=True)
 class Spread:
     """Difference in mean excess return between a better and a worse group."""
+
     mean: float | None  # mean across reviews of (better group's mean excess - worse group's); None without a review
     t: float | None  # across reviews; None under 2 reviews or with zero variance
     reviews: int  # reviews with both groups
@@ -118,6 +122,7 @@ class Spread:
 @dataclass(frozen=True, slots=True)
 class HorizonScore:
     """Group statistics and spread of an agent's calls at one forward horizon."""
+
     groups: dict[str, GroupStats]  # in display order
     spread: Spread
     concerns: dict[str, GroupStats] = field(default_factory=dict)  # the bear's, by concern; empty for the others
@@ -126,6 +131,7 @@ class HorizonScore:
 @dataclass(frozen=True, slots=True)
 class AgentScore:
     """How well one agent's calls ranked forward returns, per horizon."""
+
     agent: str  # "bull", "bear", "judge", "strength" or "strength_standard"
     spread_label: str  # e.g. "high - low"
     by_horizon: dict[int, HorizonScore]
@@ -134,6 +140,7 @@ class AgentScore:
 @dataclass(frozen=True, slots=True)
 class RunScores:
     """Scores of every agent for one run."""
+
     agents: list[AgentScore]  # bull, bear, judge, strength, strength_standard
     dropped: int  # from `Returns.dropped`: candidate x horizon pairs left out for want of prices
     immature: int = 0  # from `Returns.immature`: pairs whose exit is past the end of the data

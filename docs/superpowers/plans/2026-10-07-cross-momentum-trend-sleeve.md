@@ -596,7 +596,7 @@ def _run(args: argparse.Namespace) -> int:
         print(f"[{args.label}] {DAY_NAMES[day]}: running", flush=True)
         command = [sys.executable, __file__, "one", "--day", str(day), "--slippage", str(args.slippage)]
         completed = subprocess.run(command, capture_output=True, text=True)
-        run_dirs = [line[len(RUN_DIR_PREFIX):] for line in completed.stdout.splitlines() if line.startswith(RUN_DIR_PREFIX)]
+        run_dirs = [line[len(RUN_DIR_PREFIX) :] for line in completed.stdout.splitlines() if line.startswith(RUN_DIR_PREFIX)]
         if completed.returncode != 0 or not run_dirs:
             sys.stderr.write(completed.stderr[-4000:])
             sys.exit(f"[{args.label}] {DAY_NAMES[day]}: the backtest failed (exit {completed.returncode}); the days before it are saved in {path}")
@@ -960,39 +960,40 @@ RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below t
 Replace `FakeStrategy.__init__` and add the bar methods (keep every other method):
 
 ```python
-    def __init__(
-        self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=(), trend_assets=(), bars=None
-    ):
-        self.parameters = {
-            "sell_rank_threshold": 35,
-            "cash_buffer_pct": cash_buffer_pct,
-            "parking": {"symbol": "SHV", "trend_assets": tuple(trend_assets), "trend_sma_window": 3, "min_trade_pct": min_trade_pct},
-        }
-        self._cash = cash
-        self._positions = list(positions)
-        self._last_prices = last_prices or {}
-        self._reject = set(reject)
-        self._price_errors = set(price_errors)
-        self._bars = bars or {}
-        self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
-        self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
-        self.bar_requests = []
-        self.orders = []
-        self.warnings: list[str] = []
-        self.infos: list[str] = []
+def __init__(self, *, cash, positions=(), last_prices=None, cash_buffer_pct=0.05, min_trade_pct=0.01, reject=(), price_errors=(), trend_assets=(), bars=None):
+    self.parameters = {
+        "sell_rank_threshold": 35,
+        "cash_buffer_pct": cash_buffer_pct,
+        "parking": {"symbol": "SHV", "trend_assets": tuple(trend_assets), "trend_sma_window": 3, "min_trade_pct": min_trade_pct},
+    }
+    self._cash = cash
+    self._positions = list(positions)
+    self._last_prices = last_prices or {}
+    self._reject = set(reject)
+    self._price_errors = set(price_errors)
+    self._bars = bars or {}
+    self.portfolio_value = cash + sum(p.quantity * self._last_prices[p.asset.symbol] for p in self._positions)
+    self.vars = SimpleNamespace(alpaca_rate_limiter=SimpleNamespace(wait=lambda: None))
+    self.bar_requests = []
+    self.orders = []
+    self.warnings: list[str] = []
+    self.infos: list[str] = []
 
-    def get_historical_prices(self, symbol, length, timestep):
-        self.bar_requests.append((symbol, length, timestep))
-        bars = self._bars.get(symbol)
-        if isinstance(bars, Exception):
-            raise bars
-        return bars
 
-    def _market_date(self):
-        return TODAY
+def get_historical_prices(self, symbol, length, timestep):
+    self.bar_requests.append((symbol, length, timestep))
+    bars = self._bars.get(symbol)
+    if isinstance(bars, Exception):
+        raise bars
+    return bars
 
-    _sleeve_weights = CrossMomentumStrategy._sleeve_weights
-    _trend_closes = CrossMomentumStrategy._trend_closes
+
+def _market_date(self):
+    return TODAY
+
+
+_sleeve_weights = CrossMomentumStrategy._sleeve_weights
+_trend_closes = CrossMomentumStrategy._trend_closes
 ```
 
 Add after `_orders`:
@@ -1169,41 +1170,42 @@ Expected: collection error, `AttributeError: type object 'CrossMomentumStrategy'
 4e. Add after `_price_or_zero`:
 
 ```python
-    def _trend_closes(self, symbol: str) -> list[float] | None:
-        """A trend asset's completed daily closes, oldest first, or None (logged) when its bars are unavailable."""
-        fallback = self.parameters["parking"]["symbol"]
-        self.vars.alpaca_rate_limiter.wait()
-        try:
-            bars = self.get_historical_prices(symbol, length=_HISTORY_BARS + 1, timestep="day")
-        except BrokerError as exc:
-            self.log_warning(f"Sleeve: no bars for {symbol} ({exc}): its share goes to {fallback}")
-            return None
-        if bars is None or bars.empty:
-            self.log_warning(f"Sleeve: no bars for {symbol}: its share goes to {fallback}")
-            return None
-        # Completed sessions only, like the stocks: a bar dated today is partial while the session is open
-        return completed_bars(bars.pandas_df, self._market_date()).tail(_HISTORY_BARS)["close"].tolist()
+def _trend_closes(self, symbol: str) -> list[float] | None:
+    """A trend asset's completed daily closes, oldest first, or None (logged) when its bars are unavailable."""
+    fallback = self.parameters["parking"]["symbol"]
+    self.vars.alpaca_rate_limiter.wait()
+    try:
+        bars = self.get_historical_prices(symbol, length=_HISTORY_BARS + 1, timestep="day")
+    except BrokerError as exc:
+        self.log_warning(f"Sleeve: no bars for {symbol} ({exc}): its share goes to {fallback}")
+        return None
+    if bars is None or bars.empty:
+        self.log_warning(f"Sleeve: no bars for {symbol}: its share goes to {fallback}")
+        return None
+    # Completed sessions only, like the stocks: a bar dated today is partial while the session is open
+    return completed_bars(bars.pandas_df, self._market_date()).tail(_HISTORY_BARS)["close"].tolist()
 
-    def _sleeve_weights(self) -> dict[str, float]:
-        """This week's share of the parking sleeve per symbol (SHV first, then the trend assets), logged."""
-        parking = self.parameters["parking"]
-        window = parking["trend_sma_window"]
-        trend_assets = tuple(parking["trend_assets"])
-        closes_by_asset = {symbol: closes for symbol in trend_assets if (closes := self._trend_closes(symbol)) is not None}
-        weights = sleeve_weights(closes_by_asset, trend_assets, window, parking["symbol"])
 
-        readings = []
-        for symbol in trend_assets:
-            reading = trend_reading(closes_by_asset.get(symbol, []), window)
-            if reading is None:
-                readings.append(f"{symbol} off (no data)")
-            elif weights[symbol] > 0:
-                readings.append(f"{symbol} on (close {reading[0]:.2f} > SMA{window} {reading[1]:.2f})")
-            else:
-                readings.append(f"{symbol} off (close {reading[0]:.2f} <= SMA{window} {reading[1]:.2f})")
-        allocation = " / ".join(f"{symbol} {weight:.0%}" for symbol, weight in weights.items())
-        self.log_info(f"Sleeve: {', '.join(readings) + ' -> ' if readings else ''}{allocation}")
-        return weights
+def _sleeve_weights(self) -> dict[str, float]:
+    """This week's share of the parking sleeve per symbol (SHV first, then the trend assets), logged."""
+    parking = self.parameters["parking"]
+    window = parking["trend_sma_window"]
+    trend_assets = tuple(parking["trend_assets"])
+    closes_by_asset = {symbol: closes for symbol in trend_assets if (closes := self._trend_closes(symbol)) is not None}
+    weights = sleeve_weights(closes_by_asset, trend_assets, window, parking["symbol"])
+
+    readings = []
+    for symbol in trend_assets:
+        reading = trend_reading(closes_by_asset.get(symbol, []), window)
+        if reading is None:
+            readings.append(f"{symbol} off (no data)")
+        elif weights[symbol] > 0:
+            readings.append(f"{symbol} on (close {reading[0]:.2f} > SMA{window} {reading[1]:.2f})")
+        else:
+            readings.append(f"{symbol} off (close {reading[0]:.2f} <= SMA{window} {reading[1]:.2f})")
+    allocation = " / ".join(f"{symbol} {weight:.0%}" for symbol, weight in weights.items())
+    self.log_info(f"Sleeve: {', '.join(readings) + ' -> ' if readings else ''}{allocation}")
+    return weights
 ```
 
 4f. In `rebalance`:

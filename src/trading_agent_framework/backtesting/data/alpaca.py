@@ -156,11 +156,7 @@ class AlpacaBacktestData(BacktestDataSource):
         only when the requested range isn't already covered, so the common case (every
         query within `[self._start, self._end]`) still costs exactly one calendar call.
         """
-        if (
-            self._sessions_cache is None
-            or start < self._calendar_start
-            or end > self._calendar_end
-        ):
+        if self._sessions_cache is None or start < self._calendar_start or end > self._calendar_end:
             fetch_start = min(start, self._calendar_start)
             fetch_end = max(end, self._calendar_end)
             request = account.build_calendar_request(fetch_start.date(), fetch_end.date())
@@ -181,10 +177,7 @@ class AlpacaBacktestData(BacktestDataSource):
             self._calendar_start, self._calendar_end = fetch_start, fetch_end
         first_date = start.astimezone(market_data.MARKET_TZ).date()
         last_date = end.astimezone(market_data.MARKET_TZ).date()
-        return [
-            s for s in self._sessions_cache
-            if first_date <= s.open.astimezone(market_data.MARKET_TZ).date() <= last_date
-        ]
+        return [s for s in self._sessions_cache if first_date <= s.open.astimezone(market_data.MARKET_TZ).date() <= last_date]
 
     def _fetch(self, asset: Asset, timestep: str, start: datetime, end: datetime) -> pd.DataFrame | None:
         self._fetch_many([asset], timestep, start, end)
@@ -207,10 +200,7 @@ class AlpacaBacktestData(BacktestDataSource):
                     barset = self._real_client().get_stock_bars(request)
                 parsed.update(market_data.parse_bars(barset, chunk, timestep, FULL_HISTORY))
             except Exception as exc:
-                raise BacktestDataError(
-                    f"failed to fetch Alpaca bars for {len(chunk)} ticker(s) "
-                    f"(starting {chunk[0].symbol!r}): {exc}"
-                ) from exc
+                raise BacktestDataError(f"failed to fetch Alpaca bars for {len(chunk)} ticker(s) (starting {chunk[0].symbol!r}): {exc}") from exc
         # Calendar failures here surface as BacktestDataError from sessions() itself
         # (message already mentions "calendar"), and a daily bar with no matching
         # session surfaces as BacktestDataError from reindex_to_bar_close itself
@@ -219,11 +209,7 @@ class AlpacaBacktestData(BacktestDataSource):
         sessions = self.sessions(start, end)
         for asset in assets:
             source_bars = parsed.get(asset)
-            self._frames[(asset, timestep)] = (
-                pd.DataFrame()
-                if source_bars is None
-                else reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)
-            )
+            self._frames[(asset, timestep)] = pd.DataFrame() if source_bars is None else reindex_to_bar_close(source_bars.df, timestep, sessions, symbol=asset.symbol)
 
     def _real_client(self) -> market_data.AlpacaStockDataClient:
         if self._client is None:

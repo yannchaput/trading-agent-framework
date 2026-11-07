@@ -45,6 +45,7 @@ def _to_decimal(value: int | float | str | Decimal | None) -> Decimal | None:
 @dataclass(frozen=True, slots=True)
 class Transaction:
     """One fill of an order: quantity, price and time."""
+
     quantity: Decimal
     price: Decimal
     timestamp: datetime

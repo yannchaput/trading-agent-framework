@@ -34,9 +34,7 @@ _FIGURES = (
     "fundamentals_stale means the latest figures are old; fundamentals_unavailable (with its reason) means there are none."
 )
 
-_SOURCES_RULE = (
-    "Sources can be wrong or stale: do not repeat a figure from a news item as fact when the fact sheet or a filing says otherwise."
-)
+_SOURCES_RULE = "Sources can be wrong or stale: do not repeat a figure from a news item as fact when the fact sheet or a filing says otherwise."
 
 _FACT_SHEET = f"{_FIGURES} {_SOURCES_RULE}"
 
@@ -54,12 +52,7 @@ def researcher_system(news: bool) -> str:
         "guidance, share issuance, going-concern doubts, covenant breaches, restatements, impairments) and what the "
         "latest filings show"
     )
-    search_rule = (
-        "In every search_news call pass this stock's ticker in symbols (the symbol on the fact sheet): never leave it empty "
-        "and never use the company name. "
-        if news
-        else ""
-    )
+    search_rule = "In every search_news call pass this stock's ticker in symbols (the symbol on the fact sheet): never leave it empty and never use the company name. " if news else ""
     return (
         "You are the researcher of a long-only stock portfolio that buys strong momentum stocks. You receive one stock at a "
         "time and gather the facts a bull and a bear will argue from. Do not trade and do not give an opinion.\n\n"

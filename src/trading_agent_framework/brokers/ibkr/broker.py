@@ -70,6 +70,7 @@ async def _place_and_wait(ib: Any, contract: Contract, ib_order: Any, timeout: f
 
 class IbkrBroker(Broker):
     """Broker implementation for Interactive Brokers through an IB Gateway connection."""
+
     name: ClassVar[str] = "ibkr"
 
     def __init__(

@@ -537,9 +537,7 @@ def test_load_parameters_has_no_temperature_row_when_settings_predate_it(tmp_pat
 
 def test_load_parameters_shows_the_agents_reasoning_effort_under_its_temperature(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
-    report.write_settings(
-        run_dir, _settings_payload(agents={"trader": {**_TRADER, "temperature": 0.3, "reasoning_effort": "xhigh"}})
-    )
+    report.write_settings(run_dir, _settings_payload(agents={"trader": {**_TRADER, "temperature": 0.3, "reasoning_effort": "xhigh"}}))
 
     rows = load_parameters(_ref(run_dir))
 

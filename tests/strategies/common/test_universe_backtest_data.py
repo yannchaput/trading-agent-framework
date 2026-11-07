@@ -189,14 +189,28 @@ def test_a_download_that_fails_every_attempt_raises() -> None:
 
 def test_universe_parameters_record_the_history_and_the_pool_counts() -> None:
     history = UniverseHistory(
-        built=date(2026, 11, 3), pool_date=date(2026, 10, 30), top_n=1200, min_price=10.0, min_dollar_volume=20e6, lookback=63,
-        months={"2024-02": ("A",)}, pool_size=5400, unanswered=("U1", "U2"), bars_absent=("B1",),
+        built=date(2026, 11, 3),
+        pool_date=date(2026, 10, 30),
+        top_n=1200,
+        min_price=10.0,
+        min_dollar_volume=20e6,
+        lookback=63,
+        months={"2024-02": ("A",)},
+        pool_size=5400,
+        unanswered=("U1", "U2"),
+        bars_absent=("B1",),
     )
 
     parameters = universe_parameters(history)
 
     assert parameters == {
-        "mode": "point_in_time", "history_built": "2026-11-03", "pool_date": "2026-10-30", "top_n": 1200,
-        "pool_size": 5400, "unanswered_count": 2, "bars_absent_count": 1, "preload_missing": 0,
+        "mode": "point_in_time",
+        "history_built": "2026-11-03",
+        "pool_date": "2026-10-30",
+        "top_n": 1200,
+        "pool_size": 5400,
+        "unanswered_count": 2,
+        "bars_absent_count": 1,
+        "preload_missing": 0,
     }
     json.dumps(parameters)

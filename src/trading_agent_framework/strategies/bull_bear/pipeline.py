@@ -46,6 +46,7 @@ if TYPE_CHECKING:
 
 class AgentLike(CommonAgentLike, Protocol):
     """The slice of an agent handle bull_bear uses."""
+
     def run(
         self,
         task_prompt: str,
@@ -82,6 +83,7 @@ class _Pending:
 
 class BullBearPipeline(ReviewPipeline[BullBearState]):
     """Bull/bear pipeline: debate the candidates, let the judge rank them and execute the resulting portfolio."""
+
     LOG_PREFIX: ClassVar[str] = "[bull_bear] "
     _agents: AgentLookup  # the narrower lookup: its agents also take `max_steps`
 

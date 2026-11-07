@@ -29,6 +29,7 @@ _TRADE_CODES = frozenset({"P", "S"})
 @dataclass(frozen=True, slots=True)
 class Owner:
     """A reporting owner on a Form 4 and the relationship they declare to the issuer."""
+
     cik: str
     name: str
     is_director: bool
@@ -58,6 +59,7 @@ class Owner:
 @dataclass(frozen=True, slots=True)
 class Form4Trade:
     """One non-derivative transaction row of a Form 4."""
+
     accession: str
     filed: date
     ticker: str
@@ -87,6 +89,7 @@ class Form4Trade:
 @dataclass(frozen=True, slots=True)
 class Form4Filing:
     """A parsed Form 4: the issuer, its owners and the transactions."""
+
     accession: str
     filed: date
     ticker: str

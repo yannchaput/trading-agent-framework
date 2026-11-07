@@ -23,6 +23,7 @@ from trading_agent_framework.utils.errors import FundamentalsError
 @dataclass(frozen=True, slots=True)
 class LoadReport:
     """Counts describing what one event load fetched."""
+
     loaded: int
     failed: dict[str, str] = field(default_factory=dict)  # symbol -> error message
 
@@ -34,6 +35,7 @@ class LoadReport:
 
 class EventProvider(Protocol):
     """Source of earnings events, as a protocol so tests can fake it."""
+
     def needs_load(self) -> bool:
         """Whether events must be loaded before use."""
         ...
@@ -53,6 +55,7 @@ class EventProvider(Protocol):
 
 class EventSource:
     """Earnings events read from SEC EDGAR filings."""
+
     def __init__(self, client: SecEdgarClient, *, reload_every_cycle: bool) -> None:
         """Create the source; `reload_every_cycle` forces a fresh load on each cycle (backtests need it)."""
         self._client = client

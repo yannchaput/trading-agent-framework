@@ -92,9 +92,13 @@ def test_footnotes_referenced_by_a_row_travel_with_the_trade():
 
 
 def test_a_footnote_referenced_twice_by_a_row_is_kept_once():
-    xml = (FIXTURES / "sale_ceo.xml").read_text().replace(
-        "<transactionShares><value>100</value></transactionShares>",
-        '<transactionShares><value>100</value><footnoteId id="F1"/></transactionShares>',
+    xml = (
+        (FIXTURES / "sale_ceo.xml")
+        .read_text()
+        .replace(
+            "<transactionShares><value>100</value></transactionShares>",
+            '<transactionShares><value>100</value><footnoteId id="F1"/></transactionShares>',
+        )
     )
     (t,) = parse_form4(xml, accession="x", filed=FILED, ticker="AAPL").trades
     assert len(t.footnotes) == 1

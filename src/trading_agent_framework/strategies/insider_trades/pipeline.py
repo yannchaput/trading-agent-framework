@@ -78,6 +78,7 @@ class _Stock:
 
 class InsiderPipeline(ReviewPipeline[InsiderState]):
     """Insider-trades review pipeline: refresh filings, pick the changed stocks, let the agent review them and execute the trades."""
+
     LOG_PREFIX: ClassVar[str] = "[insider_trades] "
     WHAT: ClassVar[str] = "run"
     RECORD_FLAG: ClassVar[tuple[str, Any, Any]] = ("outcome", None, "abandoned")
@@ -289,7 +290,7 @@ class InsiderPipeline(ReviewPipeline[InsiderState]):
         if not audit.complete:
             strategy.log_info(f"[trader] unfinished trade kept; it will be checked again on later days (up to {self._params.max_trade_retries}): {_unfinished(audit)}")
 
-        kept ={ticker: state.in_window[ticker] for ticker in failed if ticker in state.in_window}
+        kept = {ticker: state.in_window[ticker] for ticker in failed if ticker in state.in_window}
         self._state.save(
             InsiderState(
                 processed=sorted(set(state.processed).union(*current.values())),

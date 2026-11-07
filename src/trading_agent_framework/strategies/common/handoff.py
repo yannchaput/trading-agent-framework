@@ -23,6 +23,7 @@ class HandoffError(ValueError):
 @dataclass(frozen=True, slots=True)
 class OrderReport:
     """One order as reported back to the agent."""
+
     order_id: str
     reason: str | None
 

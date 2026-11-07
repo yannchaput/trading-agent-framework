@@ -58,9 +58,11 @@ class AlpacaStockDataClient(Protocol):
     def get_stock_bars(self, request_params: StockBarsRequest) -> BarSet:
         """Fetch stock bars for the request."""
         ...
+
     def get_stock_latest_trade(self, request_params: StockLatestTradeRequest) -> dict[str, AlpacaTrade]:
         """Fetch the latest trade per symbol."""
         ...
+
     def get_stock_latest_quote(self, request_params: StockLatestQuoteRequest) -> dict[str, AlpacaQuote]:
         """Fetch the latest quote per symbol."""
         ...

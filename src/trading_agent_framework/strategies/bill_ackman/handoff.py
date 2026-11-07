@@ -35,6 +35,7 @@ RANKING, VERDICTS_STAGE, PORTFOLIO = "ranking", "verdicts", "portfolio"
 @dataclass(frozen=True, slots=True)
 class Idea:
     """A ranked investment idea: a stock and the agent's reasoning for it."""
+
     symbol: str
     reason: str
 
@@ -42,6 +43,7 @@ class Idea:
 @dataclass(frozen=True, slots=True)
 class Verdict:
     """The quality verdict on one stock (fail or survive), with the concern for a short seller's fail."""
+
     symbol: str
     verdict: str
     reason: str
@@ -52,6 +54,7 @@ class Verdict:
 @dataclass(frozen=True, slots=True)
 class PortfolioPosition:
     """One position of the proposed portfolio: a stock and its weight."""
+
     symbol: str
     weight: float
     reason: str

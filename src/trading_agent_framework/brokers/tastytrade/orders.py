@@ -242,6 +242,7 @@ def is_still_arriving(data: Mapping[str, Any]) -> bool:
 @dataclass(frozen=True, slots=True)
 class Fill:
     """One fill of a Tastytrade order."""
+
     fill_id: str
     quantity: Decimal
     price: Decimal
