@@ -74,7 +74,7 @@ convention = "google" # Options: "google", "numpy", or "pep257"
 
 [tool.interrogate]
 paths = ["src"]
-exclude = ["scripts", "tests"]
+exclude = ["scripts", "tests", ".claude"]
 fail-under = 80
 
 [tool.pyright]
