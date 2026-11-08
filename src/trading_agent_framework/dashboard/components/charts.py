@@ -33,18 +33,48 @@ REGIME_AXIS_LABELS = {1: "Bullish", 0: "Neutral", -1: "Bearish"}
 REGIME_BAND_COLORS = {1: "#16a34a", 0: "#6b7280", -1: "#dc2626"}
 _REGIME_LINE_COLOR = "#d1d4dc"
 _REGIME_BAND_OPACITY = {1: 0.10, 2: 0.30}  # by row: faint behind the portfolio, stronger on the regime row
+_BENCHMARK_COLOR = "#f59e0b"  # the benchmark's dashed line on the equity and drawdown charts
+
+
+def benchmark_equity(cumulative: dict[str, Any] | None, budget: float) -> dict[str, Any] | None:
+    """The benchmark's equity curve had `budget` been invested in it on the run's first day.
+
+    Args:
+        cumulative: :func:`reader.load_cumulative_returns` output; its ``benchmark`` is the fractional cumulative return.
+        budget: Starting capital in dollars.
+
+    Returns:
+        ``{"label", "dates", "values"}`` (values in dollars), or None when the run recorded no benchmark.
+    """
+    if not cumulative or cumulative.get("benchmark") is None:
+        return None
+    return {
+        "label": cumulative.get("benchmark_symbol", "Benchmark"),
+        "dates": list(cumulative["dates"]),
+        "values": [budget * (1 + r) for r in cumulative["benchmark"]],
+    }
 
 
 def equity_curve_chart(
     equity: list[dict[str, Any]],
     breakdown: dict[str, Any] | None = None,
     title: str = "Equity Curve",
+    indicators: dict[str, list[dict[str, Any]]] | None = None,
+    benchmark: dict[str, Any] | None = None,
 ) -> go.Figure:
     """Build a cumulative equity curve chart.
 
     When *breakdown* is provided (from load_portfolio_breakdown), all data —
     portfolio value, cash, and assets — is sourced from equity.parquet for
     consistency.  Falls back to the indicator-based *equity* list otherwise.
+
+    Args:
+        equity: ``{"date", "value"}`` rows, used when there is no *breakdown*.
+        breakdown: Output of load_portfolio_breakdown.
+        title: Chart title.
+        indicators: Optional :func:`load_indicator_lines` output; as in :func:`trades_chart` only the ``"Regime"``
+            series is drawn, in its own row under the curve with one colored band per run.
+        benchmark: Optional :func:`benchmark_equity` output, drawn as a dashed line on the same budget.
     """
     has_breakdown = bool(breakdown and breakdown.get("dates") and breakdown.get("portfolio_value"))
 
@@ -54,7 +84,7 @@ def equity_curve_chart(
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
 
-    fig = go.Figure()
+    fig, regime, top = _figure_with_regime_row(indicators)
 
     if has_breakdown:
         breakdown = cast(dict[str, Any], breakdown)
@@ -70,7 +100,8 @@ def equity_curve_chart(
                     name="Cash",
                     line=dict(color="#ef4444", width=1.5),
                     hovertemplate="$%{y:,.0f}<extra>Cash</extra>",
-                )
+                ),
+                **top,
             )
 
         # Assets line (green)
@@ -83,7 +114,8 @@ def equity_curve_chart(
                     name="Assets",
                     line=dict(color="#16a34a", width=1.5),
                     hovertemplate="$%{y:,.0f}<extra>Assets</extra>",
-                )
+                ),
+                **top,
             )
 
         # Portfolio value line (sourced from equity.parquet, filled to zero)
@@ -97,7 +129,8 @@ def equity_curve_chart(
                 fill="tozeroy",
                 fillcolor="rgba(8, 145, 178, 0.1)",
                 hovertemplate="$%{y:,.0f}<extra>Portfolio Value</extra>",
-            )
+            ),
+            **top,
         )
     else:
         # Fallback: load_equity_curve's own {"date", "value"} rows
@@ -114,23 +147,54 @@ def equity_curve_chart(
                     fill="tozeroy",
                     fillcolor="rgba(8, 145, 178, 0.1)",
                     hovertemplate="$%{y:,.0f}<extra>Portfolio Value</extra>",
-                )
+                ),
+                **top,
             )
+
+    if benchmark is not None:
+        label = benchmark["label"]
+        fig.add_trace(
+            go.Scatter(
+                x=pd.to_datetime(benchmark["dates"]),
+                y=benchmark["values"],
+                mode="lines",
+                name=label,
+                line=dict(color=_BENCHMARK_COLOR, width=1.5, dash="dash"),
+                hovertemplate=f"$%{{y:,.0f}}<extra>{label}</extra>",
+            ),
+            **top,
+        )
+
+    if regime is not None:
+        curve_ends = [pd.Timestamp(cast(Any, trace).x[-1]) for trace in fig.data]
+        _add_regime_row(fig, regime, max(pd.Timestamp(regime["times"][-1]), *curve_ends))
 
     fig.update_layout(
         title=title,
-        xaxis_title="Date",
-        yaxis_title="Portfolio Value ($)",
         template=CHART_TEMPLATE,
         hovermode="x unified",
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
+    _label_date_axis(fig, regime)
+    fig.update_yaxes(title_text="Portfolio Value ($)", **top)
     return fig
 
 
-def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.Figure:
-    """Build a drawdown chart from equity curve data."""
+def _drawdown_pct(values: Any) -> Any:
+    """Percent below the running peak of `values` (0 at a new high, negative under it)."""
+    running_max = np.maximum.accumulate(values)
+    return (values - running_max) / running_max * 100
+
+
+def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchmark: dict[str, Any] | None = None) -> go.Figure:
+    """Build a drawdown chart from equity curve data.
+
+    Args:
+        equity: ``{"date", "value"}`` rows.
+        title: Chart title.
+        benchmark: Optional :func:`benchmark_equity` output; its own drawdown is overlaid as a dashed line.
+    """
     if not equity:
         fig = go.Figure()
         fig.add_annotation(text="No data available", showarrow=False)
@@ -143,8 +207,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
         return go.Figure()
 
     values = cast(Any, df["value"].values)
-    running_max = np.maximum.accumulate(values)
-    drawdown = (values - running_max) / running_max * 100
+    drawdown = _drawdown_pct(values)
 
     x_vals = df["date"] if "date" in df.columns else list(range(len(drawdown)))
     fig = go.Figure()
@@ -159,6 +222,16 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown") -> go.
             fillcolor="rgba(231, 76, 60, 0.15)",
         )
     )
+    if benchmark is not None:
+        fig.add_trace(
+            go.Scatter(
+                x=benchmark["dates"],
+                y=_drawdown_pct(np.asarray(benchmark["values"], dtype=float)),
+                mode="lines",
+                name=f"{benchmark['label']} Drawdown %",
+                line=dict(color=_BENCHMARK_COLOR, width=1.5, dash="dash"),
+            )
+        )
     fig.update_layout(
         title=title,
         xaxis_title="Date",
@@ -443,15 +516,7 @@ def cumulative_returns_chart(
     strategy_pct = [v * 100 for v in data["strategy"]]
     benchmark = data.get("benchmark")
 
-    regime = _find_regime(indicators)
-    if regime is not None:
-        # The dates are naive session days; the regime times are tz-aware instants, which would not line up with them.
-        regime = {**regime, "times": list(pd.to_datetime(regime["times"], utc=True).tz_localize(None))}
-        fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.85, 0.15])
-    else:
-        fig = go.Figure()
-    # `row=None` addresses a plain figure; with the regime row the curves go to the first one.
-    top = dict(row=1, col=1) if regime is not None else {}
+    fig, regime, top = _figure_with_regime_row(indicators)
 
     fig.add_trace(
         go.Scatter(
@@ -493,9 +558,7 @@ def cumulative_returns_chart(
         margin=dict(l=40, r=20, t=40, b=40),
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
-    if regime is not None:
-        fig.update_layout(height=450 + 140)
-    fig.update_xaxes(title_text="Date", row=2 if regime is not None else None, col=1 if regime is not None else None)
+    _label_date_axis(fig, regime)
     fig.update_yaxes(title_text="Cumulative Return (%)", tickformat=".1f", **top)
     return fig
 
@@ -644,6 +707,28 @@ def rolling_sharpe_chart(
         y_label="Sharpe Ratio",
         benchmark_label=benchmark_label,
     )
+
+
+def _figure_with_regime_row(indicators: dict[str, list[dict[str, Any]]] | None) -> tuple[go.Figure, dict[str, Any] | None, dict[str, int]]:
+    """An empty figure, the regime series to draw (naive times) and the row/col kwargs that address the curves' pane.
+
+    With a regime the figure has two rows (curves above, regime below, shared x axis) and the kwargs are
+    ``row=1, col=1``; without one it is a plain figure and the kwargs are empty (`row=None` addresses it as is).
+    """
+    regime = _find_regime(indicators)
+    if regime is None:
+        return go.Figure(), None, {}
+    # The dates are naive session days; the regime times are tz-aware instants, which would not line up with them.
+    regime = {**regime, "times": list(pd.to_datetime(regime["times"], utc=True).tz_localize(None))}
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.05, row_heights=[0.85, 0.15])
+    return fig, regime, dict(row=1, col=1)
+
+
+def _label_date_axis(fig: go.Figure, regime: dict[str, Any] | None) -> None:
+    """Title the bottom x axis "Date" and make room for the regime row when there is one."""
+    if regime is not None:
+        fig.update_layout(height=450 + 140)
+    fig.update_xaxes(title_text="Date", row=2 if regime is not None else None, col=1 if regime is not None else None)
 
 
 def _regime_runs(times: Sequence[Any], values: Sequence[float], end: Any) -> list[tuple[Any, Any, int]]:

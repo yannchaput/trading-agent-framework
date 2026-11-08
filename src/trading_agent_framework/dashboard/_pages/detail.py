@@ -5,6 +5,7 @@ import streamlit as st
 
 from trading_agent_framework.dashboard.components.charts import (
     agent_calls_chart,
+    benchmark_equity,
     cumulative_returns_chart,
     drawdown_chart,
     equity_curve_chart,
@@ -81,7 +82,7 @@ def page_detail():
     # Load cumulative returns once — used by rolling-metric charts (Charts tab)
     # and the Returns tab.
     cum_ret = load_cumulative_returns(ref)
-    # The market regime rows of the Trades and Returns tabs.
+    # The market regime rows of the Charts, Trades and Returns tabs.
     indicators = load_indicator_lines(ref)
 
     period_start = s.backtesting_start.strftime("%Y-%m-%d") if s and s.backtesting_start else "?"
@@ -170,9 +171,10 @@ def page_detail():
 
     with tab2:
         st.subheader("Equity Curve")
-        st.plotly_chart(equity_curve_chart(run.equity_curve, breakdown=breakdown), width="stretch")
+        spy_equity = benchmark_equity(cum_ret, s.budget if s else 10000.0)
+        st.plotly_chart(equity_curve_chart(run.equity_curve, breakdown=breakdown, indicators=indicators, benchmark=spy_equity), width="stretch")
         st.subheader("Drawdown")
-        st.plotly_chart(drawdown_chart(bpv or run.equity_curve), width="stretch")
+        st.plotly_chart(drawdown_chart(bpv or run.equity_curve, benchmark=spy_equity), width="stretch")
 
         # Rolling metric charts — use daily returns from load_cumulative_returns
         if cum_ret and cum_ret.get("strategy_daily_returns"):
