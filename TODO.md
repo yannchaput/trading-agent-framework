@@ -14,7 +14,7 @@
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
-* Externalize the quality gate of claude.md in a mandatory skill loaded by the claude.md
+* Set up amlflow server for evaluation
 
 ## BUGS
 
@@ -27,7 +27,7 @@
 * Caveman
 * RTK
 * Wait-what (mattpockock)
-* poneytail
+* ~~poneytail~~
 
 ## PEA Manager
 
@@ -47,9 +47,8 @@
 * ~~REplace VIX, ADX etc with a "regime" indicator: 1 =bullish, neutral =0, bearish = -1~~
 * ~~Add a column with slippage and fees in dashboard~~
 * ~~Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)~~
-* Review  Agent table pivot format to be consistent with all strategies
+* ~~Review  Agent table pivot format to be consistent with all strategies~~
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
-* Draw a plot of realized P&L in grey
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
 
@@ -62,7 +61,7 @@
 
 ### Bull Bear
 
-* Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query
+* ~~Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query~~
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
 * ~~Enable compaction of the state in langchain with middleware~~
