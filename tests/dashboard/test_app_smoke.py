@@ -243,11 +243,11 @@ def test_backtesting_is_the_default_tab_with_its_sidebar(run_dir: Path) -> None:
     assert "🔄 Refresh Data" in labels
 
 
-def test_run_detail_shows_the_intraday_exposure_of_a_run_with_fills(run_dir: Path) -> None:
+def test_run_detail_shows_the_allocation_of_a_run_with_fills(run_dir: Path) -> None:
     at = _detail_page(run_dir, agents=None, with_calls_db=False)
 
     assert not at.exception
-    assert "Intraday exposure" in [subheader.value for subheader in at.subheader]
+    assert "Allocation at the close" in [subheader.value for subheader in at.subheader]
 
 
 def _fill_at(time: datetime, side: OrderSide, price: str) -> FillRecord:

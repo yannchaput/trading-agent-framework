@@ -1,15 +1,18 @@
 """Page 2: Run Detail — full metrics and charts for a single run."""
 
+from collections.abc import Sequence
+from datetime import date
+
 import pandas as pd
 import streamlit as st
 
 from trading_agent_framework.dashboard.components.charts import (
     agent_calls_chart,
+    allocation_chart,
     benchmark_equity,
     cumulative_returns_chart,
     drawdown_chart,
     equity_curve_chart,
-    intraday_exposure_chart,
     monthly_returns_distribution,
     monthly_returns_heatmap,
     returns_distribution,
@@ -23,17 +26,26 @@ from trading_agent_framework.dashboard.components.metric_cards import render_hea
 from trading_agent_framework.dashboard.components.tables import render_reviews_table
 from trading_agent_framework.dashboard.reader import (
     load_agent_calls,
+    load_allocation,
     load_cumulative_returns,
     load_indicator_lines,
-    load_intraday_exposure,
     load_parameters,
     load_portfolio_breakdown,
     load_run,
     load_session_pnl,
     load_trades_curve,
     load_yearly_returns,
+    yahoo_sleeve_closes,
 )
 from trading_agent_framework.dashboard.reviews_reader import has_reviews
+from trading_agent_framework.utils.errors import YahooDataError
+
+
+@st.cache_data(show_spinner="Fetching the SHV/IEF/GLD closes from Yahoo...", ttl="1h", max_entries=16)
+def _sleeve_closes(symbols: Sequence[str], first: date, last: date) -> dict[str, pd.Series]:
+    """Cached `reader.yahoo_sleeve_closes`: the run's sleeve prices do not change while one is being read."""
+    return yahoo_sleeve_closes(symbols, first, last)
+
 
 BETA_HELP = (
     "Sensitivity and volatility relative to the market:\n"
@@ -209,13 +221,17 @@ def page_detail():
                 st.subheader("Realized P&L per session")
                 st.plotly_chart(session_pnl_chart(session_pnl), width="stretch")
                 st.caption("Each point is the P&L realized by the positions sold during that session, net of fees, against their average cost. Hover a point for the detail of each position sold.")
-            exposure = load_intraday_exposure(ref)
-            if exposure:
-                st.subheader("Intraday exposure")
-                st.plotly_chart(intraday_exposure_chart(exposure), width="stretch")
+            try:
+                allocation = load_allocation(ref, _sleeve_closes)
+            except YahooDataError as exc:
+                allocation = None
+                st.warning(f"Allocation unavailable: Yahoo could not price the SHV/IEF/GLD sleeve ({exc}).")
+            if allocation:
+                st.subheader("Allocation at the close")
+                st.plotly_chart(allocation_chart(allocation), width="stretch")
                 st.caption(
-                    "Peak value invested (at cost) during each day, against the previous session's closing equity. "
-                    "The equity curve is sampled at the close, so it cannot show positions opened and closed within a day."
+                    "Share of equity at each session's close: stocks, the SHV/IEF/GLD sleeve and cash, always 100% together. "
+                    "Positions are at market value from the ledger; the sleeve's share is priced with Yahoo's closes and capped at the ledger's positions."
                 )
         else:
             st.info("No trade data available for this run.")

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from collections.abc import Callable, Sequence
+from datetime import date
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,6 +16,7 @@ from trading_agent_framework.agents.stats_store import llm_stats_db_path
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
 from trading_agent_framework.dashboard.pnl import AverageCostBook, Fill
+from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 
 
@@ -521,15 +524,41 @@ def load_indicator_lines(ref: RunRef) -> dict[str, list[dict[str, Any]]] | None:
     return panes or None
 
 
-def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
-    """Per trading day, the peak value invested (at cost) and the most positions held at once, rebuilt from the fills.
+# The parked money: the cash-like sleeve every strategy rotates into (bull_bear/bill_ackman park in SHV;
+# cross_momentum's trend assets are GLD and IEF). Everything else the ledger holds is "stocks".
+SLEEVE_SYMBOLS = ("SHV", "IEF", "GLD")
+ClosesFn = Callable[[Sequence[str], date, date], dict[str, pd.Series]]
 
-    equity.parquet samples each session at its close, so an intraday strategy (flat by then) always shows 100% cash
-    there; this is what the fills say happened in between. `peak_pct` is the peak against the previous session's
-    closing equity (the budget on the first day); None when neither is known. A position carried overnight counts
-    from the start of the next day at its remaining cost; a session without fills gets a zero row. None when there
-    are no fills.
+
+def yahoo_sleeve_closes(symbols: Sequence[str], first: date, last: date, source: BarsSource | None = None) -> dict[str, pd.Series]:
+    """Daily closes of `symbols` by session date, as the backtests saw them (Yahoo, dividend-adjusted).
+
+    Args:
+        symbols: Tickers to fetch; one Yahoo batch.
+        first: First session the caller needs.
+        last: Last session the caller needs (the download itself always runs to today, which splits require).
+        source: Replacement for `YahooDailyBars` (injected in tests).
+
+    Returns:
+        ``{symbol: Series(close, index=session date)}``; a symbol Yahoo has no data for is absent.
+
+    Raises:
+        YahooDataError: when the download fails or returns nothing at all.
     """
+    today = date.today()
+    # One Yahoo bar per session: calendar days are more than enough of them to reach back to `first`.
+    bars = (source or YahooDailyBars(history=(today - first).days + 7)).bars(symbols, today)
+    closes: dict[str, pd.Series] = {}
+    for symbol, frame in bars.items():
+        index = pd.DatetimeIndex(frame.df.index)
+        if index.tz is not None:
+            index = index.tz_convert(MARKET_TZ)
+        closes[symbol] = pd.Series(frame.df["close"].to_numpy(dtype=float), index=[ts.date() for ts in index])
+    return closes
+
+
+def _load_fills(ref: RunRef) -> pd.DataFrame | None:
+    """The run's filled orders in market time, oldest first; None without a readable trades.parquet or without fills."""
     path = os.path.join(ref.path, "trades.parquet")
     if not os.path.isfile(path):
         return None
@@ -543,44 +572,59 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
     if fills.empty:
         return None
     fills["time"] = cast(pd.Series, pd.to_datetime(fills["time"], utc=True)).dt.tz_convert(MARKET_TZ)
-    fills = fills.sort_values("time", kind="stable")
+    return fills.sort_values("time", kind="stable")
 
-    closes = pd.Series(dtype=float)
-    curve = load_equity_curve(ref)
-    if curve:
-        closes = pd.Series({pd.Timestamp(row["date"]).date(): row["value"] for row in curve}).sort_index()
-    settings = load_settings(ref)
-    budget = settings.budget if settings is not None else None
 
-    holdings: dict[str, list[float]] = {}  # symbol -> [shares, remaining cost]
-    rows: list[dict[str, Any]] = []
-    by_day = dict(tuple(cast(Any, fills.groupby(fills["time"].dt.date, sort=True))))
-    # Every session of the equity curve gets a row, so a day without trades shows as zero rather than as nothing.
-    for day in sorted(set(by_day) | set(cast(Any, closes.index))):
-        peak = sum(cost for _, cost in holdings.values())
-        most = len(holdings)
-        for _, fill in by_day.get(day, fills.iloc[0:0]).iterrows():
-            symbol, qty, price = str(fill["symbol"]), float(fill["filled_quantity"]), float(fill["price"])
-            shares, cost = holdings.get(symbol, [0.0, 0.0])
-            if str(fill["side"]).lower() == "buy":
-                shares, cost = shares + qty, cost + qty * price
-            elif shares > 0:
-                cost -= cost * min(qty, shares) / shares  # the sold shares leave at their average cost
-                shares -= qty
-            if shares > 1e-9:
-                holdings[symbol] = [shares, cost]
-            else:
-                holdings.pop(symbol, None)
-            peak = max(peak, sum(c for _, c in holdings.values()))
-            most = max(most, len(holdings))
-        earlier = cast(pd.Series, closes[closes.index < day]) if not closes.empty else closes
-        base = float(earlier.iloc[-1]) if not earlier.empty else budget
+def load_allocation(ref: RunRef, closes: ClosesFn) -> list[dict[str, Any]] | None:
+    """Per session close, the share of equity in stocks, in the SHV/IEF/GLD sleeve and in cash; each row sums to 100.
+
+    The ledger's `equity.parquet` gives cash and the market value of every position (at the backtest's own prices).
+    Only the sleeve's value is rebuilt: its shares come from the fills and are priced with `closes` (fetched only for
+    the sleeve symbols that traded, a session without a close carrying the previous one). The sleeve is capped at
+    the ledger's positions, since Yahoo's adjusted closes drift a little from the run's; stocks are what remains of
+    the positions, so the three parts always add up to the run's own total and never exceed it.
+
+    Args:
+        ref: The run.
+        closes: Fetches `{symbol: closes by session date}` for the symbols over `[first, last]` sessions.
+
+    Returns:
+        Rows ``{date, equity, stocks_pct, sleeve_pct, cash_pct}``, or None without `equity.parquet`.
+    """
+    breakdown = load_portfolio_breakdown(ref)
+    if breakdown is None:
+        return None
+    days = [date.fromisoformat(d) for d in breakdown["dates"]]
+
+    sleeve_values = [0.0] * len(days)
+    fills = _load_fills(ref)
+    if fills is not None:
+        sleeve = cast(pd.DataFrame, fills[fills["symbol"].isin(SLEEVE_SYMBOLS)])
+        traded = sorted(set(sleeve["symbol"]))
+        fetched = closes(traded, days[0], days[-1]) if traded else {}
+        for symbol in traded:
+            own = cast(pd.DataFrame, sleeve[sleeve["symbol"] == symbol])
+            signed = own["filled_quantity"].astype(float) * own["side"].str.lower().map({"buy": 1.0, "sell": -1.0}).fillna(0.0)
+            fill_days = own["time"].dt.date
+            # Shares held at each session's close: every fill up to and including that day.
+            shares = signed.groupby(fill_days.to_numpy()).sum().cumsum().reindex(days, method="ffill").fillna(0.0)
+            # A close missing for a session carries the previous one; the fills' own prices cover a symbol Yahoo lacks.
+            fill_prices = own["price"].astype(float).groupby(fill_days.to_numpy()).last()
+            prices = pd.Series(fetched.get(symbol, {}), dtype=float).combine_first(fill_prices).sort_index()
+            priced = prices.reindex(prices.index.union(days)).ffill().reindex(days)
+            sleeve_values = [v + float(q) * float(p) for v, q, p in zip(sleeve_values, shares, priced.fillna(0.0), strict=True)]
+
+    rows = []
+    for day, equity, cash, assets, parked in zip(days, breakdown["portfolio_value"], breakdown["cash"], breakdown["assets"], sleeve_values, strict=True):
+        parked = min(max(parked, 0.0), assets)
+        total = (cash + assets) or 1.0  # an empty account shows 0% everywhere rather than dividing by zero
         rows.append(
             {
                 "date": day.isoformat(),
-                "peak_invested": round(peak, 2),
-                "peak_pct": round(100 * peak / base, 2) if base else None,
-                "max_positions": most,
+                "equity": equity,
+                "stocks_pct": 100 * (assets - parked) / total,
+                "sleeve_pct": 100 * parked / total,
+                "cash_pct": 100 * cash / total,
             }
         )
     return rows
@@ -589,8 +633,7 @@ def load_intraday_exposure(ref: RunRef) -> list[dict[str, Any]] | None:
 def load_session_pnl(ref: RunRef) -> list[dict[str, Any]] | None:
     """Per trading session, the realized P&L of the positions sold, rebuilt from the fills.
 
-    A sale is priced against the position's average cost (`pnl.AverageCostBook`, the convention of
-    `load_intraday_exposure`), with every buy fee in that cost and the sell fee deducted from the proceeds, so the
+    A sale is priced against the position's average cost (`pnl.AverageCostBook`), with every buy fee in that cost and the sell fee deducted from the proceeds, so the
     figures are net of fees.
     The sales of one symbol in a session are merged into one position. Each row is
     ``{date, pnl, positions: [{symbol, qty, avg_cost, sell_price, pnl, pnl_pct}]}``; a session without a sale has

@@ -907,31 +907,49 @@ def trades_chart(trades_data: dict[str, Any], title: str = "Trade Activity", ind
     return fig
 
 
-def intraday_exposure_chart(rows: list[dict[str, Any]], title: str = "Intraday exposure") -> go.Figure:
-    """One bar per trading day: the peak share of equity invested during the day (`reader.load_intraday_exposure`)."""
+_ALLOCATION_PARTS = (
+    ("Stocks", "stocks_pct", "#16a34a"),
+    ("SHV / IEF / GLD", "sleeve_pct", "#60a5fa"),
+    ("Cash", "cash_pct", "#6b7280"),
+)
+
+
+def allocation_chart(rows: list[dict[str, Any]], title: str = "Allocation at the close") -> go.Figure:
+    """One stacked area over the sessions: stocks, the SHV/IEF/GLD sleeve and cash as a share of equity, always 100% in all.
+
+    Args:
+        rows: :func:`reader.load_allocation` output.
+        title: Chart title.
+    """
     if not rows:
         fig = go.Figure()
         fig.add_annotation(text="No trade data available", showarrow=False)
         fig.update_layout(title=title, template=CHART_TEMPLATE)
         return fig
     fig = go.Figure(
-        go.Bar(
-            x=[row["date"] for row in rows],
-            y=[row["peak_pct"] for row in rows],
-            customdata=[(row["peak_invested"], row["max_positions"]) for row in rows],
-            marker_color="#16a34a",
-            hovertemplate="%{x}<br>Peak %{y:.1f}% of equity<br>$%{customdata[0]:,.0f} invested<br>%{customdata[1]} position(s) at once<extra></extra>",
-        )
+        [
+            go.Scatter(
+                x=pd.to_datetime([row["date"] for row in rows]),
+                y=[row[key] for row in rows],
+                name=name,
+                mode="lines",
+                line=dict(color=color, width=0.5),
+                stackgroup="allocation",  # one stack: the areas add up to the equity
+                hovertemplate=f"%{{y:.1f}}%<extra>{name}</extra>",
+            )
+            for name, key, color in _ALLOCATION_PARTS
+        ]
     )
     fig.update_layout(
         title=title,
         xaxis_title="Date",
-        yaxis_title="Peak invested (% of equity)",
+        yaxis_title="Share of equity (%)",
         template=CHART_TEMPLATE,
-        showlegend=False,
-        margin=dict(l=40, r=20, t=40, b=40),
+        hovermode="x unified",
+        margin=_STACKED_MARGIN,
+        legend=dict(orientation="h", traceorder="normal", yanchor="bottom", y=1.02, xanchor="center", x=0.5),
     )
-    fig.update_xaxes(type="category")  # trading days only: no empty weekend gaps
+    fig.update_yaxes(range=[0, 100], ticksuffix="%", automargin=False)
     return fig
 
 
