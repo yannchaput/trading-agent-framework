@@ -19,7 +19,7 @@ from tests.fakes import FakeBroker, FakeClock, et, make_session
 from tests.strategies.earnings_drift.test_drift_scanner import StaticEvents
 
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.core.strategy import REGIME_WARMUP_SLACK, Strategy
+from trading_agent_framework.core.strategy import DAILY_WARMUP_FLOOR, Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.bull_bear import BullBearStrategy, agent_bull_bear
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
@@ -100,7 +100,7 @@ def test_strategy_backtest_defaults_unchanged(name: str, tmp_path: Path, monkeyp
     assert seen["slippage"] == Decimal("0.0005")
     assert seen["timestep"] == timestep
     if timestep == "day":
-        regime_floor = strategy.regime_params.min_bars + REGIME_WARMUP_SLACK
+        regime_floor = DAILY_WARMUP_FLOOR
         assert seen["warmup_trading_days"] == max(warmup, regime_floor)
     else:
         assert seen["warmup_trading_days"] == warmup

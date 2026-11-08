@@ -1,106 +1,114 @@
 from __future__ import annotations
 
 import logging
+from datetime import date, timedelta
 
 import pytest
-from tests.fakes import FakeBroker, FakeClock, et, make_bars_frame
+from tests.fakes import FakeBroker, FakeClock, FakeRegimeSource, et
 
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.core.regime import RegimeParameters
+from trading_agent_framework.core.regime_data import RegimeSeries
 from trading_agent_framework.core.strategy import Strategy
-from trading_agent_framework.utils.errors import BacktestDataError, BrokerError
+from trading_agent_framework.utils.errors import RegimeDataError
 
-UPTREND = [100 * 1.001**i for i in range(300)]
-DOWNTREND = [100 * 0.999**i for i in range(300)]
+ROWS = 503
 
 
-def _strategy(closes: list[float] | None = None, cls: type[Strategy] = Strategy) -> tuple[Strategy, FakeBroker, list[tuple]]:
-    broker = FakeBroker(FakeClock(et(2026, 9, 14, 8, 30)))
-    if closes is not None:
-        broker.bar_frames["SPY"] = make_bars_frame(closes, start=et(2025, 1, 6))
+def _series(spy: list[float], vix: float = 15.0, vix3m: float = 18.0, rows: int = ROWS) -> RegimeSeries:
+    """`rows` sessions ending 2026-09-11 (the Friday before the clock's date), weekdays only."""
+    sessions: list[date] = []
+    day = date(2026, 9, 11)
+    while len(sessions) < rows:
+        if day.weekday() < 5:
+            sessions.append(day)
+        day -= timedelta(days=1)
+    sessions.reverse()
+    closes = spy[-rows:]
+    return RegimeSeries(tuple(sessions), tuple(closes), tuple([vix] * rows), tuple([vix3m] * rows))
+
+
+BULL = _series([100 * 1.001**i for i in range(ROWS)])
+# A fall from the 52w high with an inverted term structure: SPY below its SMA50 and off its high, VIX above VIX3M.
+BEAR = _series([100 * 1.001**i for i in range(300)] + [100 * 1.001**300 * 0.995 ** (i + 1) for i in range(ROWS - 300)], vix=30.0, vix3m=25.0)
+
+
+def _strategy(series: RegimeSeries | None = None, cls: type[Strategy] = Strategy, clock_at=None) -> tuple[Strategy, FakeRegimeSource, FakeBroker, list[tuple]]:
+    broker = FakeBroker(FakeClock(clock_at or et(2026, 9, 14, 8, 30)))
     strategy = cls(broker, mode=TradingMode.BACKTESTING)
+    source = FakeRegimeSource(series)
+    strategy.regime_source = source
     lines: list[tuple] = []
     strategy.add_line = lambda name, value, **kw: lines.append((name, value, kw["plot_name"]))  # ty: ignore[invalid-assignment]
-    return strategy, broker, lines
+    return strategy, source, broker, lines
 
 
 def test_the_regime_is_unknown_before_the_first_refresh() -> None:
-    strategy, _, _ = _strategy(UPTREND)
+    strategy, source, _, _ = _strategy(BULL)
     assert strategy.regime is None
+    assert source.calls == []
+
+
+@pytest.mark.parametrize("clock", [et(2026, 9, 14, 8, 30), et(2026, 9, 14, 10, 15)])
+def test_a_refresh_reads_503_closes_strictly_before_the_session_date(clock) -> None:
+    strategy, source, _, _ = _strategy(BULL, clock_at=clock)
+    strategy._refresh_regime()
+    assert source.calls == [(date(2026, 9, 14), 503)]
 
 
 def test_a_refresh_sets_logs_and_charts_the_regime(caplog: pytest.LogCaptureFixture) -> None:
-    strategy, broker, lines = _strategy(UPTREND)
+    strategy, _, _, lines = _strategy(BEAR)
     with caplog.at_level(logging.INFO):
         strategy._refresh_regime()
-    assert strategy.regime == 1
-    assert lines == [("Regime", 1, "Regime")]
-    assert broker.bars_calls == [(("SPY",), 273, "day", True)]
-    assert "Market regime +1 (bullish)" in caplog.text
-
-
-def test_the_log_names_the_volatility_threshold_from_the_regime_parameters(caplog: pytest.LogCaptureFixture) -> None:
-    strategy, _, _ = _strategy(UPTREND)
-    strategy.regime_params = RegimeParameters(vol_lookback=200, vol_percentile=0.9)
-    with caplog.at_level(logging.INFO):
-        strategy._refresh_regime()
-    assert "vs 200-day p90 " in caplog.text
-
-
-def test_a_downtrend_is_logged_as_minus_one() -> None:
-    strategy, _, lines = _strategy(DOWNTREND)
-    strategy._refresh_regime()
     assert strategy.regime == -1
     assert lines == [("Regime", -1, "Regime")]
+    for text in ("Market regime -1 (bearish)", "score ", "VIX3M", "SMA50", "-session high", "episode low"):
+        assert text in caplog.text
 
 
-def test_the_benchmark_and_the_parameters_come_from_the_class() -> None:
-    class Small(Strategy):
+def test_the_regime_never_reads_the_strategys_own_bars() -> None:
+    strategy, _, broker, _ = _strategy(BULL)
+    strategy._refresh_regime()
+    assert broker.bars_calls == []
+
+
+def test_the_regime_ignores_benchmark_symbol(caplog: pytest.LogCaptureFixture) -> None:
+    class Qqq(Strategy):
         benchmark_symbol = "QQQ"
-        regime_params = RegimeParameters(sma_fast=3, sma_slow=5, vol_window=2, vol_lookback=4)
 
-    strategy, broker, _ = _strategy(cls=Small)
-    broker.bar_frames["QQQ"] = make_bars_frame([7, 6, 5, 4, 3, 2, 1], start=et(2026, 9, 1))
+    strategy, source, _, _ = _strategy(BULL, cls=Qqq)
+    with caplog.at_level(logging.INFO):
+        strategy._refresh_regime()
+    assert len(source.calls) == 1
+    assert "SPY" in caplog.text and "QQQ" not in caplog.text
+
+
+@pytest.mark.parametrize("error", [RegimeDataError("yahoo down"), ValueError("bad close")])
+def test_a_data_failure_keeps_the_previous_regime(error: Exception, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, source, _, lines = _strategy(BEAR)
     strategy._refresh_regime()
     assert strategy.regime == -1
-    assert broker.bars_calls == [(("QQQ",), 7, "day", True)]
-
-
-@pytest.mark.parametrize("error", [BrokerError("data down"), BacktestDataError("no session")])
-def test_a_data_failure_keeps_the_previous_regime(error: Exception, caplog: pytest.LogCaptureFixture) -> None:
-    strategy, broker, lines = _strategy(UPTREND)
-    strategy._refresh_regime()
-    broker.market_data_error = error  # ty: ignore[invalid-assignment]
+    source.error = error
     with caplog.at_level(logging.WARNING):
         strategy._refresh_regime()
-    assert strategy.regime == 1
+    assert strategy.regime == -1
     assert len(lines) == 1  # nothing charted for the failed refresh
-    assert "Market regime not refreshed" in caplog.text
+    assert "Market regime not refreshed (still -1)" in caplog.text
 
 
-@pytest.mark.parametrize("closes", [None, UPTREND[:100]])
-def test_too_little_history_leaves_the_regime_unknown_and_warns_once(closes: list[float] | None, caplog: pytest.LogCaptureFixture) -> None:
-    strategy, _, lines = _strategy(closes)
+@pytest.mark.parametrize("series", [None, _series([100.0] * 100, rows=100)])
+def test_too_little_history_leaves_the_regime_unknown_and_warns_once(series: RegimeSeries | None, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, _, lines = _strategy(series)
     with caplog.at_level(logging.WARNING):
         strategy._refresh_regime()
         strategy._refresh_regime()
     assert strategy.regime is None and lines == []
     assert caplog.text.count("Market regime unavailable") == 1
-
-
-def test_a_corrupt_close_keeps_the_previous_regime(caplog: pytest.LogCaptureFixture) -> None:
-    strategy, broker, lines = _strategy(UPTREND)
-    strategy._refresh_regime()
-    broker.bar_frames["SPY"] = make_bars_frame([*UPTREND[:-1], 0.0], start=et(2025, 1, 6))
-    with caplog.at_level(logging.WARNING):
-        strategy._refresh_regime()
-    assert strategy.regime == 1 and len(lines) == 1
-    assert "Market regime not refreshed" in caplog.text
+    assert "SPY/VIX/VIX3M" in caplog.text
 
 
 def test_outside_backtesting_the_regime_is_set_and_nothing_is_charted() -> None:
     broker = FakeBroker(FakeClock(et(2026, 9, 14, 8, 30)))
-    broker.bar_frames["SPY"] = make_bars_frame(UPTREND, start=et(2025, 1, 6))
     strategy = Strategy(broker, mode=TradingMode.PAPER)
+    strategy.regime_source = FakeRegimeSource(BULL)
     strategy._refresh_regime()  # the real add_line: a no-op outside backtesting
     assert strategy.regime == 1

@@ -33,6 +33,7 @@ agent = "trading_agent_framework.main:main"
 batch-universe = "trading_agent_framework.strategies.common.batch_us_stock_universe:main"
 bull-bear-scores = "trading_agent_framework.strategies.bull_bear.batch.scores_cli:main"
 dashboard = "trading_agent_framework.dashboard.cli:main"
+regime = "trading_agent_framework.core.regime_cli:main"
 
 [build-system]
 requires = ["hatchling"]

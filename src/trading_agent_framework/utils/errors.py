@@ -71,6 +71,10 @@ class YahooDataError(TradingFrameworkError):
     """Raised when a strategy's Yahoo daily-bar lookup fails."""
 
 
+class RegimeDataError(TradingFrameworkError):
+    """Raised when the SPY/VIX/VIX3M series for the market regime cannot be fetched or is incomplete."""
+
+
 class FundamentalsError(TradingFrameworkError):
     """Raised when a SEC EDGAR fundamentals lookup fails."""
 

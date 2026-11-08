@@ -24,6 +24,7 @@ from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
 from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, classify_regime
+from trading_agent_framework.core.regime_data import RegimeSource, YahooRegimeData
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
 from trading_agent_framework.entities.enums import (
@@ -37,8 +38,8 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.memory.store import MemoryStore, memory_db_path
-from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, ConfigurationError, LLMStatsError, OrderValidationError
+from trading_agent_framework.utils.clock import MARKET_TZ, MarketClock
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError, OrderValidationError, RegimeDataError
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -50,10 +51,10 @@ logger = logging.getLogger(__name__)
 
 Number = Decimal | int | float | str
 
-# Extra trading days on top of `regime_params.min_bars` for the regime's backtest warmup: `warmup_calendar_days`'
-# fixed holiday buffer under-covers a 13-month span (about 10-11 NYSE holidays), so some start dates would get
-# 270-272 sessions and no regime for their first sessions.
-REGIME_WARMUP_SLACK = 10
+# Minimum warmup of a daily backtest, in sessions (and the window of the benchmark's daily preload in other
+# timesteps). The regime no longer needs it (it reads Yahoo SPY/VIX/VIX3M on its own), but strategies (for example
+# earnings_drift's recorded 283) and the runner's daily benchmark read rely on it; removing it is a separate decision.
+DAILY_WARMUP_FLOOR = 283
 
 _FINAL_STATUSES = frozenset(OrderStatus) - ACTIVE_ORDER_STATUSES
 
@@ -112,8 +113,9 @@ class Strategy:
     # Off here for paper/live (opt in with `agent_telemetry = True`); `run_backtesting(agent_telemetry=True)` turns it on per run.
     agent_telemetry: bool = False
 
-    # Market regime (1 bullish, 0 neutral, -1 bearish), estimated once per session from `benchmark_symbol`'s daily
-    # bars (`core/regime.py`). Information only: logged, and charted in backtests. Override to change the windows.
+    # Market regime (1 bullish, 0 neutral, -1 bearish), estimated once per session from Yahoo's SPY, VIX and VIX3M daily
+    # closes (`core/regime.py`), whatever `benchmark_symbol` and the mode. Information only: logged, and charted in
+    # backtests. Override to change the thresholds.
     regime_params: RegimeParameters = RegimeParameters()
 
     def __init__(
@@ -155,6 +157,8 @@ class Strategy:
         # Latest market regime; None until `_refresh_regime` could compute one (the executor calls it every session).
         self.regime: int | None = None
         self._regime_history_warned = False
+        # Where the regime's SPY/VIX/VIX3M closes come from; no network until the first refresh. Assignable in tests.
+        self.regime_source: RegimeSource = YahooRegimeData()
         self.executor = StrategyExecutor(self)
 
     @property
@@ -352,31 +356,33 @@ class Strategy:
         )
 
     def _refresh_regime(self) -> None:
-        """Estimate the market regime from the benchmark's daily bars; the executor calls this once per session.
+        """Estimate the market regime from Yahoo's SPY, VIX and VIX3M closes; the executor calls this once per session.
 
-        Information only: a log line, and an `add_line` point in backtests. Any failure keeps the previous
-        value, because a regime estimate must never cost a session.
+        Reads the closes strictly before today's session date, so a mid-session start sees the same data as the
+        morning refresh. Information only: a log line, and an `add_line` point in backtests. Any failure keeps the
+        previous value, because a regime estimate must never cost a session.
         """
         params = self.regime_params
+        session = self.clock.now().astimezone(MARKET_TZ).date()
         try:
-            bars = self.get_historical_prices(self.benchmark_symbol, params.min_bars, "day")
-            reading = None if bars is None else classify_regime(bars.df["close"].tolist(), params)
-        except (BrokerError, BacktestError, ValueError) as exc:
+            series = self.regime_source.closes_before(session, params.min_bars)
+            reading = classify_regime(series.spy, series.vix, series.vix3m, params)
+        except (RegimeDataError, ValueError) as exc:
             self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")
             return
         if reading is None:
             if not self._regime_history_warned:
                 self._regime_history_warned = True
-                self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily bars of {self.benchmark_symbol}")
+                self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily closes of SPY/VIX/VIX3M before {session}")
             return
         self.regime = reading.regime
-        # Latest realized volatility (vol): 20-day rolling realized volatility, annualized
-        # Threshold (vol_threshold): the 80th percentile of all rolling volatilities in the last 252 days
+        episode = f", episode low {reading.episode_low:.2f}" if reading.episode_low is not None else ""
         self.log_info(
-            f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): {self.benchmark_symbol} close {reading.close:.2f}, "
-            f"SMA{params.sma_fast} {reading.sma_fast:.2f}, SMA{params.sma_slow} {reading.sma_slow:.2f}, "
-            f"vol {reading.vol:.1%} vs {params.vol_lookback}-day p{params.vol_percentile * 100:.0f} {reading.vol_threshold:.1%}"
-            f"{' (stressed)' if reading.stressed else ''}"
+            f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): score {reading.score}/4, "
+            f"SPY {reading.spy:.2f} vs SMA{params.sma_window} {reading.sma:.2f}, "
+            f"{reading.spy / reading.high - 1:+.1%} vs {params.high_window}-session high {reading.high:.2f}, "
+            f"VIX {reading.vix:.2f} vs VIX3M {reading.vix3m:.2f}, "
+            f"VIX {reading.vix / reading.vix_median:.2f}x its {params.vix_median_window}-day median{episode}"
         )
         self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
@@ -664,11 +670,10 @@ class Strategy:
                 Computed once, here, via `backtesting.warmup.warmup_calendar_days`, and used both
                 to construct a `data_source` class/callable and to widen `run_backtest`'s own eager
                 preload call -- an explicit `data_source` instance is used as given and is not
-                widened by this method. The market regime needs `regime_params.min_bars` daily
-                benchmark bars before the first session: with `timestep="day"` the warmup is raised
-                to at least `min_bars + REGIME_WARMUP_SLACK` (283 by default). For any other
-                timestep it is NOT raised (that would widen every minute download); instead the
-                benchmark's daily frame alone is preloaded over that regime window.
+                widened by this method. With `timestep="day"` the warmup is raised to at least
+                `DAILY_WARMUP_FLOOR` (283). For any other timestep it is NOT raised (that would
+                widen every minute download); instead the benchmark's daily frame alone is
+                preloaded over that window. (The market regime reads Yahoo on its own and needs neither.)
             news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
                 Alpaca provider built lazily from `AlpacaCredentials.for_news()` (`ALPACA_NEWS_*`); the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
@@ -687,13 +692,9 @@ class Strategy:
         resolved_slippage = _to_decimal(slippage if slippage is not None else self.parameters.get("slippage", self.backtesting_slippage))
         warmup = warmup_trading_days if warmup_trading_days is not None else self.parameters.get("warmup_trading_days", 0)
         resolved_fees = fees if fees is not None else TradingFeeFactory.from_env()  # before any data source is built: a bad BROKER fails fast
-        # The regime needs `regime_params.min_bars` daily bars of the benchmark before the first session.
-        # Daily runs: the benchmark's daily frame is the strategy's own, so the warmup itself is raised (the
-        # eager benchmark load would otherwise cache a frame too short for `_refresh_regime`). Other timesteps:
-        # raising it would widen every minute download, so the warmup stays as asked and only the benchmark's
-        # daily frame is preloaded over the regime window below.
-        regime_warmup = self.regime_params.min_bars + REGIME_WARMUP_SLACK
-        resolved_warmup = max(warmup, regime_warmup) if timestep == "day" else warmup
+        # Daily runs: the warmup itself is raised to `DAILY_WARMUP_FLOOR`. Other timesteps: raising it would widen
+        # every minute download, so the warmup stays as asked and only the benchmark's daily frame is preloaded.
+        resolved_warmup = max(warmup, DAILY_WARMUP_FLOOR) if timestep == "day" else warmup
         warmup_start = resolved_start - timedelta(days=warmup_calendar_days(resolved_warmup))
         if data_source is None:
             resolved_source = YahooBacktestData(warmup_start, resolved_end)
@@ -702,8 +703,8 @@ class Strategy:
         else:
             resolved_source = data_source(warmup_start, resolved_end)
         if timestep != "day":
-            regime_start = resolved_start - timedelta(days=warmup_calendar_days(regime_warmup))
-            resolved_source.load([Asset(self.benchmark_symbol)], regime_start, resolved_end, "day")
+            floor_start = resolved_start - timedelta(days=warmup_calendar_days(DAILY_WARMUP_FLOOR))
+            resolved_source.load([Asset(self.benchmark_symbol)], floor_start, resolved_end, "day")
         return run_backtest(
             self,
             start=resolved_start,

@@ -49,7 +49,7 @@ class EarningsDriftStrategy(Strategy):
         "backtesting_start": backtest_window(PredefinedWindow.YEAR)[0],
         "backtesting_end": backtest_window(PredefinedWindow.YEAR)[1],
         "benchmark_symbol": "SPY",
-        "warmup_trading_days": 283,  # the regime minimum; also covers the 60-session run-up and the 20-session baselines
+        "warmup_trading_days": 283,  # the framework's DAILY_WARMUP_FLOOR; also covers the 60-session run-up and the 20-session baselines
         "budget": 10000,
     }
 

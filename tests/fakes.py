@@ -48,6 +48,7 @@ from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
 
 from trading_agent_framework.backtesting.data.base import BacktestDataSource
 from trading_agent_framework.brokers.base import Broker
+from trading_agent_framework.core.regime_data import RegimeSeries
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -432,6 +433,21 @@ class FakeNewsClient:
 
 
 ET = ZoneInfo("America/New_York")
+
+
+class FakeRegimeSource:
+    """A `RegimeSource` over a fixed series: no network; records every `closes_before` call."""
+
+    def __init__(self, series: RegimeSeries | None = None, error: Exception | None = None) -> None:
+        self.series = series if series is not None else RegimeSeries((), (), (), ())
+        self.error = error
+        self.calls: list[tuple[date, int]] = []
+
+    def closes_before(self, session: date, length: int) -> RegimeSeries:
+        self.calls.append((session, length))
+        if self.error is not None:
+            raise self.error
+        return self.series.before(session, length)
 
 
 def et(year: int, month: int, day: int, hour: int = 0, minute: int = 0, second: int = 0) -> datetime:

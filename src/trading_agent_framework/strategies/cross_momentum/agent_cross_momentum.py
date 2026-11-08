@@ -50,7 +50,7 @@ from trading_agent_framework.strategies.common.universe_backtest_data import Uni
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory, market_day, month_universe, window_symbols
 from trading_agent_framework.strategies.common.yahoo_daily_bars import UnusableBatch, YahooDailyBars, fetch_usable_batch
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, YahooDataError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError
 from trading_agent_framework.utils.helpers import fractional_qty, get_thread_capacity, parse_insufficient_buying_power
 
 from .log_diagnostics import DiagnosticLogger
@@ -293,40 +293,6 @@ class CrossMomentumStrategy(Strategy):
             return None if bars is None else Bars(asset=bars.asset, timestep="day", df=bars.pandas_df.tail(length))
         self.vars.alpaca_rate_limiter.wait()  # Alpaca's data API; a no-op in backtests
         return super().get_historical_prices(asset, length, timestep, include_after_hours=include_after_hours)
-
-    def _refresh_regime(self) -> None:
-        """The framework's regime refresh, fed with the benchmark's Yahoo bars in paper/live.
-
-        The executor refreshes the regime once per session, before the open and so before any scan: `vars.yahoo_bars`
-        is empty then (it is filled by `rebalance` and released when it ends), and the `get_historical_prices` override
-        above answers an empty batch with None. The framework then read "no bars" as "fewer than `min_bars` daily
-        bars", logged that once and never produced a regime in paper/live (2026-10-09). Falling back to Alpaca instead
-        would put the regime on IEX bars while every decision runs on Yahoo's, which is the split the Yahoo switch
-        removed. So the benchmark is fetched here, on its own, and handed to the framework's unchanged logic through
-        `vars.yahoo_bars` for the duration of the call only. A backtest has no bars source and uses the framework as is.
-        """
-        if self.vars.bars_source is None:
-            # call parent implementation based on Alpaca IEX if bars_source is not based on Yahoo
-            super()._refresh_regime()
-            return
-        benchmark = self.benchmark_symbol
-        try:
-            # Fetch bars from Yahoo for the benchmark only, and hand them to the framework's logic through `vars.yahoo_bars` for the duration of the call
-            fetched = self.vars.bars_source.bars([benchmark], self._market_date())
-        except YahooDataError as exc:
-            # Same policy as the framework: a failed refresh keeps the previous value and never costs a session
-            self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")
-            return
-        if benchmark not in fetched:
-            self.log_warning(f"Market regime not refreshed (still {self.regime}): Yahoo has no bars for {benchmark}")
-            return
-        previous = self.vars.yahoo_bars
-        self.vars.yahoo_bars = fetched
-        try:
-            # Hand over to parent refresh_regime which will call this class get_historical_prices fetching bars from vars.yahoo_bars
-            super()._refresh_regime()
-        finally:
-            self.vars.yahoo_bars = previous  # not left behind: no stale bars outlive the call
 
     def _compute_indicators_for_ticker(self, ticker: str) -> dict | None:
         """Fetch OHLCV data and compute momentum indicators for a single ticker."""
