@@ -102,3 +102,28 @@ def test_drawdown_overlays_the_benchmark_drawdown() -> None:
 def test_drawdown_without_benchmark_is_unchanged() -> None:
     fig = drawdown_chart(EQUITY)
     assert [t.name for t in cast(Any, fig.data)] == ["Drawdown %"]
+
+
+def test_drawdown_legend_overlays_the_plot_on_the_left() -> None:
+    fig = drawdown_chart(EQUITY, benchmark=benchmark_equity(CUMULATIVE, 1000.0))
+    legend = fig.layout.legend
+    assert legend.xanchor == "left" and 0 <= legend.x < 0.5  # inside the plot, not in the right margin
+
+
+def test_drawdown_and_equity_share_horizontal_margins_so_their_plots_align() -> None:
+    equity = equity_curve_chart(EQUITY, breakdown=BREAKDOWN, indicators=_regime([1, 0]))
+    drawdown = drawdown_chart(EQUITY)
+    assert (equity.layout.margin.l, equity.layout.margin.r) == (drawdown.layout.margin.l, drawdown.layout.margin.r)
+    # A tick label wider on one chart must not move its plot area.
+    assert equity.layout.yaxis.automargin is False and drawdown.layout.yaxis.automargin is False
+    # The regime row's "Bullish"/"Bearish" labels are wider than any tick: they must not grow the margin either.
+    assert equity.layout.yaxis2.automargin is False
+
+
+def test_drawdown_and_equity_span_the_same_dates_even_when_the_regime_starts_earlier() -> None:
+    early = {"Regime": [{**_regime([1, 0, -1, 1, 0, 1])["Regime"][0], "times": [T0 - timedelta(days=30 - i) for i in range(6)]}]}
+    equity = equity_curve_chart(EQUITY, breakdown=BREAKDOWN, indicators=early)
+    drawdown = drawdown_chart(EQUITY)
+    assert tuple(pd.Timestamp(x) for x in equity.layout.xaxis.range) == tuple(pd.Timestamp(x) for x in drawdown.layout.xaxis.range)
+    assert pd.Timestamp(drawdown.layout.xaxis.range[0]) == pd.Timestamp(DATES[0])
+    assert pd.Timestamp(drawdown.layout.xaxis.range[1]) == pd.Timestamp(DATES[-1])

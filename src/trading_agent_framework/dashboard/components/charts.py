@@ -33,6 +33,9 @@ REGIME_AXIS_LABELS = {1: "Bullish", 0: "Neutral", -1: "Bearish"}
 REGIME_BAND_COLORS = {1: "#16a34a", 0: "#6b7280", -1: "#dc2626"}
 _REGIME_LINE_COLOR = "#d1d4dc"
 _REGIME_BAND_OPACITY = {1: 0.10, 2: 0.30}  # by row: faint behind the portfolio, stronger on the regime row
+# Equity and drawdown charts are stacked: fixed (not auto-grown) left/right margins keep their plot areas, and so the
+# regime row above and the drawdowns below, on the same x pixels.
+_STACKED_MARGIN = dict(l=80, r=20, t=40, b=40)
 _BENCHMARK_COLOR = "#f59e0b"  # the benchmark's dashed line on the equity and drawdown charts
 
 
@@ -151,6 +154,10 @@ def equity_curve_chart(
                 **top,
             )
 
+    # The regime may start before the run (warmup): pin the axis to the curve so the drawdown chart below can match it.
+    curve_x = [pd.to_datetime(cast(Any, t).x) for t in fig.data]
+    x_range = (min(x.min() for x in curve_x), max(x.max() for x in curve_x)) if curve_x else None
+
     if benchmark is not None:
         label = benchmark["label"]
         fig.add_trace(
@@ -166,17 +173,19 @@ def equity_curve_chart(
         )
 
     if regime is not None:
-        curve_ends = [pd.Timestamp(cast(Any, trace).x[-1]) for trace in fig.data]
-        _add_regime_row(fig, regime, max(pd.Timestamp(regime["times"][-1]), *curve_ends))
+        _add_regime_row(fig, regime, max(pd.Timestamp(regime["times"][-1]), x_range[1]) if x_range else pd.Timestamp(regime["times"][-1]))
 
     fig.update_layout(
         title=title,
         template=CHART_TEMPLATE,
         hovermode="x unified",
-        margin=dict(l=40, r=20, t=40, b=40),
+        margin=_STACKED_MARGIN,
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
     _label_date_axis(fig, regime)
+    if x_range:
+        fig.update_xaxes(range=x_range)
+    fig.update_yaxes(automargin=False)  # every row, the regime one included
     fig.update_yaxes(title_text="Portfolio Value ($)", **top)
     return fig
 
@@ -238,9 +247,14 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchm
         yaxis_title="Drawdown (%)",
         template=CHART_TEMPLATE,
         hovermode="x unified",
-        margin=dict(l=40, r=20, t=40, b=40),
+        margin=_STACKED_MARGIN,
+        # Inside the plot, bottom left: the drawdown hangs from the top and is shallow early on.
+        legend=dict(yanchor="bottom", y=0.01, xanchor="left", x=0.01),
     )
-    fig.update_yaxes(tickformat=".1f")
+    fig.update_yaxes(tickformat=".1f", automargin=False)
+    if "date" in df.columns:
+        dates = pd.to_datetime(df["date"])
+        fig.update_xaxes(range=(dates.min(), dates.max()))
     return fig
 
 
