@@ -1,8 +1,8 @@
-"""Where a review's daily bars come from: one Yahoo batch in paper/live, the backtest gate otherwise.
+"""Where a strategy's daily bars come from: one Yahoo batch in paper/live, the backtest gate otherwise.
 
 Paper/live read Yahoo for the same reason as cross_momentum: Alpaca's IEX bars carry ~5% of consolidated volume, so
-the $20M dollar-volume filter would empty the ranking. Both sources hand the pipeline completed sessions only (the
-bar dated today is partial while the session is open), at most `HISTORY_BARS` of them.
+any volume-based filter would see far too little. Both sources hand the strategy completed sessions only (the bar
+dated today is partial while the session is open), at most `HISTORY_BARS` of them.
 """
 
 from __future__ import annotations

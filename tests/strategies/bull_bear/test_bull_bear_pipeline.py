@@ -21,11 +21,11 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools, trim_note
-from trading_agent_framework.strategies.bull_bear.market_data import DailySeries, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
+from trading_agent_framework.strategies.common.daily_bars import DailySeries, DataUnavailable
 from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog

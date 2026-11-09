@@ -7,7 +7,7 @@ import pytest
 
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
-from trading_agent_framework.strategies.bull_bear.market_data import DataUnavailable, GateBars, YahooBars
+from trading_agent_framework.strategies.common.daily_bars import DataUnavailable, GateBars, YahooBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BrokerError, YahooDataError
 

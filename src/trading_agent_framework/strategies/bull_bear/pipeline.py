@@ -25,12 +25,12 @@ from trading_agent_framework.strategies.bull_bear.debate_set import build_debate
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.fundamentals import unavailable_fundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts, trim_note
-from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE, bear_task, bull_task, judge_task, researcher_task, retry_prompt
 from trading_agent_framework.strategies.bull_bear.sizing import equal_weights
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
 from trading_agent_framework.strategies.common.cooldowns import advance_cooldowns
+from trading_agent_framework.strategies.common.daily_bars import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.common.pipeline import AgentLike as CommonAgentLike
 from trading_agent_framework.strategies.common.pipeline import ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.portfolio import target_portfolio

@@ -27,13 +27,13 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.fundamentals.edgar_client import default_client
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
-from trading_agent_framework.strategies.bull_bear.market_data import DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pinned_news import pin_search_news
 from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import StateStore
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
+from trading_agent_framework.strategies.common.daily_bars import DailyBars, GateBars, YahooBars
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
