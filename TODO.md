@@ -51,7 +51,6 @@
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
-
 ### Cross sectional momentum
 
 * ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
@@ -61,6 +60,7 @@
 
 ### Bull Bear
 
+* Refactor bull bear into Langgraph like "pod_sectors"
 * ~~Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query~~
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
@@ -68,12 +68,18 @@
 * ~~Enrich logging, specifically the research agent~~
 * ~~Show P&L in the log when a stock is sold~~
 
+### Citadel Pod Sector
+
+* Run the fist baseline (on 1 month)
+
 ### Insider
 
 * Replace the fixed 10 stocks with the 100 first stocks of the cross momentum universe. As this universe won't be rabalanced, criteria is to decide.
 
 ### LLM benchmark
 
+* Install Strata (better of MoE) and update the framework to run Strata along with vllm
+* Run Qwen 3.8 on both servers and compare
 * ~~Add a cli parameter to select scenarios to run~~
 * ~~Test new scenarios from bull bear and insider~~
 * ~~Add mathematical and tradinc calculation problems to the scenarios~~
@@ -81,6 +87,7 @@
 * Test Sage 1.5
 * Test Nanbeige 4.3
 * Test Qwen 3.8 35B: [X](https://x.com/Oluwaphilemon1/status/2114912917157974508)
+* Implement Qwen 3.8 27B with DFlash2: [Hugging Face](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2)
 ~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
