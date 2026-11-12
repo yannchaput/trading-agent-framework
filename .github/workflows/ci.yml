@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      # the dashboard extra is needed or ~290 dashboard tests are silently skipped
+      - run: uv sync --extra dashboard
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run pytest --cov
+      - run: uv run interrogate -v
