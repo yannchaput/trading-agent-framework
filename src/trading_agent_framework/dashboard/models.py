@@ -231,6 +231,7 @@ class BenchmarkModel:
     median_tokens_per_s: float | None
     timeouts: int | None
     errors: int | None
+    overall_all: float | None = None
 
 
 @dataclass(frozen=True)

@@ -162,6 +162,7 @@ def _build_model(entry: dict[str, Any], meta_model: dict[str, Any], vllm_version
         ran=bool(entry.get("ran", True)),
         error=entry.get("error"),
         overall=_opt_float(entry.get("overall")),
+        overall_all=_opt_float(entry.get("overall_all")),
         mean_partial=_opt_float(entry.get("mean_partial")),
         categories={str(name): float(score) for name, score in (entry.get("categories") or {}).items()},
         scenarios={

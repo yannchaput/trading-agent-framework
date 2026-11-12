@@ -133,15 +133,15 @@ def _ratio(a: int | None, b: int | None) -> str:
 
 
 def benchmark_summary_frame(models: Sequence[BenchmarkModel], categories: Sequence[str]) -> pd.DataFrame:
-    """One row per model, best overall first (marked 🏆); models that did not run go last."""
-    ranked = sorted(models, key=lambda m: (not m.ran, -(m.overall or 0.0)))
+    """One row per model, best overall (all categories) first (marked 🏆); models that did not run go last."""
+    ranked = sorted(models, key=lambda m: (not m.ran, -(m.overall_all or 0.0), -(m.overall or 0.0)))
     rows = []
     for i, model in enumerate(ranked):
         if not model.ran:
             name = f"{model.display_name} (did not run)"
         else:
             name = f"🏆 {model.display_name}" if i == 0 else model.display_name
-        row: dict[str, object] = {"Model": name, "Overall": _pct(model.overall)}
+        row: dict[str, object] = {"Model": name, "Overall score (all categories)": _pct(model.overall_all), "Score (math excluded)": _pct(model.overall)}
         for category in categories:
             row[category.capitalize()] = _pct(model.categories.get(category))
         row |= {
@@ -164,7 +164,7 @@ def render_benchmark_summary_table(models: Sequence[BenchmarkModel], categories:
         categories: Scenario categories, each shown as its own score column next to the overall score.
     """
     frame = benchmark_summary_frame(models, categories)
-    score_columns = ["Overall", *(category.capitalize() for category in categories)]
+    score_columns = ["Overall score (all categories)", "Score (math excluded)", *(category.capitalize() for category in categories)]
     column_config = {column: st.column_config.ProgressColumn(column, min_value=0, max_value=100, format="%.0f%%") for column in score_columns}
     column_config |= {
         "Avg tool calls": st.column_config.NumberColumn(format="%.2f"),

@@ -124,13 +124,16 @@ def _render_headline_cards(ran: Sequence[BenchmarkModel]) -> None:
     best = _best(ran)
     timed = [m for m in ran if m.median_tokens_per_s is not None]
     quick = [m for m in ran if m.median_run_s is not None]
-    cols = st.columns(3)
+    best_all = max(ran, key=lambda m: m.overall_all or 0.0)
+    cols = st.columns(4)
     with cols[0]:
-        render_metric_card("🏆 Best overall", f"{best.display_name} · {(best.overall or 0.0):.0%}")
+        render_metric_card("🏆 Best overall (all categories)", f"{best_all.display_name} · {(best_all.overall_all or 0.0):.0%}" if best_all.overall_all is not None else "—")
     with cols[1]:
+        render_metric_card("🏆 Best overall (math excluded)", f"{best.display_name} · {(best.overall or 0.0):.0%}")
+    with cols[2]:
         fastest = max(timed, key=lambda m: cast(float, m.median_tokens_per_s)) if timed else None
         render_metric_card("⚡ Fastest (tokens/s)", f"{fastest.display_name} · {fastest.median_tokens_per_s:.0f}" if fastest else "—")
-    with cols[2]:
+    with cols[3]:
         quickest = min(quick, key=lambda m: cast(float, m.median_run_s)) if quick else None
         render_metric_card("⏱ Lowest median run", f"{quickest.display_name} · {quickest.median_run_s:.1f} s" if quickest else "—")
 
