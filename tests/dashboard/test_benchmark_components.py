@@ -77,10 +77,20 @@ def test_summary_frame_is_sorted_by_overall_with_the_winner_marked(results: Path
     frame = benchmark_summary_frame(run.models, run.categories)
 
     assert list(frame["Model"]) == ["🏆 Qwen3.6-27B-AWQ", "GLM-4.7-Flash"]
-    assert list(frame.columns[:4]) == ["Model", "Overall", "Reasoning", "Tools"]
-    assert frame.loc[0, "Overall"] == pytest.approx(83.0)
+    assert list(frame.columns[:5]) == ["Model", "Overall score (all categories)", "Score (math excluded)", "Reasoning", "Tools"]
+    assert frame.loc[0, "Score (math excluded)"] == pytest.approx(83.0)
     assert frame.loc[0, "Runs passed"] == "5/6"
     assert frame.loc[0, "Timeouts / errors"] == "1/0"
+
+
+def test_summary_frame_trophy_follows_the_all_categories_score(results: Path) -> None:
+    run = _run(results)
+    glm, qwen = run.models
+    models = [dataclasses.replace(glm, overall_all=0.9), dataclasses.replace(qwen, overall_all=0.7)]
+    frame = benchmark_summary_frame(models, run.categories)
+
+    assert list(frame["Model"]) == ["🏆 GLM-4.7-Flash", "Qwen3.6-27B-AWQ"]
+    assert list(frame["Overall score (all categories)"]) == [pytest.approx(90.0), pytest.approx(70.0)]
 
 
 def test_summary_frame_puts_a_model_that_did_not_run_last_with_empty_scores(results: Path) -> None:
@@ -88,7 +98,7 @@ def test_summary_frame_puts_a_model_that_did_not_run_last_with_empty_scores(resu
     frame = benchmark_summary_frame(run.models, run.categories)
 
     assert list(frame["Model"]) == ["🏆 GLM-4.7-Flash", "Gpt-OSS-20b (did not run)"]
-    assert frame["Overall"].isna().iloc[1]
+    assert frame["Score (math excluded)"].isna().iloc[1]
 
 
 def test_scenario_runs_frame_has_one_row_per_repeat(results: Path) -> None:
