@@ -32,7 +32,6 @@ class BullBearParams:
         research_tool_budget: Tool calls per researcher run; `submit_note` is exempt.
         research_news: Give the researcher its news tool; False for the news-off comparison run.
         max_agent_steps: LangGraph steps one agent run may take before it counts as a loop and abandons the review.
-        judge_memory_budget: Memory tool calls per judge run; `submit_verdicts` is exempt.
         note_max_chars: The length the researcher is asked for in a submitted note.
         note_hard_max_chars: The length the recorder refuses above.
         argument_max_chars: The bull's and the bear's submitted argument.
@@ -62,10 +61,8 @@ class BullBearParams:
     research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     # LangGraph steps one agent run may take before it counts as a loop and abandons the review: a model resubmitting a rejected
     # call for ever. LangGraph supersteps: a tool call is a round trip of 3, a run takes 3 x calls + 5 at worst, so a normal run
-    # needs a limit of at most 21 (the researcher using its 5 tool calls; the judge with 3 memory calls needs 15); a rejected resubmission adds 3.
+    # needs a limit of at most 21 (the researcher using its 5 tool calls); a rejected resubmission adds 3.
     max_agent_steps: int = 60
-    # Memory tool calls per judge run; submit_verdicts is exempt. The 10-23 run (Qwen 3.8) made 107 memory calls, each kept in its context.
-    judge_memory_budget: int = 3
     note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
     note_hard_max_chars: int = 700  # the length the recorder refuses above: a model cannot count characters (10-31 run: 11.8% of drafts over 600, 1.9% over 700)
     argument_max_chars: int = 300  # the bull's and the bear's submitted argument
@@ -122,7 +119,6 @@ class BullBearParams:
             "parking_symbol must not be blank": not self.parking_symbol.strip(),
             "research_tool_budget must be at least 1": self.research_tool_budget < 1,
             "max_agent_steps must be at least 1": self.max_agent_steps < 1,
-            "judge_memory_budget must be at least 0": self.judge_memory_budget < 0,
             "note_max_chars, argument_max_chars and reason_max_chars must be at least 1": min(self.note_max_chars, self.argument_max_chars, self.reason_max_chars) < 1,
             "note_hard_max_chars must be at least note_max_chars": self.note_hard_max_chars < self.note_max_chars,
             "reentry_cooldown_reviews must be at least 0": self.reentry_cooldown_reviews < 0,

@@ -231,8 +231,8 @@ def test_the_judge_is_told_nothing_of_recent_verdicts() -> None:
     assert "recent_verdicts" not in prompts.JUDGE_SYSTEM and "in_names_return_pct" not in prompts.JUDGE_SYSTEM
 
 
-def test_the_judge_is_told_about_its_memory_tools() -> None:
-    assert "search_memory" in prompts.JUDGE_SYSTEM and "remember_lesson" in prompts.JUDGE_SYSTEM
+def test_the_judge_is_told_of_no_memory_tool() -> None:
+    assert not any(word in prompts.JUDGE_SYSTEM for word in ("search_memory", "remember_lesson", "memory", "lesson"))
 
 
 def test_the_bear_keeps_none_with_low_for_no_concrete_risk_and_the_fundamentals_gate_only_the_high() -> None:

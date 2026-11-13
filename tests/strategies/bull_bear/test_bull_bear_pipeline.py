@@ -13,7 +13,7 @@ from typing import Any
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
+from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -71,8 +71,6 @@ class FakeAgent:
         self.overrides: list[Callable[..., Any]] = []
         self.calls: list[dict[str, Any]] = []
         self.tools: dict[str, Callable[..., dict[str, Any]]] = {}
-        self.tool_calls: list[ToolCallRecord] = []
-        self.attempt_tool_calls: list[list[ToolCallRecord]] = []  # the next runs' tool calls, one list per run, before `tool_calls`
         self.stop: dict[str, Any] = {}  # how every run reports it ended: finish_reason and its token counts
         self.output = "done"  # the run's closing text; "" is what a final tool's run reports (no closing turn)
 
@@ -80,7 +78,7 @@ class FakeAgent:
         self.calls.append({"task": task_prompt, "context": context, "run_id": run_id, "force_tool": force_tool, "tool_budget": tool_budget, "max_steps": max_steps})
         step = self.overrides.pop(0) if self.overrides else self.script
         step(self.tools, context)
-        return AgentRunResult(output=self.output, tool_calls=self.attempt_tool_calls.pop(0) if self.attempt_tool_calls else self.tool_calls, **self.stop)
+        return AgentRunResult(output=self.output, tool_calls=[], **self.stop)
 
 
 def notes(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
@@ -1337,78 +1335,13 @@ def test_the_judge_and_the_log_carry_no_recent_verdicts(tmp_path: Path) -> None:
     assert "recent_verdicts" not in h.agents["judge"].calls[0]["context"] and "recent_verdicts" not in h.log_lines()[0]
 
 
-def test_the_judge_runs_with_its_memory_budget_and_its_lessons_are_logged(tmp_path: Path) -> None:
-    h = _harness(tmp_path, params=BullBearParams(judge_memory_budget=4))
-    h.agents["judge"].tool_calls = [
-        ToolCallRecord("search_memory", {"query": "S03"}, "{}"),
-        ToolCallRecord("remember_lesson", {"text": "out on a shelf filing alone was wrong", "symbol": "CRDO"}, "{}"),
-        ToolCallRecord("submit_verdicts", {}, "{}"),
-    ]
-
-    assert h.run().completed
-
-    assert h.agents["judge"].calls[0]["tool_budget"] == 4
-    assert h.log_lines()[0]["memory"] == {"calls": 2, "lessons": ["out on a shelf filing alone was wrong"]}
-
-
-def test_lessons_from_a_rejected_first_attempt_and_from_the_retry_are_both_logged(tmp_path: Path) -> None:
-    h = _harness(tmp_path)
-    h.agents["judge"].overrides = [verdicts(UNIVERSE[:11])]  # 11 in against a cap of 10: refused, then the retry submits
-    h.agents["judge"].attempt_tool_calls = [
-        [ToolCallRecord("remember_lesson", {"text": "first lesson"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}'), ToolCallRecord("submit_verdicts", {}, '{"error": "too many in"}')],
-        [
-            ToolCallRecord("search_memory", {"query": "S03"}, "{}"),
-            ToolCallRecord("remember_lesson", {"text": "second lesson"}, '{"id": "lesson_2", "kind": "lesson", "status": "active"}'),
-            ToolCallRecord("submit_verdicts", {}, "{}"),
-        ],
-    ]
-
-    assert h.run().completed
-
-    assert len(h.agents["judge"].calls) == 2
-    assert h.log_lines()[0]["memory"] == {"calls": 3, "lessons": ["first lesson", "second lesson"]}
-
-
-def test_a_refused_or_invalid_remember_lesson_counts_as_a_call_but_is_not_a_lesson(tmp_path: Path) -> None:
-    h = _harness(tmp_path)
-    h.agents["judge"].tool_calls = [
-        ToolCallRecord("remember_lesson", {"text": "stored"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}'),
-        ToolCallRecord("remember_lesson", {"text": "over the budget"}, '{"error": "tool budget of 6 calls spent; remember_lesson was not run. Finish now: call submit_verdicts."}'),
-        ToolCallRecord("remember_lesson", {"text": ""}, '{"error": "text must be a non-empty string"}'),
-        ToolCallRecord("remember_lesson", {"text": "python repr"}, "{'error': 'text must be a non-empty string'}"),
-        ToolCallRecord("remember_lesson", {"symbol": "CRDO"}, '{"id": "lesson_2", "kind": "lesson", "status": "active"}'),  # no text: not a lesson
-        ToolCallRecord("remember_lesson", {"text": "never answered"}, ""),
-        ToolCallRecord("remember_lesson", {"text": "tool raised"}, "Error invoking tool 'remember_lesson' with kwargs {'text': 'tool raised'} with error: boom"),
-        ToolCallRecord("submit_verdicts", {}, "{}"),
-    ]
-
-    assert h.run().completed
-
-    assert h.log_lines()[0]["memory"] == {"calls": 7, "lessons": ["stored"]}
-
-
-def test_an_abandoned_judge_stage_still_logs_the_memory_calls_it_made(tmp_path: Path) -> None:
-    h = _harness(tmp_path)
-    h.agents["judge"].script = does_nothing
-    h.agents["judge"].attempt_tool_calls = [
-        [ToolCallRecord("remember_lesson", {"text": "kept before the failure"}, '{"id": "lesson_1", "kind": "lesson", "status": "active"}')],
-        [ToolCallRecord("search_memory", {"query": "S00"}, "{}")],
-    ]
-
-    outcome = h.run()
-
-    assert not outcome.completed
-    (line,) = h.log_lines()
-    assert line["abandoned"] is True and line["stage"] == "judge"
-    assert line["memory"] == {"calls": 2, "lessons": ["kept before the failure"]}
-
-
-def test_a_judge_that_used_no_memory_tool_logs_an_empty_record(tmp_path: Path) -> None:
+def test_the_judge_runs_with_no_tool_budget_and_the_log_carries_no_memory_record(tmp_path: Path) -> None:
     h = _harness(tmp_path)
 
     assert h.run().completed
 
-    assert h.log_lines()[0]["memory"] == {"calls": 0, "lessons": []}
+    assert h.agents["judge"].calls[0]["tool_budget"] is None  # its only tool is submit_verdicts
+    assert "memory" not in h.log_lines()[0]
 
 
 def test_a_rejected_submission_warning_says_how_the_run_ended(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -1468,7 +1401,7 @@ def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pyte
     (message,) = [record.getMessage() for record in caplog.records if "abandoned" in record.getMessage()]
     (line,) = [json.loads(text, object_pairs_hook=lambda pairs: pairs) for text in h.log_path.read_text(encoding="utf-8").splitlines()]
     head = ["date", "run_id", "abandoned"]
-    review = ["ranked", "debate_set", "forced_exits", "cooldowns_active", "notes", "bull_conviction", "bear_risk", "memory"]
+    review = ["ranked", "debate_set", "forced_exits", "cooldowns_active", "notes", "bull_conviction", "bear_risk"]
     tail = ["stage", "error", "abandoned_streak"]
     prefix = "[bull_bear] \x1b[31m[bull_bear] review abandoned at the "
     verdicts_state = {"S03": {"verdict": "in", "reason": "old", "date": "2026-09-29", "strength": "standard"}}

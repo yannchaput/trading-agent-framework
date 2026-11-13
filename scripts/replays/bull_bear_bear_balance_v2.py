@@ -296,7 +296,6 @@ def prepare(args: argparse.Namespace) -> None:
 def replay_judge(arm: str, day: str, log: Mapping[str, Any], fields: Mapping[str, Any], prompts: types.ModuleType) -> dict[str, Any]:
     """The judge alone on the logged bull and bear arguments of a review (J-new adds the four fields); one result line."""
     judge_ctx = log["judge"][day]["context"]
-    review_time = datetime.fromisoformat(judge_ctx["current_datetime"])
     symbols = [stock["fact_sheet"]["symbol"] for stock in judge_ctx["stocks"]]
     replay = v1._Replay(arm, day, prompts)
     params = replay.params
@@ -304,12 +303,12 @@ def replay_judge(arm: str, day: str, log: Mapping[str, Any], fields: Mapping[str
     started = datetime.now(UTC)
     stages: dict[str, Any] = {}
     try:
-        replay.create(("judge",), review_time)
+        replay.create(("judge",))
         previous = {stock["fact_sheet"]["symbol"]: stock["previous_verdict"] for stock in judge_ctx["stocks"] if "previous_verdict" in stock}
         replay.recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
         context = judge_context(arm, day, judge_ctx, fields)
         line["fields_shown"] = v1._shown(context)
-        stages["judge"] = replay.stage("judge", "submit_verdicts", prompts.judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget)
+        stages["judge"] = replay.stage("judge", "submit_verdicts", prompts.judge_task(params.reason_max_chars), context)
         tokens = [value for value in stages["judge"]["input_tokens"] if value is not None]
         line["judge_prompt_tokens"] = tokens[0] if tokens else None
         line["judge_max_input_tokens"] = max(tokens) if tokens else None
@@ -320,7 +319,6 @@ def replay_judge(arm: str, day: str, log: Mapping[str, Any], fields: Mapping[str
         line["ok"] = True
         return line
     finally:
-        replay.close()
         line["stages"] = stages
         line["started"] = started.isoformat(timespec="seconds")
         line["seconds"] = round((datetime.now(UTC) - started).total_seconds(), 1)

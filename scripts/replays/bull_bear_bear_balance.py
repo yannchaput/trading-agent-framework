@@ -26,7 +26,6 @@ import io
 import json
 import statistics
 import subprocess
-import tempfile
 import time
 import tokenize
 import types
@@ -295,9 +294,8 @@ class _Replay:
         self.manager.enable_telemetry(now=lambda: datetime.now(UTC))
         self.recorder = HandoffRecorder(self.params)
         self.submit = submit_tools(self.recorder)
-        self._memory_dir: tempfile.TemporaryDirectory[str] | None = None
 
-    def create(self, stages: Sequence[str], review_time: datetime) -> None:
+    def create(self, stages: Sequence[str]) -> None:
         """The agents of `stages`, built as `BullBearStrategy.initialize` builds them, with this arm's prompts."""
         params, prompts = self.params, self.prompts
         cap, budget, temperature = params.max_output_tokens, params.thinking_token_budget, params.agent_temperature
@@ -305,27 +303,15 @@ class _Replay:
             if name in stages:
                 self.manager.create(name=name, system_prompt=system, tools=[self.submit[tool]], temperature=temperature, final_tools=[tool], max_output_tokens=cap, thinking_token_budget=budget)
         if "judge" in stages:
-            from trading_agent_framework.agents.tools import only
-            from trading_agent_framework.memory.store import MemoryStore
-            from trading_agent_framework.memory.tools import memory_tools
-
-            self._memory_dir = tempfile.TemporaryDirectory(prefix="bull_bear_replay_memory_")
-            store = MemoryStore(Path(self._memory_dir.name) / "memory.sqlite", strategy_name="bull_bear", now=lambda: review_time, fresh=True)  # empty: the run's memory is gone
             self.manager.create(
                 name="judge",
                 system_prompt=prompts.JUDGE_SYSTEM,
-                tools=[*only(memory_tools(store), {"search_memory", "remember_lesson"}), self.submit["submit_verdicts"]],
+                tools=[self.submit["submit_verdicts"]],
                 temperature=temperature,
-                exempt_tools=["submit_verdicts"],
                 final_tools=["submit_verdicts"],
-                compact_history=True,
                 max_output_tokens=params.judge_max_output_tokens,
                 thinking_token_budget=params.judge_thinking_token_budget,
             )
-
-    def close(self) -> None:
-        if self._memory_dir is not None:
-            self._memory_dir.cleanup()
 
     def stage(self, name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> dict[str, Any]:
         """`BullBearPipeline._run_stage`: one run, then one fresh run with the submit tool forced; a loop fails at once."""
@@ -384,7 +370,6 @@ def replay_review(arm: str, entry: Mapping[str, Any], log: Mapping[str, Any], fi
     """Bull, bear, then judge on that arm's bull and bear (or the bear alone); one result line."""
     day = entry["date"]
     bull_ctx, bear_ctx, judge_ctx = (log[stage][day]["context"] for stage in STAGES)
-    review_time = datetime.fromisoformat(judge_ctx["current_datetime"])
     symbols = _symbols(bull_ctx)
     replay = _Replay(arm, day, prompts)
     params = replay.params
@@ -392,7 +377,7 @@ def replay_review(arm: str, entry: Mapping[str, Any], log: Mapping[str, Any], fi
     started = datetime.now(UTC)
     stages: dict[str, Any] = {}
     try:
-        replay.create(("bear",) if bear_only else tuple(STAGES), review_time)
+        replay.create(("bear",) if bear_only else tuple(STAGES))
         evidence_bear = _evidence(arm, day, bear_ctx, fields)
         line["bear_context_fields"] = _shown(evidence_bear)
         bull: dict[str, Any] = {}
@@ -431,7 +416,7 @@ def replay_review(arm: str, entry: Mapping[str, Any], log: Mapping[str, Any], fi
             "constraints": judge_ctx["constraints"],
         }
         replay.recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
-        stages["judge"] = replay.stage("judge", "submit_verdicts", prompts.judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget)
+        stages["judge"] = replay.stage("judge", "submit_verdicts", prompts.judge_task(params.reason_max_chars), context)
         tokens = [value for value in stages["judge"]["input_tokens"] if value is not None]
         line["judge_prompt_tokens"] = tokens[0] if tokens else None  # the first judge call: system prompt, tools and the task with its context
         line["judge_max_input_tokens"] = max(tokens) if tokens else None
@@ -442,7 +427,6 @@ def replay_review(arm: str, entry: Mapping[str, Any], log: Mapping[str, Any], fi
         line["ok"] = True
         return line
     finally:
-        replay.close()
         line["stages"] = stages
         line["started"] = started.isoformat(timespec="seconds")
         line["seconds"] = round((datetime.now(UTC) - started).total_seconds(), 1)

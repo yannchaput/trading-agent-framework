@@ -49,7 +49,6 @@ if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
 
 _RESEARCH_TOOLS = {"search_news", "get_income_statement", "get_balance_sheet"}
-_JUDGE_MEMORY_TOOLS = {"search_memory", "remember_lesson"}
 
 
 def _size(quantity: Decimal | None) -> str:
@@ -135,7 +134,6 @@ class BullBearStrategy(Strategy):
             submit = submit_tools(recorder)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
             from trading_agent_framework.agents.tools.news import news_tools
-            from trading_agent_framework.memory.tools import memory_tools
 
             temperature = self.settings.agent_temperature
 
@@ -165,16 +163,13 @@ class BullBearStrategy(Strategy):
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             for name, system_prompt, tool in (("bull", BULL_SYSTEM, "submit_bull_case"), ("bear", BEAR_SYSTEM, "submit_bear_case")):
                 self.agents.create(name=name, system_prompt=system_prompt, tools=[submit[tool]], temperature=temperature, final_tools=[tool], max_output_tokens=cap, thinking_token_budget=budget)
-            # The judge also keeps lessons between reviews (`strategy.memory`, wiped at the start of every backtest).
-            lessons = only(memory_tools(self.memory), _JUDGE_MEMORY_TOOLS)
+            # The judge has its submit tool only, like the bull and the bear, with its own budget and cap.
             self.agents.create(
                 name="judge",
                 system_prompt=JUDGE_SYSTEM,
-                tools=[*lessons, submit["submit_verdicts"]],
+                tools=[submit["submit_verdicts"]],
                 temperature=temperature,
-                exempt_tools=["submit_verdicts"],
                 final_tools=["submit_verdicts"],
-                compact_history=True,
                 max_output_tokens=self.settings.judge_max_output_tokens,
                 thinking_token_budget=self.settings.judge_thinking_token_budget,
             )

@@ -11,7 +11,6 @@ docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 from __future__ import annotations
 
 import math
-import re
 import uuid
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
@@ -19,7 +18,7 @@ from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
-from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
+from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
@@ -337,11 +336,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
             ],
             "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
         }
-        judge_calls: list[ToolCallRecord] = []
-        try:
-            self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context, tool_budget=params.judge_memory_budget, calls_out=judge_calls)
-        finally:
-            record["memory"] = _memory_record(judge_calls)  # lessons may be stored even when the stage then abandons the review
+        self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
         verdicts: Verdicts = self._recorder.submission
         outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
         ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
@@ -357,7 +352,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         task: str,
         context: dict[str, Any],
         tool_budget: int | None = None,
-        calls_out: list[ToolCallRecord] | None = None,
         skip_retry: Callable[[], bool] | None = None,
     ) -> None:
         """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
@@ -372,12 +366,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
             tool: the submit tool the agent must call, e.g. `"submit_verdicts"`.
             task: the first-attempt prompt; the retry prompt is built from it.
             context: the template variables passed to the agent run.
-            tool_budget: cap on the agent's non-submit tool calls per run (the judge's memory tools), or `None`.
-            calls_out: optional list the tool calls of every run that returned a result are appended to, in order,
-                across both attempts (a rejected or unsubmitted attempt's calls included). A run that raised
-                (`AgentError`, `AgentLoopError`) returns no result, so its calls are not added. The judge reads it
-                in a `finally` to build the `memory` record in `reviews.jsonl` (`_memory_record`), so lessons it
-                stored are logged even when the review is abandoned.
+            tool_budget: cap on the agent's non-submit tool calls per run (the researcher's), or `None`.
             skip_retry: called after a first attempt that recorded nothing; `True` raises `StageAbandoned` at once,
                 with no forced retry (the researcher, when its note was refused for length: the caller keeps that note).
 
@@ -400,8 +389,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
             try:
                 result = agent.run(prompt, context=context, run_id=run_id, force_tool=force_tool, tool_budget=tool_budget, max_steps=self._params.max_agent_steps)
                 stop = _stop_detail(result)  # how the run's last model call ended, for the warnings below
-                if calls_out is not None:  # kept whatever the outcome, so the caller can log them even if this stage abandons
-                    calls_out.extend(result.tool_calls)
                 if result.output:  # empty when a final tool ended the run with no closing turn (the normal case), or the model spent its window thinking (warned about below, with `stop`)
                     self._strategy.log_info(f"[{agent_name}] {result.output}")
                 for i, tool_call in enumerate(result.tool_calls):
@@ -448,28 +435,6 @@ def _stop_detail(result: AgentRunResult) -> str:
     ]
     known = [part for part in parts if part]
     return f" ({', '.join(known)})" if known else ""
-
-
-_MEMORY_TOOLS = ("search_memory", "remember_lesson")
-
-
-def _memory_record(calls: Sequence[ToolCallRecord]) -> dict[str, Any]:
-    """The judge's memory use in one review: how many memory calls it made (refused ones too), and the text of each lesson that was stored."""
-    used = [call for call in calls if call.name in _MEMORY_TOOLS]
-    lessons = [call.args["text"] for call in used if call.name == "remember_lesson" and isinstance(call.args.get("text"), str) and not tool_failed(call.result)]
-    return {"calls": len(used), "lessons": lessons}
-
-
-_ERROR_KEY = re.compile(r"""["']error["']\s*:""")
-
-
-def tool_failed(result: str) -> bool:
-    """Whether a tool result says the call did nothing.
-
-    That is an `{"error": ...}` (a tool's own refusal, or the tool-budget middleware's, as JSON or as a Python dict repr), an
-    "Error invoking tool ..." message (the tool raised), or no result at all (the call was requested but never answered).
-    """
-    return not result.strip() or result.lstrip().startswith("Error") or _ERROR_KEY.search(result) is not None
 
 
 def _submission_lines(agent_name: str, submission: Any) -> list[str]:

@@ -19,7 +19,6 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.max_book_size * params.stock_weight == pytest.approx(params.investable)  # a full book is fully invested
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
     assert params.reentry_cooldown_reviews == 4
-    assert params.judge_memory_budget == 3
     assert params.research_news is True
     assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 5 tool calls, needs a limit of 21; each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 700)  # the researcher is asked for 500, a note up to 700 is kept
@@ -51,7 +50,6 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"yahoo_retry_delays": (60.0, -1.0)}, "yahoo_retry_delays"),
         ({"research_tool_budget": 0}, "research_tool_budget must be at least 1"),
         ({"reentry_cooldown_reviews": -1}, "reentry_cooldown_reviews must be at least 0"),
-        ({"judge_memory_budget": -1}, "judge_memory_budget must be at least 0"),
         ({"max_agent_steps": 0}, "max_agent_steps must be at least 1"),
         ({"max_output_tokens": 0}, "max_output_tokens must be None or at least 1"),
         ({"judge_max_output_tokens": 0}, "judge_max_output_tokens must be None or at least 1"),

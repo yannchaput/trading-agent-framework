@@ -109,7 +109,7 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
         "researcher": {"search_news", "get_income_statement", "get_balance_sheet", "submit_note"},
         "bull": {"submit_bull_case"},
         "bear": {"submit_bear_case"},
-        "judge": {"submit_verdicts", "search_memory", "remember_lesson"},
+        "judge": {"submit_verdicts"},
     }
 
 
@@ -122,13 +122,13 @@ def test_every_agent_ends_its_run_on_its_own_recorded_submission(tmp_path: Path)
     assert final == {"researcher": ["submit_note"], "bull": ["submit_bull_case"], "bear": ["submit_bear_case"], "judge": ["submit_verdicts"]}
 
 
-def test_the_researcher_and_the_judge_compact_their_history_and_the_single_shot_bull_and_bear_do_not(tmp_path: Path) -> None:
+def test_only_the_researcher_compacts_its_history_the_single_shot_bull_bear_and_judge_do_not(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=False))
 
     strategy.initialize()
 
     compacting = {created["name"]: created.get("compact_history", False) for created in agents.created}
-    assert compacting == {"researcher": True, "bull": False, "bear": False, "judge": True}
+    assert compacting == {"researcher": True, "bull": False, "bear": False, "judge": False}
 
 
 def test_the_judge_gets_its_own_output_cap_and_the_others_share_one(tmp_path: Path) -> None:
@@ -200,12 +200,12 @@ def test_research_news_is_on_by_default_and_recorded_in_the_parameters(tmp_path:
     assert strategy.parameters["stock_weight"] == 0.098  # recorded in settings.json
 
 
-def test_the_researcher_and_the_judge_end_with_a_budget_exempt_submit_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
+def test_the_researcher_ends_with_a_budget_exempt_submit_and_every_agent_uses_the_temperature(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(agent_temperature=0.1))
 
     strategy.initialize()
 
-    assert {created["name"]: created.get("exempt_tools") for created in agents.created} == {"researcher": ["submit_note"], "bull": None, "bear": None, "judge": ["submit_verdicts"]}
+    assert {created["name"]: created.get("exempt_tools") for created in agents.created} == {"researcher": ["submit_note"], "bull": None, "bear": None, "judge": None}
     assert {created["temperature"] for created in agents.created} == {0.1}
 
 
