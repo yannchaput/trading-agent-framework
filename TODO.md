@@ -14,7 +14,8 @@
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
-* Set up amlflow server for evaluation
+* Set up a mlflow server for agent evaluation
+* create a PR template
 
 ## BUGS
 
