@@ -64,7 +64,9 @@ class BullBearParams:
     # needs a limit of at most 21 (the researcher using its 5 tool calls); a rejected resubmission adds 3.
     max_agent_steps: int = 60
     note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
-    note_hard_max_chars: int = 700  # the length the recorder refuses above: a model cannot count characters (10-31 run: 11.8% of drafts over 600, 1.9% over 700)
+    # the length the recorder refuses above: a model cannot count characters (10-31 run on vLLM: 11.8% of drafts over 600, 1.9% over 700;
+    # 2026-11-13 on HyperQwen, whose notes run longer: 14% of researcher runs refused at 700, the refused drafts a median of 741, 6 of 61 still over 800)
+    note_hard_max_chars: int = 800
     argument_max_chars: int = 300  # the bull's and the bear's submitted argument
     reason_max_chars: int = 300  # the judge's submitted reason per verdict
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates
