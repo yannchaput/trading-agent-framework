@@ -14,13 +14,13 @@ import pandas as pd
 
 from trading_agent_framework.agents.stats_store import llm_stats_db_path
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
+from trading_agent_framework.dashboard.models import BenchmarkRunRef, MetricSet, Run, RunRef, Settings
 from trading_agent_framework.dashboard.pnl import AverageCostBook, Fill
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 
 
-def load_description(ref: RunRef) -> str | None:
+def load_description(ref: RunRef | BenchmarkRunRef) -> str | None:
     """Load the description from ``description.json`` in the run directory.
 
     Returns the description string, or None if the file is missing or
@@ -30,15 +30,15 @@ def load_description(ref: RunRef) -> str | None:
     if not os.path.isfile(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        desc = data.get("description")
-        return desc if isinstance(desc, str) else None
-    except json.JSONDecodeError, OSError:
+    except ValueError, OSError:  # ValueError covers JSONDecodeError and UnicodeDecodeError
         return None
+    desc = data.get("description") if isinstance(data, dict) else None
+    return desc if isinstance(desc, str) else None
 
 
-def save_description(ref: RunRef, description: str) -> None:
+def save_description(ref: RunRef | BenchmarkRunRef, description: str) -> None:
     """Write the description to ``description.json`` in the run directory.
 
     Creates the file if it doesn't exist; overwrites it if it does.

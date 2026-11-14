@@ -2,7 +2,8 @@
 
 Layout: <results>/<YYYYMMDD-HHMMSS>/ with meta.json, summary.json and one <model key>.jsonl per model.
 A run is complete once summary.json exists; until then it is not listed. Streamlit-free, like
-reader.py: the Models page adds the caching. Nothing here ever writes into the results directory.
+reader.py: the Models page adds the caching. Nothing in this module writes into the results directory; the one
+write is the Models page saving a run's ``description.json`` through ``reader.save_description``.
 """
 
 from __future__ import annotations

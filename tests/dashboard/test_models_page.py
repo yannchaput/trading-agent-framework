@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -55,8 +56,6 @@ def test_drill_down_defaults_to_the_winners_worst_scenario(results: Path, monkey
 
 
 def test_drill_down_falls_back_to_the_first_scenario_when_the_default_model_has_no_scores(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
     # The default-selected model (the run's winner) has an empty `scenarios` dict --
     # `_worst_scenario`'s `scored` list is then empty and must fall back to `scenarios[0]`
     # instead of calling `min()` on an empty sequence.
@@ -96,8 +95,6 @@ def test_switching_runs_recomputes_the_default_model_for_the_new_run(results: Pa
 
 
 def test_a_run_where_no_model_ran_shows_a_warning_and_the_table(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import json
-
     summary_path = results / LATEST / "summary.json"
     summary = json.loads(summary_path.read_text())
     write_json(summary_path, [{**entry, "ran": False, "error": "boom"} for entry in summary])
@@ -129,3 +126,62 @@ def test_the_models_sidebar_has_no_backtesting_buttons(results: Path, monkeypatc
     labels = [button.label for button in _app(results, monkeypatch).sidebar.button]
 
     assert labels == ["🔄 Refresh Data"]
+
+
+def _description(results: Path, run_id: str) -> Path:
+    return results / run_id / "description.json"
+
+
+def test_description_box_sits_under_the_run_picker(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(results, monkeypatch)
+
+    assert not at.exception
+    box = at.sidebar.text_area[0]
+    assert box.label == "Description"
+    assert box.value == ""
+
+
+def test_typing_a_description_saves_it_in_the_run_folder(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    at = _app(results, monkeypatch)
+    at.sidebar.text_area[0].input("vllm 0.33 sweep").run()
+
+    assert not at.exception
+    assert json.loads(_description(results, LATEST).read_text()) == {"description": "vllm 0.33 sweep"}
+
+
+def test_an_existing_description_prefills_the_box(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_json(_description(results, LATEST), {"description": "old note"})
+
+    assert _app(results, monkeypatch).sidebar.text_area[0].value == "old note"
+
+
+def test_switching_runs_shows_that_runs_description(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    write_json(_description(results, OLDER), {"description": "older note"})
+    at = _app(results, monkeypatch)
+
+    at.sidebar.selectbox[0].set_value(OLDER).run()
+    assert at.sidebar.text_area[0].value == "older note"
+
+    at.sidebar.selectbox[0].set_value(LATEST).run()
+    assert at.sidebar.text_area[0].value == ""
+
+
+def test_an_unreadable_run_still_shows_the_description_box(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (results / LATEST / "summary.json").write_text("{not json", encoding="utf-8")
+
+    at = _app(results, monkeypatch)
+
+    assert any("cannot be read" in error.value for error in at.error)
+    assert len(at.sidebar.text_area) == 1
+
+
+def test_a_failed_save_shows_a_toast(results: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(ref: object, description: str) -> None:
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr("trading_agent_framework.dashboard._pages.models.save_description", refuse)
+    at = _app(results, monkeypatch)
+    at.sidebar.text_area[0].input("note").run()
+
+    assert not at.exception
+    assert "read-only file system" in at.toast[0].value

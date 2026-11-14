@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -14,11 +15,12 @@ from trading_agent_framework.agents.telemetry import CallRecord
 from trading_agent_framework.backtesting import report
 from trading_agent_framework.backtesting.ledger import EquitySample, FillRecord, Ledger
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.dashboard.models import RunRef
+from trading_agent_framework.dashboard.models import BenchmarkRunRef, RunRef
 from trading_agent_framework.dashboard.reader import (
     get_benchmark_symbol,
     load_agent_calls,
     load_cumulative_returns,
+    load_description,
     load_equity_curve,
     load_indicator_lines,
     load_metrics,
@@ -30,6 +32,7 @@ from trading_agent_framework.dashboard.reader import (
     load_trades_curve,
     load_yearly_returns,
     save_decision,
+    save_description,
     save_regime,
 )
 from trading_agent_framework.entities.enums import OrderSide, OrderType
@@ -730,3 +733,21 @@ def test_load_session_pnl_returns_none_without_fills(tmp_path: Path) -> None:
     report.write_trades(run_dir, Ledger())
 
     assert load_session_pnl(_ref(run_dir)) is None
+
+
+def test_description_round_trips_on_a_benchmark_run(tmp_path: Path) -> None:
+    ref = BenchmarkRunRef.from_path(tmp_path / "20261111-232707")
+    text = "Qwen 3.8 sweep — été ✓"
+
+    save_description(ref, text)
+
+    assert load_description(ref) == text
+    assert json.loads((ref.path / "description.json").read_text()) == {"description": text}
+
+
+@pytest.mark.parametrize("content", [b'["x"]', b'"just text"', b'{"description": "\xff\xfe bad"}'])
+def test_load_description_ignores_a_malformed_file(tmp_path: Path, content: bytes) -> None:
+    run_dir = _run_dir(tmp_path)
+    (run_dir / "description.json").write_bytes(content)
+
+    assert load_description(_ref(run_dir)) is None
