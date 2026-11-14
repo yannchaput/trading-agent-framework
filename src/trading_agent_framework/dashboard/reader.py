@@ -14,13 +14,13 @@ import pandas as pd
 
 from trading_agent_framework.agents.stats_store import llm_stats_db_path
 from trading_agent_framework.config.env import TradingMode
-from trading_agent_framework.dashboard.models import MetricSet, Run, RunRef, Settings
+from trading_agent_framework.dashboard.models import BenchmarkRunRef, MetricSet, Run, RunRef, Settings
 from trading_agent_framework.dashboard.pnl import AverageCostBook, Fill
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
 
 
-def load_description(ref: RunRef) -> str | None:
+def load_description(ref: RunRef | BenchmarkRunRef) -> str | None:
     """Load the description from ``description.json`` in the run directory.
 
     Returns the description string, or None if the file is missing or
@@ -38,7 +38,7 @@ def load_description(ref: RunRef) -> str | None:
         return None
 
 
-def save_description(ref: RunRef, description: str) -> None:
+def save_description(ref: RunRef | BenchmarkRunRef, description: str) -> None:
     """Write the description to ``description.json`` in the run directory.
 
     Creates the file if it doesn't exist; overwrites it if it does.
