@@ -1,6 +1,6 @@
 """Read-only access to the per-run agent log of a backtesting run (one JSON line per strategy review/run).
 
-`reviews.jsonl` is written by `bill_ackman` and `bull_bear`, `runs.jsonl` (`strategies/common/run_log.py`) by
+`reviews.jsonl` is written by `bill_ackman`, `bull_bear` and `sector_pods`, `runs.jsonl` (`strategies/common/run_log.py`) by
 `insider_trades` and `congress_trades`; the Agents tab of Run Detail shows whichever the run has.
 The schemas differ, so the table is generic: one column per key found in the file, in first-seen order, and the page
 shows the raw record next to it. Streamlit-free, like reader.py. Nothing here writes into a run.

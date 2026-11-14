@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, trim_note, validate_verdicts
+from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, validate_verdicts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.common.handoff import HandoffError
+from trading_agent_framework.strategies.common.handoff import HandoffError, trim_text
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 
@@ -318,39 +318,12 @@ def test_a_long_what_changed_is_refused() -> None:
     assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]
 
 
-# --- trim_note ----------------------------------------------------------------------------------
-
-
-def test_a_note_within_the_limit_is_only_stripped() -> None:
-    assert trim_note("  A fact. Another.  ", max_chars=600, min_chars=250) == "A fact. Another."
-
-
-def test_a_long_note_keeps_the_most_whole_sentences_that_fit() -> None:
-    text = "a" * 300 + ". " + "b" * 250 + "! " + "c" * 100 + "."
-    assert trim_note(text, max_chars=600, min_chars=250) == "a" * 300 + ". " + "b" * 250 + "!"
-
-
-def test_a_decimal_point_is_not_a_sentence_end() -> None:
-    text = "Revenue " + "r" * 280 + ". Q3 EPS $1.58 vs $1.47 est " + "e" * 300 + "."
-    assert trim_note(text, max_chars=600, min_chars=250) == "Revenue " + "r" * 280 + "."
-
-
-def test_with_no_long_enough_sentence_the_note_is_cut_at_a_word_with_an_ellipsis() -> None:
-    text = "Short. " + "word " * 200
-    trimmed = trim_note(text, max_chars=600, min_chars=250)
-    assert len(trimmed) <= 600 and trimmed.endswith("word…")
-
-
-def test_a_note_with_no_space_is_cut_hard_with_an_ellipsis() -> None:
-    assert trim_note("x" * 700, max_chars=600, min_chars=250) == "x" * 599 + "…"
-
-
 @pytest.mark.parametrize("length", [801, 850, 1200])
 def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
     text = ("Fact 2025-10-27: revenue $1.58B. " * 60)[:length]
     recorder, tools = _tools()
     recorder.expect_note("AAA")
-    assert tools["submit_note"]("AAA", trim_note(text, max_chars=800, min_chars=250)) == {"status": "recorded"}
+    assert tools["submit_note"]("AAA", trim_text(text, max_chars=800, min_chars=250)) == {"status": "recorded"}
 
 
 def test_the_weak_in_refusal_tells_a_held_stock_to_give_what_changed() -> None:

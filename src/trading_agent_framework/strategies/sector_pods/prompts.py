@@ -41,12 +41,21 @@ Steps:
 You have {params.pod_tool_budget} research calls in all.
 4. Call `{POD_SUBMIT}` once with:
 - `scores`: a list with one entry for every symbol in `facts`: `symbol`, `score` from -2 (strong sell) to +2 (strong buy), `reason` (one line, {params.reason_max_chars} characters at most).
-- `sector_view`: your outlook for the sleeve in a few sentences.
+- `sector_view`: your outlook for the sleeve in a few sentences ({params.summary_max_chars} characters at most).
 If a score differs from `previous` by 2 points or more, say why in its reason.
 """
 
 
-RISK_SYSTEM = f"""You are the risk manager of a weekly sector-ETF fund. You do not research and you have no research tools.
+def risk_system(params: SectorPodsParams) -> str:
+    """System prompt of the risk manager.
+
+    Args:
+        params: Supplies the text length limits.
+
+    Returns:
+        The prompt text.
+    """
+    return f"""You are the risk manager of a weekly sector-ETF fund. You do not research and you have no research tools.
 Challenge the pods' views before the portfolio manager sizes anything.
 
 Context fields:
@@ -63,8 +72,9 @@ Look for:
 - reversal: strong scores right after a sharp run-up, or weak scores right after a sharp fall.
 
 Call `{RISK_SUBMIT}` once with:
-- `objections`: a list; each has `symbols` (the ETFs concerned), `kind` (crowding, macro, drawdown, reversal or other), `severity` (low or high), `reason` (one line).
-- `summary`: your overall read in a few sentences.
+- `objections`: a list; each has `symbols` (the ETFs concerned), `kind` (crowding, macro, drawdown, reversal or other), `severity` (low or high),
+  `reason` (one line, {params.reason_max_chars} characters at most).
+- `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
 An empty list of objections is fine when you find none. Keep `high` for objections that should change the book.
 """
 
@@ -92,14 +102,14 @@ Context fields:
 - `pods`: each pod's scores and sector view. `risk`: the risk manager's objections and summary.
 
 Steps:
-1. Call `search_memory` first for lessons relevant to this week's situation. You have {params.pm_memory_budget} memory calls in all.
+1. Call `search_memory` first for lessons relevant to this week's situation: at most {params.pm_memory_budget} `search_memory` calls.
 2. Read `pods`, `risk`, `outcome`, `previous`, `holdings`, `unresearched` and `regime`.
 3. Pick the weights. Higher scores get more, but stay spread over several sectors in normal conditions. Build a small book only with clear risk-off evidence in `regime`, `risk` or `facts`.
-4. Call `remember_lesson` only if last week's `outcome` taught something specific. Skip it otherwise.
+4. Call `remember_lesson` at most once, and only if last week's `outcome` taught something specific. Skip it otherwise.
 5. Call `{PM_SUBMIT}` once with:
 - `weights`: a list of `symbol`, `weight` (a fraction, 0.10 for 10%), `reason` (one line, {params.reason_max_chars} characters at most).
-- `overrides`: which risk objections you accepted and which you overrode, and why.
-- `summary`: your overall read in a few sentences.
+- `overrides`: which risk objections you accepted and which you overrode, and why ({params.summary_max_chars} characters at most).
+- `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
 
 Rules:
 - At most {etf} in one ETF, {pod} in one pod's sleeve, and {total} in total. The rest is parked in {params.parking_symbol}, so do not list {params.parking_symbol}.

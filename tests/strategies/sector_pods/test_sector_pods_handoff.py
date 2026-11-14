@@ -1,5 +1,7 @@
 """Tests for the sector_pods submit schemas, validators and submit tools."""
 
+import logging
+
 import pytest
 
 from trading_agent_framework.agents.graph import SubmitSlot
@@ -173,7 +175,7 @@ def test_check_weights_boundaries(book, message):
 def test_submit_tools_record_into_their_slot():
     slot = SubmitSlot(validate_pod(TECH, PARAMS))
     slot.arm(_state())
-    tool = pod_submit_tool(slot)
+    tool = pod_submit_tool(slot, PARAMS)
     assert tool.__name__ == "submit_pod_view"
     result = tool(scores=_scores(("XLK", 1), ("SMH", 0))["scores"], sector_view="x")
     assert result == {"status": "recorded"}
@@ -184,11 +186,83 @@ def test_submit_tools_record_into_their_slot():
 def test_risk_and_pm_tools():
     risk = SubmitSlot(validate_risk(PARAMS))
     risk.arm(_state())
-    tool = risk_submit_tool(risk)
+    tool = risk_submit_tool(risk, PARAMS)
     assert tool.__name__ == "submit_risk_review"
     assert tool(objections=[], summary="s") == {"status": "recorded"}
     pm = SubmitSlot(validate_pm(PARAMS))
     pm.arm(_full_state())
-    tool = pm_submit_tool(pm)
+    tool = pm_submit_tool(pm, PARAMS)
     assert tool.__name__ == "submit_target_weights"
     assert tool(weights=[], overrides="", summary="s") == {"status": "recorded"}
+
+
+LONG = "First sentence here. " * 30  # 630 characters of whole sentences
+
+
+def test_an_over_long_pod_text_is_recorded_trimmed_at_a_sentence_not_refused():
+    slot = SubmitSlot(validate_pod(TECH, PARAMS))
+    slot.arm(_state())
+    scores = [{"symbol": "XLK", "score": 1, "reason": LONG}, {"symbol": "SMH", "score": 0, "reason": "short"}]
+
+    assert pod_submit_tool(slot, PARAMS)(scores=scores, sector_view=LONG) == {"status": "recorded"}
+
+    assert slot.value is not None
+    view, reason = slot.value["sector_view"], slot.value["scores"][0]["reason"]
+    assert PARAMS.summary_max_chars // 2 <= len(view) <= PARAMS.summary_max_chars and view.endswith("here.")
+    assert PARAMS.reason_max_chars // 2 <= len(reason) <= PARAMS.reason_max_chars and reason.endswith("here.")
+    assert slot.value["scores"][1]["reason"] == "short"
+
+
+def test_an_over_long_risk_text_is_recorded_trimmed():
+    slot = SubmitSlot(validate_risk(PARAMS))
+    slot.arm(_state())
+    objections = [{"symbols": ["XLK"], "kind": "crowding", "severity": "high", "reason": LONG}]
+
+    assert risk_submit_tool(slot, PARAMS)(objections=objections, summary=LONG) == {"status": "recorded"}
+
+    assert slot.value is not None
+    assert len(slot.value["summary"]) <= PARAMS.summary_max_chars and len(slot.value["objections"][0]["reason"]) <= PARAMS.reason_max_chars
+
+
+def test_an_over_long_pm_text_is_recorded_trimmed():
+    slot = SubmitSlot(validate_pm(PARAMS))
+    slot.arm(_full_state())
+
+    assert pm_submit_tool(slot, PARAMS)(weights=[{"symbol": "XLK", "weight": 0.1, "reason": LONG}], overrides=LONG, summary=LONG) == {"status": "recorded"}
+
+    assert slot.value is not None
+    assert all(len(slot.value[field]) <= PARAMS.summary_max_chars for field in ("overrides", "summary"))
+    assert len(slot.value["weights"][0]["reason"]) <= PARAMS.reason_max_chars
+
+
+def test_a_submit_tool_still_refuses_what_is_not_text():
+    slot = SubmitSlot(validate_risk(PARAMS))
+    slot.arm(_state())
+
+    assert "error" in risk_submit_tool(slot, PARAMS)(objections=[], summary=None)
+    assert "error" in risk_submit_tool(slot, PARAMS)(objections=["not an object"], summary="s")
+
+
+def test_each_trim_is_logged_as_a_warning_naming_the_field_and_both_lengths(caplog: pytest.LogCaptureFixture):
+    slot = SubmitSlot(validate_pod(TECH, PARAMS))
+    slot.arm(_state())
+    scores = [{"symbol": "XLK", "score": 1, "reason": LONG}, {"symbol": "SMH", "score": 0, "reason": "short"}]
+
+    with caplog.at_level(logging.WARNING):
+        pod_submit_tool(slot, PARAMS)(scores=scores, sector_view=LONG)
+
+    assert slot.value is not None
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == 2  # the short reason is not logged
+    assert any(f"submit_pod_view: reason for XLK trimmed from {len(LONG.strip())} to {len(slot.value['scores'][0]['reason'])} characters" in m for m in warnings)
+    assert any(f"submit_pod_view: sector_view trimmed from {len(LONG.strip())} to {len(slot.value['sector_view'])} characters" in m for m in warnings)
+
+
+def test_a_risk_objection_trim_is_logged_with_its_symbols(caplog: pytest.LogCaptureFixture):
+    slot = SubmitSlot(validate_risk(PARAMS))
+    slot.arm(_state())
+
+    with caplog.at_level(logging.WARNING):
+        risk_submit_tool(slot, PARAMS)(objections=[{"symbols": ["XLK", "SMH"], "kind": "crowding", "severity": "high", "reason": LONG}], summary="s")
+
+    assert any("submit_risk_review: reason for XLK, SMH trimmed from" in record.getMessage() for record in caplog.records)

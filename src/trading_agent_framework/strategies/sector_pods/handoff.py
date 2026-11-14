@@ -3,12 +3,17 @@
 No `from __future__ import annotations` here: LangChain reads the tool signatures and the TypedDicts at runtime.
 """
 
+import logging
 from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 
 from trading_agent_framework.agents.graph import SubmitSlot
+from trading_agent_framework.strategies.common.handoff import trim_text
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, Pod, pod_of
+from trading_agent_framework.utils.log import ColorLogger
+
+logger = ColorLogger(logging.getLogger(__name__), "sector_pods")
 
 POD_SUBMIT = "submit_pod_view"
 RISK_SUBMIT = "submit_risk_review"
@@ -195,31 +200,63 @@ def validate_pm(params: SectorPodsParams) -> Validator:
     return check
 
 
-def pod_submit_tool(slot: SubmitSlot) -> Callable[..., dict[str, Any]]:
-    """Build the pod agents' submit tool, recording into `slot`."""
+def _trimmed(value: Any, limit: int, label: str) -> Any:
+    """A text `value` cut to `limit` characters at a sentence, with a warning; anything else is returned as is, for the validator to refuse.
+
+    The models cannot count characters: refused for length, they resubmitted the whole payload until the run counted as a loop.
+    """
+    if not isinstance(value, str):
+        return value
+    kept = trim_text(value, max_chars=limit, min_chars=limit // 2)
+    if len(value.strip()) > limit:
+        logger.log_warning(f"{label} trimmed from {len(value.strip())} to {len(kept)} characters (limit {limit})")
+    return kept
+
+
+def _trimmed_reasons(entries: Any, limit: int, tool: str) -> Any:
+    """`entries` with each object's `reason` trimmed to `limit`; a malformed list is returned as is."""
+    if not isinstance(entries, list):
+        return entries
+    return [{**entry, "reason": _trimmed(entry.get("reason"), limit, f"{tool}: reason for {_subject(entry)}")} if isinstance(entry, dict) else entry for entry in entries]
+
+
+def _subject(entry: Mapping[str, Any]) -> str:
+    """What an entry's reason is about, for the trim warning: its `symbol`, or its `symbols` joined."""
+    symbols = entry.get("symbols")
+    return ", ".join(map(str, symbols)) if isinstance(symbols, list) else str(entry.get("symbol"))
+
+
+def pod_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the pod agents' submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
 
     def submit_pod_view(scores: list[Score], sector_view: str) -> dict[str, Any]:
         """Submit your score for every ETF and your view of the sector."""
-        return slot.submit({"scores": scores, "sector_view": sector_view})
+        return slot.submit({"scores": _trimmed_reasons(scores, params.reason_max_chars, POD_SUBMIT), "sector_view": _trimmed(sector_view, params.summary_max_chars, f"{POD_SUBMIT}: sector_view")})
 
     return submit_pod_view
 
 
-def risk_submit_tool(slot: SubmitSlot) -> Callable[..., dict[str, Any]]:
-    """Build the risk agent's submit tool, recording into `slot`."""
+def risk_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the risk agent's submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
 
     def submit_risk_review(objections: list[Objection], summary: str) -> dict[str, Any]:
         """Submit your objections to the pods' views (none is fine) and a summary."""
-        return slot.submit({"objections": objections, "summary": summary})
+        return slot.submit({"objections": _trimmed_reasons(objections, params.reason_max_chars, RISK_SUBMIT), "summary": _trimmed(summary, params.summary_max_chars, f"{RISK_SUBMIT}: summary")})
 
     return submit_risk_review
 
 
-def pm_submit_tool(slot: SubmitSlot) -> Callable[..., dict[str, Any]]:
-    """Build the portfolio manager's submit tool, recording into `slot`."""
+def pm_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the portfolio manager's submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
 
     def submit_target_weights(weights: list[Weight], overrides: str, summary: str) -> dict[str, Any]:
         """Submit the target weight of each ETF you want to hold, what you overrode, and a summary."""
-        return slot.submit({"weights": weights, "overrides": overrides, "summary": summary})
+        return slot.submit(
+            {
+                "weights": _trimmed_reasons(weights, params.reason_max_chars, PM_SUBMIT),
+                "overrides": _trimmed(overrides, params.summary_max_chars, f"{PM_SUBMIT}: overrides"),
+                "summary": _trimmed(summary, params.summary_max_chars, f"{PM_SUBMIT}: summary"),
+            }
+        )
 
     return submit_target_weights

@@ -20,12 +20,13 @@ from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools, trim_note
+from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
 from trading_agent_framework.strategies.common.daily_bars import DailySeries, DataUnavailable
+from trading_agent_framework.strategies.common.handoff import trim_text
 from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
@@ -611,13 +612,13 @@ def test_a_note_refused_for_length_is_kept_trimmed_without_a_forced_retry(tmp_pa
         assert h.run().completed
 
     assert len(h.agents["researcher"].calls) == 15  # no forced retry for S00
-    assert _notes_seen_by_the_bull(h)["S00"] == trim_note(LONG, max_chars=800, min_chars=250)
+    assert _notes_seen_by_the_bull(h)["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
     assert h.log_lines()[0]["notes"] == {"written": 15, "failed": [], "trimmed": ["S00"]}
     messages = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING]
-    assert any(f"[researcher] note for S00 trimmed from 920 to {len(trim_note(LONG, max_chars=800, min_chars=250))} characters" in m for m in messages)
+    assert any(f"[researcher] note for S00 trimmed from 920 to {len(trim_text(LONG, max_chars=800, min_chars=250))} characters" in m for m in messages)
     assert not any("no note for S00" in m for m in messages)
     infos = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.INFO]
-    assert any(m.endswith(f"[researcher] S00: {trim_note(LONG, max_chars=800, min_chars=250)}") for m in infos)  # the note the bull, bear and judge read is in the run log
+    assert any(m.endswith(f"[researcher] S00: {trim_text(LONG, max_chars=800, min_chars=250)}") for m in infos)  # the note the bull, bear and judge read is in the run log
 
 
 def test_a_researcher_that_loops_after_a_refused_note_keeps_it_trimmed(tmp_path: Path) -> None:
@@ -631,7 +632,7 @@ def test_a_researcher_that_loops_after_a_refused_note_keeps_it_trimmed(tmp_path:
     assert h.run().completed
 
     seen = _notes_seen_by_the_bull(h)
-    assert seen["S00"] == trim_note(LONG, max_chars=800, min_chars=250)
+    assert seen["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
     assert seen["S01"] == UNAVAILABLE_NOTE  # S00's refused note never leaks into S01
     assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S01"], "trimmed": ["S00"]}
 
@@ -643,7 +644,7 @@ def test_a_note_refused_for_length_on_the_forced_retry_is_kept_trimmed(tmp_path:
     assert h.run().completed
 
     assert h.agents["researcher"].calls[1]["force_tool"] == "submit_note"
-    assert _notes_seen_by_the_bull(h)["S00"] == trim_note(LONG, max_chars=800, min_chars=250)
+    assert _notes_seen_by_the_bull(h)["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
 
 
 def test_every_agent_run_gets_the_step_limit_of_the_settings(tmp_path: Path) -> None:
