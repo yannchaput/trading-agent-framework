@@ -317,7 +317,7 @@ class AgentManager:
 
         return force_tool_choice
 
-    def _tool_budget_middleware(self, tool_names: Sequence[str], exempt_tools: Sequence[str]) -> Any:
+    def _tool_budget_middleware(self, tool_names: Sequence[str], exempt_tools: Sequence[str], final_tools: Sequence[str] = ()) -> Any:
         """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
 
         `AgentHandle.run` sets `run_limit` for the run (`None` between runs: nothing is refused). The base class
@@ -325,12 +325,15 @@ class AgentManager:
         the limit, so a refused call never runs. Two things differ from stock: only the agent's own non-exempt
         tools are counted (an unknown name is rejected by ToolNode, uncounted; an exempt call is neither counted
         nor refused), and the refusal reads `{"error": "tool budget of N calls spent; ..."}`, the shape a tool's
-        own refusal has and the one the callers look for, naming the tools the model must finish with.
+        own refusal has and the one the callers look for, naming the tools the model must finish with: the agent's
+        `final_tools` when it has any (an exempt tool that does not end the run, a statement reader say, is not
+        one to finish with), else its exempt tools.
         """
         from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
         from langchain_core.messages import ToolMessage
 
         exempt = tuple(exempt_tools)
+        finish = tuple(final_tools) or exempt
         counted = frozenset(tool_names) - frozenset(exempt)
 
         class ToolBudgetLimit(ToolCallLimitMiddleware):
@@ -356,7 +359,7 @@ class AgentManager:
                 refusals = []
                 for message in update["messages"]:
                     logger.log_warning(f"tool budget of {self.run_limit} calls spent: {message.name} was refused")
-                    error = {"error": _tool_budget_message(self.run_limit, message.name, exempt)}
+                    error = {"error": _tool_budget_message(self.run_limit, message.name, finish)}
                     refusals.append(ToolMessage(content=json.dumps(error), tool_call_id=message.tool_call_id, name=message.name, status="error"))
                 # The spread keeps the base's counter keys; the explicit "messages" replaces the base's generic refusals with ours.
                 return {**update, "messages": refusals}
@@ -558,7 +561,7 @@ class AgentManager:
 
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
             tool_list = list(tools or [])
-            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or ())
+            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or (), final_tools or ())
             stack = [
                 self._tool_call_repair_middleware(glm_format=glm_format),
                 self._forced_tool_choice_middleware(),

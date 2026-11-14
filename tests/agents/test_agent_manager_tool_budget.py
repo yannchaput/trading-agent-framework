@@ -173,3 +173,28 @@ def test_a_negative_budget_is_refused() -> None:
 def test_the_message_names_only_the_callers_tools() -> None:
     assert _tool_budget_message(12, "get_bars", ["submit_a", "submit_b"]) == "tool budget of 12 calls spent; get_bars was not run. Finish now: call submit_a or submit_b."
     assert _tool_budget_message(3, "get_bars", []) == "tool budget of 3 calls spent; get_bars was not run. Answer now without calling another tool."
+
+
+def test_the_refusal_names_the_final_tools_not_every_exempt_tool() -> None:
+    def lookup(symbol: str) -> str:
+        """Look up a symbol."""
+        return f"{symbol} ok"
+
+    def statement(symbol: str) -> str:
+        """Read a statement."""
+        return f"{symbol} statement"
+
+    def submit(answer: str) -> dict[str, str]:
+        """Submit the answer."""
+        return {"status": "recorded"}
+
+    model = FakeToolCallingChatModel(
+        messages=iter([_calls(("lookup", {"symbol": "A"})), _calls(("lookup", {"symbol": "B"})), _calls(("statement", {"symbol": "A"})), _calls(("submit", {"answer": "x"}))])
+    )
+    handle = _manager().create(name="r", system_prompt="x", model=model, tools=[lookup, statement, submit], exempt_tools=["submit", "statement"], final_tools=["submit"])
+
+    result = handle.run("go", tool_budget=1)
+
+    refused = [call for call in result.tool_calls if call.name == "lookup"][1]
+    assert json.loads(refused.result) == {"error": "tool budget of 1 calls spent; lookup was not run. Finish now: call submit."}  # statement is exempt but does not finish the run
+    assert [call.result for call in result.tool_calls if call.name == "statement"] == ["A statement"]  # the exempt tool still ran past the budget
