@@ -30,12 +30,12 @@ def load_description(ref: RunRef | BenchmarkRunRef) -> str | None:
     if not os.path.isfile(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        desc = data.get("description")
-        return desc if isinstance(desc, str) else None
-    except json.JSONDecodeError, OSError:
+    except ValueError, OSError:  # ValueError covers JSONDecodeError and UnicodeDecodeError
         return None
+    desc = data.get("description") if isinstance(data, dict) else None
+    return desc if isinstance(desc, str) else None
 
 
 def save_description(ref: RunRef | BenchmarkRunRef, description: str) -> None:

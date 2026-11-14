@@ -743,3 +743,11 @@ def test_description_round_trips_on_a_benchmark_run(tmp_path: Path) -> None:
 
     assert load_description(ref) == text
     assert json.loads((ref.path / "description.json").read_text()) == {"description": text}
+
+
+@pytest.mark.parametrize("content", [b'["x"]', b'"just text"', b'{"description": "\xff\xfe bad"}'])
+def test_load_description_ignores_a_malformed_file(tmp_path: Path, content: bytes) -> None:
+    run_dir = _run_dir(tmp_path)
+    (run_dir / "description.json").write_bytes(content)
+
+    assert load_description(_ref(run_dir)) is None
