@@ -25,14 +25,14 @@
 
 ## Skills
 
-* Caveman
-* RTK
+* Install [Alpaca skills](https://alpaca.markets/blog/alpaca-launches-skills-library-for-ai-agents/)
 * Wait-what (mattpockock)
 * ~~poneytail~~
 
 ## PEA Manager
 
-* Trouver un skills ou MCP permettant de remplacer EODHD quand son credit est epuisé pour le scan des tickers
+* Tester Fable 5.2
+* Utiliser Fable pour revoir le skill
 
 ## Tests
 
