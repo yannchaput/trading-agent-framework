@@ -106,7 +106,7 @@ def test_backtest_end_to_end(tmp_path: Path) -> None:
 
     _run(tmp_path, manager, 2)
 
-    (path,) = tmp_path.rglob("weeks.jsonl")
+    (path,) = tmp_path.rglob("reviews.jsonl")
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert [line["date"] for line in lines] == ["2026-11-10", "2026-11-17"]
     assert all(line["abandoned"] is None for line in lines)

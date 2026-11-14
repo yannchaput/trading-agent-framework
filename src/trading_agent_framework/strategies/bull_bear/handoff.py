@@ -121,29 +121,6 @@ def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_
     return Note(expected, text)
 
 
-def trim_note(text: str, *, max_chars: int, min_chars: int) -> str:
-    """`text` cut to at most `max_chars`, never reworded.
-
-    The longest run of whole sentences that fits, if it has at least `min_chars`; otherwise a cut at a word with a trailing
-    ellipsis (or hard, when there is no space).
-    """
-    text = text.strip()
-    if len(text) <= max_chars:
-        return text
-    end = 0  # length of the longest prefix that ends a sentence (. ! or ? before whitespace or at the end) and fits
-    for index, char in enumerate(text[:max_chars]):
-        if char in ".!?" and (index + 1 == len(text) or text[index + 1].isspace()):
-            end = index + 1
-    whole = text[:end].rstrip()
-    if len(whole) >= min_chars:
-        return whole
-    head = text[: max_chars - 1]
-    cut = max((index for index, char in enumerate(head) if char.isspace()), default=-1)
-    if cut <= 0:
-        return head + "…"
-    return head[:cut].rstrip() + "…"
-
-
 def validate_bull_cases(raw: Any, *, expected: Sequence[str], max_chars: int) -> list[BullCase]:
     """Validate the bull cases against the expected symbols and the length limit."""
     return [BullCase(symbol, _one_of(item, "conviction", symbol, LEVELS), required_text(item, "argument", symbol, max_chars)) for symbol, item in _covering(raw, expected)]

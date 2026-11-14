@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import calendar
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -44,7 +44,7 @@ from trading_agent_framework.strategies.sector_pods.handoff import (
 )
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, PODS
-from trading_agent_framework.strategies.sector_pods.prompts import PM_TASK, POD_TASK, RISK_SYSTEM, RISK_TASK, pm_system, pod_system
+from trading_agent_framework.strategies.sector_pods.prompts import PM_TASK, POD_TASK, RISK_TASK, pm_system, pod_system, risk_system
 from trading_agent_framework.strategies.sector_pods.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, ConfigurationError, FatalStrategyError
@@ -133,15 +133,17 @@ class SectorPodsStrategy(Strategy):
         if provider is None:
             raise ConfigurationError("the pods need a news provider and this broker has none")
 
-    def _node(self, name: str, system: str, tools: list[Callable[..., Any]], slot: SubmitSlot, submit: str, task: str, reads: Any, write: Any, budget: int | None) -> AgentNode:
-        """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it."""
+    def _node(
+        self, name: str, system: str, tools: list[Callable[..., Any]], slot: SubmitSlot, submit: str, task: str, reads: Any, write: Any, budget: int | None, exempt: Sequence[str] = ()
+    ) -> AgentNode:
+        """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it; `exempt` tools are outside `budget`, like `submit`."""
         params = self.settings
         agent = self.agents.create(
             name=name,
             system_prompt=system,
-            tools=[*tools, _SUBMIT_TOOLS[submit](slot)],
+            tools=[*tools, _SUBMIT_TOOLS[submit](slot, params)],
             temperature=params.agent_temperature,
-            exempt_tools=[submit],
+            exempt_tools=[submit, *exempt],
             final_tools=[submit],
             max_output_tokens=params.max_output_tokens,
             thinking_token_budget=params.thinking_token_budget,
@@ -166,7 +168,9 @@ class SectorPodsStrategy(Strategy):
             )
             for pod in PODS
         }
-        risk = self._node("risk_manager", RISK_SYSTEM, [], SubmitSlot(validate_risk(params)), RISK_SUBMIT, RISK_TASK, risk_reads, lambda view: {"risk": UNAVAILABLE if view is None else view}, None)
+        risk = self._node(
+            "risk_manager", risk_system(params), [], SubmitSlot(validate_risk(params)), RISK_SUBMIT, RISK_TASK, risk_reads, lambda view: {"risk": UNAVAILABLE if view is None else view}, None
+        )
         memory = only(memory_tools(self.memory), _PM_MEMORY_TOOLS)
         pm = self._node(
             "portfolio_manager",
@@ -178,6 +182,8 @@ class SectorPodsStrategy(Strategy):
             pm_reads,
             lambda view: {"pm": UNAVAILABLE if view is None else view},
             params.pm_memory_budget,
+            # outside the budget: three searches used to spend it, so no lesson was ever stored
+            exempt=("remember_lesson",),
         )
         rebalancer = Rebalancer(self, params)
         return GraphParts(
@@ -186,7 +192,7 @@ class SectorPodsStrategy(Strategy):
             pods=pods,
             risk_manager=risk,
             portfolio_manager=pm,
-            execute=Execute(store, rebalancer, RunLog(self.run_file("weeks.jsonl"), what="week log"), params, on_warning=self._warn, on_error=self._error),
+            execute=Execute(store, rebalancer, RunLog(self.run_file("reviews.jsonl"), what="review log"), params, on_warning=self._warn, on_error=self._error),
         )
 
     def on_trading_iteration(self) -> None:

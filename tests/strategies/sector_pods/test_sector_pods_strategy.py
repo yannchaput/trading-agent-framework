@@ -104,6 +104,9 @@ def test_each_pod_gets_its_own_news_and_macro_tools(tmp_path: Path) -> None:
     assert set(tools["portfolio_manager"]) == {"search_memory", "remember_lesson", "submit_target_weights"}
     assert set(tools["risk_manager"]) == {"submit_risk_review"}
     assert by_name["tech_pod"]["final_tools"] == ["submit_pod_view"] == by_name["tech_pod"]["exempt_tools"]
+    # remember_lesson is outside the memory budget: three searches used to spend it, so no lesson was ever stored
+    assert by_name["portfolio_manager"]["exempt_tools"] == ["submit_target_weights", "remember_lesson"]
+    assert by_name["portfolio_manager"]["final_tools"] == ["submit_target_weights"]
 
 
 def test_an_error_escaping_the_graph_is_an_abandoned_week_that_keeps_the_previous_views(tmp_path: Path) -> None:

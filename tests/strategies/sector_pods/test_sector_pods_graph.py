@@ -185,7 +185,7 @@ def _harness(
     def make(name: str, script: Script, validate: Any, tool_factory: Any, submit_tool: str, reads: Any, write: Callable[[Any], dict[str, Any]]) -> AgentNode:
         slot = SubmitSlot(validate)
         agent = FakeAgent(script)
-        agent.submit = tool_factory(slot)
+        agent.submit = tool_factory(slot, params)
         agents[name] = agent
         return AgentNode(name=name, agent=agent, slot=slot, submit_tool=submit_tool, task=f"task {name}", reads=reads, write=write)
 

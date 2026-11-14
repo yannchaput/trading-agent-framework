@@ -22,13 +22,13 @@ class SectorPodsParams:
         max_etf_weight: Largest weight of one ETF.
         max_pod_weight: Largest total weight of one pod's sleeve.
         pod_tool_budget: Tool calls per pod run; the submit tool is exempt.
-        pm_memory_budget: Memory tool calls per portfolio manager run.
+        pm_memory_budget: `search_memory` calls per portfolio manager run (`remember_lesson` is not counted).
         max_agent_steps: LangGraph steps one agent run may take before it counts as a loop.
         agent_temperature: Sampling temperature of every agent; None leaves the server's default.
         thinking_token_budget: Reasoning tokens per model call; None for no budget.
         max_output_tokens: Output tokens per model call, reasoning included; None for no cap.
-        reason_max_chars: Longest submitted reason.
-        summary_max_chars: Longest submitted summary.
+        reason_max_chars: Longest submitted reason; a longer one is trimmed.
+        summary_max_chars: Longest submitted summary, sector view or overrides text; a longer one is trimmed.
         max_consecutive_abandoned: Abandoned reviews in a row that abort a backtest.
         yahoo_retry_delays: Seconds before each new attempt at an unusable Yahoo batch.
         min_yahoo_coverage: Share of the universe a Yahoo batch must cover.
@@ -43,7 +43,7 @@ class SectorPodsParams:
     max_etf_weight: float = 0.25  # largest weight of one ETF
     max_pod_weight: float = 0.40  # largest total weight of one pod
     pod_tool_budget: int = 4  # tool calls per pod run
-    pm_memory_budget: int = 3  # memory tool calls per portfolio manager run
+    pm_memory_budget: int = 3  # search_memory calls per portfolio manager run
     max_agent_steps: int = 40  # LangGraph steps before a run counts as a loop
     agent_temperature: float | None = 0.3  # None leaves the LLM server's default
     thinking_token_budget: int | None = 16384  # reasoning tokens per model call
