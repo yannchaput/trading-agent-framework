@@ -19,6 +19,7 @@ from trading_agent_framework.dashboard.components.charts import (
 from trading_agent_framework.dashboard.components.metric_cards import render_metric_card
 from trading_agent_framework.dashboard.components.tables import render_benchmark_summary_table, scenario_runs_frame
 from trading_agent_framework.dashboard.models import BenchmarkModel, BenchmarkRun, BenchmarkRunRef, ScenarioRuns
+from trading_agent_framework.dashboard.reader import load_description, save_description
 from trading_agent_framework.utils.errors import ConfigurationError
 
 
@@ -65,6 +66,17 @@ def page_models() -> None:
         format_func=lambda rid: _run_label(rid, loaded[rid]),
         key="benchmark_run",
     )
+    selected = next(r for r in refs if r.run_id == run_id)
+    desc_key = f"benchmark_description_{run_id}"  # per-run key: switching runs shows that run's own text
+    st.sidebar.text_area(
+        "Description",
+        value=load_description(selected) or "",
+        key=desc_key,
+        height=150,
+        placeholder="Notes about this benchmark run…",
+        on_change=_save_description,
+        args=(selected, desc_key),
+    )
     run = loaded[run_id]
     if isinstance(run, br.BenchmarkReadError):
         st.error(f"This benchmark run cannot be read: {run}")
@@ -88,6 +100,14 @@ def page_models() -> None:
     st.subheader("Per-scenario results")
     st.plotly_chart(benchmark_scenario_heatmap(ran, run.scenarios), width="stretch")
     _render_drill_down(run, ran)
+
+
+def _save_description(ref: BenchmarkRunRef, key: str) -> None:
+    """Write the text area's committed text to the run's ``description.json``; a toast reports a failed write."""
+    try:
+        save_description(ref, st.session_state[key])
+    except OSError as exc:
+        st.toast(f"Could not save the description: {exc}")
 
 
 def _run_label(run_id: str, run: BenchmarkRun | br.BenchmarkReadError) -> str:
