@@ -20,7 +20,8 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
     assert params.reentry_cooldown_reviews == 4
     assert params.research_news is True
-    assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 5 tool calls, needs a limit of 21; each rejected resubmission adds 3
+    assert params.research_tool_budget == 7  # counts only search_news: the statements and submit_note are exempt
+    assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 7 searches, both statements and its submit, needs a limit of 35; each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 800)  # the researcher is asked for 500, a note up to 800 is kept
     assert params.max_output_tokens == 36864  # the thinking budget plus 8,192 for the submission
     assert params.judge_max_output_tokens == 45056  # the judge's own cap: its budget plus 8,192; ~20k prompt + 45,056 fits the 81,920 window

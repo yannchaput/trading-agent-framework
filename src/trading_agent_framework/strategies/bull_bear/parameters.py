@@ -29,7 +29,7 @@ class BullBearParams:
         rebalance_band: Drift that triggers a trade.
         min_trade_pct: Smallest order.
         parking_symbol: Where unspent money goes.
-        research_tool_budget: Tool calls per researcher run; `submit_note` is exempt.
+        research_tool_budget: Counted tool calls per researcher run, which means `search_news` calls: `get_income_statement`, `get_balance_sheet` and `submit_note` are exempt.
         research_news: Give the researcher its news tool; False for the news-off comparison run.
         max_agent_steps: LangGraph steps one agent run may take before it counts as a loop and abandons the review.
         note_max_chars: The length the researcher is asked for in a submitted note.
@@ -57,11 +57,11 @@ class BullBearParams:
     rebalance_band: float = 0.03  # drift that triggers a trade
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes
-    research_tool_budget: int = 5  # tool calls per researcher run; submit_note is exempt
+    research_tool_budget: int = 7  # search_news calls per researcher run; the statement tools and submit_note are exempt
     research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     # LangGraph steps one agent run may take before it counts as a loop and abandons the review: a model resubmitting a rejected
     # call for ever. LangGraph supersteps: a tool call is a round trip of 3, a run takes 3 x calls + 5 at worst, so a normal run
-    # needs a limit of at most 21 (the researcher using its 5 tool calls); a rejected resubmission adds 3.
+    # needs a limit of at most 35 (the researcher using its 7 searches, both statements and its submit, 10 calls); a rejected resubmission adds 3.
     max_agent_steps: int = 60
     note_max_chars: int = 500  # the length the researcher is asked for in a submitted note
     # the length the recorder refuses above: a model cannot count characters (10-31 run on vLLM: 11.8% of drafts over 600, 1.9% over 700;

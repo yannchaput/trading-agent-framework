@@ -205,7 +205,8 @@ def test_the_researcher_ends_with_a_budget_exempt_submit_and_every_agent_uses_th
 
     strategy.initialize()
 
-    assert {created["name"]: created.get("exempt_tools") for created in agents.created} == {"researcher": ["submit_note"], "bull": None, "bear": None, "judge": None}
+    exempt = {created["name"]: created.get("exempt_tools") for created in agents.created}
+    assert exempt == {"researcher": ["submit_note", "get_income_statement", "get_balance_sheet"], "bull": None, "bear": None, "judge": None}
     assert {created["temperature"] for created in agents.created} == {0.1}
 
 

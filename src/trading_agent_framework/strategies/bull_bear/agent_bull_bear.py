@@ -154,7 +154,7 @@ class BullBearStrategy(Strategy):
                 system_prompt=researcher_system(news),
                 tools=[*research, submit["submit_note"]],
                 temperature=temperature,
-                exempt_tools=["submit_note"],
+                exempt_tools=["submit_note", "get_income_statement", "get_balance_sheet"],  # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
                 compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
                 max_output_tokens=cap,
