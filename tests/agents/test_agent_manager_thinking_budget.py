@@ -77,6 +77,33 @@ def test_every_model_call_of_the_run_is_sent_the_budget(monkeypatch: pytest.Monk
     assert _budgets(model) == [28672, 28672]
 
 
+def test_the_budget_is_sent_under_llama_cpps_key_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    """llama-server reads `reasoning_budget_tokens` and silently ignores vLLM's `thinking_token_budget`."""
+    model = RecordingToolCallingChatModel(messages=iter([AIMessage(content="done")]))
+    manager = _manager()
+    _with_model(manager, model, monkeypatch)
+    handle = manager.create(name="a", system_prompt="x", tools=[_lookup], thinking_token_budget=500)
+
+    handle.run("go")
+
+    assert model.calls[0]["extra_body"]["reasoning_budget_tokens"] == 500
+
+
+def test_a_refusal_naming_llama_cpps_key_is_resent_without_either(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    model = _RefusingModel(messages=iter([AIMessage(content="done")]), error=ValueError("Error code: 400 - unknown field reasoning_budget_tokens"))
+    manager = _manager()
+    _with_model(manager, model, monkeypatch)
+    handle = manager.create(name="a", system_prompt="x", tools=[_lookup], thinking_token_budget=500)
+
+    with caplog.at_level(logging.INFO):
+        result = handle.run("go")
+
+    assert result.output == "done"
+    assert "reasoning_budget_tokens" not in (model.calls[1].get("extra_body") or {})
+    assert _budgets(model) == [500, None]
+    assert len(_warnings(caplog)) == 1
+
+
 def test_without_a_budget_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     model = RecordingToolCallingChatModel(messages=iter([AIMessage(content="done")]))
     manager = _manager()
@@ -105,7 +132,7 @@ def test_the_budget_is_merged_into_an_existing_extra_body(monkeypatch: pytest.Mo
 
     handle.run("go")
 
-    assert model.calls[0]["extra_body"] == {"top_k": 20, "thinking_token_budget": 500}
+    assert model.calls[0]["extra_body"] == {"top_k": 20, "thinking_token_budget": 500, "reasoning_budget_tokens": 500}
 
 
 def test_the_budget_is_merged_with_a_call_level_extra_body_and_the_models(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -123,7 +150,7 @@ def test_the_budget_is_merged_with_a_call_level_extra_body_and_the_models(monkey
 
     handle.run("go")
 
-    assert model.calls[0]["extra_body"] == {"top_k": 20, "top_p_note": 1, "thinking_token_budget": 500}
+    assert model.calls[0]["extra_body"] == {"top_k": 20, "top_p_note": 1, "thinking_token_budget": 500, "reasoning_budget_tokens": 500}
 
 
 def test_a_budget_below_one_is_refused() -> None:
