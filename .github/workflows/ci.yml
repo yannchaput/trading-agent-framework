@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# least privilege: the job only reads the repo (the default token can be read/write)
+permissions:
+  contents: read
+
 jobs:
   checks:
     runs-on: ubuntu-latest
