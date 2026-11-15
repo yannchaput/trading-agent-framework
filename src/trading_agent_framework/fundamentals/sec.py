@@ -511,7 +511,7 @@ def raw_form4_document(primary_document: str) -> str:
 
 def strip_html(raw: str) -> str:
     """Filing HTML/XBRL to readable text."""
-    text = re.sub(r"(?is)<script.*?</script>|<style.*?</style>", " ", raw)
+    text = re.sub(r"(?is)<script\b.*?</script[^>]*>|<style\b.*?</style[^>]*>", " ", raw)  # an end tag may hold spaces or junk: `</script >`
     text = re.sub(r"(?is)<ix:hidden.*?</ix:hidden>", " ", text)
     text = re.sub(r"(?is)</?(?:p|div|br|tr|table|section|article|h[1-6])\b[^>]*>", "\n", text)
     text = re.sub(r"(?s)<[^>]+>", " ", text)
