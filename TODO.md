@@ -2,6 +2,11 @@
 
 ## General
 
+* Add a skill to review, challenge and validate the design of a strategy
+* Set the plugins claude-api and build-evals to enable evals
+* Implement a skill scanning the auto memory and session traces to get a finding
+* Set up a mlflow server for agent evaluation
+* create a PR template
 * ~~ Migrate projects to the 2nd hard drive (with the models)~~
 * ~~Enable IBKR broker~~
 * ~~Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)~~
@@ -11,25 +16,7 @@
 * ~~Add cash available during backtesting~~
 * ~~Update pyproject.toml to make dashboard an "extra" dependency~~
 * ~~Add a gloabl factory/builder for strategy in main.py~~
-* Add a skill to review, challenge and validate the design of a strategy
-* Set the plugins claude-api and build-evals to enable evals
-* Implement a skill scanning the auto memory and session traces to get a finding
-* Set up a mlflow server for agent evaluation
-* create a PR template
-* Handle difference of reasoning token budget payload attribute between vllm and llama.cpp
-* Model switch: add a "hook" to "on_trading_iteration".
-	* If the mode is "live" or "paper:
-    	* Kill any vllm,  HyperQwen or llama.cpp process
-		* Start a fresh one
-	* Perform on_trading iteration
-		* Kill the process
-		* Logs as "warn" start & stop of the process
-		* Use a decorator around "on_trading_iteration" and a context_manager to encapsulate "start/stop"
-	* If the mode is "backtesting:
-		* The decorator around "on_trading_iteration" does nothing
-		* The HyperQwen server is started at the beginning of the backtest and stop at the end
-		* Same warn logs
-	* The server to run according to mode should be parameterized in the .env.
+* ~~Handle difference of reasoning token budget payload attribute between vllm and llama.cpp~~
 
 ## BUGS
 
@@ -45,8 +32,8 @@
 
 ## PEA Manager
 
-* Tester Fable 5.2
-* Utiliser Fable pour revoir le skill
+* ~~Tester Fable 5.2~~
+* ~~Utiliser Fable pour revoir le skill~~
 
 ## Tests
 
@@ -93,7 +80,7 @@
 
 ### LLM benchmark
 
-* Gemma 4 31B local second model on llama.cpp
+* Gemma 4 26B A4B MoE local second model on llama.cpp
 * Install Strata (better of MoE) and update the framework to run Strata along with vllm - test deepseek
 * Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 * Test Sage 1.5
