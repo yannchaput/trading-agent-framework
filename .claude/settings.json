@@ -1,0 +1,5 @@
+{
+  "enabledPlugins": {
+    "langchain-skills@langchain-skills": true
+  }
+}
