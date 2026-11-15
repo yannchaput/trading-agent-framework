@@ -419,11 +419,12 @@ class AgentManager:
         return send_reasoning_effort
 
     def _thinking_budget_middleware(self, agent_name: str, budget: int) -> Any:
-        """A `wrap_model_call` that sends vLLM's `thinking_token_budget` with every agent turn, until the server refuses it.
+        """A `wrap_model_call` that sends the thinking budget with every agent turn, until the server refuses it.
 
-        It is not an OpenAI field, so it goes in the request body through `extra_body`. langchain_openai would let a
+        The budget goes under two keys: vLLM's `thinking_token_budget` and llama-server's `reasoning_budget_tokens` (each
+        server silently ignores the other's). Neither is an OpenAI field, so they go in the request body through `extra_body`. langchain_openai would let a
         call-level `extra_body` replace the model's, so this merges the model's, the call's and the budget. A server that does not
-        accept it answers 400 with a message naming `thinking_token_budget`; the call is then sent again without it and
+        accept it answers 400 with a message naming either key; the call is then sent again without both and
         the manager drops the budget for every later call of every agent, so the refusal costs one extra request and one
         WARNING. Any other error propagates, and so does a refusal of the resend.
         """
@@ -434,11 +435,13 @@ class AgentManager:
             """Send the thinking budget to the server, dropping it for good if the server refuses it."""
             if self._thinking_budget_refused:
                 return handler(request)
-            extra_body = {**(getattr(request.model, "extra_body", None) or {}), **(request.model_settings.get("extra_body") or {}), "thinking_token_budget": budget}
+            # vLLM reads thinking_token_budget, llama-server reads reasoning_budget_tokens; each ignores the other's key.
+            budget_fields = {"thinking_token_budget": budget, "reasoning_budget_tokens": budget}
+            extra_body = {**(getattr(request.model, "extra_body", None) or {}), **(request.model_settings.get("extra_body") or {}), **budget_fields}
             try:
                 response = handler(request.override(model_settings={**request.model_settings, "extra_body": extra_body}))
             except Exception as exc:
-                if "thinking_token_budget" not in str(exc):
+                if not any(key in str(exc) for key in budget_fields):
                     raise
                 self._thinking_budget_refused = True
                 logger.log_warning(f"[{agent_name}] the server refused thinking_token_budget={budget}: sent without it for the rest of the run ({exc})")
