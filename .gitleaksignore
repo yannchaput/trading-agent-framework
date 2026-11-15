@@ -1,0 +1,8 @@
+# False positives found by `gitleaks git` on the full history (2026-11-15).
+# Format: <commit>:<file>:<rule>:<line>. Each was checked by hand: none is a real key.
+# `finish_reason=length` in a prose sentence read as a key=value pair
+ee54a8bc23c7b684a575f976bbc0c97017f8bf3b:docs/superpowers/specs/2026-10-26-bull-bear-thinking-budget-design.md:generic-api-key:16
+# Test fixture KEYS = "ALPACA_API_KEY=<placeholder>\n..." (short fake values), in the plan and in the test
+72131e3d03f16b4a215fd5ee47d68982034079f3:docs/superpowers/plans/2026-10-13-dashboard-live-paper.md:generic-api-key:559
+d1ddbf27a1b25dcdab0614c95a0abe07b03e2614:docs/superpowers/plans/2026-10-13-dashboard-live-paper.md:generic-api-key:559
+7ac4d9887a67229ec814c676c23e7ddbce7621f4:tests/dashboard/test_account_reader.py:generic-api-key:12
