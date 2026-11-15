@@ -146,6 +146,25 @@ def test_strip_html_removes_tags_and_collapses_whitespace() -> None:
     assert sec.strip_html(raw) == "Hello & welcome"
 
 
+@pytest.mark.parametrize(
+    "block",
+    [
+        "<script>bad()</script >",
+        "<script>bad()</script foo=bar>",
+        "<SCRIPT type='x'>bad()</SCRIPT >",
+        "<style>.a{color:red}</style >",
+        "<style>.a{color:red}</style foo>",
+    ],
+)
+def test_strip_html_drops_script_and_style_with_loose_end_tags(block: str) -> None:
+    """HTML allows whitespace and junk inside an end tag (`</script >`); the body must not leak into the text."""
+    assert sec.strip_html(f"<p>Hello</p>{block}<p>World</p>") == "Hello\nWorld"
+
+
+def test_strip_html_keeps_text_of_tags_that_only_start_with_script() -> None:
+    assert sec.strip_html("<p>Hi</p><scripts>keep</scripts>") == "Hi\nkeep"
+
+
 # --- IFRS filers (20-F / 40-F): the `ifrs-full` taxonomy ---------------------------------------------------------
 # Shapes follow real company-facts payloads: Kinross (40-F) tags revenue `RevenueFromContractsWithCustomers`, UMC reports
 # in TWD and USD, and Celestica / SSR Mining carry both taxonomies because they changed reporting framework.
