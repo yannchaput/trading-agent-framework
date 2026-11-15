@@ -16,6 +16,20 @@
 * Implement a skill scanning the auto memory and session traces to get a finding
 * Set up a mlflow server for agent evaluation
 * create a PR template
+* Handle difference of reasoning token budget payload attribute between vllm and llama.cpp
+* Model switch: add a "hook" to "on_trading_iteration".
+	* If the mode is "live" or "paper:
+    	* Kill any vllm,  HyperQwen or llama.cpp process
+		* Start a fresh one
+	* Perform on_trading iteration
+		* Kill the process
+		* Logs as "warn" start & stop of the process
+		* Use a decorator around "on_trading_iteration" and a context_manager to encapsulate "start/stop"
+	* If the mode is "backtesting:
+		* The decorator around "on_trading_iteration" does nothing
+		* The HyperQwen server is started at the beginning of the backtest and stop at the end
+		* Same warn logs
+	* The server to run according to mode should be parameterized in the .env.
 
 ## BUGS
 
@@ -71,7 +85,7 @@
 
 ### Citadel Pod Sector
 
-* Run the fist baseline (on 1 month)
+* ~~Run the fist baseline (on 1 month)~~
 
 ### Insider
 
@@ -79,16 +93,17 @@
 
 ### LLM benchmark
 
-* Install Strata (better of MoE) and update the framework to run Strata along with vllm
-* Run Qwen 3.8 on both servers and compare
-* ~~Add a cli parameter to select scenarios to run~~
-* ~~Test new scenarios from bull bear and insider~~
-* ~~Add mathematical and tradinc calculation problems to the scenarios~~
+* Gemma 4 31B local second model on llama.cpp
+* Install Strata (better of MoE) and update the framework to run Strata along with vllm - test deepseek
 * Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 * Test Sage 1.5
 * Test Nanbeige 4.3
 * Test Qwen 3.8 35B: [X](https://x.com/Oluwaphilemon1/status/2114912917157974508)
-* Implement Qwen 3.8 27B with DFlash2: [Hugging Face](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2)
+* ~~Run Qwen 3.8 on both servers and compare~~
+* ~~Add a cli parameter to select scenarios to run~~
+* ~~Test new scenarios from bull bear and insider~~
+* ~~Add mathematical and tradinc calculation problems to the scenarios~~
+* ~~Implement Qwen 3.8 27B with DFlash2: [Hugging Face](https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2)~~
 ~~Test Qwen 3.8-27B~~*
 * ~~Log a frontmatter before each model benchmark~~
 * ~~ Update with scenarios from bill ackman and vwap pullback continuation ~~
