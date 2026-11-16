@@ -7,6 +7,7 @@ import pytest
 
 from trading_agent_framework.agents.graph import AgentNode, SubmitSlot, merge_dicts
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.tools.text import LengthGate, TextLimit
 from trading_agent_framework.utils.errors import AgentError, AgentLoopError
 
 Script = Callable[[SubmitSlot, Mapping[str, Any] | None, str | None], Any]
@@ -123,3 +124,33 @@ def test_node_does_not_retry_a_loop() -> None:
     assert len(agent.runs) == 1
     assert result["out"] is None
     assert result["errors"][0]["error"].startswith("loop:")
+
+
+_LONG = [("a", "x" * 11, TextLimit(10, 20))]
+
+
+def test_arming_a_slot_resets_its_gate() -> None:
+    gate = LengthGate(2, name="submit", log_tag="t")
+    slot = SubmitSlot(lambda payload, state: None, gate=gate)
+    assert "error" in gate.review(_LONG)
+    slot.arm({})
+    assert "error" in gate.review(_LONG)
+    assert slot.gate is gate
+    assert SubmitSlot(lambda payload, state: None).gate is None
+
+
+def test_the_forced_retry_shares_the_gate_attempts_and_the_next_run_starts_fresh() -> None:
+    gate = LengthGate(2, name="submit_x", log_tag="t")
+    slot = SubmitSlot(lambda payload, state: None, gate=gate)
+
+    def review_then_submit(slot: SubmitSlot, context: Mapping[str, Any] | None, force_tool: str | None) -> None:
+        checked = gate.review(_LONG)
+        if isinstance(checked, list):
+            slot.submit({"text": checked[0]})
+
+    agent = ScriptedAgent(slot, [review_then_submit] * 4)
+    node = AgentNode(name="n", agent=agent, slot=slot, submit_tool="submit_x", task="Do it.", reads=lambda state: {}, write=lambda value: {"out": value})
+    assert node({}) == {"out": {"text": "x" * 11}}
+    assert [run["force_tool"] for run in agent.runs] == [None, "submit_x"]  # refused once, accepted on the forced retry
+    assert node({}) == {"out": {"text": "x" * 11}}
+    assert [run["force_tool"] for run in agent.runs] == [None, "submit_x", None, "submit_x"]  # a new run is refused again first

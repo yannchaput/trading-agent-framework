@@ -17,6 +17,7 @@ from trading_agent_framework.agents.tools.indicators import indicator_tools
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.market_data import market_data_tools
 from trading_agent_framework.agents.tools.prebuilt import PrebuiltTools
+from trading_agent_framework.agents.tools.text import LengthGate, TextLimit, count_step, text_tools, trim_text
 from trading_agent_framework.agents.tools.trading import trading_tools
 from trading_agent_framework.utils import get_version
 
@@ -27,7 +28,9 @@ if TYPE_CHECKING:
     from trading_agent_framework.agents.tools.news import news_tools
 
 __all__ = [
+    "LengthGate",
     "PrebuiltTools",
+    "TextLimit",
     "account_tools",
     "fundamentals_tools",
     "indicator_tools",
@@ -36,6 +39,9 @@ __all__ = [
     "news_tools",
     "trading_tools",
     "only",
+    "count_step",
+    "text_tools",
+    "trim_text",
 ]
 
 _LAZY = {

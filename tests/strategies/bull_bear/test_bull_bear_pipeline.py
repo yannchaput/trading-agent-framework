@@ -14,6 +14,7 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -26,7 +27,6 @@ from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeli
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
 from trading_agent_framework.strategies.common.daily_bars import DailySeries, DataUnavailable
-from trading_agent_framework.strategies.common.handoff import trim_text
 from trading_agent_framework.strategies.common.pipeline import RunOutcome
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog

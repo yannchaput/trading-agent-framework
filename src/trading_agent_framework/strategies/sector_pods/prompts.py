@@ -3,6 +3,7 @@
 The system prompt names the tools and the context fields; the node appends the state slots, rendered as a Python dict literal, as a `Context:` block to the task.
 """
 
+from trading_agent_framework.agents.tools.text import count_step
 from trading_agent_framework.strategies.sector_pods.handoff import PM_SUBMIT, POD_SUBMIT, RISK_SUBMIT
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import Pod
@@ -43,7 +44,7 @@ You have {params.pod_tool_budget} research calls in all.
 - `scores`: a list with one entry for every symbol in `facts`: `symbol`, `score` from -2 (strong sell) to +2 (strong buy), `reason` (one line, {params.reason_max_chars} characters at most).
 - `sector_view`: your outlook for the sleeve in a few sentences ({params.summary_max_chars} characters at most).
 If a score differs from `previous` by 2 points or more, say why in its reason.
-"""
+{count_step(POD_SUBMIT, "every `reason`, then `sector_view`")}"""
 
 
 def risk_system(params: SectorPodsParams) -> str:
@@ -76,7 +77,7 @@ Call `{RISK_SUBMIT}` once with:
   `reason` (one line, {params.reason_max_chars} characters at most).
 - `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
 An empty list of objections is fine when you find none. Keep `high` for objections that should change the book.
-"""
+{count_step(RISK_SUBMIT, "every `reason`, then `summary`")}"""
 
 
 def pm_system(params: SectorPodsParams) -> str:
@@ -110,7 +111,7 @@ Steps:
 - `weights`: a list of `symbol`, `weight` (a fraction, 0.10 for 10%), `reason` (one line, {params.reason_max_chars} characters at most).
 - `overrides`: which risk objections you accepted and which you overrode, and why ({params.summary_max_chars} characters at most).
 - `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
-
+{count_step(PM_SUBMIT, "every `reason`, then `overrides`, then `summary`")}
 Rules:
 - At most {etf} in one ETF, {pod} in one pod's sleeve, and {total} in total. The rest is parked in {params.parking_symbol}, so do not list {params.parking_symbol}.
 - An ETF you leave out is sold.

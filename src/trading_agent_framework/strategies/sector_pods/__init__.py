@@ -1,6 +1,6 @@
 """sector_pods: five sector-pod agents, a risk manager and a portfolio manager over a sector-ETF universe."""
 
-from trading_agent_framework.strategies.sector_pods.strategy import SectorPodsStrategy
+from trading_agent_framework.strategies.sector_pods.agent_sector_pods import SectorPodsStrategy
 from trading_agent_framework.utils.package_helper import get_version
 
 __all__ = ["SectorPodsStrategy"]

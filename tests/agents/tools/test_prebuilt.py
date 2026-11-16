@@ -58,6 +58,11 @@ def test_package_exports_every_tool_factory() -> None:
         "macro_tools",
         "fundamentals_tools",
         "only",
+        "LengthGate",
+        "TextLimit",
+        "count_step",
+        "text_tools",
+        "trim_text",
     }
     for name in tools_package.__all__:
         assert hasattr(tools_package, name)

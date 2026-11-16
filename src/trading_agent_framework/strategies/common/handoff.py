@@ -2,8 +2,7 @@
 
 A strategy's submit tools validate an agent's argument in code and return `{"error": ...}` so the model can correct itself
 in the same run (see `congress_trades/handoff.py`). What is common to them lives here: `HandoffError`, the pure readers of
-list items (`items`, `key`, `text`, `required_text`, `optional_text`, `weight`, `covering`), `trim_text` (an over-long free text cut at a
-sentence, never reworded) and the trade report, accepted only when it names every order the desk placed and
+list items (`items`, `key`, `text`, `required_text`, `optional_text`, `weight`, `covering`) and the trade report, accepted only when it names every order the desk placed and
 every order has been checked (`validate_report` against the desk's `OrderView`s). `SubmitRecorder` is the base of every
 strategy's recorder: it arms a stage, guards the submit tools and records the first valid submission.
 
@@ -104,29 +103,6 @@ def text(item: Mapping[str, Any], who: str, max_chars: int, *, required: bool) -
             raise HandoffError(f"{who} needs a reason: give one short sentence")
         return None
     return _clean_text(value, "reason", who, max_chars)
-
-
-def trim_text(text: str, *, max_chars: int, min_chars: int) -> str:
-    """`text` cut to at most `max_chars`, never reworded.
-
-    The longest run of whole sentences that fits, if it has at least `min_chars`; otherwise a cut at a word with a trailing
-    ellipsis (or hard, when there is no space).
-    """
-    text = text.strip()
-    if len(text) <= max_chars:
-        return text
-    end = 0  # length of the longest prefix that ends a sentence (. ! or ? before whitespace or at the end) and fits
-    for index, char in enumerate(text[:max_chars]):
-        if char in ".!?" and (index + 1 == len(text) or text[index + 1].isspace()):
-            end = index + 1
-    whole = text[:end].rstrip()
-    if len(whole) >= min_chars:
-        return whole
-    head = text[: max_chars - 1]
-    cut = max((index for index, char in enumerate(head) if char.isspace()), default=-1)
-    if cut <= 0:
-        return head + "…"
-    return head[:cut].rstrip() + "…"
 
 
 def weight(item: Mapping[str, Any], ticker: str, *, example: str = "0.08") -> float:

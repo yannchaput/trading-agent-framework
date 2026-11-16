@@ -63,6 +63,8 @@
 ### Bull Bear
 
 * Refactor bull bear into Langgraph like "pod_sectors"
+* Add the "character count" guardrails before submitting a note.
+* Merge the trim utilities of common in handoff with the one of bull-bear in "pipeline".
 * ~~Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query~~
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~

@@ -16,6 +16,7 @@ from trading_agent_framework.agents.graph import AgentNode, SubmitSlot
 from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.news import news_tools
+from trading_agent_framework.agents.tools.text import LengthGate, text_tools
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
@@ -35,6 +36,7 @@ from trading_agent_framework.strategies.sector_pods.handoff import (
     POD_SUBMIT,
     RISK_SUBMIT,
     UNAVAILABLE,
+    Validator,
     pm_submit_tool,
     pod_submit_tool,
     risk_submit_tool,
@@ -67,8 +69,8 @@ class SectorPodsStrategy(Strategy):
     sleeptime = "1D"
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.MONTH_LATEST)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.MONTH_LATEST)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.BI_YEAR)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 300,
         "budget": 10000,
@@ -134,16 +136,21 @@ class SectorPodsStrategy(Strategy):
             raise ConfigurationError("the pods need a news provider and this broker has none")
 
     def _node(
-        self, name: str, system: str, tools: list[Callable[..., Any]], slot: SubmitSlot, submit: str, task: str, reads: Any, write: Any, budget: int | None, exempt: Sequence[str] = ()
+        self, name: str, system: str, tools: list[Callable[..., Any]], validator: Validator, submit: str, task: str, reads: Any, write: Any, budget: int | None, exempt: Sequence[str] = ()
     ) -> AgentNode:
-        """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it; `exempt` tools are outside `budget`, like `submit`."""
+        """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it.
+
+        The agent counts its texts with `count_characters` and its submit tool puts them through the slot's `LengthGate`;
+        `exempt` tools, `count_characters` and `submit` are outside `budget`.
+        """
         params = self.settings
+        slot = SubmitSlot(validator, gate=LengthGate(params.max_submit_attempts, name=submit, log_tag="sector_pods"))
         agent = self.agents.create(
             name=name,
             system_prompt=system,
-            tools=[*tools, _SUBMIT_TOOLS[submit](slot, params)],
+            tools=[*tools, *text_tools(), _SUBMIT_TOOLS[submit](slot, params)],
             temperature=params.agent_temperature,
-            exempt_tools=[submit, *exempt],
+            exempt_tools=[submit, "count_characters", *exempt],
             final_tools=[submit],
             max_output_tokens=params.max_output_tokens,
             thinking_token_budget=params.thinking_token_budget,
@@ -159,7 +166,7 @@ class SectorPodsStrategy(Strategy):
                 pod_system(pod, params),
                 # a new tool set per pod: they hold per-run memo state behind a lock, so sharing would serialize the parallel pods
                 [*news_tools(self), *macro_tools(self, fred_client_factory=self._fred_client_factory)],
-                SubmitSlot(validate_pod(pod, params)),
+                validate_pod(pod, params),
                 POD_SUBMIT,
                 POD_TASK,
                 pod_reads(pod.key),
@@ -168,15 +175,13 @@ class SectorPodsStrategy(Strategy):
             )
             for pod in PODS
         }
-        risk = self._node(
-            "risk_manager", risk_system(params), [], SubmitSlot(validate_risk(params)), RISK_SUBMIT, RISK_TASK, risk_reads, lambda view: {"risk": UNAVAILABLE if view is None else view}, None
-        )
+        risk = self._node("risk_manager", risk_system(params), [], validate_risk(params), RISK_SUBMIT, RISK_TASK, risk_reads, lambda view: {"risk": UNAVAILABLE if view is None else view}, None)
         memory = only(memory_tools(self.memory), _PM_MEMORY_TOOLS)
         pm = self._node(
             "portfolio_manager",
             pm_system(params),
             memory,
-            SubmitSlot(validate_pm(params)),
+            validate_pm(params),
             PM_SUBMIT,
             PM_TASK,
             pm_reads,

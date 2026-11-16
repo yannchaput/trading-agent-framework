@@ -334,7 +334,7 @@ A port of lumibot's "Bull vs Bear AI Stock Trading Bot": instead of a fixed list
 
 | Field | Value |
 | --- | --- |
-| **File** | `strategies/sector_pods/strategy.py` (`SectorPodsStrategy`) |
+| **File** | `strategies/sector_pods/agent_sector_pods.py` (`SectorPodsStrategy`) |
 | **Model** | from `LLM_MODEL` in the env file (one model for the seven agents) |
 | **Agents** | five sector pods (`tech_pod`, `financials_pod`, `healthcare_pod`, `energy_pod`, `consumer_pod`), `risk_manager`, `portfolio_manager` |
 | **Tools** | pods: news (`search_news`) + macro (FRED) tools and `submit_pod_view`; risk manager: `submit_risk_review`; portfolio manager: `search_memory`, `remember_lesson` and `submit_target_weights`. None can place an order |

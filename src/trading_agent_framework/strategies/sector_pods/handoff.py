@@ -3,17 +3,12 @@
 No `from __future__ import annotations` here: LangChain reads the tool signatures and the TypedDicts at runtime.
 """
 
-import logging
 from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 
 from trading_agent_framework.agents.graph import SubmitSlot
-from trading_agent_framework.strategies.common.handoff import trim_text
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, Pod, pod_of
-from trading_agent_framework.utils.log import ColorLogger
-
-logger = ColorLogger(logging.getLogger(__name__), "sector_pods")
 
 POD_SUBMIT = "submit_pod_view"
 RISK_SUBMIT = "submit_risk_review"
@@ -96,9 +91,9 @@ def validate_pod(pod: Pod, params: SectorPodsParams) -> Validator:
             value = score.get("score")
             if isinstance(value, bool) or not isinstance(value, int) or not SCORE_RANGE[0] <= value <= SCORE_RANGE[1]:
                 return f"{score['symbol']}: score must be an integer from {SCORE_RANGE[0]} to {SCORE_RANGE[1]}"
-            if (message := _text(score.get("reason"), f"{score['symbol']}: reason", params.reason_max_chars)) is not None:
+            if (message := _text(score.get("reason"), f"{score['symbol']}: reason", params.reason_hard_max_chars)) is not None:
                 return message
-        return _text(payload.get("sector_view"), "sector_view", params.summary_max_chars)
+        return _text(payload.get("sector_view"), "sector_view", params.summary_hard_max_chars)
 
     return check
 
@@ -120,9 +115,9 @@ def validate_risk(params: SectorPodsParams) -> Validator:
                 return f"kind must be one of {', '.join(OBJECTION_KINDS)}"
             if objection.get("severity") not in SEVERITIES:
                 return f"severity must be one of {', '.join(SEVERITIES)}"
-            if (message := _text(objection.get("reason"), "reason", params.reason_max_chars)) is not None:
+            if (message := _text(objection.get("reason"), "reason", params.reason_hard_max_chars)) is not None:
                 return message
-        return _text(payload.get("summary"), "summary", params.summary_max_chars)
+        return _text(payload.get("summary"), "summary", params.summary_hard_max_chars)
 
     return check
 
@@ -189,35 +184,15 @@ def validate_pm(params: SectorPodsParams) -> Validator:
                 return "each weight needs a symbol string and a numeric weight"
             if symbol in weights:
                 return f"{symbol}: listed more than once"
-            if (message := _text(entry.get("reason"), f"{symbol}: reason", params.reason_max_chars)) is not None:
+            if (message := _text(entry.get("reason"), f"{symbol}: reason", params.reason_hard_max_chars)) is not None:
                 return message
             weights[symbol] = float(weight)
         for label in ("overrides", "summary"):
-            if (message := _text(payload.get(label), label, params.summary_max_chars, required=label == "summary")) is not None:
+            if (message := _text(payload.get(label), label, params.summary_hard_max_chars, required=label == "summary")) is not None:
                 return message
         return check_weights(weights, state, params)
 
     return check
-
-
-def _trimmed(value: Any, limit: int, label: str) -> Any:
-    """A text `value` cut to `limit` characters at a sentence, with a warning; anything else is returned as is, for the validator to refuse.
-
-    The models cannot count characters: refused for length, they resubmitted the whole payload until the run counted as a loop.
-    """
-    if not isinstance(value, str):
-        return value
-    kept = trim_text(value, max_chars=limit, min_chars=limit // 2)
-    if len(value.strip()) > limit:
-        logger.log_warning(f"{label} trimmed from {len(value.strip())} to {len(kept)} characters (limit {limit})")
-    return kept
-
-
-def _trimmed_reasons(entries: Any, limit: int, tool: str) -> Any:
-    """`entries` with each object's `reason` trimmed to `limit`; a malformed list is returned as is."""
-    if not isinstance(entries, list):
-        return entries
-    return [{**entry, "reason": _trimmed(entry.get("reason"), limit, f"{tool}: reason for {_subject(entry)}")} if isinstance(entry, dict) else entry for entry in entries]
 
 
 def _subject(entry: Mapping[str, Any]) -> str:
@@ -226,37 +201,52 @@ def _subject(entry: Mapping[str, Any]) -> str:
     return ", ".join(map(str, symbols)) if isinstance(symbols, list) else str(entry.get("symbol"))
 
 
+def _submit(slot: SubmitSlot, params: SectorPodsParams, key: str, entries: Any, **long_texts: Any) -> dict[str, Any]:
+    """Put each entry's `reason` and the `long_texts` through the slot's length gate, then record `{key: entries, **long_texts}`.
+
+    The gate's refusal is returned instead. On its last attempt the texts are stripped and cut at the hard cap. Without a
+    gate, or for a malformed list, the texts reach the validator untouched, for it to refuse.
+    """
+    if (gate := slot.gate) is not None:
+        dicts = [index for index, entry in enumerate(entries) if isinstance(entry, dict)] if isinstance(entries, list) else []
+        texts = [(f"reason for {_subject(entries[index])}", entries[index].get("reason"), params.reason_limit) for index in dicts]
+        texts += [(label, value, params.summary_limit) for label, value in long_texts.items()]
+        checked = gate.review(texts)
+        if isinstance(checked, dict):
+            return checked
+        if dicts:
+            entries = list(entries)
+            for index, value in zip(dicts, checked[: len(dicts)], strict=True):
+                entries[index] = {**entries[index], "reason": value}
+        long_texts = dict(zip(long_texts, checked[len(dicts) :], strict=True))
+    return slot.submit({key: entries, **long_texts})
+
+
 def pod_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the pod agents' submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
+    """Build the pod agents' submit tool, recording into `slot`; its texts go through the slot's length gate first."""
 
     def submit_pod_view(scores: list[Score], sector_view: str) -> dict[str, Any]:
         """Submit your score for every ETF and your view of the sector."""
-        return slot.submit({"scores": _trimmed_reasons(scores, params.reason_max_chars, POD_SUBMIT), "sector_view": _trimmed(sector_view, params.summary_max_chars, f"{POD_SUBMIT}: sector_view")})
+        return _submit(slot, params, "scores", scores, sector_view=sector_view)
 
     return submit_pod_view
 
 
 def risk_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the risk agent's submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
+    """Build the risk agent's submit tool, recording into `slot`; its texts go through the slot's length gate first."""
 
     def submit_risk_review(objections: list[Objection], summary: str) -> dict[str, Any]:
         """Submit your objections to the pods' views (none is fine) and a summary."""
-        return slot.submit({"objections": _trimmed_reasons(objections, params.reason_max_chars, RISK_SUBMIT), "summary": _trimmed(summary, params.summary_max_chars, f"{RISK_SUBMIT}: summary")})
+        return _submit(slot, params, "objections", objections, summary=summary)
 
     return submit_risk_review
 
 
 def pm_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the portfolio manager's submit tool, recording into `slot`; over-long texts are trimmed, not refused."""
+    """Build the portfolio manager's submit tool, recording into `slot`; its texts go through the slot's length gate first."""
 
     def submit_target_weights(weights: list[Weight], overrides: str, summary: str) -> dict[str, Any]:
         """Submit the target weight of each ETF you want to hold, what you overrode, and a summary."""
-        return slot.submit(
-            {
-                "weights": _trimmed_reasons(weights, params.reason_max_chars, PM_SUBMIT),
-                "overrides": _trimmed(overrides, params.summary_max_chars, f"{PM_SUBMIT}: overrides"),
-                "summary": _trimmed(summary, params.summary_max_chars, f"{PM_SUBMIT}: summary"),
-            }
-        )
+        return _submit(slot, params, "weights", weights, overrides=overrides, summary=summary)
 
     return submit_target_weights
