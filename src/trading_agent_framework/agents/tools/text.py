@@ -10,7 +10,7 @@ function's real annotations.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -61,6 +61,14 @@ class TextLimit:
             raise ValueError(f"a text limit needs 1 <= stated <= hard, got stated={self.stated}, hard={self.hard}")
 
 
+MAX_COUNTS = 2  # count, shorten, count again: then submit
+
+
+def _counts(texts: Sequence[Any]) -> dict[str, Any]:
+    """The stripped length of each text, in order."""
+    return {"counts": [len(str(text).strip()) for text in texts]}
+
+
 class LengthGate:
     """Refuses over-long texts up to `max_attempts - 1` times, then accepts them cut at their hard cap.
 
@@ -84,11 +92,24 @@ class LengthGate:
         self._max_attempts = max_attempts
         self._name = name
         self._refusals = 0
+        self._counts = 0
         self._logger = ColorLogger(logging.getLogger(__name__), log_tag)
 
     def reset(self) -> None:
-        """Give the attempts back: a new agent run starts."""
+        """Give the attempts and the counts back: a new agent run starts."""
         self._refusals = 0
+        self._counts = 0
+
+    def count(self, texts: Sequence[Any]) -> dict[str, Any]:
+        """`count_characters` for this run: the counts, or, past `MAX_COUNTS` counts, an order to submit now.
+
+        A model that cannot shorten a text re-counts it until the step limit (2026-11-16 bull_bear backtest); the
+        submit call it is sent to instead reaches this gate, which refuses or cuts the text.
+        """
+        if self._counts >= MAX_COUNTS:
+            return {"error": f"you have counted twice: call {self._name} now with your texts; it tells you if one is still too long"}
+        self._counts += 1
+        return _counts(texts)
 
     def review(self, texts: Sequence[tuple[str, Any, TextLimit]]) -> dict[str, str] | list[Any]:
         """Check labelled texts against their limits.
@@ -119,6 +140,47 @@ class LengthGate:
         return kept
 
 
+def review_texts(
+    gate: LengthGate,
+    entries: Any,
+    fields: Mapping[str, TextLimit],
+    subject: Callable[[Mapping[str, Any]], str],
+    texts: Mapping[str, tuple[Any, TextLimit]] | None = None,
+) -> dict[str, str] | tuple[Any, dict[str, Any]]:
+    """Put an entry list's text fields and some top-level texts through `gate` in one review.
+
+    Each dict entry contributes one text per field of `fields` it holds with a non-None value, labelled
+    ``"<field> for <subject(entry)>"``; the `texts` follow, labelled by their key. Anything that is not a list of dicts is
+    left for the caller's own validation to refuse.
+
+    Args:
+        gate: The length gate of the current run.
+        entries: The submitted list; a non-list, and the non-dict items of a list, pass through untouched.
+        fields: Field name to limit, applied to every dict entry.
+        subject: Names an entry in its labels. Called only for dict entries that have a field to review.
+        texts: Top-level texts as ``label: (value, limit)``.
+
+    Returns:
+        The gate's error dict, or ``(entries, top)``: `entries` a new list with each reviewed field written back into a
+        copy of its entry (the input is never mutated), `top` the reviewed top-level values by label.
+    """
+    spots = []
+    if isinstance(entries, list):
+        for index, entry in enumerate(entries):
+            if isinstance(entry, dict):
+                spots.extend((index, field) for field in fields if entry.get(field) is not None)
+    labelled = [(f"{field} for {subject(entries[index])}", entries[index][field], fields[field]) for index, field in spots]
+    labelled += [(label, value, limit) for label, (value, limit) in (texts or {}).items()]
+    checked = gate.review(labelled)
+    if isinstance(checked, dict):
+        return checked
+    if spots:
+        entries = [dict(entry) if isinstance(entry, dict) else entry for entry in entries]
+        for (index, field), value in zip(spots, checked[: len(spots)], strict=True):
+            entries[index][field] = value
+    return entries, dict(zip(texts or {}, checked[len(spots) :], strict=True))
+
+
 def count_step(submit_tool: str, texts: str) -> str:
     """The prompt paragraph that makes an agent count its texts before it submits.
 
@@ -129,15 +191,21 @@ def count_step(submit_tool: str, texts: str) -> str:
     return f"""
 Length check: before you call `{submit_tool}`, call `count_characters` once with all your texts: {texts}, in that order.
 It returns the length of each text in characters. `{submit_tool}` refuses a text over its limit.
-If a count is over its limit, shorten that text and count it again. Submit only texts whose last count is within the limit, unchanged.
+If a count is over its limit, shorten that text and count it once more, then call `{submit_tool}`: it tells you if a text is still too long.
 """
 
 
-def text_tools() -> list[Callable[..., dict[str, Any]]]:
-    """The text tools: `count_characters`."""
+def text_tools(gate: Callable[[], LengthGate | None] | None = None) -> list[Callable[..., dict[str, Any]]]:
+    """The text tools: `count_characters`.
 
-    def count_characters(texts: list[str]) -> dict[str, list[int]]:
+    Args:
+        gate: Returns the armed run's `LengthGate` (e.g. `lambda: recorder.gate`): the tool then counts at most
+            `MAX_COUNTS` times per run (see `LengthGate.count`). Without one, or while it returns None, it always counts.
+    """
+
+    def count_characters(texts: list[str]) -> dict[str, Any]:
         """Count the characters of each text. Returns `counts`: one number per text, in the order given."""
-        return {"counts": [len(str(text).strip()) for text in texts]}
+        armed = gate() if gate else None
+        return armed.count(texts) if armed else _counts(texts)
 
     return [count_characters]

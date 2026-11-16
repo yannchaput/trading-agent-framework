@@ -6,7 +6,9 @@ No `from __future__ import annotations` here: LangChain reads the tool signature
 from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 
-from trading_agent_framework.agents.graph import SubmitSlot
+from trading_agent_framework.agents.submit import HandoffError, NodeRecorder
+from trading_agent_framework.agents.tools.text import LengthGate, review_texts
+from trading_agent_framework.strategies.common.handoff import optional_text, required_text
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, Pod, pod_of
 
@@ -21,7 +23,7 @@ UNAVAILABLE: dict[str, Any] = {"unavailable": True}  # what `AgentNode.write(Non
 
 _TOLERANCE = 1e-9
 
-Validator = Callable[[Any, Mapping[str, Any]], str | None]
+Validator = Callable[[Any, Mapping[str, Any]], None]
 
 
 class Score(TypedDict):
@@ -49,23 +51,14 @@ class Weight(TypedDict):
     reason: str
 
 
-def _text(value: Any, label: str, limit: int, *, required: bool = True) -> str | None:
-    """Error unless `value` is a string of at most `limit` characters (and non-blank when `required`)."""
-    if not isinstance(value, str) or (required and not value.strip()):
-        return f"{label} must be a non-empty string" if required else f"{label} must be a string"
-    if len(value) > limit:
-        return f"{label} is {len(value)} characters; the limit is {limit}"
-    return None
-
-
-def _entries(payload: Any, key: str) -> tuple[list[Any] | None, str | None]:
-    """The list under `key` of a dict payload, or an error."""
+def _entries(payload: Any, key: str) -> list[Any]:
+    """The list under `key` of a dict payload; raise `HandoffError` when it is not a list of objects."""
     if not isinstance(payload, dict):
-        return None, "the payload must be an object"
+        raise HandoffError("the payload must be an object")
     items = payload.get(key)
     if not isinstance(items, list) or not all(isinstance(item, dict) for item in items):
-        return None, f"{key} must be a list of objects"
-    return items, None
+        raise HandoffError(f"{key} must be a list of objects")
+    return items
 
 
 def _is_number(value: Any) -> bool:
@@ -75,10 +68,8 @@ def _is_number(value: Any) -> bool:
 def validate_pod(pod: Pod, params: SectorPodsParams) -> Validator:
     """Validator for `submit_pod_view`: one score per ETF the pod has facts for, plus a sector view."""
 
-    def check(payload: Any, state: Mapping[str, Any]) -> str | None:
-        scores, error = _entries(payload, "scores")
-        if scores is None:
-            return error
+    def check(payload: Any, state: Mapping[str, Any]) -> None:
+        scores = _entries(payload, "scores")
         symbols = [score.get("symbol") for score in scores]
         expected = set(state.get("facts", {}).get(pod.key, {}))
         duplicates = sorted({str(s) for s in symbols if symbols.count(s) > 1})
@@ -86,14 +77,13 @@ def validate_pod(pod: Pod, params: SectorPodsParams) -> Validator:
         unknown = sorted(str(s) for s in set(symbols) - expected)
         if duplicates or missing or unknown:
             parts = [f"{label}: {', '.join(names)}" for label, names in (("duplicate", duplicates), ("missing", missing), ("unknown", unknown)) if names]
-            return f"scores must cover exactly {', '.join(sorted(expected))} once each ({'; '.join(parts)})"
+            raise HandoffError(f"scores must cover exactly {', '.join(sorted(expected))} once each ({'; '.join(parts)})")
         for score in scores:
             value = score.get("score")
             if isinstance(value, bool) or not isinstance(value, int) or not SCORE_RANGE[0] <= value <= SCORE_RANGE[1]:
-                return f"{score['symbol']}: score must be an integer from {SCORE_RANGE[0]} to {SCORE_RANGE[1]}"
-            if (message := _text(score.get("reason"), f"{score['symbol']}: reason", params.reason_hard_max_chars)) is not None:
-                return message
-        return _text(payload.get("sector_view"), "sector_view", params.summary_hard_max_chars)
+                raise HandoffError(f"{score['symbol']}: score must be an integer from {SCORE_RANGE[0]} to {SCORE_RANGE[1]}")
+            required_text(score, "reason", str(score["symbol"]), params.reason_hard_max_chars)
+        required_text(payload, "sector_view", "your submission", params.summary_hard_max_chars)
 
     return check
 
@@ -101,23 +91,20 @@ def validate_pod(pod: Pod, params: SectorPodsParams) -> Validator:
 def validate_risk(params: SectorPodsParams) -> Validator:
     """Validator for `submit_risk_review`: any number of objections (possibly none) plus a summary."""
 
-    def check(payload: Any, state: Mapping[str, Any]) -> str | None:
-        objections, error = _entries(payload, "objections")
-        if objections is None:
-            return error
+    def check(payload: Any, state: Mapping[str, Any]) -> None:
+        objections = _entries(payload, "objections")
         for objection in objections:
             symbols = objection.get("symbols")
             if not isinstance(symbols, list) or not symbols:
-                return "each objection needs a non-empty list of symbols"
+                raise HandoffError("each objection needs a non-empty list of symbols")
             if unknown := sorted(str(s) for s in symbols if s not in ALL_SYMBOLS):
-                return f"unknown symbols in an objection: {', '.join(unknown)}"
+                raise HandoffError(f"unknown symbols in an objection: {', '.join(unknown)}")
             if objection.get("kind") not in OBJECTION_KINDS:
-                return f"kind must be one of {', '.join(OBJECTION_KINDS)}"
+                raise HandoffError(f"kind must be one of {', '.join(OBJECTION_KINDS)}")
             if objection.get("severity") not in SEVERITIES:
-                return f"severity must be one of {', '.join(SEVERITIES)}"
-            if (message := _text(objection.get("reason"), "reason", params.reason_hard_max_chars)) is not None:
-                return message
-        return _text(payload.get("summary"), "summary", params.summary_hard_max_chars)
+                raise HandoffError(f"severity must be one of {', '.join(SEVERITIES)}")
+            required_text(objection, "reason", f"the objection on {', '.join(symbols)}", params.reason_hard_max_chars)
+        required_text(payload, "summary", "your submission", params.summary_hard_max_chars)
 
     return check
 
@@ -173,24 +160,21 @@ def check_weights(weights: Mapping[str, float], state: Mapping[str, Any], params
 def validate_pm(params: SectorPodsParams) -> Validator:
     """Validator for `submit_target_weights`: per-entry checks, then `check_weights` on the whole book."""
 
-    def check(payload: Any, state: Mapping[str, Any]) -> str | None:
-        entries, error = _entries(payload, "weights")
-        if entries is None:
-            return error
+    def check(payload: Any, state: Mapping[str, Any]) -> None:
+        entries = _entries(payload, "weights")
         weights: dict[str, float] = {}
         for entry in entries:
             symbol, weight = entry.get("symbol"), entry.get("weight")
             if not isinstance(symbol, str) or not _is_number(weight):
-                return "each weight needs a symbol string and a numeric weight"
+                raise HandoffError("each weight needs a symbol string and a numeric weight")
             if symbol in weights:
-                return f"{symbol}: listed more than once"
-            if (message := _text(entry.get("reason"), f"{symbol}: reason", params.reason_hard_max_chars)) is not None:
-                return message
+                raise HandoffError(f"{symbol}: listed more than once")
+            required_text(entry, "reason", symbol, params.reason_hard_max_chars)
             weights[symbol] = float(weight)
-        for label in ("overrides", "summary"):
-            if (message := _text(payload.get(label), label, params.summary_hard_max_chars, required=label == "summary")) is not None:
-                return message
-        return check_weights(weights, state, params)
+        optional_text(payload, "overrides", "your submission", params.summary_hard_max_chars)
+        required_text(payload, "summary", "your submission", params.summary_hard_max_chars)
+        if (message := check_weights(weights, state, params)) is not None:
+            raise HandoffError(message)
 
     return check
 
@@ -201,52 +185,45 @@ def _subject(entry: Mapping[str, Any]) -> str:
     return ", ".join(map(str, symbols)) if isinstance(symbols, list) else str(entry.get("symbol"))
 
 
-def _submit(slot: SubmitSlot, params: SectorPodsParams, key: str, entries: Any, **long_texts: Any) -> dict[str, Any]:
-    """Put each entry's `reason` and the `long_texts` through the slot's length gate, then record `{key: entries, **long_texts}`.
+def _submit(recorder: NodeRecorder, params: SectorPodsParams, key: str, entries: Any, **long_texts: Any) -> dict[str, Any]:
+    """Record `{key: entries, **long_texts}` once the recorder's length gate reviewed each entry's `reason` and the `long_texts`.
 
     The gate's refusal is returned instead. On its last attempt the texts are stripped and cut at the hard cap. Without a
     gate, or for a malformed list, the texts reach the validator untouched, for it to refuse.
     """
-    if (gate := slot.gate) is not None:
-        dicts = [index for index, entry in enumerate(entries) if isinstance(entry, dict)] if isinstance(entries, list) else []
-        texts = [(f"reason for {_subject(entries[index])}", entries[index].get("reason"), params.reason_limit) for index in dicts]
-        texts += [(label, value, params.summary_limit) for label, value in long_texts.items()]
-        checked = gate.review(texts)
-        if isinstance(checked, dict):
-            return checked
-        if dicts:
-            entries = list(entries)
-            for index, value in zip(dicts, checked[: len(dicts)], strict=True):
-                entries[index] = {**entries[index], "reason": value}
-        long_texts = dict(zip(long_texts, checked[len(dicts) :], strict=True))
-    return slot.submit({key: entries, **long_texts})
+
+    def review(gate: LengthGate) -> dict[str, str] | tuple[Any, ...]:
+        out = review_texts(gate, entries, {"reason": params.reason_limit}, _subject, {label: (value, params.summary_limit) for label, value in long_texts.items()})
+        return out if isinstance(out, dict) else ({key: out[0], **out[1]},)
+
+    return recorder.submit_texts(recorder.tool, review, {key: entries, **long_texts})
 
 
-def pod_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the pod agents' submit tool, recording into `slot`; its texts go through the slot's length gate first."""
+def pod_submit_tool(recorder: NodeRecorder, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the pod agents' submit tool, recording into `recorder`; its texts go through the recorder's length gate first."""
 
     def submit_pod_view(scores: list[Score], sector_view: str) -> dict[str, Any]:
         """Submit your score for every ETF and your view of the sector."""
-        return _submit(slot, params, "scores", scores, sector_view=sector_view)
+        return _submit(recorder, params, "scores", scores, sector_view=sector_view)
 
     return submit_pod_view
 
 
-def risk_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the risk agent's submit tool, recording into `slot`; its texts go through the slot's length gate first."""
+def risk_submit_tool(recorder: NodeRecorder, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the risk agent's submit tool, recording into `recorder`; its texts go through the recorder's length gate first."""
 
     def submit_risk_review(objections: list[Objection], summary: str) -> dict[str, Any]:
         """Submit your objections to the pods' views (none is fine) and a summary."""
-        return _submit(slot, params, "objections", objections, summary=summary)
+        return _submit(recorder, params, "objections", objections, summary=summary)
 
     return submit_risk_review
 
 
-def pm_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
-    """Build the portfolio manager's submit tool, recording into `slot`; its texts go through the slot's length gate first."""
+def pm_submit_tool(recorder: NodeRecorder, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
+    """Build the portfolio manager's submit tool, recording into `recorder`; its texts go through the recorder's length gate first."""
 
     def submit_target_weights(weights: list[Weight], overrides: str, summary: str) -> dict[str, Any]:
         """Submit the target weight of each ETF you want to hold, what you overrode, and a summary."""
-        return _submit(slot, params, "weights", weights, overrides=overrides, summary=summary)
+        return _submit(recorder, params, "weights", weights, overrides=overrides, summary=summary)
 
     return submit_target_weights

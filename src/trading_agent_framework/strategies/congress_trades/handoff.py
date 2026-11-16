@@ -18,8 +18,9 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
+from trading_agent_framework.agents.submit import HandoffError, SubmitRecorder
 from trading_agent_framework.strategies.common import handoff as shared
-from trading_agent_framework.strategies.common.handoff import HandoffError, OrderView, SubmitRecorder, validate_report
+from trading_agent_framework.strategies.common.handoff import OrderView, validate_report
 from trading_agent_framework.strategies.congress_trades.parameters import CongressParams
 
 _EPS = 1e-9

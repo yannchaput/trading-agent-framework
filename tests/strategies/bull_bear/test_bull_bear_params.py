@@ -80,3 +80,13 @@ def test_there_is_no_min_weight_max_weight_or_weak_weight() -> None:
     names = {field.name for field in dataclasses.fields(BullBearParams)}
 
     assert not names & {"min_weight", "max_weight", "weak_weight"}
+
+
+def test_hard_caps_below_their_stated_limit_or_zero_attempts_are_rejected() -> None:
+    for kwargs, message in (
+        ({"argument_hard_max_chars": 299}, "argument_hard_max_chars must be at least argument_max_chars"),
+        ({"reason_hard_max_chars": 299}, "reason_hard_max_chars must be at least reason_max_chars"),
+        ({"max_submit_attempts": 0}, "max_submit_attempts must be at least 1"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            dataclasses.replace(BullBearParams(), **kwargs)

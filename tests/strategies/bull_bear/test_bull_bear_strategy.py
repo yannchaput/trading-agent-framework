@@ -106,10 +106,10 @@ def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: 
 
     tools = {created["name"]: _tool_names(created) for created in agents.created}
     assert tools == {
-        "researcher": {"search_news", "get_income_statement", "get_balance_sheet", "submit_note"},
-        "bull": {"submit_bull_case"},
-        "bear": {"submit_bear_case"},
-        "judge": {"submit_verdicts"},
+        "researcher": {"search_news", "get_income_statement", "get_balance_sheet", "submit_note", "count_characters"},
+        "bull": {"submit_bull_case", "count_characters"},
+        "bear": {"submit_bear_case", "count_characters"},
+        "judge": {"submit_verdicts", "count_characters"},
     }
 
 
@@ -161,6 +161,13 @@ def test_each_agent_gets_its_thinking_budget_next_to_its_cap(tmp_path: Path) -> 
     assert (strategy.parameters["thinking_token_budget"], strategy.parameters["judge_thinking_token_budget"]) == (7000, 15000)  # recorded in settings.json
 
 
+def test_the_length_gate_settings_are_recorded_in_settings_json(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+
+    parameters = strategy.parameters
+    assert (parameters["argument_hard_max_chars"], parameters["reason_hard_max_chars"], parameters["max_submit_attempts"]) == (450, 450, 3)
+
+
 def test_a_judge_budget_of_none_means_no_budget_not_the_shared_one(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(judge_thinking_token_budget=None))
 
@@ -188,7 +195,7 @@ def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_sour
     strategy.initialize()
 
     researcher = next(created for created in agents.created if created["name"] == "researcher")
-    assert _tool_names(researcher) == {"get_income_statement", "get_balance_sheet", "submit_note"}
+    assert _tool_names(researcher) == {"get_income_statement", "get_balance_sheet", "submit_note", "count_characters"}
     assert "news" not in researcher["system_prompt"].lower()
     assert strategy.parameters["research_news"] is False
 
@@ -206,7 +213,12 @@ def test_the_researcher_ends_with_a_budget_exempt_submit_and_every_agent_uses_th
     strategy.initialize()
 
     exempt = {created["name"]: created.get("exempt_tools") for created in agents.created}
-    assert exempt == {"researcher": ["submit_note", "get_income_statement", "get_balance_sheet"], "bull": None, "bear": None, "judge": None}
+    assert exempt == {
+        "researcher": ["submit_note", "count_characters", "get_income_statement", "get_balance_sheet"],
+        "bull": ["submit_bull_case", "count_characters"],
+        "bear": ["submit_bear_case", "count_characters"],
+        "judge": ["submit_verdicts", "count_characters"],
+    }
     assert {created["temperature"] for created in agents.created} == {0.1}
 
 
@@ -375,3 +387,15 @@ def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expect
     result = search(symbols="Grupo Galicia")
 
     assert result["symbols_searched"] == "GGAL"
+
+
+def test_every_count_tool_stops_counting_after_two_counts_in_an_armed_stage(tmp_path: Path) -> None:
+    # the 2026-11-16 backtest: 6 of 12 researchers re-counted an over-long note until the step limit, never submitting
+    strategy, agents = _strategy(tmp_path)
+    strategy.initialize()
+    recorder = strategy.pipeline._recorder
+    for created in agents.created:
+        recorder.expect_note("AAPL")  # arming resets the stage's gate, and with it the counts
+        count = next(tool for tool in created["tools"] if tool.__name__ == "count_characters")
+        assert [count(texts=["abc"]) for _ in range(2)] == [{"counts": [3]}] * 2
+        assert "call submit_note now" in count(texts=["abc"])["error"]

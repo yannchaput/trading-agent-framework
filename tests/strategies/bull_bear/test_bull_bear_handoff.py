@@ -4,17 +4,16 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.agents.tools.text import trim_text
+from trading_agent_framework.agents.submit import HandoffError
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, validate_verdicts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.common.handoff import HandoffError
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 
 
 def _tools() -> tuple[HandoffRecorder, dict[str, Any]]:
     recorder = HandoffRecorder(BullBearParams())
-    return recorder, submit_tools(recorder)
+    return recorder, submit_tools(recorder, BullBearParams())
 
 
 def _bull(symbols: list[str], conviction: str = "high") -> list[dict[str, Any]]:
@@ -39,14 +38,14 @@ def test_a_note_up_to_the_hard_limit_is_recorded_though_the_researcher_is_asked_
     params = BullBearParams()
 
     assert params.note_max_chars < params.note_hard_max_chars == 800
-    assert tools["submit_note"]("AAA", "x" * 800) == {"status": "recorded"}
+    assert recorder.submit("note", "AAA", "x" * 800) == {"status": "recorded"}  # the validator checks the hard cap; the gate is bypassed
 
 
-def test_a_note_one_character_over_the_hard_limit_is_refused_and_one_refused_under_700_before_is_now_recorded() -> None:
-    recorder, tools = _tools()
+def test_the_validator_refuses_a_note_one_character_over_the_hard_limit() -> None:
+    recorder, _ = _tools()
     recorder.expect_note("AAA")
-    assert "801 characters" in tools["submit_note"]("AAA", "x" * 801)["error"]
-    assert tools["submit_note"]("AAA", "x" * 762) == {"status": "recorded"}  # refused while the limit was 700
+
+    assert recorder.submit("note", "AAA", "x" * 801) == {"error": "the note for AAA is 801 characters; a note is at most 800"}
 
 
 def test_a_note_for_the_armed_symbol_is_recorded_stripped() -> None:
@@ -72,48 +71,51 @@ def test_an_empty_note_is_refused() -> None:
     assert "empty" in tools["submit_note"]("AAA", "   ")["error"]
 
 
-def test_a_long_note_is_refused_with_the_asked_length_and_how_to_shorten_it() -> None:
+def test_an_over_long_note_is_refused_with_its_count_then_recorded_trimmed_at_800_on_the_third_attempt() -> None:
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+    note = ("Fact 2025-10-27: revenue $1.58B. " * 40)[:900]
+
+    for _ in range(2):
+        assert "note for AAA has 900 characters (limit 800)" in tools["submit_note"]("AAA", note)["error"]
+    assert tools["submit_note"]("AAA", note) == {"status": "recorded"}
+
+    assert 0 < len(recorder.submission.note) <= 800
+
+
+def test_a_note_over_the_ask_but_within_800_is_recorded_at_once() -> None:
+    # the 2026-11-16 backtest: refused above the 500 asked, 66% of first drafts were refused (median draft 528)
     recorder, tools = _tools()
     recorder.expect_note("AAA")
 
-    error = tools["submit_note"]("AAA", "x" * 862)["error"]
-
-    assert error == "the note for AAA is 862 characters; a note is at most 500: rewrite it to about 450 characters by dropping your least important facts, not by trimming words"
-    assert str(BullBearParams().note_hard_max_chars) not in error  # the hard limit stays hidden from the model
+    assert tools["submit_note"]("AAA", "x" * 800) == {"status": "recorded"}
+    assert len(recorder.submission.note) == 800
 
 
-def test_the_same_long_note_sent_again_is_called_out() -> None:
+def test_arming_the_next_stock_gives_the_note_gate_its_attempts_back() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
-    tools["submit_note"]("AAA", "x" * 862)
-
-    again = tools["submit_note"]("AAA", "  " + "x" * 862 + " ")["error"]  # same text once stripped
-    shorter = tools["submit_note"]("AAA", "x" * 850)["error"]
-
-    assert again.startswith("this is the same text you sent before: the note for AAA is 862 characters")
-    assert not shorter.startswith("this is the same text")
-
-
-def test_the_recorder_keeps_the_last_note_refused_for_length_until_the_next_stage() -> None:
-    recorder, tools = _tools()
-    recorder.expect_note("AAA")
-    assert recorder.refused_note is None
-
-    tools["submit_note"]("AAA", "x" * 900)
-    tools["submit_note"]("AAA", " " + "y" * 850 + " ")
-    tools["submit_note"]("BBB", "z" * 10)  # refused for its symbol: the length-refused note stays
-
-    assert recorder.refused_note == "y" * 850
+    for _ in range(2):
+        tools["submit_note"]("AAA", "x" * 900)
     recorder.expect_note("BBB")
-    assert recorder.refused_note is None
+
+    assert "note for BBB has 900 characters (limit 800)" in tools["submit_note"]("BBB", "x" * 900)["error"]
 
 
-def test_a_note_refused_for_another_reason_leaves_no_refused_note() -> None:
+def test_a_refusal_for_another_rule_spends_no_attempt() -> None:
     recorder, tools = _tools()
-    recorder.expect_note("AAA")
-    tools["submit_note"]("BBB", "x" * 800)
-    tools["submit_note"]("AAA", "  ")
-    assert recorder.refused_note is None
+    recorder.expect_verdicts(DEBATE, max_in=6)
+    weak_in = _verdicts(DEBATE)
+    weak_in[0]["strength"] = "weak"
+    long_reason = _verdicts(DEBATE)
+    long_reason[0]["reason"] = "r" * 310
+
+    # a weak "in" passes the length gate (a count, not a spent attempt) and is refused by the validator, twice
+    assert "is weak" in tools["submit_verdicts"](weak_in)["error"]
+    assert "is weak" in tools["submit_verdicts"](weak_in)["error"]
+
+    assert "reason for AAA has 310 characters (limit 300)" in tools["submit_verdicts"](long_reason)["error"]
+    assert "reason for AAA has 310 characters (limit 300)" in tools["submit_verdicts"](long_reason)["error"]
 
 
 # --- bull and bear ------------------------------------------------------------------------------
@@ -137,7 +139,7 @@ def test_a_bull_case_covering_every_stock_once_is_recorded_with_normalised_value
         (_bull([*DEBATE, "AAA"]), "AAA appears twice"),
         (_bull([*DEBATE, "ZZZ"]), "ZZZ is not in the debate"),
         (_bull(DEBATE, conviction="huge"), "conviction for AAA must be one of low, medium, high"),
-        ([{"symbol": "AAA", "conviction": "high", "argument": "x" * 301}, *_bull(DEBATE[1:])], "under 300"),
+        ([{"symbol": "AAA", "conviction": "high", "argument": "x" * 301}, *_bull(DEBATE[1:])], "argument for AAA has 301 characters (limit 300)"),
         ("not a list", "cases must be a list"),
     ],
 )
@@ -203,7 +205,7 @@ def test_every_verdict_carries_a_strength() -> None:
 )
 def test_a_missing_unknown_or_weak_in_strength_is_refused(item: dict[str, Any], message: str) -> None:
     with pytest.raises(HandoffError, match=message):
-        validate_verdicts([item], expected=["AAA"], max_in=10, max_chars=300)
+        validate_verdicts([item], expected=["AAA"], max_in=10, max_chars=450)
 
 
 def test_a_strong_or_standard_stock_may_still_be_out_and_a_changed_strength_needs_no_what_changed() -> None:
@@ -244,7 +246,7 @@ def test_verdicts_and_symbols_are_normalised_like_the_debaters_cases() -> None:
         (_verdicts([*DEBATE, "AAA"]), "AAA appears twice"),
         ([{"symbol": "AAA", "verdict": "keep", "reason": "x", "strength": "standard"}, *_verdicts([], DEBATE[1:])], "the verdict for AAA must be one of in, out"),
         ([{"symbol": "AAA", "verdict": "in", "reason": " ", "strength": "standard"}, *_verdicts([], DEBATE[1:])], "AAA has no reason"),
-        ([{"symbol": "AAA", "verdict": "in", "reason": "x" * 301, "strength": "standard"}, *_verdicts([], DEBATE[1:])], "the reason for AAA is 301 characters"),
+        ([{"symbol": "AAA", "verdict": "in", "reason": "x" * 301, "strength": "standard"}, *_verdicts([], DEBATE[1:])], "reason for AAA has 301 characters (limit 300)"),
         (_verdicts(DEBATE[:3], DEBATE[3:]), "3 stocks in: put at most 2 in and the others out"),
     ],
 )
@@ -311,25 +313,55 @@ def test_an_unchanged_verdict_or_a_first_verdict_needs_no_what_changed() -> None
     assert tools["submit_verdicts"](_verdicts(DEBATE)) == {"status": "recorded"}
 
 
-def test_a_long_what_changed_is_refused() -> None:
+def test_an_over_long_argument_names_the_stock_and_counts() -> None:
+    recorder, tools = _tools()
+    recorder.expect_bull(DEBATE)
+    cases = _bull(DEBATE)
+    cases[0]["argument"] = "a" * 320
+
+    assert "argument for AAA has 320 characters (limit 300)" in tools["submit_bull_case"](cases)["error"]
+
+
+def test_an_argument_between_stated_and_hard_is_recorded_on_the_last_attempt() -> None:
+    recorder, tools = _tools()
+    recorder.expect_bear(DEBATE)
+    cases = _bear(DEBATE)
+    cases[0]["argument"] = "a" * 420
+
+    assert "error" in tools["submit_bear_case"](cases) and "error" in tools["submit_bear_case"](cases)
+    assert tools["submit_bear_case"](cases) == {"status": "recorded"}
+    assert recorder.submission[0].argument == "a" * 420
+
+
+def test_a_reason_and_what_changed_between_stated_and_hard_are_recorded_on_the_last_attempt() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE[:2], max_in=6, previous={"AAA": "out"})
+    raw = _verdicts(DEBATE[:2])
+    for verdict in raw:
+        verdict["reason"] = "r" * 420
+    raw[0]["what_changed"] = "w" * 420
+
+    for _ in range(2):
+        assert "reason for AAA has 420 characters (limit 300)" in tools["submit_verdicts"](raw)["error"]
+    assert tools["submit_verdicts"](raw) == {"status": "recorded"}
+    assert [v.reason for v in recorder.submission.verdicts] == ["r" * 420] * 2
+    assert recorder.submission.verdicts[0].what_changed == "w" * 420
+
+
+def test_the_judge_gate_measures_reason_and_only_the_what_changed_given() -> None:
     recorder, tools = _tools()
     recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})
-    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "strength": "weak", "what_changed": "y" * 301}, *_verdicts(DEBATE[1:])]
+    raw = [{"symbol": "AAA", "verdict": "out", "reason": "x", "strength": "weak", "what_changed": "y" * 310}, *_verdicts(DEBATE[1:])]
 
-    assert "the what_changed for AAA is 301 characters" in tools["submit_verdicts"](raw)["error"]
+    error = tools["submit_verdicts"](raw)["error"]
 
-
-@pytest.mark.parametrize("length", [801, 850, 1200])
-def test_a_trimmed_note_is_always_accepted_by_the_recorder(length: int) -> None:
-    text = ("Fact 2025-10-27: revenue $1.58B. " * 60)[:length]
-    recorder, tools = _tools()
-    recorder.expect_note("AAA")
-    assert tools["submit_note"]("AAA", trim_text(text, max_chars=800, min_chars=250)) == {"status": "recorded"}
+    assert "what_changed for AAA has 310 characters (limit 300)" in error
+    assert "BBB" not in error
 
 
 def test_the_weak_in_refusal_tells_a_held_stock_to_give_what_changed() -> None:
     with pytest.raises(HandoffError, match="with what_changed if your previous verdict was in"):
-        validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}], expected=["AAA"], max_in=10, max_chars=300)
+        validate_verdicts([{"symbol": "AAA", "verdict": "in", "reason": "r", "strength": "weak"}], expected=["AAA"], max_in=10, max_chars=450)
 
 
 def test_the_recorder_names_the_stock_whose_note_is_expected_only_during_the_note_stage() -> None:

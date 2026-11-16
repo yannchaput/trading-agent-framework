@@ -5,7 +5,8 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.common.handoff import HandoffError, SubmitRecorder, covering, optional_text, required_text, text, weight
+from trading_agent_framework.agents.submit import HandoffError
+from trading_agent_framework.strategies.common.handoff import covering, optional_text, required_text, text, weight
 
 
 def _cover(raw: Any, expected: Sequence[str] = ("AAA", "BBB", "CCC")) -> list[tuple[str, Any]]:
@@ -78,31 +79,3 @@ def test_weight_example_is_the_callers() -> None:
     with pytest.raises(HandoffError, match="such as 0.25$"):
         weight({"weight": "x"}, "AAA", example="0.25")
     assert weight({"weight": "0.1"}, "AAA") == 0.1
-
-
-class _Toy(SubmitRecorder):
-    TOOL_NAMES = {"a": "submit_a", "b": "submit_b"}
-    NOT_EXPECTED_SUFFIX = " here"
-    ALREADY_RECORDED = "done already"
-
-    def _validate(self, stage: str, *args: Any) -> Any:
-        if args[0] == "bad":
-            raise HandoffError("bad value")
-        return args[0]
-
-
-def test_toy_recorder_guards_records_and_rearms() -> None:
-    toy = _Toy()
-    assert toy.missing_tool == ""
-    assert toy.submit("a", 1) == {"error": "submit_a is not expected at this point here"}
-    toy._arm("a", {})
-    assert toy.missing_tool == "submit_a"
-    assert toy.submit("b", 1) == {"error": "submit_b is not expected at this point here"}
-    assert toy.submit("a", "bad") == {"error": "bad value"}
-    assert toy.last_error == "bad value" and not toy.submitted and toy.submission is None
-    assert toy.submit("a", 5) == {"status": "recorded"}
-    assert toy.submitted and toy.submission == 5 and toy.last_error is None
-    assert toy.submit("a", 6) == {"error": "done already"}
-    assert toy.submission == 5
-    toy._arm("b", {})
-    assert not toy.submitted and toy.submission is None and toy.last_error is None

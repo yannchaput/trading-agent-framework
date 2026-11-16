@@ -3,7 +3,7 @@
 The judge puts every candidate in or out; code validates (through the `HandoffRecorder`), builds the book from the
 stocks put in (rank order), sizes it, remembers (`StateStore`) and calls the `Rebalancer`. A debater stage that
 never yields a valid submission abandons the review: no order at all, forced exits included. One stock's failed
-research only gives it the note "research unavailable", unless a note was refused for length: that one is kept, trimmed. Free text from an agent is logged and otherwise ignored.
+research only gives it the note "research unavailable". Free text from an agent is logged and otherwise ignored.
 See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md and
 docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
@@ -19,7 +19,6 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
@@ -271,7 +270,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         """The researcher stage: one note per stock (`UNAVAILABLE_NOTE` where its run failed); `notes` goes into the record."""
         params, strategy = self._params, self._strategy
         notes: dict[str, str] = {}
-        trimmed: list[str] = []
         for symbol in symbols:
             self._recorder.expect_note(symbol)
             try:
@@ -281,25 +279,15 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
                     researcher_task(symbol, params.note_max_chars),
                     {"current_datetime": moment, "fact_sheet": sheets[symbol]},
                     tool_budget=params.research_tool_budget,
-                    skip_retry=lambda: self._recorder.refused_note is not None,  # a note refused for length is kept (trimmed) below, not rewritten from the fact sheet alone
                 )
             except StageAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
-                refused = self._recorder.refused_note
-                if refused is None:
-                    strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
-                    notes[symbol] = UNAVAILABLE_NOTE
-                    continue
-                # The last note refused for length still carries the research: keep it, cut at a sentence, never reworded.
-                kept = trim_text(refused, max_chars=params.note_hard_max_chars, min_chars=params.note_max_chars // 2)
-                strategy.log_warning(f"[researcher] note for {symbol} trimmed from {len(refused)} to {len(kept)} characters: the last refused note is kept with its research")
-                strategy.log_info(f"[researcher] {symbol}: {kept}")
-                notes[symbol] = kept
-                trimmed.append(symbol)
+                strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
+                notes[symbol] = UNAVAILABLE_NOTE
                 continue
             note: Note = self._recorder.submission
             notes[symbol] = note.note
         failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
-        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed, "trimmed": trimmed}
+        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed}
         return notes
 
     def _debate_and_judge(
@@ -353,7 +341,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         task: str,
         context: dict[str, Any],
         tool_budget: int | None = None,
-        skip_retry: Callable[[], bool] | None = None,
     ) -> None:
         """Run an agent until it makes a valid `tool` call: once, then once more with a forced call; else abandon.
 
@@ -368,15 +355,13 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
             task: the first-attempt prompt; the retry prompt is built from it.
             context: the template variables passed to the agent run.
             tool_budget: cap on the agent's non-submit tool calls per run (the researcher's), or `None`.
-            skip_retry: called after a first attempt that recorded nothing; `True` raises `StageAbandoned` at once,
-                with no forced retry (the researcher, when its note was refused for length: the caller keeps that note).
 
         Returns:
             None. The accepted submission is in `self._recorder.submission`.
 
         Raises:
             AgentLooped: the run hit the step limit (`AgentLoopError`); no retry.
-            StageAbandoned: neither attempt recorded a valid `tool` call, or the first attempt alone did when `skip_retry()` is true.
+            StageAbandoned: neither attempt recorded a valid `tool` call.
         """
         agent = self._agents[agent_name]
         # Both attempts share one run_id, so the first run and its forced retry are recorded under the same id.
@@ -415,8 +400,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
                 self._strategy.log_warning(f"[{agent_name}] the agent ended without calling {tool}{stop}")
             # The retry prompt names the most specific reason: the rejection, else the run's failure, else "no call".
             error = self._recorder.last_error or error or f"the agent ended without calling {tool}"
-            if not attempt and skip_retry is not None and skip_retry():
-                raise StageAbandoned(agent_name, error)
             prompt, force_tool = retry_prompt(agent_name, tool, error, task), tool
             self._strategy.log_debug(f"[{agent_name}] retry with prompt: {prompt}")
         raise StageAbandoned(agent_name, error)

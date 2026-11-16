@@ -9,6 +9,8 @@ review cadence. The no-news researcher gets the fact sheet without the sources r
 
 from __future__ import annotations
 
+from trading_agent_framework.agents.tools.text import count_step
+
 _ENGLISH = "Write everything in English: your notes, arguments, reasons and every tool argument, even if a source you read drifts into another language."
 
 _FIGURES = (
@@ -159,7 +161,9 @@ def researcher_task(symbol: str, max_chars: int) -> str:
     Returns:
         The task text.
     """
-    return f"Research {symbol}: its fact sheet is in the context. Then submit your note on {symbol} (at most {max_chars} characters). The current datetime is in the context."
+    return f"Research {symbol}: its fact sheet is in the context. Then submit your note on {symbol} (at most {max_chars} characters). The current datetime is in the context." + count_step(
+        "submit_note", "`note`"
+    )
 
 
 def bull_task(max_chars: int) -> str:
@@ -171,9 +175,8 @@ def bull_task(max_chars: int) -> str:
     Returns:
         The task text.
     """
-    return (
-        "Make the bull case for every stock in the context and submit it. "
-        f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    return f"Make the bull case for every stock in the context and submit it. Each argument is at most {max_chars} characters. The current datetime is in the context." + count_step(
+        "submit_bull_case", "every `argument`"
     )
 
 
@@ -186,9 +189,8 @@ def bear_task(max_chars: int) -> str:
     Returns:
         The task text.
     """
-    return (
-        "Make the bear case for every stock in the context and submit it. "
-        f"Each argument is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    return f"Make the bear case for every stock in the context and submit it. Each argument is at most {max_chars} characters. The current datetime is in the context." + count_step(
+        "submit_bear_case", "every `argument`"
     )
 
 
@@ -201,9 +203,8 @@ def judge_task(max_chars: int) -> str:
     Returns:
         The task text.
     """
-    return (
-        "Give your verdict, in or out, on every stock in the context and submit them. "
-        f"Each reason is at most {max_chars} characters; a longer one rejects the whole submission. The current datetime is in the context."
+    return f"Give your verdict, in or out, on every stock in the context and submit them. Each reason is at most {max_chars} characters. The current datetime is in the context." + count_step(
+        "submit_verdicts", "every `reason`, then every `what_changed` you give"
     )
 
 

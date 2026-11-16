@@ -14,7 +14,6 @@ import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -118,13 +117,6 @@ def does_nothing(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> N
     return None
 
 
-LONG = ("2025-10-27: revenue rose 12% y/y to $1.58B. " * 22)[:920]  # whole sentences, 920 characters: over the hard limit (800); not 900, which ends on a space the recorder strips
-
-
-def long_note(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
-    tools["submit_note"](ctx["fact_sheet"]["symbol"], LONG)
-
-
 @dataclass
 class Harness:
     pipeline: BullBearPipeline
@@ -171,7 +163,7 @@ def _harness(
     recorder = HandoffRecorder(params)
     agents = {"researcher": FakeAgent(notes), "bull": FakeAgent(bull_cases), "bear": FakeAgent(bear_cases), "judge": FakeAgent(verdicts())}
     for agent in agents.values():
-        agent.tools = submit_tools(recorder)
+        agent.tools = submit_tools(recorder, params)
     bars = FakeBars(series if series is not None else _default_series())
     rebalancer = Rebalancer(strategy, params)
     log_path = tmp_path / "logs" / "reviews.jsonl"
@@ -300,7 +292,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert [stock["symbol"] for stock in line["debate_set"]] == UNIVERSE[:15]
     assert line["debate_set"][0] == {"symbol": "S00", "rank": 1, "held": False}
     assert line["forced_exits"] == []
-    assert line["notes"] == {"written": 15, "failed": [], "trimmed": []}
+    assert line["notes"] == {"written": 15, "failed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
     assert "picks" not in line and "drops" not in line
     assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins", "what_changed": None, "strength": "standard", "previous_verdict": None} and len(line["verdicts"]) == 15
@@ -525,7 +517,7 @@ def test_a_stock_whose_research_fails_gets_research_unavailable_and_the_review_g
     assert len(h.agents["researcher"].calls) == 16  # S03 once more with a forced submit_note
     stock = next(s for s in h.agents["bull"].calls[0]["context"]["stocks"] if s["fact_sheet"]["symbol"] == "S03")
     assert stock["note"] == UNAVAILABLE_NOTE
-    assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S03"], "trimmed": []}
+    assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S03"]}
 
 
 def test_a_configuration_error_from_an_agent_propagates_and_leaves_the_state(tmp_path: Path) -> None:
@@ -602,49 +594,6 @@ def test_a_researcher_that_loops_costs_that_stock_its_note_not_the_review(tmp_pa
 
 def _notes_seen_by_the_bull(h: Harness) -> dict[str, str]:
     return {s["fact_sheet"]["symbol"]: s["note"] for s in h.agents["bull"].calls[0]["context"]["stocks"]}
-
-
-def test_a_note_refused_for_length_is_kept_trimmed_without_a_forced_retry(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    h = _harness(tmp_path)
-    h.agents["researcher"].overrides = [long_note]  # S00's run ends on a refused note
-
-    with caplog.at_level(logging.INFO):
-        assert h.run().completed
-
-    assert len(h.agents["researcher"].calls) == 15  # no forced retry for S00
-    assert _notes_seen_by_the_bull(h)["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
-    assert h.log_lines()[0]["notes"] == {"written": 15, "failed": [], "trimmed": ["S00"]}
-    messages = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.WARNING]
-    assert any(f"[researcher] note for S00 trimmed from 920 to {len(trim_text(LONG, max_chars=800, min_chars=250))} characters" in m for m in messages)
-    assert not any("no note for S00" in m for m in messages)
-    infos = [re.sub(r"\x1b\[[0-9;]*m", "", r.getMessage()) for r in caplog.records if r.levelno == logging.INFO]
-    assert any(m.endswith(f"[researcher] S00: {trim_text(LONG, max_chars=800, min_chars=250)}") for m in infos)  # the note the bull, bear and judge read is in the run log
-
-
-def test_a_researcher_that_loops_after_a_refused_note_keeps_it_trimmed(tmp_path: Path) -> None:
-    def long_then_loop(tools, ctx):  # noqa: ANN001, ANN202
-        long_note(tools, ctx)
-        _loops(tools, ctx)
-
-    h = _harness(tmp_path)
-    h.agents["researcher"].overrides = [long_then_loop, _loops]  # S00 loops after a refusal; S01 loops with none
-
-    assert h.run().completed
-
-    seen = _notes_seen_by_the_bull(h)
-    assert seen["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
-    assert seen["S01"] == UNAVAILABLE_NOTE  # S00's refused note never leaks into S01
-    assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S01"], "trimmed": ["S00"]}
-
-
-def test_a_note_refused_for_length_on_the_forced_retry_is_kept_trimmed(tmp_path: Path) -> None:
-    h = _harness(tmp_path)
-    h.agents["researcher"].overrides = [does_nothing, long_note]  # no refusal first: the forced retry runs, and is refused
-
-    assert h.run().completed
-
-    assert h.agents["researcher"].calls[1]["force_tool"] == "submit_note"
-    assert _notes_seen_by_the_bull(h)["S00"] == trim_text(LONG, max_chars=800, min_chars=250)
 
 
 def test_every_agent_run_gets_the_step_limit_of_the_settings(tmp_path: Path) -> None:
@@ -1445,3 +1394,26 @@ def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pyte
             ("abandoned_streak", 2),
         ]
         assert h.store.load() == BullBearState(abandoned_streak=2, verdicts=verdicts_state, cooldowns={"S05": 2})
+
+
+def test_a_researcher_run_ending_after_its_length_refusals_gets_the_forced_retry_whose_long_note_is_recorded_trimmed(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    long_note = "x" * 900
+
+    def long_twice(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        symbol = ctx["fact_sheet"]["symbol"]
+        tools["submit_note"](symbol, long_note)
+        tools["submit_note"](symbol, long_note)  # then the run stops
+
+    def long_again(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        tools["submit_note"](ctx["fact_sheet"]["symbol"], long_note)
+
+    h.agents["researcher"].overrides = [long_twice, long_again]
+
+    assert h.run().completed
+
+    _, retry = h.agents["researcher"].calls[:2]
+    assert retry["force_tool"] == "submit_note" and "note for S00 has 900 characters" in retry["task"]
+    seen = _notes_seen_by_the_bull(h)["S00"]
+    assert len(seen) <= 800 and seen.startswith("xxx")
+    assert h.log_lines()[0]["notes"] == {"written": 15, "failed": []}

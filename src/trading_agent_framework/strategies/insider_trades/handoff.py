@@ -18,8 +18,9 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from trading_agent_framework.agents.submit import HandoffError, SubmitRecorder
 from trading_agent_framework.strategies.common import handoff as shared
-from trading_agent_framework.strategies.common.handoff import HandoffError, OrderReport, OrderView, SubmitRecorder, validate_report
+from trading_agent_framework.strategies.common.handoff import OrderReport, OrderView, validate_report
 from trading_agent_framework.strategies.insider_trades.form4.classify import Label
 from trading_agent_framework.strategies.insider_trades.form4.signal import Override, SignalClass, StockFacts
 from trading_agent_framework.strategies.insider_trades.parameters import InsiderParams
