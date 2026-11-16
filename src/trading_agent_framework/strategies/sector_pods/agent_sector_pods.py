@@ -149,7 +149,7 @@ class SectorPodsStrategy(Strategy):
         agent = self.agents.create(
             name=name,
             system_prompt=system,
-            tools=[*tools, *text_tools(), _SUBMIT_TOOLS[submit](recorder, params)],
+            tools=[*tools, *text_tools(lambda: recorder.gate), _SUBMIT_TOOLS[submit](recorder, params)],
             temperature=params.agent_temperature,
             exempt_tools=[submit, "count_characters", *exempt],
             final_tools=[submit],

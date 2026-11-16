@@ -156,7 +156,7 @@ class BullBearStrategy(Strategy):
             self.agents.create(
                 name="researcher",
                 system_prompt=researcher_system(news),
-                tools=[*research, *text_tools(), submit["submit_note"]],
+                tools=[*research, *text_tools(lambda: recorder.gate), submit["submit_note"]],
                 temperature=temperature,
                 # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
                 exempt_tools=[
@@ -175,7 +175,7 @@ class BullBearStrategy(Strategy):
                 self.agents.create(
                     name=name,
                     system_prompt=system_prompt,
-                    tools=[*text_tools(), submit[tool]],
+                    tools=[*text_tools(lambda: recorder.gate), submit[tool]],
                     temperature=temperature,
                     exempt_tools=[tool, "count_characters"],
                     final_tools=[tool],
@@ -186,7 +186,7 @@ class BullBearStrategy(Strategy):
             self.agents.create(
                 name="judge",
                 system_prompt=JUDGE_SYSTEM,
-                tools=[*text_tools(), submit["submit_verdicts"]],
+                tools=[*text_tools(lambda: recorder.gate), submit["submit_verdicts"]],
                 temperature=temperature,
                 exempt_tools=["submit_verdicts", "count_characters"],
                 final_tools=["submit_verdicts"],

@@ -34,7 +34,7 @@ class BullBearParams:
         research_news: Give the researcher its news tool; False for the news-off comparison run.
         max_agent_steps: LangGraph steps one agent run may take before it counts as a loop and abandons the review.
         note_max_chars: The length the researcher is asked for in a submitted note.
-        note_hard_max_chars: The length the validator refuses above; the last length-gate attempt is cut there.
+        note_hard_max_chars: The length the length gate refuses above (not the ask); the last attempt is cut there.
         argument_max_chars: The bull's and the bear's submitted argument.
         argument_hard_max_chars: The argument's hard cap.
         reason_max_chars: The judge's submitted reason per verdict, and its what_changed.
@@ -151,8 +151,12 @@ class BullBearParams:
 
     @property
     def note_limit(self) -> TextLimit:
-        """The stated and hard lengths of a note."""
-        return TextLimit(self.note_max_chars, self.note_hard_max_chars)
+        """The note's gate limit: refused and cut at `note_hard_max_chars`, while the prompt asks for `note_max_chars`.
+
+        The model aims at the ask and overshoots it (2Y run: median first draft 528 for 500, 1.2% over 800), so a gate
+        refusing above the ask refused 66% of first drafts (2026-11-16 backtest); above 800 it refuses as main did.
+        """
+        return TextLimit(self.note_hard_max_chars, self.note_hard_max_chars)
 
     @property
     def argument_limit(self) -> TextLimit:

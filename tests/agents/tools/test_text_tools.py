@@ -49,6 +49,24 @@ def test_count_characters_returns_stripped_lengths_in_order() -> None:
     assert count(texts=["  abc ", "", "x" * 401]) == {"counts": [3, 0, 401]}
 
 
+def test_past_two_counts_in_a_run_the_count_tool_says_submit_now_until_the_gate_is_reset() -> None:
+    # the 2026-11-16 backtest: researchers re-counted a 707-character note against 500 until the step limit
+    gate = _gate()
+    (count,) = text_tools(lambda: gate)
+    assert count(texts=["abc"]) == {"counts": [3]}
+    assert count(texts=["ab"]) == {"counts": [2]}
+    stop = {"error": "you have counted twice: call submit_x now with your texts; it tells you if one is still too long"}
+    assert count(texts=["a"]) == stop
+    assert count(texts=["a"]) == stop
+    gate.reset()
+    assert count(texts=["a"]) == {"counts": [1]}
+
+
+def test_with_no_armed_gate_the_count_tool_never_stops_counting() -> None:
+    (count,) = text_tools(lambda: None)
+    assert [count(texts=["a"]) for _ in range(4)] == [{"counts": [1]}] * 4
+
+
 # --- LengthGate ---------------------------------------------------------------------------------
 
 
@@ -124,6 +142,7 @@ def test_invalid_limits_and_attempts_raise() -> None:
 
 def test_count_step_names_the_tool_and_the_texts() -> None:
     step = count_step("submit_x", "every `note` (10 characters at most)")
+    assert "submit only texts whose last count" not in step.lower() and "tells you if a text is still too long" in step
     assert "`count_characters`" in step and "`submit_x`" in step and "every `note` (10 characters at most)" in step
 
 

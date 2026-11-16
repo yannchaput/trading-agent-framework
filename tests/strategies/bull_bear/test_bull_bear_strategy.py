@@ -387,3 +387,15 @@ def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expect
     result = search(symbols="Grupo Galicia")
 
     assert result["symbols_searched"] == "GGAL"
+
+
+def test_every_count_tool_stops_counting_after_two_counts_in_an_armed_stage(tmp_path: Path) -> None:
+    # the 2026-11-16 backtest: 6 of 12 researchers re-counted an over-long note until the step limit, never submitting
+    strategy, agents = _strategy(tmp_path)
+    strategy.initialize()
+    recorder = strategy.pipeline._recorder
+    for created in agents.created:
+        recorder.expect_note("AAPL")  # arming resets the stage's gate, and with it the counts
+        count = next(tool for tool in created["tools"] if tool.__name__ == "count_characters")
+        assert [count(texts=["abc"]) for _ in range(2)] == [{"counts": [3]}] * 2
+        assert "call submit_note now" in count(texts=["abc"])["error"]

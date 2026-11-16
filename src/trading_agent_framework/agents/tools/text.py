@@ -61,6 +61,14 @@ class TextLimit:
             raise ValueError(f"a text limit needs 1 <= stated <= hard, got stated={self.stated}, hard={self.hard}")
 
 
+MAX_COUNTS = 2  # count, shorten, count again: then submit
+
+
+def _counts(texts: Sequence[Any]) -> dict[str, Any]:
+    """The stripped length of each text, in order."""
+    return {"counts": [len(str(text).strip()) for text in texts]}
+
+
 class LengthGate:
     """Refuses over-long texts up to `max_attempts - 1` times, then accepts them cut at their hard cap.
 
@@ -84,11 +92,24 @@ class LengthGate:
         self._max_attempts = max_attempts
         self._name = name
         self._refusals = 0
+        self._counts = 0
         self._logger = ColorLogger(logging.getLogger(__name__), log_tag)
 
     def reset(self) -> None:
-        """Give the attempts back: a new agent run starts."""
+        """Give the attempts and the counts back: a new agent run starts."""
         self._refusals = 0
+        self._counts = 0
+
+    def count(self, texts: Sequence[Any]) -> dict[str, Any]:
+        """`count_characters` for this run: the counts, or, past `MAX_COUNTS` counts, an order to submit now.
+
+        A model that cannot shorten a text re-counts it until the step limit (2026-11-16 bull_bear backtest); the
+        submit call it is sent to instead reaches this gate, which refuses or cuts the text.
+        """
+        if self._counts >= MAX_COUNTS:
+            return {"error": f"you have counted twice: call {self._name} now with your texts; it tells you if one is still too long"}
+        self._counts += 1
+        return _counts(texts)
 
     def review(self, texts: Sequence[tuple[str, Any, TextLimit]]) -> dict[str, str] | list[Any]:
         """Check labelled texts against their limits.
@@ -170,15 +191,21 @@ def count_step(submit_tool: str, texts: str) -> str:
     return f"""
 Length check: before you call `{submit_tool}`, call `count_characters` once with all your texts: {texts}, in that order.
 It returns the length of each text in characters. `{submit_tool}` refuses a text over its limit.
-If a count is over its limit, shorten that text and count it again. Submit only texts whose last count is within the limit, unchanged.
+If a count is over its limit, shorten that text and count it once more, then call `{submit_tool}`: it tells you if a text is still too long.
 """
 
 
-def text_tools() -> list[Callable[..., dict[str, Any]]]:
-    """The text tools: `count_characters`."""
+def text_tools(gate: Callable[[], LengthGate | None] | None = None) -> list[Callable[..., dict[str, Any]]]:
+    """The text tools: `count_characters`.
 
-    def count_characters(texts: list[str]) -> dict[str, list[int]]:
+    Args:
+        gate: Returns the armed run's `LengthGate` (e.g. `lambda: recorder.gate`): the tool then counts at most
+            `MAX_COUNTS` times per run (see `LengthGate.count`). Without one, or while it returns None, it always counts.
+    """
+
+    def count_characters(texts: list[str]) -> dict[str, Any]:
         """Count the characters of each text. Returns `counts`: one number per text, in the order given."""
-        return {"counts": [len(str(text).strip()) for text in texts]}
+        armed = gate() if gate else None
+        return armed.count(texts) if armed else _counts(texts)
 
     return [count_characters]

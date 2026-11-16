@@ -77,20 +77,29 @@ def test_an_over_long_note_is_refused_with_its_count_then_recorded_trimmed_at_80
     note = ("Fact 2025-10-27: revenue $1.58B. " * 40)[:900]
 
     for _ in range(2):
-        assert "note for AAA has 900 characters (limit 500)" in tools["submit_note"]("AAA", note)["error"]
+        assert "note for AAA has 900 characters (limit 800)" in tools["submit_note"]("AAA", note)["error"]
     assert tools["submit_note"]("AAA", note) == {"status": "recorded"}
 
     assert 0 < len(recorder.submission.note) <= 800
+
+
+def test_a_note_over_the_ask_but_within_800_is_recorded_at_once() -> None:
+    # the 2026-11-16 backtest: refused above the 500 asked, 66% of first drafts were refused (median draft 528)
+    recorder, tools = _tools()
+    recorder.expect_note("AAA")
+
+    assert tools["submit_note"]("AAA", "x" * 800) == {"status": "recorded"}
+    assert len(recorder.submission.note) == 800
 
 
 def test_arming_the_next_stock_gives_the_note_gate_its_attempts_back() -> None:
     recorder, tools = _tools()
     recorder.expect_note("AAA")
     for _ in range(2):
-        tools["submit_note"]("AAA", "x" * 600)
+        tools["submit_note"]("AAA", "x" * 900)
     recorder.expect_note("BBB")
 
-    assert "note for BBB has 600 characters (limit 500)" in tools["submit_note"]("BBB", "x" * 600)["error"]
+    assert "note for BBB has 900 characters (limit 800)" in tools["submit_note"]("BBB", "x" * 900)["error"]
 
 
 def test_a_refusal_for_another_rule_spends_no_attempt() -> None:
