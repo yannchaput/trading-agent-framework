@@ -131,7 +131,7 @@ class BullBearStrategy(Strategy):
             if news:
                 self._require_news_provider()
             recorder = HandoffRecorder(self.settings)
-            submit = submit_tools(recorder)
+            submit = submit_tools(recorder, self.settings)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
             from trading_agent_framework.agents.tools.news import news_tools
 

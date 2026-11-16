@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from trading_agent_framework.agents.tools.text import TextLimit
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.utils.errors import ConfigurationError
 
@@ -33,9 +34,12 @@ class BullBearParams:
         research_news: Give the researcher its news tool; False for the news-off comparison run.
         max_agent_steps: LangGraph steps one agent run may take before it counts as a loop and abandons the review.
         note_max_chars: The length the researcher is asked for in a submitted note.
-        note_hard_max_chars: The length the recorder refuses above.
+        note_hard_max_chars: The length the validator refuses above; the last length-gate attempt is cut there.
         argument_max_chars: The bull's and the bear's submitted argument.
-        reason_max_chars: The judge's submitted reason per verdict.
+        argument_hard_max_chars: The argument's hard cap.
+        reason_max_chars: The judge's submitted reason per verdict, and its what_changed.
+        reason_hard_max_chars: The reason's hard cap.
+        max_submit_attempts: Submissions the length gate refuses before it cuts and records the last one.
         reentry_cooldown_reviews: Completed reviews a stock the judge sold stays out of the candidates.
         max_consecutive_abandoned: Abandoned reviews in a row that abort a backtest.
         agent_temperature: Sampling temperature of all four agents; None leaves the LLM server's default.
@@ -68,7 +72,10 @@ class BullBearParams:
     # 2026-11-13 on HyperQwen, whose notes run longer: 14% of researcher runs refused at 700, the refused drafts a median of 741, 6 of 61 still over 800)
     note_hard_max_chars: int = 800
     argument_max_chars: int = 300  # the bull's and the bear's submitted argument
-    reason_max_chars: int = 300  # the judge's submitted reason per verdict
+    argument_hard_max_chars: int = 450  # the length the validator refuses above, and where the last attempt is cut
+    reason_max_chars: int = 300  # the judge's submitted reason per verdict, and its what_changed
+    reason_hard_max_chars: int = 450
+    max_submit_attempts: int = 3  # submissions refused for length before the last one is cut and recorded
     reentry_cooldown_reviews: int = 4  # completed reviews a stock the judge sold stays out of the candidates
     max_consecutive_abandoned: int = 3  # abandoned reviews in a row that abort a backtest
     agent_temperature: float | None = 0.3  # all four agents; None leaves the LLM server's default
@@ -123,6 +130,9 @@ class BullBearParams:
             "max_agent_steps must be at least 1": self.max_agent_steps < 1,
             "note_max_chars, argument_max_chars and reason_max_chars must be at least 1": min(self.note_max_chars, self.argument_max_chars, self.reason_max_chars) < 1,
             "note_hard_max_chars must be at least note_max_chars": self.note_hard_max_chars < self.note_max_chars,
+            "argument_hard_max_chars must be at least argument_max_chars": self.argument_hard_max_chars < self.argument_max_chars,
+            "reason_hard_max_chars must be at least reason_max_chars": self.reason_hard_max_chars < self.reason_max_chars,
+            "max_submit_attempts must be at least 1": self.max_submit_attempts < 1,
             "reentry_cooldown_reviews must be at least 0": self.reentry_cooldown_reviews < 0,
             "max_consecutive_abandoned must be at least 1": self.max_consecutive_abandoned < 1,
             "agent_temperature must be None or in [0, 2]": self.agent_temperature is not None and not (math.isfinite(self.agent_temperature) and 0 <= self.agent_temperature <= 2),
@@ -138,6 +148,21 @@ class BullBearParams:
         failed = [message for message, bad in problems.items() if bad]
         if failed:
             raise ValueError("BullBearParams: " + "; ".join(failed))
+
+    @property
+    def note_limit(self) -> TextLimit:
+        """The stated and hard lengths of a note."""
+        return TextLimit(self.note_max_chars, self.note_hard_max_chars)
+
+    @property
+    def argument_limit(self) -> TextLimit:
+        """The stated and hard lengths of a bull or bear argument."""
+        return TextLimit(self.argument_max_chars, self.argument_hard_max_chars)
+
+    @property
+    def reason_limit(self) -> TextLimit:
+        """The stated and hard lengths of a verdict's reason and what_changed."""
+        return TextLimit(self.reason_max_chars, self.reason_hard_max_chars)
 
     @property
     def investable(self) -> float:

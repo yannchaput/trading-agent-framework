@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from trading_agent_framework.agents.submit import HandoffError, SubmitRecorder
+from trading_agent_framework.agents.tools.text import LengthGate, TextLimit, review_texts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.common.handoff import covering, required_text
 
@@ -22,15 +23,6 @@ VERDICTS = ("in", "out")
 STRENGTHS = ("strong", "standard", "weak")
 
 NOTE, BULL, BEAR, VERDICT = "note", "bull", "bear", "verdict"
-
-
-class NoteTooLong(HandoffError):
-    """A note over the hard limit; `note` is the refused (stripped) text, so the recorder can spot a resubmission."""
-
-    def __init__(self, message: str, note: str) -> None:
-        """Keep the over-long note so it can be shortened and resubmitted."""
-        super().__init__(message)
-        self.note = note
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,19 +98,15 @@ def _covering(raw: Any, expected: Sequence[str], what: str = "cases") -> list[tu
     )
 
 
-def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int, ask_chars: int) -> Note:
-    """`max_chars` is the hard limit; `ask_chars` the length the model is told (the hard limit is never quoted)."""
+def validate_note(symbol: Any, note: Any, *, expected: str, max_chars: int) -> Note:
+    """A note for `expected`, at most `max_chars` (the hard cap: the length gate has already worked on the text)."""
     if not isinstance(symbol, str) or symbol.strip().upper() != expected:
         raise HandoffError(f"this note is for {expected}: submit it with symbol {expected}")
     if not isinstance(note, str) or not note.strip():
         raise HandoffError(f"the note for {expected} is empty: write the dated facts you found, or say that you found none")
     text = note.strip()
     if len(text) > max_chars:
-        raise NoteTooLong(
-            f"the note for {expected} is {len(text)} characters; a note is at most {ask_chars}: "
-            f"rewrite it to about {int(ask_chars * 0.9)} characters by dropping your least important facts, not by trimming words",
-            text,
-        )
+        raise HandoffError(f"the note for {expected} is {len(text)} characters; a note is at most {max_chars}")
     return Note(expected, text)
 
 
@@ -179,9 +167,8 @@ class HandoffRecorder(SubmitRecorder):
 
     def __init__(self, params: BullBearParams) -> None:
         """Create a recorder bound to the strategy parameters."""
-        super().__init__()
+        super().__init__({stage: LengthGate(params.max_submit_attempts, name=tool, log_tag="bull_bear") for stage, tool in self.TOOL_NAMES.items()})
         self._params = params
-        self._refused_note: str | None = None
 
     def expect_note(self, symbol: str) -> None:
         """Arm the recorder to accept a note for `symbol`."""
@@ -204,54 +191,60 @@ class HandoffRecorder(SubmitRecorder):
         """Arm the recorder to accept at most `max_in` verdicts for `symbols`, given the previous run's strengths."""
         self._arm(VERDICT, {"expected": list(symbols), "max_in": max_in, "previous": dict(previous or {})})
 
-    def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        """Arm the recorder for `stage` with its validation context."""
-        super()._arm(stage, context)
-        self._refused_note = None
-
-    @property
-    def refused_note(self) -> str | None:
-        """The most recent note refused for length since the stage was armed (kept across other refusals), else None."""
-        return self._refused_note
-
     def _validate(self, stage: str, *args: Any) -> Any:
         """Validate the submitted payload for `stage`."""
         params, context = self._params, self._context
         if stage == NOTE:
-            try:
-                return validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars, ask_chars=params.note_max_chars)
-            except NoteTooLong as exc:
-                message = f"this is the same text you sent before: {exc}" if exc.note == self._refused_note else str(exc)
-                self._refused_note = exc.note
-                raise HandoffError(message) from None
+            return validate_note(args[0], args[1], expected=context["expected"], max_chars=params.note_hard_max_chars)
         if stage == BULL:
-            return validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
+            return validate_bull_cases(args[0], expected=context["expected"], max_chars=params.argument_hard_max_chars)
         if stage == BEAR:
-            return validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_max_chars)
-        return validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_max_chars, previous=context["previous"])
+            return validate_bear_cases(args[0], expected=context["expected"], max_chars=params.argument_hard_max_chars)
+        return validate_verdicts(args[0], expected=context["expected"], max_in=context["max_in"], max_chars=params.reason_hard_max_chars, previous=context["previous"])
 
 
 # --- the tools ------------------------------------------------------------------------------------
 
 
-def submit_tools(recorder: HandoffRecorder) -> dict[str, Callable[..., dict[str, Any]]]:
-    """The four submit tools, closures over `recorder`, keyed by name. Each agent is given only its own."""
+def _subject(entry: Mapping[str, Any]) -> str:
+    """What an entry's texts are about, for the gate's messages: its `symbol`."""
+    return str(entry.get("symbol"))
+
+
+def _submit_entries(recorder: HandoffRecorder, stage: str, entries: Any, fields: Mapping[str, TextLimit]) -> dict[str, Any]:
+    """Record `entries` once the stage's length gate reviewed their `fields`; the gate's refusal is returned instead."""
+
+    def review(gate: LengthGate) -> dict[str, str] | tuple[Any, ...]:
+        out = review_texts(gate, entries, fields, _subject)
+        return out if isinstance(out, dict) else (out[0],)
+
+    return recorder.submit_texts(stage, review, entries)
+
+
+def submit_tools(recorder: HandoffRecorder, params: BullBearParams) -> dict[str, Callable[..., dict[str, Any]]]:
+    """The four submit tools, closures over `recorder` (texts reviewed against `params`' limits), keyed by name. Each agent is given only its own."""
 
     def submit_note(symbol: str, note: str) -> dict[str, Any]:
         """Submit your note on the stock: its symbol and the dated facts you found (no opinion)."""
-        return recorder.submit(NOTE, symbol, note)
+        label = f"note for {recorder.note_symbol}"
+
+        def review(gate: LengthGate) -> dict[str, str] | tuple[Any, ...]:
+            out = review_texts(gate, [], {}, _subject, {label: (note, params.note_limit)})
+            return out if isinstance(out, dict) else (symbol, out[1][label])
+
+        return recorder.submit_texts(NOTE, review, symbol, note)
 
     def submit_bull_case(cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit one case per stock: objects with symbol, conviction (low, medium or high) and argument."""
-        return recorder.submit(BULL, cases)
+        return _submit_entries(recorder, BULL, cases, {"argument": params.argument_limit})
 
     def submit_bear_case(cases: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit one case per stock: objects with symbol, risk (low, medium or high), concern and argument."""
-        return recorder.submit(BEAR, cases)
+        return _submit_entries(recorder, BEAR, cases, {"argument": params.argument_limit})
 
     def submit_verdicts(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
         """Submit one verdict per stock: objects with symbol, strength (strong, standard or weak), verdict (in or out; a weak stock is always out), one short reason, and what_changed when the verdict differs from your previous_verdict."""  # noqa: E501
-        return recorder.submit(VERDICT, verdicts)
+        return _submit_entries(recorder, VERDICT, verdicts, {"reason": params.reason_limit, "what_changed": params.reason_limit})
 
     return {
         "submit_note": submit_note,

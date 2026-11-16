@@ -19,7 +19,6 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
-from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
@@ -281,20 +280,10 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
                     researcher_task(symbol, params.note_max_chars),
                     {"current_datetime": moment, "fact_sheet": sheets[symbol]},
                     tool_budget=params.research_tool_budget,
-                    skip_retry=lambda: self._recorder.refused_note is not None,  # a note refused for length is kept (trimmed) below, not rewritten from the fact sheet alone
                 )
             except StageAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
-                refused = self._recorder.refused_note
-                if refused is None:
-                    strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
-                    notes[symbol] = UNAVAILABLE_NOTE
-                    continue
-                # The last note refused for length still carries the research: keep it, cut at a sentence, never reworded.
-                kept = trim_text(refused, max_chars=params.note_hard_max_chars, min_chars=params.note_max_chars // 2)
-                strategy.log_warning(f"[researcher] note for {symbol} trimmed from {len(refused)} to {len(kept)} characters: the last refused note is kept with its research")
-                strategy.log_info(f"[researcher] {symbol}: {kept}")
-                notes[symbol] = kept
-                trimmed.append(symbol)
+                strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
+                notes[symbol] = UNAVAILABLE_NOTE
                 continue
             note: Note = self._recorder.submission
             notes[symbol] = note.note
