@@ -4,7 +4,7 @@ import logging
 
 import pytest
 
-from trading_agent_framework.agents.tools.text import LengthGate, TextLimit, count_step, text_tools, trim_text
+from trading_agent_framework.agents.tools.text import LengthGate, TextLimit, count_step, review_texts, text_tools, trim_text
 
 LIMIT = TextLimit(stated=10, hard=20)
 
@@ -125,3 +125,37 @@ def test_invalid_limits_and_attempts_raise() -> None:
 def test_count_step_names_the_tool_and_the_texts() -> None:
     step = count_step("submit_x", "every `note` (10 characters at most)")
     assert "`count_characters`" in step and "`submit_x`" in step and "every `note` (10 characters at most)" in step
+
+
+# --- review_texts ---------------------------------------------------------------------------------
+
+
+def test_review_texts_labels_every_field_of_every_entry_then_the_top_level_texts() -> None:
+    entries = [{"s": "A", "f": "x" * 11, "g": "ok"}]
+    result = review_texts(_gate(2), entries, {"f": LIMIT, "g": LIMIT}, lambda e: e["s"], {"view": ("y" * 12, LIMIT)})
+    assert isinstance(result, dict)
+    assert result["error"].startswith("too long: f for A has 11 characters (limit 10); view has 12 characters (limit 10). ")
+
+
+def test_review_texts_skips_an_absent_or_none_field() -> None:
+    entries = [{"s": "A", "f": "ok"}, {"s": "B", "f": "ok", "g": None}]
+    result = review_texts(_gate(2), entries, {"f": LIMIT, "g": LIMIT}, lambda e: e["s"])
+    assert result == (entries, {})
+
+
+def test_review_texts_writes_trimmed_values_back_to_the_right_entry() -> None:
+    long_text = "word " * 5
+    entries = [{"s": "A, B", "f": long_text}, {"s": "A, B", "f": "short"}]
+    result = review_texts(_gate(1), entries, {"f": LIMIT}, lambda e: e["s"])
+    assert not isinstance(result, dict)
+    reviewed, top = result
+    assert len(reviewed[0]["f"]) <= 20
+    assert reviewed[1]["f"] == "short"
+    assert top == {}
+    assert entries[0]["f"] == long_text
+
+
+def test_review_texts_passes_malformed_entries_through() -> None:
+    assert review_texts(_gate(2), "not a list", {"f": LIMIT}, str) == ("not a list", {})
+    mixed = [1, {"s": "A", "f": 42}]
+    assert review_texts(_gate(2), mixed, {"f": LIMIT}, lambda e: e["s"]) == (mixed, {})

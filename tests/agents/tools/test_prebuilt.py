@@ -61,6 +61,7 @@ def test_package_exports_every_tool_factory() -> None:
         "LengthGate",
         "TextLimit",
         "count_step",
+        "review_texts",
         "text_tools",
         "trim_text",
     }

@@ -10,7 +10,7 @@ function's real annotations.
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -117,6 +117,43 @@ class LengthGate:
         kept = trim_text(value, max_chars=limit.hard, min_chars=limit.stated // 2)
         self._logger.log_warning(f"{self._name}: {label} trimmed from {len(value)} to {len(kept)} characters (limit {limit.hard})")
         return kept
+
+
+def review_texts(
+    gate: LengthGate,
+    entries: Any,
+    fields: Mapping[str, TextLimit],
+    subject: Callable[[Mapping[str, Any]], str],
+    texts: Mapping[str, tuple[Any, TextLimit]] | None = None,
+) -> dict[str, str] | tuple[Any, dict[str, Any]]:
+    """Put an entry list's text fields and some top-level texts through `gate` in one review.
+
+    Each dict entry contributes one text per field of `fields` it holds with a non-None value, labelled
+    ``"<field> for <subject(entry)>"``; the `texts` follow, labelled by their key. Anything that is not a list of dicts is
+    left for the caller's own validation to refuse.
+
+    Args:
+        gate: The length gate of the current run.
+        entries: The submitted list; a non-list, and the non-dict items of a list, pass through untouched.
+        fields: Field name to limit, applied to every dict entry.
+        subject: Names an entry in its labels. Called only for dict entries that have a field to review.
+        texts: Top-level texts as ``label: (value, limit)``.
+
+    Returns:
+        The gate's error dict, or ``(entries, top)``: `entries` a new list with each reviewed field written back into a
+        copy of its entry (the input is never mutated), `top` the reviewed top-level values by label.
+    """
+    spots = [(index, field) for index, entry in enumerate(entries if isinstance(entries, list) else []) if isinstance(entry, dict) for field in fields if entry.get(field) is not None]
+    labelled = [(f"{field} for {subject(entries[index])}", entries[index][field], fields[field]) for index, field in spots]
+    labelled += [(label, value, limit) for label, (value, limit) in (texts or {}).items()]
+    checked = gate.review(labelled)
+    if isinstance(checked, dict):
+        return checked
+    if spots:
+        entries = [dict(entry) if isinstance(entry, dict) else entry for entry in entries]
+        for (index, field), value in zip(spots, checked, strict=False):
+            entries[index][field] = value
+    return entries, dict(zip(texts or {}, checked[len(spots) :], strict=True))
 
 
 def count_step(submit_tool: str, texts: str) -> str:
