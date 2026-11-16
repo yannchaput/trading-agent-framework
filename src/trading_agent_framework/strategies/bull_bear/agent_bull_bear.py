@@ -17,6 +17,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents.tools import only
+from trading_agent_framework.agents.tools.text import text_tools
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.config.env import TradingMode
@@ -152,9 +153,14 @@ class BullBearStrategy(Strategy):
             self.agents.create(
                 name="researcher",
                 system_prompt=researcher_system(news),
-                tools=[*research, submit["submit_note"]],
+                tools=[*research, *text_tools(), submit["submit_note"]],
                 temperature=temperature,
-                exempt_tools=["submit_note", "get_income_statement", "get_balance_sheet"],  # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
+                exempt_tools=[
+                    "submit_note",
+                    "count_characters",
+                    "get_income_statement",
+                    "get_balance_sheet",
+                ],  # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
                 compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
                 max_output_tokens=cap,
@@ -162,13 +168,23 @@ class BullBearStrategy(Strategy):
             )
             # The bull and the bear argue from the same evidence pack: no research tool, only their submit tool.
             for name, system_prompt, tool in (("bull", BULL_SYSTEM, "submit_bull_case"), ("bear", BEAR_SYSTEM, "submit_bear_case")):
-                self.agents.create(name=name, system_prompt=system_prompt, tools=[submit[tool]], temperature=temperature, final_tools=[tool], max_output_tokens=cap, thinking_token_budget=budget)
+                self.agents.create(
+                    name=name,
+                    system_prompt=system_prompt,
+                    tools=[*text_tools(), submit[tool]],
+                    temperature=temperature,
+                    exempt_tools=[tool, "count_characters"],
+                    final_tools=[tool],
+                    max_output_tokens=cap,
+                    thinking_token_budget=budget,
+                )
             # The judge has its submit tool only, like the bull and the bear, with its own budget and cap.
             self.agents.create(
                 name="judge",
                 system_prompt=JUDGE_SYSTEM,
-                tools=[submit["submit_verdicts"]],
+                tools=[*text_tools(), submit["submit_verdicts"]],
                 temperature=temperature,
+                exempt_tools=["submit_verdicts", "count_characters"],
                 final_tools=["submit_verdicts"],
                 max_output_tokens=self.settings.judge_max_output_tokens,
                 thinking_token_budget=self.settings.judge_thinking_token_budget,

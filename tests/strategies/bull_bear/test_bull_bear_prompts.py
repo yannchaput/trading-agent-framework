@@ -154,7 +154,7 @@ def test_the_researcher_task_names_the_symbol_and_the_note_limit() -> None:
 def test_the_debate_tasks_state_the_character_cap_they_are_given(task) -> None:  # noqa: ANN001
     text = task(234)
 
-    assert "234 characters" in text and "rejects the whole submission" in text
+    assert "234 characters" in text and "count_characters" in text
 
 
 def test_the_retry_prompt_quotes_the_error_and_the_tool() -> None:
@@ -308,3 +308,20 @@ def test_the_researcher_is_told_to_search_news_by_the_stocks_ticker() -> None:
 
     assert "ticker in symbols" in text and "never leave it empty" in text and "company name" in text
     assert "ticker in symbols" not in prompts.researcher_system(False)  # no news tool, nothing to say about it
+
+
+@pytest.mark.parametrize(
+    ("task", "tool"),
+    [
+        (prompts.researcher_task("AAPL", 500), "submit_note"),
+        (prompts.bull_task(300), "submit_bull_case"),
+        (prompts.bear_task(300), "submit_bear_case"),
+        (prompts.judge_task(300), "submit_verdicts"),
+    ],
+)
+def test_every_task_prompt_asks_for_the_count_and_quotes_only_the_stated_limits(task: str, tool: str) -> None:
+    assert "count_characters" in task and f"`{tool}`" in task
+    assert "500" in task or "300" in task
+    assert "800" not in task and "450" not in task
+    assert "rejects the whole submission" not in task
+    assert "held" not in task and "weight_pct" not in task and "forced" not in task.lower()

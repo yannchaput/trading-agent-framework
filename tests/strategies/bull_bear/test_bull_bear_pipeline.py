@@ -292,7 +292,7 @@ def test_the_review_log_records_the_whole_review_as_one_line(tmp_path: Path) -> 
     assert [stock["symbol"] for stock in line["debate_set"]] == UNIVERSE[:15]
     assert line["debate_set"][0] == {"symbol": "S00", "rank": 1, "held": False}
     assert line["forced_exits"] == []
-    assert line["notes"] == {"written": 15, "failed": [], "trimmed": []}
+    assert line["notes"] == {"written": 15, "failed": []}
     assert line["bull_conviction"] == {"high": 15} and line["bear_risk"] == {"low": 15}
     assert "picks" not in line and "drops" not in line
     assert line["verdicts"][0] == {"symbol": "S00", "verdict": "in", "reason": "bull wins", "what_changed": None, "strength": "standard", "previous_verdict": None} and len(line["verdicts"]) == 15
@@ -517,7 +517,7 @@ def test_a_stock_whose_research_fails_gets_research_unavailable_and_the_review_g
     assert len(h.agents["researcher"].calls) == 16  # S03 once more with a forced submit_note
     stock = next(s for s in h.agents["bull"].calls[0]["context"]["stocks"] if s["fact_sheet"]["symbol"] == "S03")
     assert stock["note"] == UNAVAILABLE_NOTE
-    assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S03"], "trimmed": []}
+    assert h.log_lines()[0]["notes"] == {"written": 14, "failed": ["S03"]}
 
 
 def test_a_configuration_error_from_an_agent_propagates_and_leaves_the_state(tmp_path: Path) -> None:
@@ -1394,3 +1394,26 @@ def test_abandoned_record_unchanged(name: str, tmp_path: Path, monkeypatch: pyte
             ("abandoned_streak", 2),
         ]
         assert h.store.load() == BullBearState(abandoned_streak=2, verdicts=verdicts_state, cooldowns={"S05": 2})
+
+
+def test_a_researcher_run_ending_after_its_length_refusals_gets_the_forced_retry_whose_long_note_is_recorded_trimmed(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    long_note = "x" * 900
+
+    def long_twice(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        symbol = ctx["fact_sheet"]["symbol"]
+        tools["submit_note"](symbol, long_note)
+        tools["submit_note"](symbol, long_note)  # then the run stops
+
+    def long_again(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> None:
+        tools["submit_note"](ctx["fact_sheet"]["symbol"], long_note)
+
+    h.agents["researcher"].overrides = [long_twice, long_again]
+
+    assert h.run().completed
+
+    first, retry = h.agents["researcher"].calls[:2]
+    assert retry["force_tool"] == "submit_note" and "note for S00 has 900 characters" in retry["task"]
+    seen = _notes_seen_by_the_bull(h)["S00"]
+    assert len(seen) <= 800 and seen.startswith("xxx")
+    assert h.log_lines()[0]["notes"] == {"written": 15, "failed": []}
