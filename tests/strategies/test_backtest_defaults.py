@@ -72,7 +72,7 @@ YEAR = (et(2025, 9, 29), et(2026, 10, 5))
 # name -> (window, parameters["warmup_trading_days"], timestep); the budget is 10000 and the benchmark SPY everywhere
 EXPECTED: dict[str, tuple[tuple[datetime, datetime], int, str]] = {
     "bill_ackman": (YEAR, 260, "day"),
-    "bull_bear": ((et(2024, 9, 2), et(2026, 10, 5)), 300, "day"),
+    "bull_bear": ((et(2024, 9, 2), et(2026, 11, 14)), 300, "day"),  # BI_YEAR_LATEST
     "congress_trades": (YEAR, 10, "day"),
     "cross_momentum": ((et(2016, 1, 1), et(2026, 10, 5)), 300, "day"),
     "earnings_drift": (YEAR, 283, "day"),

@@ -36,6 +36,18 @@ def test_pm_prompt_states_the_caps_from_params():
     assert "20%" in pm_system(replace(PARAMS, max_etf_weight=0.2))
 
 
+def test_pm_prompt_says_the_book_is_always_invested():
+    text = pm_system(PARAMS)
+    assert "always invested" in text and "98%" in text and "mix" in text
+    assert "small book" not in text and "risk-off" not in text
+
+
+def test_pm_prompt_says_the_submitted_weights_must_respect_the_caps():
+    text = pm_system(PARAMS)
+    assert "weights you submit must stay within these caps" in text
+    assert "the caps apply to the scaled book" not in text
+
+
 def test_no_prompt_contains_forced():
     texts = [pod_system(pod, PARAMS) for pod in PODS] + [risk_system(PARAMS), pm_system(PARAMS), POD_TASK, RISK_TASK, PM_TASK]
     assert not any(re.search(r"forced|\bheld\b", text, re.IGNORECASE) for text in texts)

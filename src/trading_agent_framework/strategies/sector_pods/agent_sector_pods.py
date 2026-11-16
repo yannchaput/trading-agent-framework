@@ -198,7 +198,7 @@ class SectorPodsStrategy(Strategy):
             pods=pods,
             risk_manager=risk,
             portfolio_manager=pm,
-            execute=Execute(store, rebalancer, RunLog(self.run_file("reviews.jsonl"), what="review log"), params, on_warning=self._warn, on_error=self._error),
+            execute=Execute(store, rebalancer, RunLog(self.run_file("reviews.jsonl"), what="review log"), params, on_info=self._info, on_warning=self._warn, on_error=self._error),
         )
 
     def on_trading_iteration(self) -> None:
@@ -258,6 +258,9 @@ class SectorPodsStrategy(Strategy):
             multiplier: Contract multiplier (1 for stocks).
         """
         self.log_info(f"order filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
+
+    def _info(self, message: str) -> None:
+        self.log_info(message)
 
     def _warn(self, message: str) -> None:
         self.log_warning(message)

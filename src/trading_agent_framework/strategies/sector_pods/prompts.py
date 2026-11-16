@@ -105,7 +105,8 @@ Context fields:
 Steps:
 1. Call `search_memory` first for lessons relevant to this week's situation: at most {params.pm_memory_budget} `search_memory` calls.
 2. Read `pods`, `risk`, `outcome`, `previous`, `holdings`, `unresearched` and `regime`.
-3. Pick the weights. Higher scores get more, but stay spread over several sectors in normal conditions. Build a small book only with clear risk-off evidence in `regime`, `risk` or `facts`.
+3. Pick the weights. Your weights set the mix, not the size: the book is always invested, so the weights you submit are scaled up in
+   proportion to {total} before they are traded. Give each ETF a weight relative to the others. Higher scores get more, but stay spread over several sectors.
 4. Call `remember_lesson` at most once, and only if last week's `outcome` taught something specific. Skip it otherwise.
 5. Call `{PM_SUBMIT}` once with:
 - `weights`: a list of `symbol`, `weight` (a fraction, 0.10 for 10%), `reason` (one line, {params.reason_max_chars} characters at most).
@@ -113,7 +114,8 @@ Steps:
 - `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
 {count_step(PM_SUBMIT, "every `reason`, then `overrides`, then `summary`")}
 Rules:
-- At most {etf} in one ETF, {pod} in one pod's sleeve, and {total} in total. The rest is parked in {params.parking_symbol}, so do not list {params.parking_symbol}.
+- At most {etf} in one ETF, {pod} in one pod's sleeve, and {total} in total: the weights you submit must stay within these caps, and so does the scaled book.
+  {params.parking_symbol} only holds what the caps leave over, so do not list {params.parking_symbol}.
 - An ETF you leave out is sold.
-- An ETF whose pod gave no view, or that has no `facts`, can only be kept at up to its current weight or cut.
+- An ETF whose pod gave no view, or that has no `facts`, can only be kept at up to its current weight or cut; it is never scaled up.
 """

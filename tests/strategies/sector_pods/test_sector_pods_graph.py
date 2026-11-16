@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.graph import AgentNode
@@ -147,6 +148,7 @@ class Harness:
     params: SectorPodsParams
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    infos: list[str] = field(default_factory=list)
 
     def run(self) -> dict[str, Any]:
         return self.graph.invoke({})
@@ -213,6 +215,7 @@ def _harness(
     }
     warnings: list[str] = []
     errors: list[str] = []
+    infos: list[str] = []
     parts = GraphParts(
         load_previous=LoadPrevious(store),
         market_facts=MarketFacts(bars, regime=lambda: 1, holdings=rebalancer.current_weights, today=lambda: date(2026, 11, 10), on_warning=warnings.append),
@@ -221,9 +224,9 @@ def _harness(
         portfolio_manager=make(
             "portfolio_manager", pm or weights({"XLK": 0.2, "XLV": 0.2}), validate_pm(params), pm_submit_tool, PM_SUBMIT, pm_reads, lambda v: {"pm": UNAVAILABLE if v is None else v}
         ),
-        execute=Execute(store, rebalancer, RunLog(log_path), params, on_warning=warnings.append, on_error=errors.append),
+        execute=Execute(store, rebalancer, RunLog(log_path), params, on_info=infos.append, on_warning=warnings.append, on_error=errors.append),
     )
-    return Harness(build_graph(parts), broker, bars, agents, store, log_path, rebalancer, params, warnings, errors)
+    return Harness(build_graph(parts), broker, bars, agents, store, log_path, rebalancer, params, warnings, errors, infos)
 
 
 def test_graph_runs_pods_in_parallel(tmp_path: Path) -> None:
@@ -372,7 +375,7 @@ def test_a_book_whose_every_order_is_refused_abandons_the_week_and_keeps_the_pre
 
 
 def test_a_book_already_held_within_the_band_completes_the_week_with_no_orders(tmp_path: Path) -> None:
-    h = _harness(tmp_path, held={"XLK": 40, "XLV": 40, "SHV": 58})  # 20% + 20% in ETFs, the rest parked: nothing is due
+    h = _harness(tmp_path, held={"XLK": 50, "XLV": 50, "SHV": 48})  # the filled book already held: 25% + 25% in ETFs, 48% parked: nothing is due
 
     final = h.run()
 
@@ -382,7 +385,7 @@ def test_a_book_already_held_within_the_band_completes_the_week_with_no_orders(t
 
 def test_execute_refuses_weights_that_break_the_limits(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_warning=h.warnings.append, on_error=h.errors.append)
+    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
 
     def week(pm: dict[str, Any]) -> PodsState:
         return PodsState(abandoned=None, date="2026-11-10", regime="bullish", holdings={}, facts={}, pods={}, pm=pm)
@@ -393,6 +396,38 @@ def test_execute_refuses_weights_that_break_the_limits(tmp_path: Path) -> None:
     assert too_big["abandoned"].startswith("execution") and too_big["orders"] == []
     assert malformed["abandoned"].startswith("execution") and h.broker.submitted == []
     assert len(h.errors) == 2 and h.store.load().abandoned_streak == 2
+
+
+def test_execute_fills_the_book_and_records_it(tmp_path: Path) -> None:
+    book = {"XLK": 0.12, "XLF": 0.08, "XLV": 0.10, "XLE": 0.10, "XLY": 0.10}
+    h = _harness(tmp_path, pm=weights(book))
+
+    h.run()
+
+    (line,) = h.log_lines()
+    assert line["book"] == pytest.approx({"XLK": 0.2352, "XLF": 0.1568, "XLV": 0.196, "XLE": 0.196, "XLY": 0.196})
+    assert [w["weight"] for w in line["pm"]["weights"]] == list(book.values())  # what the PM submitted is kept
+    assert h.infos == ["book filled from 50.0% to 98.0% invested"]
+
+
+def test_a_capped_book_trades_below_98_and_says_so(tmp_path: Path) -> None:
+    h = _harness(tmp_path)  # the default PM book, XLK 0.2 and XLV 0.2: two ETFs, each at the 25% cap
+
+    final = h.run()
+
+    (line,) = h.log_lines()
+    assert final["abandoned"] is None and line["book"] == pytest.approx({"XLK": 0.25, "XLV": 0.25})
+    assert h.infos == ["book filled from 40.0% to 50.0% invested (the caps hold it below 98.0%)"]
+
+
+def test_a_refused_book_records_no_book(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
+    week = PodsState(abandoned=None, date="2026-11-10", regime="bullish", holdings={}, facts={}, pods={}, pm={"weights": [{"symbol": "XLK", "weight": 0.9}]})
+
+    assert execute(week)["abandoned"].startswith("execution")
+
+    assert h.log_lines()[-1]["book"] is None and h.infos == []
 
 
 def test_previous_week_reaches_agents_and_outcome(tmp_path: Path) -> None:
@@ -419,7 +454,7 @@ def test_refused_book_reports_no_orders_even_after_a_week_with_orders(tmp_path: 
     h = _harness(tmp_path)
     h.run()
     assert h.rebalancer.placed  # last week's orders are still on the long-lived rebalancer
-    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_warning=h.warnings.append, on_error=h.errors.append)
+    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
     refused = PodsState(abandoned=None, date="2026-11-17", regime="bullish", holdings={}, facts={}, pods={}, pm={"weights": [{"symbol": "XLK", "weight": 0.9}]})
 
     result = execute(refused)

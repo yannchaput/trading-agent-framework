@@ -10,7 +10,7 @@ from trading_agent_framework.agents.submit import HandoffError, NodeRecorder
 from trading_agent_framework.agents.tools.text import LengthGate, review_texts
 from trading_agent_framework.strategies.common.handoff import optional_text, required_text
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
-from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, Pod, pod_of
+from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, PODS, Pod, pod_of
 
 POD_SUBMIT = "submit_pod_view"
 RISK_SUBMIT = "submit_risk_review"
@@ -155,6 +155,56 @@ def check_weights(weights: Mapping[str, float], state: Mapping[str, Any], params
     if (total := sum(weights.values())) > limit + _TOLERANCE:
         return f"weights sum to {total:.4f}; the limit is {limit:.4f} (cash buffer {params.cash_buffer})"
     return None
+
+
+def fill_book(weights: Mapping[str, float], state: Mapping[str, Any], params: SectorPodsParams) -> dict[str, float]:
+    """The book to trade: the PM's weights scaled up to `1 - params.cash_buffer`, within the ETF and pod caps.
+
+    The PM's weights set the mix. The researched ETFs are scaled in proportion; an ETF over `max_etf_weight` is clipped and a
+    pod over `max_pod_weight` is cut back, and what a cap cuts is spread in proportion over the ETFs still below their caps.
+    Unresearched ETFs keep their weight (they count toward their pod's cap) and zero weights stay out. When every researched
+    ETF is at a cap the rest is left unallocated (parked in the parking symbol by the rebalancer).
+
+    Args:
+        weights: The PM's target weight per ETF, already accepted by `check_weights`.
+        state: The graph state; reads `facts`, `holdings` and `pods`.
+        params: Supplies the ETF and pod caps and the cash buffer.
+
+    Returns:
+        Target weight per ETF, in the order of `weights`; it passes `check_weights` and never totals above the target.
+    """
+    target = 1 - params.cash_buffer
+    book = {symbol: weight for symbol, weight in weights.items() if weight > 0}
+    free = [symbol for symbol in book if not _frozen(symbol, state)]
+
+    def pod_totals() -> dict[str, float]:
+        totals: dict[str, float] = {}
+        for symbol, weight in book.items():
+            totals[pod_of(symbol).key] = totals.get(pod_of(symbol).key, 0.0) + weight
+        return totals
+
+    def scale(symbols: list[str], factor: float) -> None:
+        for symbol in symbols:
+            book[symbol] *= factor
+
+    for _ in range(len(free) + len(PODS) + 1):  # each round saturates an ETF or a pod, or ends the loop
+        totals = pod_totals()
+        room = target - sum(book.values())
+        open_ = [s for s in free if book[s] < params.max_etf_weight - _TOLERANCE and totals[pod_of(s).key] < params.max_pod_weight - _TOLERANCE]
+        if room <= _TOLERANCE or not open_:
+            break
+        scale(open_, 1 + room / sum(book[s] for s in open_))
+        for symbol in open_:
+            book[symbol] = min(book[symbol], params.max_etf_weight)
+        for key, total in pod_totals().items():
+            if total > params.max_pod_weight:
+                members = [s for s in free if pod_of(s).key == key]
+                held = sum(book[s] for s in members)
+                scale(members, max(held - (total - params.max_pod_weight), 0.0) / held)
+    if (excess := sum(book.values()) - target) > 0 and free:  # float drift: never above the target
+        held = sum(book[s] for s in free)
+        scale(free, max(held - excess, 0.0) / held)
+    return book
 
 
 def validate_pm(params: SectorPodsParams) -> Validator:
