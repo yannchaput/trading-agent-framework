@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.common.handoff import HandoffError, SubmitRecorder, covering, optional_text, required_text, text, trim_text, weight
+from trading_agent_framework.strategies.common.handoff import HandoffError, SubmitRecorder, covering, optional_text, required_text, text, weight
 
 
 def _cover(raw: Any, expected: Sequence[str] = ("AAA", "BBB", "CCC")) -> list[tuple[str, Any]]:
@@ -106,30 +106,3 @@ def test_toy_recorder_guards_records_and_rearms() -> None:
     assert toy.submission == 5
     toy._arm("b", {})
     assert not toy.submitted and toy.submission is None and toy.last_error is None
-
-
-# --- trim_text ----------------------------------------------------------------------------------
-
-
-def test_a_text_within_the_limit_is_only_stripped() -> None:
-    assert trim_text("  A fact. Another.  ", max_chars=600, min_chars=250) == "A fact. Another."
-
-
-def test_a_long_text_keeps_the_most_whole_sentences_that_fit() -> None:
-    text = "a" * 300 + ". " + "b" * 250 + "! " + "c" * 100 + "."
-    assert trim_text(text, max_chars=600, min_chars=250) == "a" * 300 + ". " + "b" * 250 + "!"
-
-
-def test_a_decimal_point_is_not_a_sentence_end() -> None:
-    text = "Revenue " + "r" * 280 + ". Q3 EPS $1.58 vs $1.47 est " + "e" * 300 + "."
-    assert trim_text(text, max_chars=600, min_chars=250) == "Revenue " + "r" * 280 + "."
-
-
-def test_with_no_long_enough_sentence_the_text_is_cut_at_a_word_with_an_ellipsis() -> None:
-    text = "Short. " + "word " * 200
-    trimmed = trim_text(text, max_chars=600, min_chars=250)
-    assert len(trimmed) <= 600 and trimmed.endswith("word…")
-
-
-def test_a_text_with_no_space_is_cut_hard_with_an_ellipsis() -> None:
-    assert trim_text("x" * 700, max_chars=600, min_chars=250) == "x" * 599 + "…"

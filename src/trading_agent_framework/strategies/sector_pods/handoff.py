@@ -8,7 +8,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, TypedDict
 
 from trading_agent_framework.agents.graph import SubmitSlot
-from trading_agent_framework.strategies.common.handoff import trim_text
+from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, Pod, pod_of
 from trading_agent_framework.utils.log import ColorLogger

@@ -148,14 +148,17 @@ def test_the_forced_retry_shares_the_gate_attempts():
 - [ ] **Step 1: Failing tests.** Params: defaults above; `ConfigurationError` naming `reason_hard_max_chars must be at least reason_max_chars` (and the summary one) and `max_submit_attempts must be at least 1`. Handoff (replace the four `..._trimmed...` tests, lines 202-268; build slots as `SubmitSlot(validate_pod(TECH, PARAMS), gate=LengthGate(PARAMS.max_submit_attempts, name=POD_SUBMIT, log_tag="sector_pods"))`):
 
 ```python
-def test_an_over_long_pod_text_is_refused_with_its_count_then_trimmed_on_the_third_attempt(caplog): ...
+def test_an_over_long_pod_text_is_refused_with_its_count_then_trimmed_on_the_third_attempt(caplog):
+    ...
     # 1st, 2nd: {"error": "too long: reason for XLK has 263 characters (limit 200); sector_view has ... (limit 400). ..."}, slot.value is None
     # 3rd: {"status": "recorded"}; reason <= 300 and sector_view <= 700, cut at a sentence; WARNING "[sector_pods] submit_pod_view: sector_view trimmed from"
-def test_a_text_between_the_stated_and_hard_limits_is_recorded_whole_on_the_last_attempt(): ...   # 450-char view kept as is (validator checks 700)
-def test_two_objections_on_the_same_symbols_are_reviewed_apart(): ...     # Review Focus 1
-def test_a_weight_refusal_uses_no_length_attempt(): ...                   # Review Focus 2: long texts refused, then valid texts + 30% weight refused, then long texts refused again (2nd length refusal), then trimmed
-def test_a_missing_reason_still_gets_the_validators_message(): ...        # Review Focus 4: reason None -> the existing "must be a non-empty string" error, not a gate error
-def test_without_a_gate_texts_reach_the_validator_unreviewed(): ...       # 800-char view -> the validator's length error against 700
+
+
+def test_a_text_between_the_stated_and_hard_limits_is_recorded_whole_on_the_last_attempt(): ...  # 450-char view kept as is (validator checks 700)
+def test_two_objections_on_the_same_symbols_are_reviewed_apart(): ...  # Review Focus 1
+def test_a_weight_refusal_uses_no_length_attempt(): ...  # Review Focus 2: long texts refused, then valid texts + 30% weight refused, then long texts refused again (2nd length refusal), then trimmed
+def test_a_missing_reason_still_gets_the_validators_message(): ...  # Review Focus 4: reason None -> the existing "must be a non-empty string" error, not a gate error
+def test_without_a_gate_texts_reach_the_validator_unreviewed(): ...  # 800-char view -> the validator's length error against 700
 ```
 
 - [ ] **Step 2:** run → FAIL. **Step 3: Implement.** Validators: every `_text(..., params.reason_max_chars)` / `summary_max_chars` becomes the hard cap. Delete `_trimmed`, `_trimmed_reasons`, the `trim_text` import. One private helper `_reviewed(slot, entries, entry_key, long_fields) -> dict | tuple[list, dict]` builds the labels (`reason for <symbol>` or `reason for <a, b>` via the existing `_subject`, then each long field name), calls `slot.gate.review`, and writes the values back into copies of the entries (an entry that is not a dict is left as is, contributing no text). Add the params, properties and validation.

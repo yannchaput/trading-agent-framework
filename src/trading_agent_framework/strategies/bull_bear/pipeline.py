@@ -19,6 +19,7 @@ from datetime import date, datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.strategies.bull_bear.book import build_book
 from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
@@ -30,7 +31,6 @@ from trading_agent_framework.strategies.bull_bear.sizing import equal_weights
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
 from trading_agent_framework.strategies.common.cooldowns import advance_cooldowns
 from trading_agent_framework.strategies.common.daily_bars import DailyBars, DataUnavailable
-from trading_agent_framework.strategies.common.handoff import trim_text
 from trading_agent_framework.strategies.common.pipeline import AgentLike as CommonAgentLike
 from trading_agent_framework.strategies.common.pipeline import ReviewPipeline, RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
