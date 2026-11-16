@@ -201,25 +201,25 @@ def _subject(entry: Mapping[str, Any]) -> str:
     return ", ".join(map(str, symbols)) if isinstance(symbols, list) else str(entry.get("symbol"))
 
 
-def _review(slot: SubmitSlot, params: SectorPodsParams, entries: Any, long_texts: dict[str, Any]) -> dict[str, str] | tuple[Any, dict[str, Any]]:
-    """Put each entry's `reason` and the `long_texts` through the slot's length gate.
+def _submit(slot: SubmitSlot, params: SectorPodsParams, key: str, entries: Any, **long_texts: Any) -> dict[str, Any]:
+    """Put each entry's `reason` and the `long_texts` through the slot's length gate, then record `{key: entries, **long_texts}`.
 
-    Returns the gate's `{"error": ...}`, else `(entries with their reasons checked, long_texts checked)`: stripped and, on
-    the last attempt, cut at the hard cap. Without a gate, or for a malformed list, the texts are returned untouched for
-    the validator to refuse.
+    The gate's refusal is returned instead. On its last attempt the texts are stripped and cut at the hard cap. Without a
+    gate, or for a malformed list, the texts reach the validator untouched, for it to refuse.
     """
-    if slot.gate is None:
-        return entries, long_texts
-    dicts = [index for index, entry in enumerate(entries) if isinstance(entry, dict)] if isinstance(entries, list) else []
-    texts = [(f"reason for {_subject(entries[index])}", entries[index].get("reason"), params.reason_limit) for index in dicts]
-    texts += [(label, value, params.summary_limit) for label, value in long_texts.items()]
-    checked = slot.gate.review(texts)
-    if isinstance(checked, dict):
-        return checked
-    kept = list(entries) if dicts else entries
-    for index, value in zip(dicts, checked[: len(dicts)], strict=True):
-        kept[index] = {**entries[index], "reason": value}
-    return kept, dict(zip(long_texts, checked[len(dicts) :], strict=True))
+    if (gate := slot.gate) is not None:
+        dicts = [index for index, entry in enumerate(entries) if isinstance(entry, dict)] if isinstance(entries, list) else []
+        texts = [(f"reason for {_subject(entries[index])}", entries[index].get("reason"), params.reason_limit) for index in dicts]
+        texts += [(label, value, params.summary_limit) for label, value in long_texts.items()]
+        checked = gate.review(texts)
+        if isinstance(checked, dict):
+            return checked
+        if dicts:
+            entries = list(entries)
+            for index, value in zip(dicts, checked[: len(dicts)], strict=True):
+                entries[index] = {**entries[index], "reason": value}
+        long_texts = dict(zip(long_texts, checked[len(dicts) :], strict=True))
+    return slot.submit({key: entries, **long_texts})
 
 
 def pod_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., dict[str, Any]]:
@@ -227,11 +227,7 @@ def pod_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[...,
 
     def submit_pod_view(scores: list[Score], sector_view: str) -> dict[str, Any]:
         """Submit your score for every ETF and your view of the sector."""
-        reviewed = _review(slot, params, scores, {"sector_view": sector_view})
-        if isinstance(reviewed, dict):
-            return reviewed
-        kept_scores, texts = reviewed
-        return slot.submit({"scores": kept_scores, "sector_view": texts["sector_view"]})
+        return _submit(slot, params, "scores", scores, sector_view=sector_view)
 
     return submit_pod_view
 
@@ -241,11 +237,7 @@ def risk_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[...
 
     def submit_risk_review(objections: list[Objection], summary: str) -> dict[str, Any]:
         """Submit your objections to the pods' views (none is fine) and a summary."""
-        reviewed = _review(slot, params, objections, {"summary": summary})
-        if isinstance(reviewed, dict):
-            return reviewed
-        kept_objections, texts = reviewed
-        return slot.submit({"objections": kept_objections, "summary": texts["summary"]})
+        return _submit(slot, params, "objections", objections, summary=summary)
 
     return submit_risk_review
 
@@ -255,10 +247,6 @@ def pm_submit_tool(slot: SubmitSlot, params: SectorPodsParams) -> Callable[..., 
 
     def submit_target_weights(weights: list[Weight], overrides: str, summary: str) -> dict[str, Any]:
         """Submit the target weight of each ETF you want to hold, what you overrode, and a summary."""
-        reviewed = _review(slot, params, weights, {"overrides": overrides, "summary": summary})
-        if isinstance(reviewed, dict):
-            return reviewed
-        kept_weights, texts = reviewed
-        return slot.submit({"weights": kept_weights, "overrides": texts["overrides"], "summary": texts["summary"]})
+        return _submit(slot, params, "weights", weights, overrides=overrides, summary=summary)
 
     return submit_target_weights

@@ -101,21 +101,21 @@ class LengthGate:
             `{"error": ...}` listing every text over its stated limit with its count, while refusals remain; otherwise
             the values in the same order, stripped and, above their hard cap, cut at a sentence (a WARNING per cut).
         """
-        over = [(label, len(value.strip()), limit.stated) for label, value, limit in texts if isinstance(value, str) and len(value.strip()) > limit.stated]
+        stripped = [(label, value.strip() if isinstance(value, str) else value, limit) for label, value, limit in texts]
+        over = [(label, len(value), limit.stated) for label, value, limit in stripped if isinstance(value, str) and len(value) > limit.stated]
         if over and self._refusals < self._max_attempts - 1:
             self._refusals += 1
             listed = "; ".join(f"{label} has {count} characters (limit {stated})" for label, count, stated in over)
             self._logger.log_info(f"{self._name}: refused for length: {listed}")
             return {"error": f"too long: {listed}. Count them with count_characters, shorten those texts and call {self._name} again with the whole submission."}
-        return [self._kept(label, value, limit) for label, value, limit in texts]
+        return [self._kept(label, value, limit) for label, value, limit in stripped]
 
     def _kept(self, label: str, value: Any, limit: TextLimit) -> Any:
-        """`value` stripped and cut at `limit.hard` (with a warning) when it is a longer string; anything else unchanged."""
-        if not isinstance(value, str):
+        """`value` (already stripped) cut at `limit.hard` with a warning when it is a longer string; anything else unchanged."""
+        if not isinstance(value, str) or len(value) <= limit.hard:
             return value
         kept = trim_text(value, max_chars=limit.hard, min_chars=limit.stated // 2)
-        if len(value.strip()) > limit.hard:
-            self._logger.log_warning(f"{self._name}: {label} trimmed from {len(value.strip())} to {len(kept)} characters (limit {limit.hard})")
+        self._logger.log_warning(f"{self._name}: {label} trimmed from {len(value)} to {len(kept)} characters (limit {limit.hard})")
         return kept
 
 
