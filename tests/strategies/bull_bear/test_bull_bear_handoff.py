@@ -4,10 +4,10 @@ from typing import Any
 
 import pytest
 
+from trading_agent_framework.agents.submit import HandoffError
 from trading_agent_framework.agents.tools.text import trim_text
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdict, submit_tools, validate_verdicts
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.common.handoff import HandoffError
 
 DEBATE = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"]
 

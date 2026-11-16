@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 from langchain_core.tools import StructuredTool
 
+from trading_agent_framework.agents.submit import HandoffError
 from trading_agent_framework.strategies.bill_ackman.handoff import (
     HandoffRecorder,
     Idea,
@@ -18,7 +19,6 @@ from trading_agent_framework.strategies.bill_ackman.handoff import (
     validate_verdicts,
 )
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
-from trading_agent_framework.strategies.common.handoff import HandoffError
 
 CANDIDATES = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF", "GGG"]
 

@@ -12,8 +12,9 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from trading_agent_framework.agents.submit import HandoffError, SubmitRecorder
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.common.handoff import HandoffError, SubmitRecorder, covering, required_text
+from trading_agent_framework.strategies.common.handoff import covering, required_text
 
 LEVELS = ("low", "medium", "high")
 CONCERNS = ("valuation", "momentum_exhaustion", "earnings", "fundamentals", "news_event", "sector", "none")

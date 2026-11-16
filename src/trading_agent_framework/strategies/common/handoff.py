@@ -1,10 +1,10 @@
-"""The pieces of an agent hand-off that strategies share: the error, the trade report's validation and the field readers.
+"""The pieces of an agent hand-off that strategies share: the trade report's validation and the field readers.
 
 A strategy's submit tools validate an agent's argument in code and return `{"error": ...}` so the model can correct itself
-in the same run (see `congress_trades/handoff.py`). What is common to them lives here: `HandoffError`, the pure readers of
+in the same run (see `congress_trades/handoff.py`). What is common to them lives here: the pure readers of
 list items (`items`, `key`, `text`, `required_text`, `optional_text`, `weight`, `covering`) and the trade report, accepted only when it names every order the desk placed and
-every order has been checked (`validate_report` against the desk's `OrderView`s). `SubmitRecorder` is the base of every
-strategy's recorder: it arms a stage, guards the submit tools and records the first valid submission.
+every order has been checked (`validate_report` against the desk's `OrderView`s). `HandoffError` and `SubmitRecorder`
+(the base of every strategy's recorder) live in `agents/submit.py`; the readers raise that `HandoffError`.
 
 This module deliberately has NO `from __future__ import annotations`: the agent layer builds each tool's schema from the
 function's real annotations (as `memory/tools.py` does).
@@ -13,11 +13,9 @@ function's real annotations (as `memory/tools.py` does).
 import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
-
-class HandoffError(ValueError):
-    """A submission that breaks a rule; the message tells the model what is wrong and what is allowed."""
+from trading_agent_framework.agents.submit import HandoffError
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,70 +170,3 @@ def validate_report(raw: Any, *, orders: Mapping[str, OrderView], reason_max_cha
     if missing:
         raise HandoffError(f"no entry for {', '.join(missing)}: report every order you placed")
     return reports
-
-
-# --- the recorder -----------------------------------------------------------------------------------
-
-
-class SubmitRecorder:
-    """Holds what the armed stage must validate against, and the first valid submission for it.
-
-    A subclass sets `TOOL_NAMES` (stage -> tool name), arms a stage with `_arm(stage, context)` and implements `_validate`,
-    which returns the submission or raises `HandoffError`. `submit` is what a submit tool returns: `{"status": "recorded"}`
-    or `{"error": ...}` (also kept in `last_error`). Insider keeps its own final-submission attributes (note, target, report),
-    so `submission` stays None there.
-    """
-
-    TOOL_NAMES: ClassVar[Mapping[str, str]] = {}
-    NOT_EXPECTED_SUFFIX: ClassVar[str] = ""
-    ALREADY_RECORDED: ClassVar[str] = "already recorded for this run"
-
-    def __init__(self) -> None:
-        """Create a recorder that accepts no submission until armed."""
-        self._stage: str | None = None
-        self._context: dict[str, Any] = {}
-        self._submission: Any = None
-        self._submitted = False
-        self.last_error: str | None = None
-
-    def _arm(self, stage: str, context: dict[str, Any]) -> None:
-        """Arm the recorder to accept the submission for `stage` with its validation context."""
-        self._stage, self._context = stage, context
-        self._submission, self._submitted, self.last_error = None, False, None
-
-    @property
-    def submitted(self) -> bool:
-        """Whether the armed stage has a valid submission."""
-        return self._submitted
-
-    @property
-    def submission(self) -> Any:
-        """The armed stage's valid submission, else None."""
-        return self._submission
-
-    @property
-    def missing_tool(self) -> str:
-        """The tool the armed stage still waits for: what a forced retry forces."""
-        return self.TOOL_NAMES.get(self._stage or "", "")
-
-    def submit(self, stage: str, *args: Any) -> dict[str, Any]:
-        """Validate and record the agent's submission for `stage`; return a result or error payload for the agent."""
-        if self._stage != stage:
-            return self._fail(f"{self.TOOL_NAMES[stage]} is not expected at this point{self.NOT_EXPECTED_SUFFIX}")
-        if self._submitted:
-            return self._fail(self.ALREADY_RECORDED)
-        try:
-            value = self._validate(stage, *args)
-        except HandoffError as exc:
-            return self._fail(str(exc))
-        self._submission, self._submitted, self.last_error = value, True, None
-        return {"status": "recorded"}
-
-    def _validate(self, stage: str, *args: Any) -> Any:
-        """The submission for `stage`, or a `HandoffError` that tells the model what to fix."""
-        raise NotImplementedError
-
-    def _fail(self, message: str) -> dict[str, Any]:
-        """Remember `message` as the last error and return it as the error payload."""
-        self.last_error = message
-        return {"error": message}

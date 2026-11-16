@@ -9,7 +9,8 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.common.handoff import HandoffError, OrderView
+from trading_agent_framework.agents.submit import HandoffError
+from trading_agent_framework.strategies.common.handoff import OrderView
 from trading_agent_framework.strategies.insider_trades.form4.classify import Label, Labelled
 from trading_agent_framework.strategies.insider_trades.form4.parse import Form4Trade
 from trading_agent_framework.strategies.insider_trades.form4.signal import SignalClass, StockFacts, summarise

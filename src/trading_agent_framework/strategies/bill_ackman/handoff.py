@@ -12,10 +12,9 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from trading_agent_framework.agents.submit import HandoffError, SubmitRecorder
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.common.handoff import (
-    HandoffError,
-    SubmitRecorder,
     items,
     key,
     optional_text,
