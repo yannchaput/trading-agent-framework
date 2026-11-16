@@ -12,6 +12,7 @@ from trading_agent_framework.strategies.sector_pods.handoff import (
     RISK_SUBMIT,
     UNAVAILABLE,
     check_weights,
+    fill_book,
     pm_submit_tool,
     pod_submit_tool,
     risk_submit_tool,
@@ -336,3 +337,64 @@ def test_a_gate_refusal_in_a_sector_pods_tool_is_the_recorders_last_error():
     pod_submit_tool(recorder, PARAMS)(scores=_scores(("XLK", 1), ("SMH", 0))["scores"], sector_view=LONGER)
 
     assert recorder.last_error is not None and recorder.last_error.startswith("too long: sector_view has")
+
+
+# --- fill_book -----------------------------------------------------------------------------------
+
+
+def _filled(weights, state=None):
+    state = state or _full_state()
+    book = fill_book(weights, state, PARAMS)
+    assert check_weights(book, state, PARAMS) is None
+    return book
+
+
+def _without_view(*keys, holdings=None):
+    """A full state where the named pods gave no view."""
+    state = _full_state(holdings)
+    return {**state, "pods": {pod.key: (UNAVAILABLE if pod.key in keys else state["pods"][pod.key]) for pod in PODS}}
+
+
+def test_fill_book_scales_in_proportion_to_98_percent():
+    book = _filled({"XLK": 0.12, "XLF": 0.08, "XLV": 0.10, "XLE": 0.10, "XLY": 0.10})
+    assert book == pytest.approx({"XLK": 0.2352, "XLF": 0.1568, "XLV": 0.196, "XLE": 0.196, "XLY": 0.196})
+
+
+def test_fill_book_spreads_what_the_etf_cap_cuts():
+    book = _filled({"XLK": 0.20, "XLF": 0.05, "XLV": 0.05, "XLE": 0.05, "XLY": 0.05})
+    assert book == pytest.approx({"XLK": 0.25, "XLF": 0.1825, "XLV": 0.1825, "XLE": 0.1825, "XLY": 0.1825})
+
+
+def test_fill_book_stops_below_98_when_every_etf_is_at_a_cap():
+    book = _filled({"XLK": 0.10, "SMH": 0.10, "IGV": 0.10, "XLV": 0.10})
+    assert book == pytest.approx({"XLK": 0.40 / 3, "SMH": 0.40 / 3, "IGV": 0.40 / 3, "XLV": 0.25})  # tech pod at 40%, XLV at 25%: 65%
+
+
+def test_fill_book_keeps_unresearched_etfs_at_their_weight():
+    state = _without_view("financials_pod", holdings={"XLF": 0.10})
+    book = _filled({"XLF": 0.10, "XLK": 0.10, "XLV": 0.10, "XLE": 0.10, "XLY": 0.10}, state)
+    assert book == pytest.approx({"XLF": 0.10, "XLK": 0.22, "XLV": 0.22, "XLE": 0.22, "XLY": 0.22})
+
+
+def test_fill_book_frozen_etfs_count_toward_their_pod_cap():
+    state = _full_state(holdings={"KRE": 0.20})
+    del state["facts"]["financials_pod"]["KRE"]  # no facts: KRE is unresearched, the rest of its pod is not
+    book = _filled({"KRE": 0.20, "XLF": 0.05, "XLK": 0.05, "XLV": 0.05}, state)
+    assert book == pytest.approx({"KRE": 0.20, "XLF": 0.20, "XLK": 0.25, "XLV": 0.25})  # the financials pod holds 40%; the 98% target is out of reach
+
+
+def test_fill_book_leaves_zero_weights_out_and_an_empty_book_empty():
+    assert _filled({"XLK": 0.0, "XLV": 0.10}) == pytest.approx({"XLV": 0.25})
+    assert fill_book({}, _full_state(), PARAMS) == {}
+
+
+def test_fill_book_with_nothing_researched_returns_the_submitted_book():
+    state = _without_view(*(pod.key for pod in PODS), holdings={"XLK": 0.10, "XLV": 0.10})
+    assert _filled({"XLK": 0.10, "XLV": 0.10}, state) == pytest.approx({"XLK": 0.10, "XLV": 0.10})
+
+
+def test_fill_book_never_exceeds_the_target():
+    spread = _filled({symbol: 1 / 30 for symbol in ("XLK", "XLC", "SMH", "XLF", "KRE", "KIE", "XLV", "XBI", "IHI", "XLE", "XLU", "XLI", "XLY", "XLP", "XHB")})
+    assert sum(spread.values()) == pytest.approx(0.98) and sum(spread.values()) <= 0.98 + 1e-9
+    full = {"XLK": 0.25, "XLV": 0.25, "XLE": 0.25, "XLY": 0.23}  # already at 98%
+    assert _filled(full) == pytest.approx(full)
