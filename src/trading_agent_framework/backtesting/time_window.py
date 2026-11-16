@@ -35,7 +35,7 @@ class PredefinedWindow(StrEnum):
 
 _LATEST_SUFFIX = "_latest"
 _END = datetime(2026, 10, 5, tzinfo=MARKET_TZ)
-_LATEST_END = datetime(2026, 11, 7, tzinfo=MARKET_TZ)
+_LATEST_END = datetime(2026, 11, 14, tzinfo=MARKET_TZ)
 _STARTS = {
     PredefinedWindow.DECADE: datetime(2016, 1, 1, tzinfo=MARKET_TZ),
     PredefinedWindow.SEMI_DECADE: datetime(2021, 9, 20, tzinfo=MARKET_TZ),
