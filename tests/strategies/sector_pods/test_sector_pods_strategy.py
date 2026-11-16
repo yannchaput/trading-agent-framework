@@ -14,9 +14,9 @@ from tests.fakes import FakeBroker, FakeClock, FakeNewsProvider, et
 from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.sector_pods import SectorPodsStrategy
+from trading_agent_framework.strategies.sector_pods.agent_sector_pods import _size
 from trading_agent_framework.strategies.sector_pods.pods import PODS
 from trading_agent_framework.strategies.sector_pods.store import WeekState
-from trading_agent_framework.strategies.sector_pods.strategy import _size
 from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
 from trading_agent_framework.utils.strategy_factory import Strategies, build_strategy
 

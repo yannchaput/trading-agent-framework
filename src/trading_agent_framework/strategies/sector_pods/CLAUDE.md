@@ -4,7 +4,7 @@
 
 ## Architecture
 
-`SectorPodsStrategy` (`strategy.py`, registered as `Strategies.SECTOR_PODS`, `"sector_pods"`) rebalances 27 sector ETFs once a week (Tuesday 12:00 ET, `sleeptime = "1D"`; every other session returns at once, and a Tuesday already completed is not run again after a restart). The weekly flow is one LangGraph graph (`graph.py`, `build_graph`) built once in `initialize`, over the plumbing of `agents/graph.py` (`AgentNode`, `SubmitSlot`, `merge_dicts`):
+`SectorPodsStrategy` (`agent_sector_pods.py`, registered as `Strategies.SECTOR_PODS`, `"sector_pods"`) rebalances 27 sector ETFs once a week (Tuesday 12:00 ET, `sleeptime = "1D"`; every other session returns at once, and a Tuesday already completed is not run again after a restart). The weekly flow is one LangGraph graph (`graph.py`, `build_graph`) built once in `initialize`, over the plumbing of `agents/graph.py` (`AgentNode`, `SubmitSlot`, `merge_dicts`):
 
 ```
 START -> load_previous -> market_facts -> tech_pod ---------\
