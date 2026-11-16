@@ -53,6 +53,13 @@ def test_every_prompt_states_both_text_limits():
         assert f"{PARAMS.reason_max_chars} characters" in text and f"{PARAMS.summary_max_chars} characters" in text
 
 
+def test_every_prompt_asks_for_a_count_before_the_submit_and_never_quotes_a_hard_cap():
+    cases = [(pod_system(PODS[0], PARAMS), POD_SUBMIT), (risk_system(PARAMS), RISK_SUBMIT), (pm_system(PARAMS), PM_SUBMIT)]
+    for text, submit in cases:
+        assert "`count_characters`" in text and f"before you call `{submit}`" in text
+        assert str(PARAMS.reason_hard_max_chars) not in text and str(PARAMS.summary_hard_max_chars) not in text
+
+
 def test_pm_prompt_keeps_remember_lesson_out_of_the_search_budget():
     text = pm_system(PARAMS)
     assert f"at most {PARAMS.pm_memory_budget} `search_memory` calls" in text

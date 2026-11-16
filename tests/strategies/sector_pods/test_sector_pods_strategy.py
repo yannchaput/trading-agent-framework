@@ -101,12 +101,30 @@ def test_each_pod_gets_its_own_news_and_macro_tools(tmp_path: Path) -> None:
     for tool_name in ("search_news", "get_fred_series"):
         objects = [tools[pod.key][tool_name] for pod in PODS]
         assert all(a is not b for i, a in enumerate(objects) for b in objects[i + 1 :])
-    assert set(tools["portfolio_manager"]) == {"search_memory", "remember_lesson", "submit_target_weights"}
-    assert set(tools["risk_manager"]) == {"submit_risk_review"}
-    assert by_name["tech_pod"]["final_tools"] == ["submit_pod_view"] == by_name["tech_pod"]["exempt_tools"]
+    assert set(tools["portfolio_manager"]) == {"search_memory", "remember_lesson", "count_characters", "submit_target_weights"}
+    assert set(tools["risk_manager"]) == {"count_characters", "submit_risk_review"}
+    assert all("count_characters" in agent_tools for agent_tools in tools.values())
+    assert by_name["tech_pod"]["final_tools"] == ["submit_pod_view"]
+    assert by_name["tech_pod"]["exempt_tools"] == ["submit_pod_view", "count_characters"]
     # remember_lesson is outside the memory budget: three searches used to spend it, so no lesson was ever stored
-    assert by_name["portfolio_manager"]["exempt_tools"] == ["submit_target_weights", "remember_lesson"]
+    assert by_name["portfolio_manager"]["exempt_tools"] == ["submit_target_weights", "count_characters", "remember_lesson"]
     assert by_name["portfolio_manager"]["final_tools"] == ["submit_target_weights"]
+
+
+def test_every_submit_tool_refuses_an_over_long_text_through_its_own_gate(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path)
+
+    strategy.initialize()
+
+    tools = {created["name"]: {tool.__name__: tool for tool in created["tools"]} for created in agents.created}
+    params = strategy.settings
+    refusal = tools["risk_manager"]["submit_risk_review"](objections=[], summary="x" * (params.summary_max_chars + 1))
+    assert refusal["error"].startswith(f"too long: summary has {params.summary_max_chars + 1} characters (limit {params.summary_max_chars}).")
+    assert "call submit_risk_review again" in refusal["error"]
+    long_book = [{"symbol": "XLK", "weight": 0.1, "reason": "r" * (params.reason_max_chars + 1)}]
+    assert "reason for XLK has" in tools["portfolio_manager"]["submit_target_weights"](weights=long_book, overrides="", summary="s")["error"]
+    long_scores = [{"symbol": "XLK", "score": 1, "reason": "r" * (params.reason_max_chars + 1)}]
+    assert "call submit_pod_view again" in tools["tech_pod"]["submit_pod_view"](scores=long_scores, sector_view="v")["error"]
 
 
 def test_an_error_escaping_the_graph_is_an_abandoned_week_that_keeps_the_previous_views(tmp_path: Path) -> None:

@@ -127,7 +127,7 @@ def count_step(submit_tool: str, texts: str) -> str:
         texts: The texts to count, in the order of the count list, e.g. ``every `title`, then `body```.
     """
     return f"""
-Length check: before you call `{submit_tool}`, call `count_characters` once with {texts}, in that order.
+Length check: before you call `{submit_tool}`, call `count_characters` once with all your texts: {texts}, in that order.
 It returns the length of each text in characters. `{submit_tool}` refuses a text over its limit.
 If a count is over its limit, shorten that text and count it again. Submit only texts whose last count is within the limit, unchanged.
 """
