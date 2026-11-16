@@ -10,8 +10,9 @@ from typing import Any
 
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.graph import AgentNode, SubmitSlot
+from trading_agent_framework.agents.graph import AgentNode
 from trading_agent_framework.agents.results import AgentRunResult
+from trading_agent_framework.agents.submit import NodeRecorder
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
@@ -183,11 +184,11 @@ def _harness(
     agents: dict[str, FakeAgent] = {}
 
     def make(name: str, script: Script, validate: Any, tool_factory: Any, submit_tool: str, reads: Any, write: Callable[[Any], dict[str, Any]]) -> AgentNode:
-        slot = SubmitSlot(validate)
+        recorder = NodeRecorder(submit_tool, validate)
         agent = FakeAgent(script)
-        agent.submit = tool_factory(slot, params)
+        agent.submit = tool_factory(recorder, params)
         agents[name] = agent
-        return AgentNode(name=name, agent=agent, slot=slot, submit_tool=submit_tool, task=f"task {name}", reads=reads, write=write)
+        return AgentNode(name=name, agent=agent, recorder=recorder, submit_tool=submit_tool, task=f"task {name}", reads=reads, write=write)
 
     def waiting(script: Script) -> Script:
         def run(tool: Callable[..., dict[str, Any]], ctx: Any) -> None:

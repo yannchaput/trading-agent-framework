@@ -115,8 +115,12 @@ def test_every_submit_tool_refuses_an_over_long_text_through_its_own_gate(tmp_pa
     strategy, agents = _strategy(tmp_path)
 
     strategy.initialize()
+    assert strategy._store is not None
+    parts = strategy._graph_parts(strategy._store)  # a fresh set of agents, so each node's recorder can be armed here
+    for node in (*parts.pods.values(), parts.risk_manager, parts.portfolio_manager):
+        node.recorder.arm({})
 
-    tools = {created["name"]: {tool.__name__: tool for tool in created["tools"]} for created in agents.created}
+    tools = {created["name"]: {tool.__name__: tool for tool in created["tools"]} for created in agents.created}  # the latest agent of a name wins
     params = strategy.settings
     refusal = tools["risk_manager"]["submit_risk_review"](objections=[], summary="x" * (params.summary_max_chars + 1))
     assert refusal["error"].startswith(f"too long: summary has {params.summary_max_chars + 1} characters (limit {params.summary_max_chars}).")

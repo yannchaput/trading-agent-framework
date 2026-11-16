@@ -12,7 +12,8 @@ from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from trading_agent_framework.agents.graph import AgentNode, SubmitSlot
+from trading_agent_framework.agents.graph import AgentNode
+from trading_agent_framework.agents.submit import NodeRecorder
 from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.news import news_tools
@@ -140,22 +141,22 @@ class SectorPodsStrategy(Strategy):
     ) -> AgentNode:
         """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it.
 
-        The agent counts its texts with `count_characters` and its submit tool puts them through the slot's `LengthGate`;
+        The agent counts its texts with `count_characters` and its submit tool puts them through the recorder's `LengthGate`;
         `exempt` tools, `count_characters` and `submit` are outside `budget`.
         """
         params = self.settings
-        slot = SubmitSlot(validator, gate=LengthGate(params.max_submit_attempts, name=submit, log_tag="sector_pods"))
+        recorder = NodeRecorder(submit, validator, gate=LengthGate(params.max_submit_attempts, name=submit, log_tag="sector_pods"))
         agent = self.agents.create(
             name=name,
             system_prompt=system,
-            tools=[*tools, *text_tools(), _SUBMIT_TOOLS[submit](slot, params)],
+            tools=[*tools, *text_tools(), _SUBMIT_TOOLS[submit](recorder, params)],
             temperature=params.agent_temperature,
             exempt_tools=[submit, "count_characters", *exempt],
             final_tools=[submit],
             max_output_tokens=params.max_output_tokens,
             thinking_token_budget=params.thinking_token_budget,
         )
-        return AgentNode(name=name, agent=agent, slot=slot, submit_tool=submit, task=task, reads=reads, write=write, tool_budget=budget, max_steps=params.max_agent_steps)
+        return AgentNode(name=name, agent=agent, recorder=recorder, submit_tool=submit, task=task, reads=reads, write=write, tool_budget=budget, max_steps=params.max_agent_steps)
 
     def _graph_parts(self, store: StateStore) -> GraphParts:
         """Create the agents and wire them, with the code nodes, into the graph's parts."""
