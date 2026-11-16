@@ -1412,7 +1412,7 @@ def test_a_researcher_run_ending_after_its_length_refusals_gets_the_forced_retry
 
     assert h.run().completed
 
-    first, retry = h.agents["researcher"].calls[:2]
+    _, retry = h.agents["researcher"].calls[:2]
     assert retry["force_tool"] == "submit_note" and "note for S00 has 900 characters" in retry["task"]
     seen = _notes_seen_by_the_bull(h)["S00"]
     assert len(seen) <= 800 and seen.startswith("xxx")

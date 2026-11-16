@@ -143,7 +143,11 @@ def review_texts(
         The gate's error dict, or ``(entries, top)``: `entries` a new list with each reviewed field written back into a
         copy of its entry (the input is never mutated), `top` the reviewed top-level values by label.
     """
-    spots = [(index, field) for index, entry in enumerate(entries if isinstance(entries, list) else []) if isinstance(entry, dict) for field in fields if entry.get(field) is not None]
+    spots = []
+    if isinstance(entries, list):
+        for index, entry in enumerate(entries):
+            if isinstance(entry, dict):
+                spots.extend((index, field) for field in fields if entry.get(field) is not None)
     labelled = [(f"{field} for {subject(entries[index])}", entries[index][field], fields[field]) for index, field in spots]
     labelled += [(label, value, limit) for label, (value, limit) in (texts or {}).items()]
     checked = gate.review(labelled)
@@ -151,7 +155,7 @@ def review_texts(
         return checked
     if spots:
         entries = [dict(entry) if isinstance(entry, dict) else entry for entry in entries]
-        for (index, field), value in zip(spots, checked, strict=False):
+        for (index, field), value in zip(spots, checked[: len(spots)], strict=True):
             entries[index][field] = value
     return entries, dict(zip(texts or {}, checked[len(spots) :], strict=True))
 

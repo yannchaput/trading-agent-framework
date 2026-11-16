@@ -311,17 +311,17 @@ def test_the_researcher_is_told_to_search_news_by_the_stocks_ticker() -> None:
 
 
 @pytest.mark.parametrize(
-    ("task", "tool"),
+    ("task", "tool", "stated"),
     [
-        (prompts.researcher_task("AAPL", 500), "submit_note"),
-        (prompts.bull_task(300), "submit_bull_case"),
-        (prompts.bear_task(300), "submit_bear_case"),
-        (prompts.judge_task(300), "submit_verdicts"),
+        (prompts.researcher_task("AAPL", 500), "submit_note", "500"),
+        (prompts.bull_task(300), "submit_bull_case", "300"),
+        (prompts.bear_task(300), "submit_bear_case", "300"),
+        (prompts.judge_task(300), "submit_verdicts", "300"),
     ],
 )
-def test_every_task_prompt_asks_for_the_count_and_quotes_only_the_stated_limits(task: str, tool: str) -> None:
+def test_every_task_prompt_asks_for_the_count_and_quotes_only_the_stated_limits(task: str, tool: str, stated: str) -> None:
     assert "count_characters" in task and f"`{tool}`" in task
-    assert "500" in task or "300" in task
+    assert stated in task
     assert "800" not in task and "450" not in task
     assert "rejects the whole submission" not in task
     assert "held" not in task and "weight_pct" not in task and "forced" not in task.lower()

@@ -80,16 +80,22 @@ class SubmitRecorder:
 
     def submit(self, stage: str, *args: Any) -> dict[str, Any]:
         """Validate and record the agent's submission for `stage`; return a result or error payload for the agent."""
-        if self._stage != stage:
-            return self._fail(f"{self._tool_name(stage)} is not expected at this point{self.NOT_EXPECTED_SUFFIX}")
-        if self._submitted:
-            return self._fail(self.ALREADY_RECORDED)
+        if refusal := self._refuse(stage):
+            return refusal
         try:
             value = self._validate(stage, *args)
         except HandoffError as exc:
             return self._fail(str(exc))
         self._submission, self._submitted, self.last_error = value, True, None
         return {"status": "recorded"}
+
+    def _refuse(self, stage: str) -> dict[str, Any] | None:
+        """The error payload when `stage` is not armed or already has its submission, else None."""
+        if self._stage != stage:
+            return self._fail(f"{self._tool_name(stage)} is not expected at this point{self.NOT_EXPECTED_SUFFIX}")
+        if self._submitted:
+            return self._fail(self.ALREADY_RECORDED)
+        return None
 
     def submit_texts(
         self,
@@ -110,10 +116,8 @@ class SubmitRecorder:
         Returns:
             What `submit` returns, or the gate's refusal as an error payload.
         """
-        if self._stage != stage:
-            return self._fail(f"{self._tool_name(stage)} is not expected at this point{self.NOT_EXPECTED_SUFFIX}")
-        if self._submitted:
-            return self._fail(self.ALREADY_RECORDED)
+        if refusal := self._refuse(stage):
+            return refusal
         if gate := self._gates.get(stage):
             out = review(gate)
             if isinstance(out, dict):
