@@ -161,6 +161,13 @@ def test_each_agent_gets_its_thinking_budget_next_to_its_cap(tmp_path: Path) -> 
     assert (strategy.parameters["thinking_token_budget"], strategy.parameters["judge_thinking_token_budget"]) == (7000, 15000)  # recorded in settings.json
 
 
+def test_the_length_gate_settings_are_recorded_in_settings_json(tmp_path: Path) -> None:
+    strategy, _ = _strategy(tmp_path)
+
+    parameters = strategy.parameters
+    assert (parameters["argument_hard_max_chars"], parameters["reason_hard_max_chars"], parameters["max_submit_attempts"]) == (450, 450, 3)
+
+
 def test_a_judge_budget_of_none_means_no_budget_not_the_shared_one(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(judge_thinking_token_budget=None))
 

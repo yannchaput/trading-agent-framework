@@ -324,6 +324,21 @@ def test_an_argument_between_stated_and_hard_is_recorded_on_the_last_attempt() -
     assert recorder.submission[0].argument == "a" * 420
 
 
+def test_a_reason_and_what_changed_between_stated_and_hard_are_recorded_on_the_last_attempt() -> None:
+    recorder, tools = _tools()
+    recorder.expect_verdicts(DEBATE[:2], max_in=6, previous={"AAA": "out"})
+    raw = _verdicts(DEBATE[:2])
+    for verdict in raw:
+        verdict["reason"] = "r" * 420
+    raw[0]["what_changed"] = "w" * 420
+
+    for _ in range(2):
+        assert "reason for AAA has 420 characters (limit 300)" in tools["submit_verdicts"](raw)["error"]
+    assert tools["submit_verdicts"](raw) == {"status": "recorded"}
+    assert [v.reason for v in recorder.submission.verdicts] == ["r" * 420] * 2
+    assert recorder.submission.verdicts[0].what_changed == "w" * 420
+
+
 def test_the_judge_gate_measures_reason_and_only_the_what_changed_given() -> None:
     recorder, tools = _tools()
     recorder.expect_verdicts(DEBATE, max_in=6, previous={"AAA": "in"})

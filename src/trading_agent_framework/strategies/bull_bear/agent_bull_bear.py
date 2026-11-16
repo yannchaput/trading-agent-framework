@@ -97,7 +97,7 @@ class BullBearStrategy(Strategy):
         """
         super().__init__(broker, mode=mode, **kwargs)
         self.settings = settings or BullBearParams()
-        # Recorded in settings.json, so the news-on and news-off runs, and runs with another thinking budget or output cap, can be told apart.
+        # Recorded in settings.json, so the news-on and news-off runs, and runs with another thinking budget or output cap, or another length gate setting, can be told apart.
         self.parameters = {
             **self.parameters,
             "research_news": self.settings.research_news,
@@ -106,6 +106,9 @@ class BullBearStrategy(Strategy):
             "judge_thinking_token_budget": self.settings.judge_thinking_token_budget,
             "max_output_tokens": self.settings.max_output_tokens,
             "judge_max_output_tokens": self.settings.judge_max_output_tokens,
+            "argument_hard_max_chars": self.settings.argument_hard_max_chars,
+            "reason_hard_max_chars": self.settings.reason_hard_max_chars,
+            "max_submit_attempts": self.settings.max_submit_attempts,
         }
         self.iteration_start_time = parse_rebalance_time(self.settings.rebalance_time)
         # Paper/live trade the universe file's list, so they need one. A backtest has none at construction: its lists come
