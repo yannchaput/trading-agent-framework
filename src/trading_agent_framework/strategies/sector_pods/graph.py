@@ -16,7 +16,7 @@ from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.sector_pods.facts import etf_facts, outcome, week_return_pct
-from trading_agent_framework.strategies.sector_pods.handoff import UNAVAILABLE, check_weights, unresearched
+from trading_agent_framework.strategies.sector_pods.handoff import UNAVAILABLE, check_weights, fill_book, unresearched
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, PODS
 from trading_agent_framework.strategies.sector_pods.store import StateStore, WeekState
@@ -175,9 +175,11 @@ class MarketFacts:
 
 
 class Execute:
-    """Node: re-check the PM's book, trade it, save the week and write the run-log record."""
+    """Node: re-check the PM's book, fill it to the invested target, trade it, save the week and write the run-log record."""
 
-    def __init__(self, store: StateStore, rebalancer: Rebalancer, log: RunLog, params: SectorPodsParams, *, on_warning: Callable[[str], None], on_error: Callable[[str], None]) -> None:
+    def __init__(
+        self, store: StateStore, rebalancer: Rebalancer, log: RunLog, params: SectorPodsParams, *, on_info: Callable[[str], None], on_warning: Callable[[str], None], on_error: Callable[[str], None]
+    ) -> None:
         """Create the node.
 
         Args:
@@ -185,6 +187,7 @@ class Execute:
             rebalancer: Places the orders.
             log: One record is appended per call.
             params: Order limits and cash buffer.
+            on_info: Reports how far the book was filled.
             on_warning: Reports an abandoned week that is not a failure of execution.
             on_error: Reports a refused book or a broker failure.
         """
@@ -192,6 +195,7 @@ class Execute:
         self._rebalancer = rebalancer
         self._log = log
         self._params = params
+        self._on_info = on_info
         self._on_warning = on_warning
         self._on_error = on_error
 
@@ -200,8 +204,9 @@ class Execute:
         saved = self._store.load()
         reason = state.get("abandoned")
         orders: list[dict[str, Any]] = []
+        book: dict[str, float] | None = None
         if reason is None:
-            reason, orders = self._trade(state)
+            reason, orders, book = self._trade(state)
         elif reason:
             self._on_warning(f"week abandoned: {reason}")
         if reason is None:
@@ -210,36 +215,52 @@ class Execute:
             week = replace(saved, abandoned_streak=saved.abandoned_streak + 1)
         self._store.save(week)
         record = {key: state.get(key) for key in ("date", "regime", "holdings", "facts", "outcome", "pods", "risk", "pm")}
-        self._log.append({**record, "orders": orders, "errors": state.get("errors", []), "abandoned": reason, "abandoned_streak": week.abandoned_streak})
+        self._log.append({**record, "book": book, "orders": orders, "errors": state.get("errors", []), "abandoned": reason, "abandoned_streak": week.abandoned_streak})
         return {"orders": orders, "abandoned": reason}
 
-    def _trade(self, state: PodsState) -> tuple[str | None, list[dict[str, Any]]]:
-        """Place the PM's book; returns why the week is abandoned (None when it went out) and the orders actually sent."""
+    def _trade(self, state: PodsState) -> tuple[str | None, list[dict[str, Any]], dict[str, float] | None]:
+        """Place the PM's book scaled to the invested target.
+
+        Returns:
+            Why the week is abandoned (None when it went out), the orders actually sent, and the weights traded (None when
+            nothing was traded because the book was refused).
+        """
         pm = state.get("pm")
         if not pm or pm.get("unavailable"):
-            return "the portfolio manager gave no book", []
+            return "the portfolio manager gave no book", [], None
         weights: dict[str, float] = {}
+        book: dict[str, float] = {}
         try:
             weights = {entry["symbol"]: float(entry["weight"]) for entry in pm["weights"]}
             problem = check_weights(weights, state, self._params)
-            target = target_portfolio(weights, cash_buffer=self._params.cash_buffer) if problem is None else None
+            if problem is None:
+                book = fill_book(weights, state, self._params)
+                problem = check_weights(book, state, self._params)
+            target = target_portfolio(book, cash_buffer=self._params.cash_buffer) if problem is None else None
         except Exception as exc:  # hostile or malformed book: abandon the week, never crash half way
             problem, target = f"unreadable book ({type(exc).__name__}: {exc})", None
         if target is None:
             self._on_error(f"execute refused the book: {problem}")
-            return f"execution: {problem}", []
+            return f"execution: {problem}", [], None
+        self._on_info(self._filled_line(sum(weights.values()), sum(book.values())))
         try:
             self._rebalancer.rebalance(target)
         except (BrokerError, BacktestError) as exc:
             orders = [asdict(order) for order in self._rebalancer.placed]
             self._on_error(f"rebalance failed after {len(orders)} orders: {exc}")
-            return f"execution: {exc}", orders
+            return f"execution: {exc}", orders, book
         orders = [asdict(order) for order in self._rebalancer.placed]
-        if not orders and self._trades_due(weights, state.get("holdings") or {}):
+        if not orders and self._trades_due(book, state.get("holdings") or {}):
             # `Rebalancer.rebalance` logs a refused order and goes on, so a broker that refuses everything returns normally.
             self._on_error("execute: no order was accepted although the book needs trades")
-            return "execution: no order was accepted", []
-        return None, orders
+            return "execution: no order was accepted", [], book
+        return None, orders, book
+
+    def _filled_line(self, submitted: float, filled: float) -> str:
+        """The log line: how far `fill_book` took the PM's total, and when the caps held it under the target."""
+        target = 1 - self._params.cash_buffer
+        line = f"book filled from {submitted:.1%} to {filled:.1%} invested"
+        return line if filled >= target - 1e-9 else f"{line} (the caps hold it below {target:.1%})"
 
     def _trades_due(self, weights: Mapping[str, float], holdings: Mapping[str, float]) -> bool:
         """Whether some ETF's target differs from its current weight by more than the rebalance band.
