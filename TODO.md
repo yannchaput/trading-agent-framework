@@ -83,6 +83,7 @@
 ### LLM benchmark
 
 * Gemma 4 26B A4B MoE local second model on llama.cpp
+* Deepseek v4.1 Flash with [Unsloth](https://unsloth.ai/docs/models/deepseek-v4.1-flash#usage-guide)
 * Install Strata (better of MoE) and update the framework to run Strata along with vllm - test deepseek
 * Test deepseek 4.1 flash : [X](https://x.com/NFT_Chen/status/2113854991958176118)
 * Test Sage 1.5
