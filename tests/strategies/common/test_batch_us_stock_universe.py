@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import io
 import json
 import logging
 import threading
@@ -9,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from rich.console import Console
 from yfinance.exceptions import YFRateLimitError
 
 from trading_agent_framework.backtesting.data.yahoo import parse_yahoo_frame
@@ -1106,3 +1108,50 @@ def test_a_covering_history_is_returned_without_taking_the_lock(tmp_path: Path) 
     _ensure(tmp_path, date(2024, 2, 5), date(2024, 2, 28), _FakeDownload())
 
     assert not (tmp_path / "cache" / ".lock").exists()
+
+
+_GOOD_INFO = {"quoteType": "EQUITY", "marketCap": 5e9, "currentPrice": 50.0, "averageVolume": 1_000_000}
+
+
+@pytest.mark.parametrize(
+    ("info", "reason"),
+    [
+        (None, "fetch failed"),
+        ({"quoteType": "EQUITY"}, "no market cap"),
+        ({**_GOOD_INFO, "quoteType": "ETF"}, "not a stock"),
+        ({**_GOOD_INFO, "marketCap": 1e9}, "market cap below threshold"),
+        ({**_GOOD_INFO, "currentPrice": 5.0}, "price below threshold"),
+        ({**_GOOD_INFO, "averageVolume": 0}, "no volume"),
+        ({**_GOOD_INFO, "averageVolume": 100}, "dollar volume below threshold"),
+    ],
+)
+def test_screen_single_ticker_names_the_rejection_reason(monkeypatch, info, reason):
+    monkeypatch.setattr(batch, "_fetch_yf_info", lambda ticker: info)
+
+    assert batch._screen_single_ticker("XYZ") == (None, reason)
+
+
+def test_screen_single_ticker_pass_has_no_reason(monkeypatch):
+    monkeypatch.setattr(batch, "_fetch_yf_info", lambda ticker: _GOOD_INFO)
+
+    row, reason = batch._screen_single_ticker("XYZ")
+
+    assert row is not None
+    assert row["symbol"] == "XYZ"
+    assert reason == ""
+
+
+def test_screen_tickers_reports_rejected_with_reason_split(monkeypatch):
+    infos = {"A": _GOOD_INFO, "B": {**_GOOD_INFO, "marketCap": 1e9}, "C": {**_GOOD_INFO, "marketCap": 1e9}, "D": None}
+    monkeypatch.setattr(batch, "_fetch_yf_info", lambda ticker: infos[ticker])
+    out = io.StringIO()
+    monkeypatch.setattr(batch, "console", Console(file=out, width=200))
+
+    passed = batch.screen_tickers(list(infos), max_workers=1)
+
+    text = out.getvalue()
+    assert [row["symbol"] for row in passed] == ["A"]
+    assert "1 passed, 3 rejected" in text
+    assert "2 market cap below threshold" in text
+    assert "1 fetch failed" in text
+    assert "failed," not in text.replace("fetch failed", "")
