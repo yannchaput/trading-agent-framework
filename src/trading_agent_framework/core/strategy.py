@@ -361,6 +361,11 @@ class Strategy:
         Reads the closes strictly before today's session date, so a mid-session start sees the same data as the
         morning refresh. Information only: a log line, and an `add_line` point in backtests. Any failure keeps the
         previous value, because a regime estimate must never cost a session.
+
+        `reading` is a `RegimeReading` from `classify_regime`, the state machine's output on the last close. Its
+        `score` (0 to 4) counts the stress conditions met (VIX inverted, VIX spike, SPY below its SMA, SPY well
+        off its high); `regime` maps that score through the hysteresis rules, so it can differ from what the score
+        alone suggests. `episode_low` is the lowest SPY close of the current bearish episode, or None.
         """
         params = self.regime_params
         session = self.clock.now().astimezone(MARKET_TZ).date()

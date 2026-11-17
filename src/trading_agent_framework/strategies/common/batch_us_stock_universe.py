@@ -54,7 +54,7 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import date, timedelta
@@ -770,15 +770,13 @@ def download_batch(download: DownloadFn, symbols: list[str], start: date, end: d
                 time.sleep(_DOWNLOAD_RETRY_BACKOFF * 2**attempt)
             continue
         if empty_is_failure and raw.dropna(how="all").empty:
-            failure = None
             logger.warning("Yahoo returned no data for any of %d symbols (from %s), attempt %d", len(symbols), symbols[0], attempt + 1)
-            if not last:
-                time.sleep(_DOWNLOAD_RETRY_BACKOFF * 2**attempt)
+            if last:
+                return raw  # still empty on the last attempt: the symbols are absent
+            time.sleep(_DOWNLOAD_RETRY_BACKOFF * 2**attempt)
             continue
         gate.on_success()
         return raw
-    if failure is None:
-        return raw  # still empty on the last attempt: the symbols are absent
     raise UniverseHistoryError(f"the Yahoo download of {len(symbols)} symbols (from {symbols[0]}) failed after {_DOWNLOAD_ATTEMPTS} attempts: {failure}") from failure
 
 
@@ -881,12 +879,12 @@ def _load_traded_frames(symbols: list[str], bars_dir: Path) -> dict[str, pd.Data
         path = bars_dir / f"{symbol}.parquet"
         if not path.exists():
             raise UniverseHistoryError(f"the cached bars of {symbol} are missing: {path}")
-        frames[symbol] = parse_yahoo_frame(pd.read_parquet(path))[["traded_close", "traded_volume"]]
+        frames[symbol] = parse_yahoo_frame(pd.read_parquet(path)).loc[:, ["traded_close", "traded_volume"]]
     return frames
 
 
 @contextmanager
-def _build_lock(cache_dir: Path) -> Iterator[None]:
+def _build_lock(cache_dir: Path) -> Generator[None]:
     """An exclusive `flock` on `<cache_dir>/.lock`, held for the block: two processes building at once would share the cache's temp files and each save its own bars index over the other's files.
 
     Released when the process exits.
