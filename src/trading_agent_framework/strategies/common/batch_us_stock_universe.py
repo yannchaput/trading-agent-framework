@@ -53,6 +53,7 @@ import logging
 import sys
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
@@ -430,41 +431,41 @@ def _fetch_yf_info(ticker: str) -> dict | None:
     return info
 
 
-def _screen_single_ticker(ticker: str) -> dict | None:
-    """Fetch yfinance info for a single ticker (see `_fetch_yf_info`) and return screening data.
+def _screen_single_ticker(ticker: str) -> tuple[dict | None, str]:
+    """Fetch yfinance info for a single ticker (see `_fetch_yf_info`) and screen it.
 
-    Returns a dict with keys: symbol, market_cap, price, avg_volume,
-    dollar_volume, quote_type, or None if the ticker fails all retries.
+    Returns `(row, "")` for a ticker that passes, where `row` has the keys symbol, market_cap, price, avg_volume,
+    dollar_volume and quote_type; otherwise `(None, reason)`. `"fetch failed"` (no answer after the retries) is the
+    only reason that points at Yahoo rather than at the stock.
     """
     info = _fetch_yf_info(ticker)
-    if not info or (info.get("trailingPegRatio") is None and info.get("marketCap") is None):
-        return None
+    if info is None:
+        return None, "fetch failed"
+    market_cap = info.get("marketCap")
+    if not info or (info.get("trailingPegRatio") is None and market_cap is None):
+        return None, "no market cap"
 
     quote_type = info.get("quoteType", "")
     if quote_type != "EQUITY":
-        return None
+        return None, "not a stock"
 
-    market_cap = info.get("marketCap")
     if market_cap is None or market_cap < THRESHOLDS["market_cap"]:
-        # We should never go there as this pre condition is checked in step 1.
-        return None
+        return None, "market cap below threshold"
 
     # Try multiple price fields (yfinance is inconsistent)
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
-    if price is None or price <= 0:
-        return None
-    if price < THRESHOLDS["price"]:
-        return None
+    if price is None or price <= 0 or price < THRESHOLDS["price"]:
+        return None, "price below threshold"
 
     avg_volume = info.get("averageVolume") or info.get("volume")
     if avg_volume is None or avg_volume <= 0:
-        return None
+        return None, "no volume"
 
     dollar_volume = price * avg_volume
     if dollar_volume < THRESHOLDS["dollar_volume"]:
-        return None
+        return None, "dollar volume below threshold"
 
-    return {
+    row = {
         "symbol": ticker,
         "market_cap": market_cap,
         "price": price,
@@ -472,10 +473,15 @@ def _screen_single_ticker(ticker: str) -> dict | None:
         "dollar_volume": dollar_volume,
         "quote_type": quote_type,
     }
+    return row, ""
 
 
 def screen_tickers(tickers: list[str], max_workers: int = 3) -> list[dict]:
     """Screen a list of tickers using yfinance in parallel.
+
+    Prints how many passed and how many were rejected, with the rejections split by reason: most of a run's
+    rejections are the screen working (small caps from the ETF holdings), so only a large `fetch failed` count means
+    Yahoo is failing.
 
     Args:
         tickers: List of ticker symbols.
@@ -486,7 +492,7 @@ def screen_tickers(tickers: list[str], max_workers: int = 3) -> list[dict]:
     """
     passed: list[dict] = []
     total = len(tickers)
-    failed = 0
+    rejections: Counter[str] = Counter()
 
     # [progress.description] = style
     # {task.description} = dynamic text
@@ -501,16 +507,17 @@ def screen_tickers(tickers: list[str], max_workers: int = 3) -> list[dict]:
             futures = {executor.submit(_screen_single_ticker, t): t for t in tickers}
             for future in as_completed(futures):
                 try:
-                    result = future.result()
+                    result, reason = future.result()
                 except Exception:
-                    result = None
+                    result, reason = None, "screening error"
                 if result is not None:
                     passed.append(result)
                 else:
-                    failed += 1
-                progress.update(task, advance=1, description=f"Screening... {len(passed)} passed, {failed} failed")
+                    rejections[reason] += 1
+                progress.update(task, advance=1, description=f"Screening... {len(passed)} passed, {rejections.total()} rejected")
 
-    console.print(f"[bold green]Screening complete: {len(passed)} passed, {failed} rejected[/bold green]")
+    split = ", ".join(f"{count} {reason}" for reason, count in rejections.most_common())
+    console.print(f"[bold green]Screening complete: {len(passed)} passed, {rejections.total()} rejected[/bold green]" + (f" ({split})" if split else ""))
     return passed
 
 
