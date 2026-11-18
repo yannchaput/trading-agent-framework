@@ -674,6 +674,27 @@ def test_a_funding_trim_skips_a_stock_whose_excess_is_below_the_minimum_trade(tm
     assert _orders(broker) == [("A", "sell", 8.0), ("D", "buy", 4.0)]
 
 
+def test_a_stock_already_trimmed_to_its_target_is_not_trimmed_again_to_fund_the_buys(tmp_path: Path) -> None:
+    # A is 1,000 over (beyond its band): step 1 sells it to target. D needs 1,200 and only 1,000 is there:
+    # the missing 200 comes from B (200 over), not from A, which has no excess left (2026-11-18 run: 18 ETFs sold twice)
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 100, "B": 25, "D": 23}, prices={"A": 50, "B": 100, "D": 100, "SHV": 100}, cash=200)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.40, "B": 0.23, "D": 0.35}, cash_buffer=0.02))
+
+    assert _orders(broker) == [("A", "sell", 20.0), ("B", "sell", 2.0), ("D", "buy", 12.0)]
+
+
+def test_a_sell_with_an_unknown_outcome_is_not_sold_again_to_fund_the_buys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"A": 100, "B": 25, "D": 23}, prices={"A": 50, "B": 100, "D": 100, "SHV": 100}, cash=200)
+    calls = _raising_for(strategy, monkeypatch, "A", OrderSide.SELL, BrokerUncertainError("timeout"))
+
+    rebalancer.rebalance(target_portfolio({"A": 0.40, "B": 0.23, "D": 0.35}, cash_buffer=0.02))
+
+    # A's unknown sell is sent once, never again, and brings no proceeds: only B funds the buys
+    assert calls["A"] == 1
+    assert _orders(broker) == [("B", "sell", 2.0), ("D", "buy", 2.0)]
+
+
 def test_nothing_is_trimmed_when_no_buy_is_due_even_if_cash_is_below_the_reserve(tmp_path: Path) -> None:
     # cash 100 is under the 200 reserve, but A is 500 over (inside its band) and nothing is waiting to be bought: no money is needed
     _, broker, rebalancer = _book(tmp_path, positions={"A": 50, "B": 73}, prices={"A": 52, "B": 100, "SHV": 100}, cash=100)

@@ -222,13 +222,15 @@ class Rebalancer:
         reserve = params.cash_buffer * portfolio_value
         refusals: list[Exception] = []  # the last refused order's error, read by the buy loop
 
+        sold: dict[str, float] = {}  # this run's sells per symbol; apart from `outgoing`, which `earlier_credit` reads after step 1
+
         def sellable(symbol: str) -> float:
-            """What is held and not already being sold."""
-            return max(0.0, held.get(symbol, 0.0) - outgoing.get(symbol, 0.0))
+            """What is held and not already being sold, by earlier runs or by this one."""
+            return max(0.0, held.get(symbol, 0.0) - outgoing.get(symbol, 0.0) - sold.get(symbol, 0.0))
 
         def value_of(symbol: str) -> float:
-            """The position's value counting open orders: held, plus buys in flight, minus sells in flight."""
-            return max(0.0, held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0)) * prices.get(symbol, 0.0)
+            """The position's value counting open orders: held, plus buys in flight, minus sells in flight and sold by this run."""
+            return max(0.0, held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0) - sold.get(symbol, 0.0)) * prices.get(symbol, 0.0)
 
         sells: list[Order] = []  # the stock sells of this run, whose fills the buys wait for
 
@@ -238,14 +240,18 @@ class Rebalancer:
             except BrokerUncertainError as exc:  # the broker keeps the order tracked and resolves it later: never resend, never refund
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
                 self.placed.append(PlacedOrder(symbol, side, quantity, confirmed=False))
+                if side == "sell":  # it may have gone through: never sell the same shares twice
+                    sold[symbol] = sold.get(symbol, 0.0) + quantity
                 return "unknown"
             except TradingFrameworkError as exc:
                 refusals[:] = [exc]
                 self.refused += 1
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
                 return "refused"
-            if side == "sell" and symbol != parking:
-                sells.append(order)
+            if side == "sell":
+                sold[symbol] = sold.get(symbol, 0.0) + quantity
+                if symbol != parking:
+                    sells.append(order)
             note = _estimated_pnl(prices[symbol], costs[symbol], quantity) if side == "sell" and symbol in costs and prices[symbol] > 0 else ""
             strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why}{note})")
             self.placed.append(PlacedOrder(symbol, side, quantity))

@@ -35,6 +35,7 @@ from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BU
 from trading_agent_framework.strategies.bull_bear.state import StateStore
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
 from trading_agent_framework.strategies.common.daily_bars import DailyBars, GateBars, YahooBars
+from trading_agent_framework.strategies.common.news import require_news_provider
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sector_provider import SectorProvider
@@ -44,7 +45,7 @@ from trading_agent_framework.strategies.common.universe_history import UniverseH
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, FatalStrategyError
+from trading_agent_framework.utils.errors import ConfigurationError, FatalStrategyError
 
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
@@ -133,7 +134,7 @@ class BullBearStrategy(Strategy):
         try:
             news = self.settings.research_news
             if news:
-                self._require_news_provider()
+                require_news_provider(self.broker, "the researcher needs")
             recorder = HandoffRecorder(self.settings)
             submit = submit_tools(recorder, self.settings)
             from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
@@ -213,19 +214,6 @@ class BullBearStrategy(Strategy):
         news_state = "on" if self.settings.research_news else "off"
         size = f"{len(self.universe)} symbols" if self._history is None else "the point-in-time monthly universe"
         self.log_info(f"BullBearStrategy initialized: {size}, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}, research news {news_state}")
-
-    def _require_news_provider(self) -> None:
-        """Refuse to start without a news source: the researcher's `search_news` would only ever return `{"error": ...}`.
-
-        A backtest builds its Alpaca provider from `ALPACA_NEWS_*` on first use, so a missing credential would
-        otherwise surface only inside the tool, and every note of the run would be research-free.
-        """
-        try:
-            provider = self.broker.news_provider()
-        except BrokerError as exc:
-            raise ConfigurationError(f"the researcher needs a news provider: {exc}") from exc
-        if provider is None:
-            raise ConfigurationError("the researcher needs a news provider and this broker has none")
 
     def on_trading_iteration(self) -> None:
         """The weekly review. A backtest aborts when too many reviews in a row were abandoned (a dead LLM or data source)."""
