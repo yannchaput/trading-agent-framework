@@ -32,6 +32,7 @@ dashboard = ["streamlit>=1.40", "pandas>=2.0"]
 [project.scripts]
 agent = "trading_agent_framework.main:main"
 batch-universe = "trading_agent_framework.strategies.common.batch_us_stock_universe:main"
+bear-spread-research = "trading_agent_framework.strategies.bear_put_spread.research_cli:main"
 bull-bear-scores = "trading_agent_framework.strategies.bull_bear.batch.scores_cli:main"
 dashboard = "trading_agent_framework.dashboard.cli:main"
 regime = "trading_agent_framework.core.regime_cli:main"

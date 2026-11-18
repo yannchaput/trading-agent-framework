@@ -509,6 +509,19 @@ def test_buys_wait_for_the_sells_to_fill_so_buying_power_has_the_proceeds(tmp_pa
     assert clock.waits  # it did wait on the clock for the sell
 
 
+def test_funding_trims_are_waited_on_too_before_the_buys_in_paper_and_live(tmp_path: Path) -> None:
+    broker, clock, rebalancer = _deferred_book(tmp_path)
+    broker.positions = [
+        Position(strategy_name="bill_ackman", asset=Asset(symbol), quantity=Decimal(quantity), side=PositionSide.LONG) for symbol, quantity in (("A", 50), ("B", 50), ("C", 50), ("D", 23))
+    ]
+    broker.last_prices = {"A": Decimal(50), "B": Decimal(50), "C": Decimal(50), "D": Decimal(100), "SHV": Decimal(100)}
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.21, "B": 0.21, "C": 0.21, "D": 0.35}, cash_buffer=0.02))
+
+    assert placed == [PlacedOrder("A", "sell", 8.0), PlacedOrder("B", "sell", 8.0), PlacedOrder("C", "sell", 8.0), PlacedOrder("D", "buy", 12.0)]
+    assert clock.waits  # the buys waited for the funding trims to fill, like for any other sell
+
+
 def test_a_sell_that_never_fills_costs_the_buys_but_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     _, clock, rebalancer = _deferred_book(tmp_path, fills_on_wait=False)
 
@@ -598,3 +611,73 @@ def test_a_sell_priced_at_zero_logs_no_pnl(tmp_path: Path, caplog: pytest.LogCap
 
     assert "sell 100 A @ $0.00 (forced exit)" in caplog.text
     assert "P&L" not in caplog.text
+
+
+# --- a buy with nothing left to pay for it: parking first, then trims -------------------------------------
+
+
+def test_a_buy_beyond_the_band_with_no_cash_is_funded_by_trimming_stocks_inside_their_band(tmp_path: Path) -> None:
+    # fully invested: A, B and C are 400 over their targets (inside the 500 band, so no trim of their own), D is 900 under
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 50, "B": 50, "C": 50, "D": 23}, prices={"A": 50, "B": 50, "C": 50, "D": 100, "SHV": 100}, cash=200)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.22, "B": 0.22, "C": 0.22, "D": 0.32}, cash_buffer=0.02))
+
+    assert _orders(broker) == [("A", "sell", 6.0), ("B", "sell", 6.0), ("C", "sell", 6.0), ("D", "buy", 9.0)]
+
+
+def test_parking_is_sold_first_and_only_the_rest_of_the_shortfall_is_trimmed(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"SHV": 6, "A": 50, "B": 50, "C": 50, "D": 17}, prices={"A": 50, "B": 50, "C": 50, "D": 100, "SHV": 100}, cash=200)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.21, "B": 0.21, "C": 0.21, "D": 0.35}, cash_buffer=0.02))
+
+    # D needs 1,800: the 600 of parking first, then 1,200 from the three 400 excesses
+    assert _orders(broker) == [("SHV", "sell", 6.0), ("A", "sell", 8.0), ("B", "sell", 8.0), ("C", "sell", 8.0), ("D", "buy", 18.0)]
+
+
+def test_a_funding_trim_sells_only_the_shortfall_largest_excess_first(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 52, "B": 50, "C": 48, "D": 23}, prices={"A": 50, "B": 50, "C": 50, "D": 100, "SHV": 100}, cash=200)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.21, "B": 0.21, "C": 0.21, "D": 0.29}, cash_buffer=0.02))
+
+    # D is 600 under: A is 500 over (10 shares, inside its band), B 400 over covers the remaining 100 (2 shares); C is not touched
+    assert _orders(broker) == [("A", "sell", 10.0), ("B", "sell", 2.0), ("D", "buy", 6.0)]
+
+
+def test_refused_orders_are_counted_and_the_count_starts_over_each_rebalance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, _, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500)
+    _raising_for(strategy, monkeypatch, "B", OrderSide.SELL, BrokerError("cannot sell"))
+
+    rebalancer.rebalance(target_portfolio({"A": 0.35}, cash_buffer=0.02))
+    assert rebalancer.refused == 1
+
+    rebalancer.rebalance(target_portfolio({"B": 0.25}, cash_buffer=0.02))
+    assert rebalancer.refused == 0
+
+
+def test_a_refused_funding_trim_is_not_counted_as_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"A": 50, "B": 50, "C": 50, "D": 23}, prices={"A": 50, "B": 50, "C": 50, "D": 100, "SHV": 100}, cash=200)
+    _raising_for(strategy, monkeypatch, "A", OrderSide.SELL, BrokerError("cannot sell"))
+
+    rebalancer.rebalance(target_portfolio({"A": 0.22, "B": 0.22, "C": 0.22, "D": 0.32}, cash_buffer=0.02))
+
+    # D needs 900 and A's 300 never came: B and C bring 600, so D buys 600, not 900
+    assert _orders(broker) == [("B", "sell", 6.0), ("C", "sell", 6.0), ("D", "buy", 6.0)]
+    assert rebalancer.refused == 1
+
+
+def test_a_funding_trim_skips_a_stock_whose_excess_is_below_the_minimum_trade(tmp_path: Path) -> None:
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 50, "B": 50, "D": 23}, prices={"A": 50, "B": 50, "D": 100, "SHV": 100}, cash=200)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.21, "B": 0.247, "D": 0.40}, cash_buffer=0.02))
+
+    # A is 400 over, B only 30 over (the smallest order is 50): only A is trimmed, D buys what that brings
+    assert _orders(broker) == [("A", "sell", 8.0), ("D", "buy", 4.0)]
+
+
+def test_nothing_is_trimmed_when_no_buy_is_due_even_if_cash_is_below_the_reserve(tmp_path: Path) -> None:
+    # cash 100 is under the 200 reserve, but A is 500 over (inside its band) and nothing is waiting to be bought: no money is needed
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 50, "B": 73}, prices={"A": 52, "B": 100, "SHV": 100}, cash=100)
+
+    rebalancer.rebalance(target_portfolio({"A": 0.21, "B": 0.70}, cash_buffer=0.02))
+
+    assert _orders(broker) == []
