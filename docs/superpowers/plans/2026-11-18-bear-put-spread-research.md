@@ -57,9 +57,11 @@ reuses the regime CLI's data path (`YahooRegimeData`, `regime_cli.trim`, `regime
 def test_at_the_money_put_matches_black_scholes():
     assert put_price(100.0, 100.0, 0.2, 1.0) == pytest.approx(7.96557, abs=1e-4)
 
+
 def test_put_tends_to_intrinsic_at_expiry():
     assert put_price(90.0, 100.0, 0.3, 1e-6) == pytest.approx(10.0, abs=1e-3)
     assert put_price(110.0, 100.0, 0.3, 1e-6) == pytest.approx(0.0, abs=1e-3)
+
 
 @pytest.mark.parametrize("bad", [0.0, -1.0, math.nan, math.inf])
 def test_bad_inputs_raise(bad):
@@ -67,16 +69,19 @@ def test_bad_inputs_raise(bad):
         with pytest.raises(ValueError):
             put_price(*args)
 
+
 def test_skew_raises_vol_below_spot_only():
     m = VolModel()
     assert m.vol(600, 600, 20) == pytest.approx(0.20)
     assert m.vol(600, 660, 20) == pytest.approx(0.20)
     assert m.vol(600, 540, 20) == pytest.approx(0.20 + 0.8 * math.log(600 / 540))
 
+
 @pytest.mark.parametrize("spot,vix", [(600, 18), (600, 80), (300, 80), (400, 80)])
 def test_spread_value_stays_between_zero_and_width(spot, vix):  # Review Focus 1
     v = spread_mid(spot, 588.0, 583.0, vix, 30 / 365, VolModel())
     assert 0.0 <= v <= 5.0
+
 
 def test_costs_per_contract():
     c = CostModel()
@@ -115,18 +120,23 @@ def test_third_fridays():
     assert third_friday(2026, 12) == date(2026, 12, 18)
     assert third_friday(2027, 1) == date(2027, 1, 15)
 
+
 def test_expiry_takes_the_nearer_of_two():
     assert monthly_expiry(date(2026, 11, 18), SpreadParameters()) == date(2026, 12, 18)  # 30 and 58 days
 
+
 def test_expiry_skips_one_too_close():
     assert monthly_expiry(date(2026, 11, 19), SpreadParameters()) == date(2027, 1, 15)  # Dec is 29 days
+
 
 def test_strikes_are_whole_dollars_five_apart():
     assert strikes(600.0, SpreadParameters()) == (588.0, 583.0)
     assert strikes(601.3, SpreadParameters()) == (589.0, 584.0)
 
+
 def test_should_open():
     assert should_open(-1, False) and not should_open(-1, True) and not should_open(0, False)
+
 
 def test_exit_priority_time_then_target_then_regime():
     p, exp = SpreadParameters(), date(2026, 12, 18)
@@ -135,11 +145,12 @@ def test_exit_priority_time_then_target_then_regime():
     assert exit_reason(date(2026, 12, 1), exp, 0, 3.9, 5.0, p) == "regime"
     assert exit_reason(date(2026, 12, 1), exp, -1, 3.9, 5.0, p) is None
 
+
 def test_sizing():
     p = SpreadParameters()
     assert contracts_for(1200.0, 1.35, 12.2, p) == 1
-    assert contracts_for(1200.0, 2.05, 12.2, p) == 1   # 217.2 > 180 but <= 240: the 20% exception
-    assert contracts_for(1200.0, 2.30, 12.2, p) == 0   # 242.2 > 240
+    assert contracts_for(1200.0, 2.05, 12.2, p) == 1  # 217.2 > 180 but <= 240: the 20% exception
+    assert contracts_for(1200.0, 2.30, 12.2, p) == 0  # 242.2 > 240
     assert contracts_for(5000.0, 1.35, 12.2, p) == 5  # Review Focus 4: 750 / 147.2
 ```
 
@@ -177,24 +188,29 @@ def test_a_fall_hits_the_target_then_rolls_next_session():
     assert first.reason == "target" and first.pnl > 0
     assert second.entry == days[days.index(first.exit) + 1]
 
+
 def test_a_false_alarm_loses_and_exits_on_regime():
     # SPY flat 600, regime -1 for 5 sessions then 0
     r = simulate(...)
     assert [t.reason for t in r.trades] == ["regime"] and r.trades[0].pnl < 0
     assert r.equity[-1][1] == pytest.approx(1200.0 + r.trades[0].pnl)
 
+
 def test_a_window_starting_bearish_opens_on_the_first_session():  # Review Focus 2
     assert r.trades[0].entry == days[0]
+
 
 def test_too_small_an_account_skips_every_bearish_session():
     r = simulate(..., start_equity=100.0)  # 5 bearish sessions
     assert r.trades == [] and r.skipped == 5
+
 
 def test_an_open_spread_at_the_end_is_marked_net_of_exit_costs():  # Review Focus 5
     t = r.trades[-1]
     assert t.reason == "open" and t.exit is None
     assert t.costs == pytest.approx(CostModel().open_cost(t.contracts) + CostModel().close_cost(t.contracts))
     assert r.equity[-1][1] == pytest.approx(1200.0 + sum(x.pnl for x in r.trades))
+
 
 def test_equity_has_one_point_per_session():
     assert [d for d, _ in r.equity] == days
@@ -227,24 +243,30 @@ def test_max_drawdown():
     assert max_drawdown([100, 120, 90, 130]) == pytest.approx(0.25)
     assert max_drawdown([100]) == 0.0
 
+
 def test_a_finished_fall_and_one_still_under_way():
     # closes: 100 -> 85 -> 95 (10%+ rebound) -> 100 -> 88 at the end
     eps = episode_results(days, closes, [trade_in_first_fall_pnl_50])
     assert [(e.open, e.trades, e.pnl) for e in eps] == [(False, 1, 50.0), (True, 0, 0.0)]
 
+
 def test_verdict_ignores_the_open_fall_and_open_trades():
     v = verdict(result_with_closed_pnl_minus_10_and_open_trade_plus_200, eps)
     assert v.closed_pnl == pytest.approx(-10.0) and not v.pnl_ok and not v.go
+
 
 def test_a_fall_never_traded_counts_as_not_won():
     v = verdict(result, [won_closed, untraded_closed, untraded_closed])
     assert (v.episodes_won, v.episodes_closed, v.episodes_ok) == (1, 3, False)
 
+
 def test_no_closed_fall_fails_criterion_two():
     assert not verdict(result, [only_open_episode]).episodes_ok
 
+
 def test_go_when_all_three_pass():
     assert verdict(profitable_result_dd_20pct, [won, won, lost]).go
+
 
 def test_drawdown_over_the_bar_fails():
     assert not verdict(result_dd_40pct, [won]).drawdown_ok
