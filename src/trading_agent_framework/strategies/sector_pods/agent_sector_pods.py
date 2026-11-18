@@ -27,6 +27,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.memory.tools import memory_tools
 from trading_agent_framework.strategies.common.daily_bars import DailyBars, GateBars, YahooBars
+from trading_agent_framework.strategies.common.news import require_news_provider
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
@@ -120,21 +121,12 @@ class SectorPodsStrategy(Strategy):
         # fresh in a backtest: one run's streak and date must not leak into the next; paper and live state is never wiped
         self._store = StateStore(self.state_file("sector_pods"), log=self._log, fresh=self.is_backtesting)
         try:
-            self._require_news_provider()
+            require_news_provider(self.broker, "the pods need")
             parts = self._graph_parts(self._store)
         except ConfigurationError as exc:
             raise FatalStrategyError(str(exc)) from exc
         self._graph = build_graph(parts)
         self.log_info(f"SectorPodsStrategy initialized: {len(ALL_SYMBOLS)} ETFs in {len(PODS)} pods, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}")
-
-    def _require_news_provider(self) -> None:
-        """Refuse to start without a news source: every pod's `search_news` would only return `{"error": ...}`."""
-        try:
-            provider = self.broker.news_provider()
-        except BrokerError as exc:
-            raise ConfigurationError(f"the pods need a news provider: {exc}") from exc
-        if provider is None:
-            raise ConfigurationError("the pods need a news provider and this broker has none")
 
     def _node(
         self, name: str, system: str, tools: list[Callable[..., Any]], validator: Validator, submit: str, task: str, reads: Any, write: Any, budget: int | None, exempt: Sequence[str] = ()
