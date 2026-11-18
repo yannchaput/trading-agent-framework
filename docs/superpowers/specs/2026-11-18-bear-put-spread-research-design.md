@@ -94,8 +94,10 @@ same-day move, a small and unbiased delay.
   $140-170 with entry costs at VIX 18-28), so the 2016-2026 years stay comparable; the most a contract can pay is
   $500. (The user chose a narrow spread over a percentage-based one because the account will be about $1,200: a spread
   7% wide costs $600-800 per contract at today's SPY.)
-- **Expiry**: the monthly expiry (third Friday of the month) whose days to expiry are in [30, 60]; if two qualify, the
-  nearer. Holiday-shifted expiries are ignored (one-day error, builder's note in code).
+- **Expiry**: the nearest monthly expiry (third Friday) at least 30 calendar days away (`min_dte` 30). (Found while
+  implementing: third Fridays are 28-35 days apart, so a fixed [30, 60] window can hold none, e.g. on 2026-12-17; the
+  nearest one past 30 days equals the in-window one whenever one exists, so `max_dte` was dropped.) Holiday-shifted
+  expiries are ignored (one-day error, builder's note in code).
 - **Close** (checked each session, first match wins, executed at that close):
   1. time stop: 7 calendar days or fewer to expiry (`exit_dte` 7), so the spread is never held into expiry/assignment;
   2. profit target: model value >= 80% of width (`take_profit` 0.80);
