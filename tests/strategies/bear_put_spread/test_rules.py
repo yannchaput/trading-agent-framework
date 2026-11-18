@@ -2,8 +2,6 @@
 
 from datetime import date
 
-import pytest
-
 from trading_agent_framework.strategies.bear_put_spread.rules import (
     SpreadParameters,
     contracts_for,
@@ -62,6 +60,7 @@ def test_sizing() -> None:
     assert contracts_for(5000.0, 1.35, 12.2, params) == 5  # 750 / 147.2
 
 
-def test_expiry_for_an_impossible_min_dte_raises() -> None:
-    with pytest.raises(ValueError):
-        monthly_expiry(date(2026, 11, 18), SpreadParameters(min_dte=400))
+def test_expiry_for_a_long_min_dte_looks_far_enough_ahead() -> None:
+    # Jul 15 is 80 days after 2022-04-26: the nearest third Friday at least 90 days away is Aug 19
+    assert monthly_expiry(date(2022, 4, 26), SpreadParameters(min_dte=90)) == date(2022, 8, 19)
+    assert (monthly_expiry(date(2026, 11, 18), SpreadParameters(min_dte=400)) - date(2026, 11, 18)).days >= 400

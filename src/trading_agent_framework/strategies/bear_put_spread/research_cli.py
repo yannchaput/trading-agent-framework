@@ -38,6 +38,8 @@ def _print_report(window: Sequence[date], result: SimulationResult, episodes: Se
     invested = sum(1 for d in window if any(t.entry <= d <= (t.exit or last) for t in result.trades))
     final = result.equity[-1][1]
     print(f"final equity {final:.2f} ({final / start_equity - 1:+.1%}), {len(closed)} closed trades, win rate {len(wins) / len(closed) if closed else 0.0:.0%}")
+    mean_pct = sum(t.pnl_pct for t in closed) / len(closed) if closed else 0.0
+    print(f"mean P&L per closed trade {mean_pct:+.1%} of the account at entry")
     print(f"average win {sum(wins) / len(wins) if wins else 0.0:+.2f}, average loss {sum(losses) / len(losses) if losses else 0.0:+.2f}, invested {invested} of {len(window)} sessions")
     print(f"skipped: too small {result.skipped}")
     for ok, text in (
@@ -64,7 +66,7 @@ def _write_outputs(out: Path, result: SimulationResult, episodes: Sequence[Episo
     _write_csv(out / "equity.csv", [{"date": d, "equity": v} for d, v in result.equity], ["date", "equity"])
 
 
-def run(start: date, end: date | None, equity: float, vol: VolModel, costs: CostModel, out: Path, trigger: str = "regime") -> int:
+def run(start: date, end: date | None, equity: float, vol: VolModel, costs: CostModel, out: Path, trigger: str = "regime", params: SpreadParameters | None = None) -> int:
     """Download, replay, print and write the outputs.
 
     Args:
@@ -75,6 +77,7 @@ def run(start: date, end: date | None, equity: float, vol: VolModel, costs: Cost
         costs: Cost model.
         out: Directory for the CSVs, created only on success.
         trigger: `regime` (the market regime is bearish) or one of `triggers.TRIGGERS`; the window is the same either way.
+        params: Spread structure (strikes, expiry, exits, sizing); `SpreadParameters()` when None.
 
     Returns:
         The exit code: 0 (GO and NO-GO alike), or 1 when the data cannot be used.
@@ -97,7 +100,7 @@ def run(start: date, end: date | None, equity: float, vol: VolModel, costs: Cost
         states = trigger_states(trigger, series.spy, series.vix)
         regimes = {series.sessions[i]: states[i] for i in rows}
     print(f"trigger: {trigger}")
-    params = SpreadParameters()
+    params = params or SpreadParameters()
     result = simulate(window, spy, [series.vix[i] for i in rows], regimes, params, vol, costs, equity)
     episodes = episode_results(window, spy, result.trades)
     _print_report(window, result, episodes, verdict(result, episodes), equity)
@@ -119,11 +122,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--start", type=date.fromisoformat, default=DEFAULT_START, help="first replayed session")
     parser.add_argument("--end", type=date.fromisoformat, default=None, help="last replayed session (default: the last downloaded)")
     parser.add_argument("--trigger", choices=["regime", *TRIGGERS], default="regime", help="what opens a spread: the bearish regime (default) or t1 / t2 / t3 (triggers.py)")
+    defaults = SpreadParameters()
+    parser.add_argument("--long-otm", type=float, default=defaults.long_otm, help="the bought put sits this fraction below spot (0 = at the money)")
+    parser.add_argument("--width", type=float, default=defaults.width, help="dollars between the two strikes")
+    parser.add_argument("--min-dte", type=int, default=defaults.min_dte, help="fewest days to expiry at entry")
+    parser.add_argument("--exit-dte", type=int, default=defaults.exit_dte, help="close at this many days to expiry or fewer")
+    parser.add_argument("--take-profit", type=float, default=defaults.take_profit, help="close at this fraction of the width (above 1: never)")
     parser.add_argument("--equity", type=float, default=1200.0, help="starting cash in dollars")
     parser.add_argument("--vol-scale", type=float, default=1.0, help="multiplier on VIX / 100")
     parser.add_argument("--skew", type=float, default=0.8, help="volatility points per unit of ln(spot / strike) below spot")
     parser.add_argument("--half-spread", type=float, default=0.05, help="half bid/ask, dollars per share per leg")
     parser.add_argument("--out", type=Path, default=None, help="output directory (default: logs/bear_put_spread/research/<timestamp>)")
     args = parser.parse_args(argv)
+    params = dataclasses.replace(defaults, long_otm=args.long_otm, width=args.width, min_dte=args.min_dte, exit_dte=args.exit_dte, take_profit=args.take_profit)
     out = args.out or OUT_ROOT / datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    return run(args.start, args.end, args.equity, VolModel(args.vol_scale, args.skew), CostModel(half_spread=args.half_spread), out, args.trigger)
+    return run(args.start, args.end, args.equity, VolModel(args.vol_scale, args.skew), CostModel(half_spread=args.half_spread), out, args.trigger, params)

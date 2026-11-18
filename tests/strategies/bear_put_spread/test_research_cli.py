@@ -104,3 +104,41 @@ def test_the_default_trigger_is_the_regime(tmp_path: Path, monkeypatch: pytest.M
     research_cli.main(["--start", data.sessions[550].isoformat(), "--out", str(tmp_path)])
 
     assert "trigger: regime" in capsys.readouterr().out
+
+
+def _first_row(out: Path) -> dict[str, str]:
+    with (out / "trades.csv").open() as handle:
+        return next(csv.DictReader(handle))
+
+
+def test_structure_flags_reach_the_rules(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _patch(monkeypatch)
+    base = ["--start", data.sessions[550].isoformat(), "--equity", "100000"]
+
+    research_cli.main([*base, "--out", str(tmp_path / "a")])
+    research_cli.main([*base, "--width", "10", "--min-dte", "90", "--long-otm", "0", "--out", str(tmp_path / "b")])
+
+    a, b = _first_row(tmp_path / "a"), _first_row(tmp_path / "b")
+    assert float(a["long_strike"]) - float(a["short_strike"]) == 5.0
+    assert float(b["long_strike"]) - float(b["short_strike"]) == 10.0
+    assert float(b["long_strike"]) > float(a["long_strike"])  # at the money, not 2% below
+    assert b["expiry"] > a["expiry"]
+
+
+def test_no_profit_target_holds_past_80_percent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    data = _patch(monkeypatch)
+    base = ["--start", data.sessions[550].isoformat(), "--equity", "100000"]
+
+    research_cli.main([*base, "--out", str(tmp_path / "a")])
+    research_cli.main([*base, "--take-profit", "10", "--out", str(tmp_path / "b")])
+
+    assert _first_row(tmp_path / "a")["reason"] == "target"
+    assert _first_row(tmp_path / "b")["reason"] != "target"
+
+
+def test_the_report_prints_the_mean_pnl_per_trade(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    data = _patch(monkeypatch)
+
+    research_cli.main(["--start", data.sessions[550].isoformat(), "--equity", "100000", "--out", str(tmp_path)])
+
+    assert "mean P&L per closed trade" in capsys.readouterr().out

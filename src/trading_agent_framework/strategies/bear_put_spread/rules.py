@@ -47,12 +47,12 @@ def monthly_expiry(today: date, params: SpreadParameters) -> date:
     is 29 days away, Feb 19 is 64); taking the nearest one past `min_dte` always answers, and is the one inside
     `[min_dte, min_dte + 35)`.
     """
-    for offset in range(4):
-        month_index = today.year * 12 + today.month - 1 + offset
+    month_index = today.year * 12 + today.month - 1
+    while True:
         expiry = third_friday(month_index // 12, month_index % 12 + 1)
         if (expiry - today).days >= params.min_dte:
             return expiry
-    raise ValueError(f"no monthly expiry at least {params.min_dte} days after {today}")  # only for a huge min_dte
+        month_index += 1
 
 
 def strikes(spot: float, params: SpreadParameters) -> tuple[float, float]:
