@@ -20,6 +20,7 @@ from trading_agent_framework.core.regime_data import RegimeDataError, YahooRegim
 from trading_agent_framework.strategies.bear_put_spread.pricing import CostModel, VolModel
 from trading_agent_framework.strategies.bear_put_spread.research import EpisodeResult, SimulationResult, Trade, Verdict, episode_results, simulate, verdict
 from trading_agent_framework.strategies.bear_put_spread.rules import SpreadParameters
+from trading_agent_framework.strategies.bear_put_spread.triggers import TRIGGERS, trigger_states
 
 OUT_ROOT = Path("logs/bear_put_spread/research")
 
@@ -63,7 +64,7 @@ def _write_outputs(out: Path, result: SimulationResult, episodes: Sequence[Episo
     _write_csv(out / "equity.csv", [{"date": d, "equity": v} for d, v in result.equity], ["date", "equity"])
 
 
-def run(start: date, end: date | None, equity: float, vol: VolModel, costs: CostModel, out: Path) -> int:
+def run(start: date, end: date | None, equity: float, vol: VolModel, costs: CostModel, out: Path, trigger: str = "regime") -> int:
     """Download, replay, print and write the outputs.
 
     Args:
@@ -73,6 +74,7 @@ def run(start: date, end: date | None, equity: float, vol: VolModel, costs: Cost
         vol: Volatility model.
         costs: Cost model.
         out: Directory for the CSVs, created only on success.
+        trigger: `regime` (the market regime is bearish) or one of `triggers.TRIGGERS`; the window is the same either way.
 
     Returns:
         The exit code: 0 (GO and NO-GO alike), or 1 when the data cannot be used.
@@ -89,7 +91,12 @@ def run(start: date, end: date | None, equity: float, vol: VolModel, costs: Cost
         return 1
     window = [series.sessions[i] for i in rows]
     spy = [series.spy[i] for i in rows]
-    regimes = {d: readings[d].regime for d in window}
+    if trigger == "regime":
+        regimes = {d: readings[d].regime for d in window}
+    else:
+        states = trigger_states(trigger, series.spy, series.vix)
+        regimes = {series.sessions[i]: states[i] for i in rows}
+    print(f"trigger: {trigger}")
     params = SpreadParameters()
     result = simulate(window, spy, [series.vix[i] for i in rows], regimes, params, vol, costs, equity)
     episodes = episode_results(window, spy, result.trades)
@@ -111,6 +118,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bear-spread-research", description="Replay SPY bear put spreads on the bearish regime (read-only).")
     parser.add_argument("--start", type=date.fromisoformat, default=DEFAULT_START, help="first replayed session")
     parser.add_argument("--end", type=date.fromisoformat, default=None, help="last replayed session (default: the last downloaded)")
+    parser.add_argument("--trigger", choices=["regime", *TRIGGERS], default="regime", help="what opens a spread: the bearish regime (default) or t1 / t2 / t3 (triggers.py)")
     parser.add_argument("--equity", type=float, default=1200.0, help="starting cash in dollars")
     parser.add_argument("--vol-scale", type=float, default=1.0, help="multiplier on VIX / 100")
     parser.add_argument("--skew", type=float, default=0.8, help="volatility points per unit of ln(spot / strike) below spot")
@@ -118,4 +126,4 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None, help="output directory (default: logs/bear_put_spread/research/<timestamp>)")
     args = parser.parse_args(argv)
     out = args.out or OUT_ROOT / datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    return run(args.start, args.end, args.equity, VolModel(args.vol_scale, args.skew), CostModel(half_spread=args.half_spread), out)
+    return run(args.start, args.end, args.equity, VolModel(args.vol_scale, args.skew), CostModel(half_spread=args.half_spread), out, args.trigger)

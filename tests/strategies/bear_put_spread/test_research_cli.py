@@ -84,3 +84,23 @@ def test_an_empty_window_exits_1_and_writes_nothing(tmp_path: Path, monkeypatch:
     assert code == 1
     assert "error:" in capsys.readouterr().out
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize("trigger", ["t1", "t2", "t3"])
+def test_a_trigger_replaces_the_regime(trigger: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    data = _patch(monkeypatch)
+
+    code = research_cli.main(["--start", data.sessions[550].isoformat(), "--equity", "100000", "--trigger", trigger, "--out", str(tmp_path)])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert f"trigger: {trigger}" in out
+    assert ("verdict: GO" in out) or ("verdict: NO-GO" in out)
+
+
+def test_the_default_trigger_is_the_regime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    data = _patch(monkeypatch)
+
+    research_cli.main(["--start", data.sessions[550].isoformat(), "--out", str(tmp_path)])
+
+    assert "trigger: regime" in capsys.readouterr().out
