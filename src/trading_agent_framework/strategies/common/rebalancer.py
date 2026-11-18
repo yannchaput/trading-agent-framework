@@ -125,6 +125,7 @@ class Rebalancer:
         self._params = params
         self._fill_wait_seconds = fill_wait_seconds  # how long the buys wait for this run's sells to fill (paper/live only)
         self.placed: list[PlacedOrder] = []  # the orders sent by the current/last `rebalance` (accepted, or with an unknown outcome: `confirmed=False`), readable if it raises half way
+        self.refused = 0  # the orders the broker refused in the current/last `rebalance`: with none placed, it tells a refusal from a rebalance that had nothing to send
 
     # --- what is held ----------------------------------------------------------------------------
 
@@ -202,6 +203,7 @@ class Rebalancer:
         """
         strategy, params = self._strategy, self._params
         self.placed = []
+        self.refused = 0
         account = strategy.broker.get_account()
         portfolio_value = float(account.portfolio_value)
         if portfolio_value <= 0:
@@ -239,6 +241,7 @@ class Rebalancer:
                 return "unknown"
             except TradingFrameworkError as exc:
                 refusals[:] = [exc]
+                self.refused += 1
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}) was refused: {exc}")
                 return "refused"
             if side == "sell" and symbol != parking:
@@ -304,6 +307,24 @@ class Rebalancer:
                 if quantity > 0 and submit(parking, "sell", quantity, "above target or funding the buys") == "accepted":
                     available += quantity * parking_price
                     parking_value -= quantity * parking_price
+
+        # The buys may still lack money: a fully invested book has no parking to sell and no cash. Parking went first above; now trim
+        # the stocks above their targets, inside their band too, the largest excess first, and only by what the buys are short.
+        unfunded = sum(difference for _, difference in plan) - available if plan else 0.0  # no buy, no money needed (cash under the reserve is not a reason to trim)
+        trimmed = False
+        overweight = sorted(((value_of(symbol) - targets[symbol] * portfolio_value, symbol) for symbol in held if symbol in targets), key=lambda item: -item[0])
+        for excess, symbol in overweight:
+            if unfunded < min_trade:
+                break
+            if excess < min_trade or prices[symbol] <= 0:
+                continue
+            quantity = min(fractional_qty(min(excess, unfunded) / prices[symbol]), sellable(symbol))
+            if quantity > 0 and submit(symbol, "sell", quantity, "trim to fund the buys") == "accepted":
+                available += quantity * prices[symbol]
+                unfunded -= quantity * prices[symbol]
+                trimmed = True
+        if trimmed and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
+            strategy.log_warning(f"{len(sells)} sell(s) did not fill within {self._fill_wait_seconds:g}s: the buys go out on the broker's buying power as it stands")
 
         # 2. Buys, in the trader's order.
         for symbol, difference in plan:

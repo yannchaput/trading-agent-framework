@@ -374,6 +374,18 @@ def test_a_book_whose_every_order_is_refused_abandons_the_week_and_keeps_the_pre
     assert h.errors == ["execute: no order was accepted although the book needs trades"]
 
 
+def test_a_rebalance_that_sends_nothing_and_was_refused_nothing_completes_the_week_with_a_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path)  # the book needs trades, but the rebalancer sends none and the broker refuses none: nothing could be funded
+    monkeypatch.setattr(h.rebalancer, "rebalance", lambda target, forced_exits=(): [])
+
+    final = h.run()
+
+    (line,) = h.log_lines()
+    assert final["abandoned"] is None and line["orders"] == [] and h.errors == []
+    assert h.warnings == ["execute: the rebalancer sent no order although the book needs trades: nothing could be funded"]
+    assert h.store.load().last_completed == "2026-11-10" and h.store.load().abandoned_streak == 0
+
+
 def test_a_book_already_held_within_the_band_completes_the_week_with_no_orders(tmp_path: Path) -> None:
     h = _harness(tmp_path, held={"XLK": 50, "XLV": 50, "SHV": 48})  # the filled book already held: 25% + 25% in ETFs, 48% parked: nothing is due
 

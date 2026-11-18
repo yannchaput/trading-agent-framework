@@ -251,9 +251,12 @@ class Execute:
             return f"execution: {exc}", orders, book
         orders = [asdict(order) for order in self._rebalancer.placed]
         if not orders and self._trades_due(book, state.get("holdings") or {}):
-            # `Rebalancer.rebalance` logs a refused order and goes on, so a broker that refuses everything returns normally.
-            self._on_error("execute: no order was accepted although the book needs trades")
-            return "execution: no order was accepted", [], book
+            if self._rebalancer.refused:
+                # `Rebalancer.rebalance` logs a refused order and goes on, so a broker that refuses everything returns normally.
+                self._on_error("execute: no order was accepted although the book needs trades")
+                return "execution: no order was accepted", [], book
+            # Nothing was sent and nothing refused: the rebalancer found nothing it could fund. The week is not a failure.
+            self._on_warning("execute: the rebalancer sent no order although the book needs trades: nothing could be funded")
         return None, orders, book
 
     def _filled_line(self, submitted: float, filled: float) -> str:
