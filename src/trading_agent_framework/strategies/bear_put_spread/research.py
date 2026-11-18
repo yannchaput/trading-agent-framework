@@ -10,6 +10,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 
+from trading_agent_framework.core.regime_scorecard import Episode, zigzag
 from trading_agent_framework.strategies.bear_put_spread.pricing import CostModel, VolModel, spread_mid
 from trading_agent_framework.strategies.bear_put_spread.rules import SpreadParameters, contracts_for, exit_reason, monthly_expiry, should_open, strikes
 
@@ -141,3 +142,121 @@ def simulate(
     if pos is not None:
         trades.append(_trade(pos, None, "open", spy[-1], value, costs))
     return SimulationResult(trades, equity, skipped)
+
+
+@dataclass(frozen=True, slots=True)
+class EpisodeResult:
+    """What the strategy did during one SPY fall.
+
+    Attributes:
+        episode: The fall (swing high to swing low).
+        trades: Trades attributed to it.
+        pnl: Their summed P&L, dollars (an open trade at model value net of exit costs).
+        open: The fall is still under way: no close after its low has rebounded by the threshold.
+    """
+
+    episode: Episode
+    trades: int
+    pnl: float
+    open: bool
+
+
+def episode_results(sessions: Sequence[date], spy: Sequence[float], trades: Sequence[Trade], threshold: float = 0.10, attribution: int = 20) -> list[EpisodeResult]:
+    """Attribute each trade to the SPY fall it was entered for.
+
+    A trade belongs to a fall when it was entered from the fall's peak to `attribution` sessions after its trough;
+    where falls overlap, to the latest one that began before the entry.
+
+    Args:
+        sessions: Session dates, oldest first.
+        spy: SPY closes aligned with `sessions`.
+        trades: The simulation's trades.
+        threshold: Size of a fall and of the rebound that ends it, as a fraction.
+        attribution: Sessions after the trough during which entries still count.
+
+    Returns:
+        One result per fall found by `zigzag`, oldest first.
+    """
+    episodes = zigzag(sessions, spy, threshold)
+    counts = [[0, 0.0] for _ in episodes]
+    for trade in trades:
+        owners = [i for i, ep in enumerate(episodes) if ep.peak <= trade.entry <= sessions[min(sessions.index(ep.trough) + attribution, len(sessions) - 1)]]
+        if owners:
+            counts[owners[-1]][0] += 1
+            counts[owners[-1]][1] += trade.pnl
+    results = []
+    for ep, (count, pnl) in zip(episodes, counts, strict=True):
+        trough = sessions.index(ep.trough)
+        low = spy[trough]
+        results.append(EpisodeResult(ep, int(count), pnl, not any(c >= low * (1 + threshold) for c in spy[trough + 1 :])))
+    return results
+
+
+def max_drawdown(values: Sequence[float]) -> float:
+    """The largest fall from a running peak, as a positive fraction; 0 for fewer than two values."""
+    peak = worst = 0.0
+    for value in values:
+        peak = max(peak, value)
+        if peak > 0:
+            worst = max(worst, (peak - value) / peak)
+    return worst
+
+
+@dataclass(frozen=True, slots=True)
+class Verdict:
+    """The three GO / NO-GO criteria.
+
+    Attributes:
+        closed_pnl: Summed P&L of the closed trades, dollars (a spread still open at the end is excluded).
+        episodes_won: Closed SPY falls where the attributed trades made a profit.
+        episodes_closed: SPY falls that are over; a fall never traded counts here and not as won.
+        drawdown: Largest fall of the equity curve, fraction.
+        max_drawdown: The bar the drawdown must stay within.
+    """
+
+    closed_pnl: float
+    episodes_won: int
+    episodes_closed: int
+    drawdown: float
+    max_drawdown: float
+
+    @property
+    def pnl_ok(self) -> bool:
+        """Closed trades made money."""
+        return self.closed_pnl > 0
+
+    @property
+    def episodes_ok(self) -> bool:
+        """More than half of the closed falls ended in a profit (and there is at least one)."""
+        return self.episodes_closed > 0 and 2 * self.episodes_won > self.episodes_closed
+
+    @property
+    def drawdown_ok(self) -> bool:
+        """The equity curve never fell more than `max_drawdown`."""
+        return self.drawdown <= self.max_drawdown
+
+    @property
+    def go(self) -> bool:
+        """All three criteria pass."""
+        return self.pnl_ok and self.episodes_ok and self.drawdown_ok
+
+
+def verdict(result: SimulationResult, episodes: Sequence[EpisodeResult], max_drawdown_bar: float = 0.35) -> Verdict:
+    """Judge a replay against the three criteria.
+
+    Args:
+        result: The simulation.
+        episodes: Its SPY falls from `episode_results`; open ones are left out.
+        max_drawdown_bar: Largest acceptable equity drawdown, fraction.
+
+    Returns:
+        The `Verdict`.
+    """
+    closed = [e for e in episodes if not e.open]
+    return Verdict(
+        closed_pnl=sum(t.pnl for t in result.trades if t.reason != "open"),
+        episodes_won=sum(1 for e in closed if e.pnl > 0),
+        episodes_closed=len(closed),
+        drawdown=max_drawdown([v for _, v in result.equity]),
+        max_drawdown=max_drawdown_bar,
+    )
