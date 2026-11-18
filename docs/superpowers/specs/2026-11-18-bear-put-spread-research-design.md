@@ -102,8 +102,10 @@ same-day move, a small and unbiased delay.
   3. regime exit: the reading is no longer -1.
   At the window's last session an open spread is marked at its model value minus exit costs and reported as open.
 - **Size**: contracts = floor(`risk_fraction` x equity / (net debit x 100 + entry costs)), `risk_fraction` 0.15 (the
-  user's choice), equity at the entry session: 1 contract at $1,200, more if the account grows. 0 contracts -> no trade,
-  counted and printed as "skipped: too small".
+  user's choice), equity at the entry session: 1 contract at $1,200, more if the account grows. When that gives 0, take
+  **1 contract if it costs at most 20% of equity** (`min_one_fraction` 0.20, the user's choice after seeing that above a
+  VIX of about 34 one spread costs more than 15% of $1,200, which would skip most of COVID and 2022). Still 0 -> no
+  trade, counted and printed as "skipped: too small".
 - Starting equity **$1,200** (the user's intended live account size; `--equity` flag), cash earns nothing.
 
 ### Pricing (`pricing.py`)
@@ -179,4 +181,5 @@ same-day move, a small and unbiased delay.
 ## Decided with the user (after the builder check)
 
 - Narrow fixed $5-wide spread, 15% of equity per trade, starting equity $1,200, drawdown bar 35%.
+- When 15% buys no contract, 1 contract is allowed up to 20% of equity.
 - A fall the strategy never traded counts as not a profit; the fall still under way is printed apart, outside the verdict.
