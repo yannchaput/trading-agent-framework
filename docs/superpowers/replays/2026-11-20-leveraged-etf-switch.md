@@ -20,7 +20,9 @@ Synthetic 3x from `^SP500TR` and `^NDX` daily returns, `3 r - 2 rf - ER / 252` (
 `^IRX`); one full session of lag (a signal from the close of t trades at the close of t+1); 10 bps per unit traded;
 R3 trades only when a weight is 10 points or more off. R2 runs `core/regime.py` (`regime_by_session`, default
 parameters) on `^GSPC`, `^VIX`, `^VIX3M`; before VIX3M exists (2006-07-17) its term-structure condition is always
-false. Window 1993-01-04 to 2026-11-20; sub-windows 1993-2015 and 2016-2026, each started fresh. Rebound: median
+false. B3's monthly rebalance goes through the same one-session lag, so it trades at the close of each month's second
+session, not the first (constant target: no look-ahead, negligible effect). Window 1993-01-04 to 2026-11-20;
+sub-windows 1993-2015 and 2016-2026, each started fresh. Rebound: median
 return over the 63 sessions after each 15%+ fall's trough in the underlying, next to B1's.
 
 Validation of the synthetic 3x against the real ETFs (reported, not adjusted):
@@ -106,18 +108,22 @@ Selected calendar years (full table in `report.txt`):
 ## Conclusion
 
 - **R3 (volatility-scaled) and R4 (200-day trend) pass on both UPRO and TQQQ; R2 (graded regime) fails on both**, on
-  the full window and the 1993-2015 half (Calmar 0.04 and 0.05 there), where it runs without its VIX/VIX3M condition
-  before 2006 and loses 49% (UPRO) and 76% (TQQQ) in 2000. It passes on 2016-2026 alone, the window it was built on.
-- **R4 has the highest return** (UPRO +18.1%/y, TQQQ +22.5%/y, against 3x buy-and-hold +15.1% and +10.7%) and is the
-  best in long bear markets (UPRO 2008 +1%, TQQQ 2002 +1%), but it **misses the rebound by design**: about +1% over
-  the 63 sessions after a trough, against +51% to +55% for 3x buy-and-hold, and it loses in choppy years (UPRO 2015
-  -33%, TQQQ 2011 -42%).
-- **R3 has the best worst year on both** (UPRO -45.5%, TQQQ -40.5%), the smallest drawdown on TQQQ (74.7%, against
-  R4's 88.2%; on UPRO R4's 61.5% beats R3's 76.3%) and the smallest on both over 2016-2026 (UPRO 37.2%, TQQQ 42.1%, the
-  best Calmar there, 0.61 and 0.62). It **keeps part of the rebound**: +17% to +25% over the 63 sessions, about a third
-  of 3x buy-and-hold's, as its weight rises when volatility fades.
-- **No rule makes 3x safe.** Full-window drawdowns stay 61-88% (UPRO R4 61.5%, TQQQ R4 88.2%), against 55.3% and
-  82.9% for 1x buy-and-hold. The rules make leverage pay for itself; they do not make it gentle.
+  the full window and the 1993-2015 half (Calmar 0.04 and 0.05 there); it loses 49% (UPRO) and 76% (TQQQ) in 2000
+  (it also runs without its term-structure condition before 2006; the study does not test whether that is the
+  cause). It passes on 2016-2026 alone, the window it was built on.
+- **R4 has the highest return** (UPRO +18.1%/y, TQQQ +22.5%/y, against 3x buy-and-hold +15.1% and +10.7%). It
+  sidesteps a bear market once its 200-day average has turned (UPRO 2001 +3%, 2002 -7%, 2008 +1%; TQQQ 2002 +1%) but
+  takes the first leg in full: 2000 is its worst year on both (UPRO -49%, worse than 3x buy-and-hold's -43%; TQQQ
+  -66%). It **misses the rebound by design**: about +1% over the 63 sessions after a trough, against +51% to +55% for
+  3x buy-and-hold, and it loses in choppy years (UPRO 2015 -33%, TQQQ 2011 -42%).
+- **Of the three rules, R3 has the best worst year** (UPRO -45.5%, TQQQ -40.5%; 1x buy-and-hold is better on UPRO,
+  -37.0%), the smallest drawdown on TQQQ (74.7%, against R4's 88.2%; on UPRO R4's 61.5% beats R3's 76.3%) and the
+  smallest of the three on both over 2016-2026 (UPRO 37.2%, TQQQ 42.1%, against 33.8% and 35.6% for 1x buy-and-hold;
+  the best Calmar there, 0.61 and 0.62). It **keeps part of the rebound**: +17% to +25% over the 63 sessions, about a
+  third of 3x buy-and-hold's, as its weight rises when volatility fades.
+- **No rule makes 3x safe.** Full-window drawdowns stay 61-88% for R3 and R4 (UPRO R4 61.5%, TQQQ R4 88.2%) and reach
+  93.5% for R2 on TQQQ, against 55.3% and 82.9% for 1x buy-and-hold. The rules make leverage pay for itself; they do
+  not make it gentle.
 
 ## Limits
 
