@@ -7,7 +7,7 @@ Adapted from LumiBot's idea-meritocracy example (see `prompts.py`). The flow is 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol, TypedDict, cast
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
@@ -39,14 +39,6 @@ class DalioState(TypedDict, total=False):
     disagreement: str
 
 
-class _Node(Protocol):
-    """A graph node: reads the shared state, returns the slot it writes."""
-
-    def __call__(self, state: DalioState) -> dict[str, Any]:
-        """Run the node."""
-        ...
-
-
 class RayDalioStrategy(Strategy):
     """Once a session: growth, inflation and debt/liquidity analysts in parallel, a disagreement round, then the trader."""
 
@@ -76,7 +68,7 @@ class RayDalioStrategy(Strategy):
         """Read-only tools, new instances on every call (the news tool keeps a per-instance run memo)."""
         return [*macro_tools(self), *news_tools(self), *fundamentals_tools(self), *market_data_tools(self), *account_tools(self), *indicator_tools(self)]
 
-    def _node(self, name: str, slot: str | None, upstream: tuple[str, ...]) -> _Node:
+    def _node(self, name: str, slot: str | None, upstream: tuple[str, ...]):
         """A graph node that runs agent `name` on the date, the fixed context and the `upstream` slots and writes `slot`."""
 
         def run(state: DalioState) -> dict[str, Any]:
