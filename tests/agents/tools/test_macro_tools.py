@@ -40,7 +40,7 @@ def _strategy() -> Strategy:
 
 def _tool(series: pd.Series, calls: list[dict[str, object]]):
     strategy = _strategy()
-    [tool] = macro_tools(strategy, fred_client_factory=lambda: _FakeFred(series, calls))
+    tool = {t.__name__: t for t in macro_tools(strategy, fred_client_factory=lambda: _FakeFred(series, calls))}["get_fred_series"]
     return tool, strategy
 
 
@@ -131,9 +131,74 @@ def test_get_fred_series_returns_an_error_dict_on_failure() -> None:
             raise RuntimeError("network down")
 
     strategy = _strategy()
-    [tool] = macro_tools(strategy, fred_client_factory=lambda: _Boom())
+    tool = {t.__name__: t for t in macro_tools(strategy, fred_client_factory=lambda: _Boom())}["get_fred_series"]
 
     result = tool("M2SL")
 
     assert "error" in result
     assert "M2SL" in result["error"]
+
+
+class _PerSeriesFred:
+    """Fake FRED client: `bad` ids raise, every other id returns `series`; records the calls."""
+
+    def __init__(self, series: pd.Series, calls: list[dict[str, object]], bad: str = "") -> None:
+        self._series = series
+        self._calls = calls
+        self._bad = bad
+
+    def get_series(self, series_id: str, **kwargs: object) -> object:
+        self._calls.append({"series_id": series_id, **kwargs})
+        if series_id == self._bad:
+            raise RuntimeError("network down")
+        return self._series
+
+
+def _named(series: pd.Series, calls: list[dict[str, object]], bad: str = ""):
+    tools = macro_tools(_strategy(), fred_client_factory=lambda: _PerSeriesFred(series, calls, bad))
+    return {t.__name__: t for t in tools}
+
+
+_LATEST = pd.Series([4.1, 4.2, float("nan")], index=pd.to_datetime(["2026-09-10", "2026-09-11", "2026-09-12"]))
+
+
+def test_get_fred_latest_returns_the_last_non_nan_observation() -> None:
+    calls: list[dict[str, object]] = []
+
+    result = _named(_LATEST, calls)["get_fred_latest"]("DGS10")
+
+    assert result == {"series_id": "DGS10", "as_of": "2026-09-14", "date": "2026-09-11", "value": 4.2}
+    [call] = calls
+    cutoff = pd.Timestamp("2026-09-14").date()
+    assert call["realtime_start"] == call["realtime_end"] == call["observation_end"] == cutoff
+
+
+def test_get_fred_latest_reports_an_empty_series() -> None:
+    result = _named(pd.Series(dtype=float), [])["get_fred_latest"]("DGS10")
+
+    assert result == {"series_id": "DGS10", "error": "no observation on or before 2026-09-14"}
+
+
+def test_get_fred_latest_reports_a_fetch_failure() -> None:
+    result = _named(_LATEST, [], bad="DGS10")["get_fred_latest"]("DGS10")
+
+    assert result["series_id"] == "DGS10" and "Failed to fetch FRED series 'DGS10'" in result["error"]
+
+
+def test_get_fred_snapshot_accepts_a_comma_string_with_blanks() -> None:
+    result = _named(_LATEST, [])["get_fred_snapshot"]("DGS10, ,UNRATE ")
+
+    assert result["as_of"] == "2026-09-14"
+    assert [row["series_id"] for row in result["series"]] == ["DGS10", "UNRATE"]
+
+
+def test_get_fred_snapshot_accepts_a_list_and_keeps_a_failed_row() -> None:
+    result = _named(_LATEST, [], bad="BAD")["get_fred_snapshot"](["DGS10", "BAD"])
+
+    assert [("error" in row) for row in result["series"]] == [False, True]
+
+
+def test_get_fred_snapshot_refuses_more_than_ten_or_no_ids() -> None:
+    snapshot = _named(_LATEST, [])["get_fred_snapshot"]
+
+    assert "error" in snapshot([f"S{i}" for i in range(11)]) and "error" in snapshot(" , ")
