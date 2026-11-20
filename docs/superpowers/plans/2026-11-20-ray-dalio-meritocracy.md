@@ -58,20 +58,25 @@ def test_get_fred_latest_returns_the_last_non_nan_observation():
     assert latest("DGS10") == {"series_id": "DGS10", "as_of": "2026-09-14", "date": "2026-09-11", "value": 4.2}
     # the fake recorded realtime_start == realtime_end == date(2026, 9, 14) and observation_end == date(2026, 9, 14)
 
+
 def test_get_fred_latest_reports_an_empty_series():
     assert latest("DGS10") == {"series_id": "DGS10", "error": "no observation on or before 2026-09-14"}
 
-def test_get_fred_latest_reports_a_fetch_failure():   # a client whose get_series raises
+
+def test_get_fred_latest_reports_a_fetch_failure():  # a client whose get_series raises
     assert result["series_id"] == "DGS10" and "Failed to fetch FRED series 'DGS10'" in result["error"]
+
 
 def test_get_fred_snapshot_accepts_a_comma_string_with_blanks():
     result = snapshot("DGS10, ,UNRATE ")
     assert result["as_of"] == "2026-09-14"
     assert [row["series_id"] for row in result["series"]] == ["DGS10", "UNRATE"]
 
+
 def test_get_fred_snapshot_accepts_a_list_and_keeps_a_failed_row():
     # a fake that raises for "BAD" only
     assert [("error" in row) for row in snapshot(["DGS10", "BAD"])["series"]] == [False, True]
+
 
 def test_get_fred_snapshot_refuses_more_than_ten_or_no_ids():
     assert "error" in snapshot([f"S{i}" for i in range(11)]) and "error" in snapshot(" , ")
@@ -119,16 +124,19 @@ result with no `"error"`) clears (a) and (b); the prices stay valid. A new run i
 - [ ] **Step 1: Write the failing tests** (fake tools record their calls; `submit_order` fake returns `{"identifier": "o1"}` or a set error)
 
 ```python
-def test_an_order_without_any_check_is_refused_and_names_all_three(): ...
+def test_an_order_without_any_check_is_refused_and_names_all_three():
+    ...
     # error starts "ORDER_READINESS_REQUIRED" and contains "get_account_balance", "get_positions", "get_last_price(symbol='TQQQ')"; the inner submit_order was not called
+
+
 def test_an_order_after_all_three_checks_is_placed(): ...
-def test_the_price_check_is_per_symbol(): ...            # priced UPRO, ordering TQQQ -> refused, names only get_last_price
-def test_the_price_check_ignores_case(): ...             # priced "tqqq", ordering "TQQQ" -> placed
-def test_a_failed_check_does_not_count(): ...            # get_positions returned {"error": "x"} -> refused, names get_positions
+def test_the_price_check_is_per_symbol(): ...  # priced UPRO, ordering TQQQ -> refused, names only get_last_price
+def test_the_price_check_ignores_case(): ...  # priced "tqqq", ordering "TQQQ" -> placed
+def test_a_failed_check_does_not_count(): ...  # get_positions returned {"error": "x"} -> refused, names get_positions
 def test_an_accepted_order_requires_fresh_account_and_positions(): ...  # 2nd order refused naming balance+positions, not the price
-def test_a_refused_order_keeps_the_checks(): ...         # submit returns {"error": "insufficient"} -> next order goes straight through
-def test_checks_do_not_carry_over_to_a_new_run(): ...    # checks in run-1, order in run-2 -> refused
-def test_missing_tool_raises(): ...                      # list without get_positions -> ValueError
+def test_a_refused_order_keeps_the_checks(): ...  # submit returns {"error": "insufficient"} -> next order goes straight through
+def test_checks_do_not_carry_over_to_a_new_run(): ...  # checks in run-1, order in run-2 -> refused
+def test_missing_tool_raises(): ...  # list without get_positions -> ValueError
 def test_wrapped_tools_keep_their_names_and_signatures(): ...  # [t.__name__ for t in guarded] unchanged; inspect.signature(submit_order) == original
 ```
 
@@ -166,13 +174,60 @@ Exact copy. This is lumibot `ai_trading_team_ray_dalio_idea_meritocracy_leverage
 
 ```python
 UNIVERSE = (
-    "TQQQ", "QLD", "SQQQ", "QID", "UPRO", "SSO", "SPXU", "SDS",
-    "UDOW", "DDM", "SDOW", "DXD", "TNA", "UWM", "TZA", "TWM",
-    "FNGU", "FNGD", "TECL", "TECS", "SOXL", "SOXS", "FAS", "FAZ",
-    "CURE", "RXD", "LABU", "LABD", "ERX", "ERY", "GUSH", "DRIP",
-    "TMF", "UBT", "TBT", "TTT", "UGL", "GLL", "AGQ", "ZSL",
-    "UCO", "SCO", "NUGT", "DUST", "YINN", "YANG", "EDC", "EDZ",
-    "EURL", "EUO", "YCS", "DRN", "SRS", "SHV",
+    "TQQQ",
+    "QLD",
+    "SQQQ",
+    "QID",
+    "UPRO",
+    "SSO",
+    "SPXU",
+    "SDS",
+    "UDOW",
+    "DDM",
+    "SDOW",
+    "DXD",
+    "TNA",
+    "UWM",
+    "TZA",
+    "TWM",
+    "FNGU",
+    "FNGD",
+    "TECL",
+    "TECS",
+    "SOXL",
+    "SOXS",
+    "FAS",
+    "FAZ",
+    "CURE",
+    "RXD",
+    "LABU",
+    "LABD",
+    "ERX",
+    "ERY",
+    "GUSH",
+    "DRIP",
+    "TMF",
+    "UBT",
+    "TBT",
+    "TTT",
+    "UGL",
+    "GLL",
+    "AGQ",
+    "ZSL",
+    "UCO",
+    "SCO",
+    "NUGT",
+    "DUST",
+    "YINN",
+    "YANG",
+    "EDC",
+    "EDZ",
+    "EURL",
+    "EUO",
+    "YCS",
+    "DRN",
+    "SRS",
+    "SHV",
 )
 
 ORDER_READINESS_RULE = (
@@ -194,8 +249,7 @@ LEVERAGE_RULE = (
     "leveraged setup."
 )
 SIZING_RULE = (  # this repo's rule for every agent that buys (strategies/CLAUDE.md), not in lumibot
-    "Size every buy against the SMALLER of buying_power and cash plus the proceeds of the sells you submitted in this "
-    "run, never against buying_power alone."
+    "Size every buy against the SMALLER of buying_power and cash plus the proceeds of the sells you submitted in this run, never against buying_power alone."
 )
 _RULES = DATA_USAGE_RULE + " " + LEVERAGE_RULE
 
@@ -226,33 +280,30 @@ SYSTEM_PROMPTS = {
         "momentum bet. Use the specialists' disagreement process, reconcile overrides, and size at least three positions "
         "in normal conditions. Favor 3x ETFs for high-conviction sleeves, use 2x when conviction or drawdown risk is lower, "
         "and use inverse ETFs only as carefully justified hedge or downside exposure. SHV/cash-like exposure may count as "
-        "one position only when evidence is too weak for full leveraged risk. "
-        + _RULES + " " + ORDER_READINESS_RULE
+        "one position only when evidence is too weak for full leveraged risk. " + _RULES + " " + ORDER_READINESS_RULE
     ),
 }
 
 TASK_PROMPTS = {
     "growth_agent": (
-        "Call get_fred_snapshot or get_fred_latest and search_news, then rank the strongest leveraged ETFs from a "
-        "growth-regime view. Prefer diversified 3x exposure when evidence supports it."
+        "Call get_fred_snapshot or get_fred_latest and search_news, then rank the strongest leveraged ETFs from a growth-regime view. Prefer diversified 3x exposure when evidence supports it."
     ),
     "inflation_agent": (
-        "Call get_fred_snapshot or get_fred_latest and search_news, then rank the strongest leveraged ETFs from an "
-        "inflation-and-rates view. Explain any inverse or 2x risk-down preference."
+        "Call get_fred_snapshot or get_fred_latest and search_news, then rank the strongest leveraged ETFs from an inflation-and-rates view. Explain any inverse or 2x risk-down preference."
     ),
     "debt_liquidity_agent": (
         "Call get_fred_snapshot or get_fred_latest and search_news, then rank the strongest leveraged ETFs from a "
         "debt-and-liquidity view. Explain whether liquidity argues for 3x risk, 2x risk-down, inverse exposure, or SHV ballast."
     ),
     "thoughtful_disagreement": (
-        "Challenge the growth, inflation, and liquidity views. Prefer a diversified leveraged basket of at least three "
-        "symbols unless risk evidence argues for SHV/cash-like ballast."
+        "Challenge the growth, inflation, and liquidity views. Prefer a diversified leveraged basket of at least three symbols unless risk evidence argues for SHV/cash-like ballast."
     ),
     "trader": (
         "Rebalance into a diversified leveraged ETF basket of at least three positions. Bias toward 3x ETFs, use 2x only "
         "as a risk-down choice, and use inverse ETFs only with explicit hedge/downside evidence. Before each order, call "
         "get_account_balance, get_positions, and get_last_price for the exact ordered symbol in this same run. "
-        + SIZING_RULE + " Explain which specialist advice you accepted or rejected and cite FRED/news evidence used."
+        + SIZING_RULE
+        + " Explain which specialist advice you accepted or rejected and cite FRED/news evidence used."
     ),
 }
 
@@ -267,10 +318,19 @@ CONTEXT = {
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-def test_universe_is_lumibots_54_symbols_with_shv(): assert len(UNIVERSE) == 54 == len(set(UNIVERSE)) and UNIVERSE[-1] == "SHV"
-def test_every_agent_has_a_system_and_a_task_prompt(): assert set(SYSTEM_PROMPTS) == set(TASK_PROMPTS) == {*ANALYSTS, DISAGREEMENT, TRADER}
+def test_universe_is_lumibots_54_symbols_with_shv():
+    assert len(UNIVERSE) == 54 == len(set(UNIVERSE)) and UNIVERSE[-1] == "SHV"
+
+
+def test_every_agent_has_a_system_and_a_task_prompt():
+    assert set(SYSTEM_PROMPTS) == set(TASK_PROMPTS) == {*ANALYSTS, DISAGREEMENT, TRADER}
+
+
 def test_no_lumibot_tool_name_is_left():  # in every prompt and in CONTEXT's strings
-    for gone in ("alpaca_news", "account_portfolio", "account_positions", "market_last_price", "orders_submit_order", "list_fred_series", "LumiBot"): ...
+    for gone in ("alpaca_news", "account_portfolio", "account_positions", "market_last_price", "orders_submit_order", "list_fred_series", "LumiBot"):
+        ...
+
+
 def test_only_the_trader_is_told_about_orders_and_sizing():
     assert ORDER_READINESS_RULE in SYSTEM_PROMPTS[TRADER] and SIZING_RULE in TASK_PROMPTS[TRADER]
     assert all("submit_order" not in SYSTEM_PROMPTS[name] for name in (*ANALYSTS, DISAGREEMENT))
@@ -310,18 +370,30 @@ def test_only_the_trader_is_told_about_orders_and_sizing():
 Fakes: a `_FakeAgents` with `create(**kwargs)` recording the kwargs, and `__getitem__(name)` returning a per-name `_FakeHandle`. That handle records `(task_prompt, context)` and returns `AgentRunResult(output=f"{name} view", tool_calls=[])`, or raises a preset error. Copy the shape of `tests/strategies/test_news_builtin.py:77-95`. Build the strategy with `RayDalioStrategy(FakeBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="ray_dalio"), mode=TradingMode.PAPER, project_root=tmp_path)`, then set `strategy._agents = cast(AgentManager, agents)`. Use `monkeypatch.setenv` for `FRED_API_KEY` and `SEC_EDGAR_USER_AGENT`, and stub `broker.news_provider` as `test_news_builtin.py:199` does.
 
 ```python
-def test_initialize_creates_the_five_agents_with_lumibots_prompts(): ...
+def test_initialize_creates_the_five_agents_with_lumibots_prompts():
+    ...
     # names in order; system_prompt == SYSTEM_PROMPTS[name]; strategy.sleeptime == "1D"
-def test_only_the_trader_has_order_tools_and_they_are_guarded(): ...
+
+
+def test_only_the_trader_has_order_tools_and_they_are_guarded():
+    ...
     # "submit_order" absent from the four others; the trader's submit_order without checks returns ORDER_READINESS_REQUIRED (call it inside agent_call_context)
-def test_each_agent_gets_its_own_news_and_macro_tool_instances(): ...   # `is not` between agents for search_news and get_fred_snapshot
-def test_every_tool_a_prompt_names_is_in_that_agents_tools(): ...
+
+
+def test_each_agent_gets_its_own_news_and_macro_tool_instances(): ...  # `is not` between agents for search_news and get_fred_snapshot
+def test_every_tool_a_prompt_names_is_in_that_agents_tools():
+    ...
     # for each of get_fred_snapshot, get_fred_latest, get_fred_series, search_news, get_account_balance, get_positions, get_last_price, submit_order: if named in the agent's system or task prompt, it is in its tools
-def test_an_iteration_runs_analysts_then_disagreement_then_trader(): ...
+
+
+def test_an_iteration_runs_analysts_then_disagreement_then_trader():
+    ...
     # each of the five ran once with TASK_PROMPTS[name]; analysts' context == {"date": "2026-09-14", **CONTEXT}
     # disagreement's context adds growth/inflation/liquidity == "<agent> view"; trader's adds disagreement too; trader ran last
-def test_an_analyst_error_stops_the_iteration_before_the_trader(): ...   # inflation raises AgentError -> invoke raises it, the trader never ran
-def test_initialize_fails_without_a_news_provider(): ...                # ConfigurationError
+
+
+def test_an_analyst_error_stops_the_iteration_before_the_trader(): ...  # inflation raises AgentError -> invoke raises it, the trader never ran
+def test_initialize_fails_without_a_news_provider(): ...  # ConfigurationError
 ```
 
 In `tests/test_strategy_factory.py`, add a case that `build_strategy(Strategies.RAY_DALIO, ...)` returns a `RayDalioStrategy`, following the file's existing cases. In `tests/strategies/test_backtest_defaults.py`, add a case like the sector_pods/news_builtin ones: preload = the 54 + SPY, `timestep == "day"`, telemetry on.
