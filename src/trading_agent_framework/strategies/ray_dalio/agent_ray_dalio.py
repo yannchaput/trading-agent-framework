@@ -47,8 +47,8 @@ class RayDalioStrategy(Strategy):
     sleeptime = "1D"
 
     parameters = {
-        "backtesting_start": backtest_window(PredefinedWindow.MONTH_LATEST)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.MONTH_LATEST)[1],
+        "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[1],
         "benchmark_symbol": "SPY",
         "warmup_trading_days": 10,
         "budget": 10000,
