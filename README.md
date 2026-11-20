@@ -330,6 +330,21 @@ A concentrated long-only portfolio of at most 5 stocks, after lumibot's Bill Ack
 
 A port of lumibot's "Bull vs Bear AI Stock Trading Bot": instead of a fixed list of 13 large caps, the agents debate the 15 strongest stocks of the cross_momentum ranking (plus the holdings still ranked within the top 35), computed by the same code (`strategies/common/scoring.py` and cross_momentum's own parameters). A researcher writes one note of dated facts per stock, the bull and the bear rate every stock from that same evidence without seeing each other, and the judge rates every stock strong, standard or weak (the bull's conviction against the bear's risk) and puts it in or out of the portfolio, with a reason, without being told which stocks are held (only strong and standard stocks can go in, a weak one is always out; at most 10 in; a strong trend alone is no reason for out). It sees its previous verdict and strength on each stock and must say what changed to flip the verdict (a change of strength alone needs no explanation). Code holds exactly the stocks put in, gives each the same weight (9.8%, whatever the judge's strength: a full book of 10 makes 98%, a shorter one leaves the rest parked in SHV), sells holdings that fell below rank 35 (the agents never see those) and any holding put out, which then cannot come back for 4 reviews, and places every order. A review that cannot complete (a debater that never submits, unusable data) trades nothing (a broker failure during the rebalance itself can leave the orders already placed in the market), and a backtest stops after 3 such reviews in a row. Sectors in the fact sheet come from yfinance as of today, even in a backtest. The news-off comparison run is made by setting `BullBearParams.research_news` to False (the strategy factory passes no settings, so there is no command-line switch); the researcher then works from the SEC statements alone. Run `uv run agent bull_bear backtesting` (default window `PredefinedWindow.YEAR`; each review runs one researcher call per debated stock, typically 15 to 25, so start short); each run writes `reviews.jsonl` (one line per weekly review) next to its report. The universe file (`uv run batch-universe`) must exist first for paper and live, or the strategy refuses to start. Its backtests build and reuse their own point-in-time history instead (see Cross momentum universe batch); the first such backtest can take tens of minutes to over an hour (Yahoo downloads), and a failing build stops the backtest with an error.
 
+### 📈 `ray_dalio` — Growth, inflation and debt/liquidity analysts, a disagreement round and a trader over 53 leveraged ETFs
+
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/ray_dalio/agent_ray_dalio.py` (`RayDalioStrategy`) |
+| **Model** | from `LLM_MODEL` in the env file (one model for the five agents; `LLM_REASONING_EFFORT=high`) |
+| **Agents** | `growth_agent`, `inflation_agent`, `debt_liquidity_agent` (in parallel), `thoughtful_disagreement`, `trader` |
+| **Asset universe** | 53 leveraged and inverse ETFs, plus SHV |
+| **Agent frequency** | once per trading day |
+| **Trading modes** | backtest, paper, live |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.ray_dalio.<mode>`: `LLM_*`, `ALPACA_NEWS_*`, `FRED_API_KEY`, `SEC_EDGAR_USER_AGENT`, plus the broker keys in paper/live |
+
+Adapted from lumibot's idea-meritocracy leveraged ETF example; not affiliated with Ray Dalio or Bridgewater. Three analysts argue from macro data (FRED) and news, a disagreement round challenges them, and the trader holds at least three positions; an order is refused until the trader has read the account, the positions and the symbol's price. Run `uv run agent ray_dalio paper` (or `backtesting`, default window `PredefinedWindow.MONTH_LATEST`). **Use an account that holds only this strategy's positions:** the trader may sell any position. Alpaca's news archive before 2026-04-29 is empty, so earlier backtests run blind on news.
+
 ### 📈 `sector_pods` — Five sector pods, a risk manager and a portfolio manager over 27 sector ETFs
 
 | Field | Value |

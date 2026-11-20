@@ -12,6 +12,7 @@ if TYPE_CHECKING:
 
 MIN_LIMIT = 1
 MAX_LIMIT = 250
+MAX_SNAPSHOT_SERIES = 10
 
 
 class FredSeriesClient(Protocol):
@@ -102,4 +103,32 @@ def macro_tools(
             "observations": observations[-clamped_limit:],
         }
 
-    return [get_fred_series]
+    def get_fred_latest(series_id: str) -> dict[str, Any]:
+        """Get the latest FRED macro observation available as of the current date."""
+        cutoff = strategy.clock.now().date()
+        try:
+            series = _fetch_series(fred_client_factory(), series_id, None, cutoff).dropna()
+        except MacroDataError as exc:
+            return {"series_id": series_id, "error": str(exc)}
+        if series.empty:
+            return {"series_id": series_id, "error": f"no observation on or before {cutoff.isoformat()}"}
+        index, value = series.index[-1], series.iloc[-1]
+        return {
+            "series_id": series_id,
+            "as_of": cutoff.isoformat(),
+            "date": index.date().isoformat() if hasattr(index, "date") else str(index),
+            "value": float(value),
+        }
+
+    def get_fred_snapshot(series_ids: list[str] | str) -> dict[str, Any]:
+        """Get the latest values of several FRED series at once, e.g. FEDFUNDS,DGS10,CPIAUCSL,UNRATE (a list or a comma-separated string, at most 10)."""
+        raw = series_ids.split(",") if isinstance(series_ids, str) else series_ids
+        ids = [item.strip() for item in raw if item.strip()]
+        if not ids or len(ids) > MAX_SNAPSHOT_SERIES:
+            return {"error": f"give between 1 and {MAX_SNAPSHOT_SERIES} FRED series ids"}
+        return {
+            "as_of": strategy.clock.now().date().isoformat(),
+            "series": [get_fred_latest(series_id) for series_id in ids],
+        }
+
+    return [get_fred_series, get_fred_latest, get_fred_snapshot]

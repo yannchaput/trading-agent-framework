@@ -18,6 +18,7 @@ from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrat
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
 from trading_agent_framework.strategies.sector_pods import SectorPodsStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 
@@ -37,6 +38,7 @@ class Strategies(StrEnum):
     EARNINGS_DRIFT_BASELINE = auto()
     INSIDER_TRADES = auto()
     NEWS_BINARY = auto()
+    RAY_DALIO = auto()
     SECTOR_PODS = auto()
     VWAP_PULLBACK_CONTINUATION = auto()
 
@@ -82,6 +84,11 @@ def _build_bull_bear(broker: Broker, mode: TradingMode) -> Strategy | None:
     return _build_with_universe(BullBearStrategy, broker, mode, point_in_time=True)
 
 
+def _build_ray_dalio(broker: Broker, mode: TradingMode) -> Strategy | None:
+    """Build the ray_dalio strategy (a fixed leveraged-ETF universe: no universe file)."""
+    return RayDalioStrategy(broker=broker, mode=mode)
+
+
 def _build_sector_pods(broker: Broker, mode: TradingMode) -> Strategy | None:
     """Build the sector-pods strategy (a fixed ETF universe: no universe file)."""
     return SectorPodsStrategy(broker=broker, mode=mode)
@@ -124,6 +131,7 @@ _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
     Strategies.EARNINGS_DRIFT_BASELINE: _build_earnings_drift_baseline,
     Strategies.INSIDER_TRADES: _build_insider_trades,
     Strategies.NEWS_BINARY: _build_news_binary,
+    Strategies.RAY_DALIO: _build_ray_dalio,
     Strategies.SECTOR_PODS: _build_sector_pods,
     Strategies.VWAP_PULLBACK_CONTINUATION: _build_vwap_pullback,
 }

@@ -18,6 +18,7 @@ from tests.backtesting.fakes import FakeBacktestDataSource
 from tests.fakes import FakeBroker, FakeClock, et, make_session
 from tests.strategies.earnings_drift.test_drift_scanner import StaticEvents
 
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import DAILY_WARMUP_FLOOR, Strategy
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
@@ -29,6 +30,7 @@ from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrat
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 
 NOW = et(2026, 9, 14, 10)
@@ -60,6 +62,7 @@ def _build(name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Strate
         "earnings_drift": lambda: EarningsDriftStrategy(_broker(name), mode=mode, universe=["AAA"], project_root=tmp_path, settings=DriftParams(), event_source=StaticEvents([])),
         "insider_trades": lambda: InsiderTradesStrategy(_broker(name), mode=mode, project_root=tmp_path, source=object()),
         "news_builtin": lambda: NewsBinaryStrategy(_broker(name), mode=mode, project_root=tmp_path),
+        "ray_dalio": lambda: RayDalioStrategy(_broker(name), mode=mode, project_root=tmp_path),
         "vwap_pullback": lambda: VwapPullbackStrategy(_broker(name), mode=mode, universe=["AAA"], project_root=tmp_path),
     }
     strategy = builders[name]()
@@ -78,6 +81,7 @@ EXPECTED: dict[str, tuple[tuple[datetime, datetime], int, str]] = {
     "earnings_drift": (YEAR, 283, "day"),
     "insider_trades": (YEAR, 10, "day"),
     "news_builtin": (YEAR, 10, "minute"),
+    "ray_dalio": (backtest_window(PredefinedWindow.MONTH_LATEST), 10, "day"),
     "vwap_pullback": ((et(2021, 9, 20), et(2026, 10, 5)), 75, "minute"),
 }
 
