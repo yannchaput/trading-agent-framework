@@ -147,8 +147,23 @@ class _PerSeriesFred:
         self._calls = calls
         self._bad = bad
 
-    def get_series(self, series_id: str, **kwargs: object) -> object:
-        self._calls.append({"series_id": series_id, **kwargs})
+    def get_series(
+        self,
+        series_id: str,
+        observation_start: object = None,
+        observation_end: object = None,
+        realtime_start: object = None,
+        realtime_end: object = None,
+    ) -> object:
+        self._calls.append(
+            {
+                "series_id": series_id,
+                "observation_start": observation_start,
+                "observation_end": observation_end,
+                "realtime_start": realtime_start,
+                "realtime_end": realtime_end,
+            }
+        )
         if series_id == self._bad:
             raise RuntimeError("network down")
         return self._series
