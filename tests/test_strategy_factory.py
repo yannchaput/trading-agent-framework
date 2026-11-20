@@ -11,6 +11,7 @@ from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrat
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
+from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 from trading_agent_framework.utils import strategy_factory
 from trading_agent_framework.utils.strategy_factory import Strategies, build_strategy
@@ -39,6 +40,7 @@ def test_strategy_names_are_the_cli_names() -> None:
         "earnings_drift_baseline",
         "insider_trades",
         "news_binary",
+        "ray_dalio",
         "sector_pods",
         "vwap_pullback_continuation",
     }
@@ -52,6 +54,13 @@ def test_news_binary_returns_the_strategy() -> None:
     strategy = build_strategy(Strategies.NEWS_BINARY, _broker(Strategies.NEWS_BINARY), TradingMode.BACKTESTING)
 
     assert isinstance(strategy, NewsBinaryStrategy)
+    assert strategy.is_backtesting
+
+
+def test_ray_dalio_returns_the_strategy() -> None:
+    strategy = build_strategy(Strategies.RAY_DALIO, _broker(Strategies.RAY_DALIO), TradingMode.BACKTESTING)
+
+    assert isinstance(strategy, RayDalioStrategy)
     assert strategy.is_backtesting
 
 
