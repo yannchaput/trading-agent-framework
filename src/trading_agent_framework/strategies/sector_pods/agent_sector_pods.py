@@ -158,7 +158,7 @@ class SectorPodsStrategy(Strategy):
                 pod.key,
                 pod_system(pod, params),
                 # a new tool set per pod: they hold per-run memo state behind a lock, so sharing would serialize the parallel pods
-                [*news_tools(self), *macro_tools(self, fred_client_factory=self._fred_client_factory)],
+                [*news_tools(self), *only(macro_tools(self, fred_client_factory=self._fred_client_factory), {"get_fred_series"})],
                 validate_pod(pod, params),
                 POD_SUBMIT,
                 POD_TASK,

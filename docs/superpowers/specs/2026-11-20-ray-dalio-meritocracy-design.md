@@ -86,6 +86,9 @@ and the five task prompts, with an MIT attribution comment. Substitutions only:
 | `list_fred_series` | dropped from `DATA_USAGE_RULE` (no such tool; see calls) |
 | `account_portfolio`, `account_positions`, `market_last_price`, `orders_submit_order` | `get_account_balance`, `get_positions`, `get_last_price`, `submit_order` |
 | "LumiBot rejects blind orders with ORDER_READINESS_REQUIRED" | "blind orders are rejected with ORDER_READINESS_REQUIRED" |
+| "official LumiBot built-in tools" | "the built-in tools" |
+| "Alpaca News call/limit" | "search_news call/limit" |
+| "FRED/Alpaca evidence" | "FRED/news evidence" |
 
 Context passed to every run: `date`, `universe`, `min_positions`, `data_expectation`, `leverage_expectation` (lumibot's
 strings), plus `growth`/`inflation`/`liquidity` for `disagreement`, and those plus `disagreement` for `trader`.
@@ -99,7 +102,7 @@ Lumibot's `data_tool_validation_run_id` (an id of its own smoke test) is dropped
   one `get_fred_latest` row per id, an id that fails gets its own `{"series_id", "error"}` row. Cap the count
   (e.g. 10) so a payload stays small for the local model.
 
-Existing `macro_tools` users (sector_pods' pods) gain two tools; their prompts don't mention them.
+sector_pods' pods keep only `get_fred_series`, through `only(macro_tools(...), {"get_fred_series"})`, so their tool surface is unchanged.
 
 ### Order-readiness guard (`strategies/ray_dalio/readiness.py`, one function)
 

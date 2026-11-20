@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
+from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
 from trading_agent_framework.agents.tools.indicators import indicator_tools
@@ -26,6 +27,7 @@ from trading_agent_framework.strategies.ray_dalio.readiness import require_readi
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
 
+_ORDER_TOOLS = {"submit_order", "cancel_order", "cancel_open_orders", "get_orders", "get_order"}
 _DEBATE = tuple(ANALYSTS.values())  # the state slots the analysts write
 
 
@@ -60,7 +62,7 @@ class RayDalioStrategy(Strategy):
         require_news_provider(self.broker, "ray_dalio's agents need")
         for name in (*ANALYSTS, DISAGREEMENT):
             self.agents.create(name=name, system_prompt=SYSTEM_PROMPTS[name], tools=self._research_tools())
-        trader_tools = require_readiness_before_orders([*self._research_tools(), *trading_tools(self)])
+        trader_tools = require_readiness_before_orders([*self._research_tools(), *only(trading_tools(self), _ORDER_TOOLS)])  # no close_position / sell_all: they order without the guard
         self.agents.create(name=TRADER, system_prompt=SYSTEM_PROMPTS[TRADER], tools=trader_tools)
         self._graph = self._build_graph()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, cast
 
@@ -23,10 +24,12 @@ class _FakeHandle:
     def __init__(self, name: str, order: list[str]) -> None:
         self.name, self.order = name, order
         self.runs: list[tuple[str, dict[str, Any]]] = []
+        self.thread: int | None = None
         self.error: Exception | None = None
 
     def run(self, task_prompt: str, *, context: dict[str, Any]) -> AgentRunResult:
         self.runs.append((task_prompt, context))
+        self.thread = threading.get_ident()
         self.order.append(self.name)
         if self.error is not None:
             raise self.error
@@ -147,3 +150,23 @@ def test_backtesting_preloads_the_universe_and_spy(tmp_path: Path, monkeypatch: 
 
     assert [a.symbol for a in seen["preload_assets"]] == [*UNIVERSE, "SPY"]
     assert seen["timestep"] == "day" and seen["agent_telemetry"] is True
+
+
+def test_the_trader_has_no_unguarded_order_tools(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, agents = _strategy(tmp_path, monkeypatch)
+    strategy.initialize()
+
+    trader = set(_tools(agents)[TRADER])
+
+    assert "submit_order" in trader
+    assert not {"close_position", "sell_all"} & trader
+
+
+def test_disagreement_and_trader_run_on_the_strategy_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, agents = _strategy(tmp_path, monkeypatch)
+    strategy.initialize()
+
+    strategy.on_trading_iteration()
+
+    assert agents[DISAGREEMENT].thread == threading.get_ident()
+    assert agents[TRADER].thread == threading.get_ident()

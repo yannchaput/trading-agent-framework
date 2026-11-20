@@ -1,4 +1,4 @@
-"""ray_dalio: an LLM trader that reads the macro regime and holds a leveraged ETF or cash."""
+"""ray_dalio: an LLM team that reads the macro regime and holds a basket of at least three leveraged ETFs."""
 
 from trading_agent_framework.strategies.ray_dalio.agent_ray_dalio import RayDalioStrategy
 from trading_agent_framework.utils import get_version
