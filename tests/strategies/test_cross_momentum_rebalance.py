@@ -296,6 +296,22 @@ def test_the_last_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up()
     assert fake.attempts["BBB"] == 2
 
 
+def test_a_retry_with_an_unknown_outcome_logs_the_retried_quantity():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 100.0}, ticks={"BBB": 100.01})
+    submit = fake.submit_order
+
+    def retry_times_out(order):  # BBB's first buy is refused for money; its retry at 4.89951 times out
+        if order.symbol == "BBB" and fake.attempts.get("BBB"):
+            raise BrokerUncertainError("timeout")
+        return submit(order)
+
+    fake.submit_order = retry_times_out
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.49, 100.0, 1), _target("BBB", 0.49, 100.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert any(message.startswith("buy 4.89951 BBB (toward target): outcome unknown at the broker") for message in fake.warnings)
+
+
 def test_a_parking_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up():
     fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, ticks={"SHV": 50.5})
 

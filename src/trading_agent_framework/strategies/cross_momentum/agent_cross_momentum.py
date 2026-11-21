@@ -43,7 +43,7 @@ from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
-from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities, submit_buy
+from trading_agent_framework.strategies.common.rebalancer import UncertainRetryError, in_flight_quantities, submit_buy
 from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
 from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData, universe_parameters
@@ -581,6 +581,8 @@ class CrossMomentumStrategy(Strategy):
                 return submit_buy(self, symbol, quantity, price, min_trade=min_trade)[0], None, False
             return self.submit_order(self.create_order(symbol, quantity, side, time_in_force="day")), None, False
         except BrokerUncertainError as exc:
+            if isinstance(exc, UncertainRetryError):  # the retry, not the first attempt, is the order that may exist
+                quantity = float(exc.quantity)
             self.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
             return None, exc, True
         except Exception as exc:
