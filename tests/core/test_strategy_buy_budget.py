@@ -154,3 +154,23 @@ def test_open_market_orders_are_priced_with_one_batched_lookup() -> None:
         _open(strategy, broker, "AAA", 1, "buy")
     assert strategy.spendable_cash() == Decimal("7500")  # 9500 - 20 x 100
     assert (broker.batch_lookups, broker.single_lookups) == (1, 0)
+
+
+def test_open_stop_sells_need_no_price_lookup() -> None:
+    """A stop or trailing-stop sell credits nothing, so it is not quoted (earnings_drift and vwap hold one per position)."""
+    broker = _broker(_CountingBroker)
+    assert isinstance(broker, _CountingBroker)
+    strategy = Strategy(broker)
+    _open(strategy, broker, "AAA", 10, "sell", stop_price=90)
+    broker.tracker.track_unprocessed(strategy.create_order("BBB", 5, "sell", trail_percent=8))
+    assert strategy.spendable_cash() == Decimal("9500")
+    assert (broker.batch_lookups, broker.single_lookups) == (0, 0)
+
+
+def test_an_open_stop_buy_is_still_priced_and_debited() -> None:
+    broker = _broker(_CountingBroker)
+    assert isinstance(broker, _CountingBroker)
+    strategy = Strategy(broker)
+    _open(strategy, broker, "AAA", 10, "buy", stop_price=110)
+    assert strategy.spendable_cash() == Decimal("8500")  # 9500 - 10 x the last price 100
+    assert broker.batch_lookups == 1

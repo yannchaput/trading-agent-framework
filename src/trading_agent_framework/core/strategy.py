@@ -77,6 +77,11 @@ def _to_decimal(value: Number) -> Decimal:
     return value if isinstance(value, Decimal) else Decimal(str(value))
 
 
+def _is_stop(order: Order) -> bool:
+    """A stop, stop-limit or trailing-stop order: it may never trigger."""
+    return order.stop_price is not None or order.trail_price is not None or order.trail_percent is not None
+
+
 def _to_optional_decimal(value: Number | None) -> Decimal | None:
     """Like `_to_decimal`, but `None` stays `None`."""
     return None if value is None else _to_decimal(value)
@@ -553,13 +558,14 @@ class Strategy:
         account = self.broker.get_account()
         net_credit = Decimal(0)
         open_orders = self.broker.tracker.get_active_orders()
-        unpriced = {o.asset for o in open_orders if o.quantity is not None and (o.limit_price or o.stop_limit_price) is None}
+        # A stop sell is never priced: it credits nothing (below). A stop buy still costs money, so it is.
+        unpriced = {o.asset for o in open_orders if o.quantity is not None and (o.limit_price or o.stop_limit_price) is None and not (o.side is OrderSide.SELL and _is_stop(o))}
         last_prices = self.get_last_prices(unpriced) if unpriced else {}  # one batched lookup, not one per order
         for order in open_orders:
             value = self._unfilled_value(order, last_prices)
             if order.side is OrderSide.BUY:
                 net_credit -= value
-            elif order.stop_price is None and order.trail_price is None and order.trail_percent is None:
+            elif not _is_stop(order):
                 net_credit += value
         spendable = min(account.buying_power, account.cash + net_credit)
         return spendable - BUY_BUFFER * account.portfolio_value
