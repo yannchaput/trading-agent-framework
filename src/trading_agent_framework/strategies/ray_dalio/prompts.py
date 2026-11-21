@@ -66,13 +66,7 @@ UNIVERSE = {
 MIN_POSITIONS = 3
 ANALYSTS = {"growth_agent": "growth", "inflation_agent": "inflation", "debt_liquidity_agent": "liquidity"}
 DISAGREEMENT = "thoughtful_disagreement"
-TRADER = "trader"
 
-ORDER_READINESS_RULE = (
-    "Immediately before every buy or sell order, call get_account_balance, get_positions, and get_last_price for the "
-    "exact ordered symbol in this same agent run, then call submit_order. Blind orders are rejected with "
-    "ORDER_READINESS_REQUIRED when those readiness calls are missing."
-)
 DATA_USAGE_RULE = (
     "Use the built-in tools by their real names: get_fred_snapshot, get_fred_latest, and get_fred_series for macro "
     "evidence; search_news for recent market, sector, rates, and ETF-proxy headlines; SEC tools only when sector or "
@@ -87,8 +81,12 @@ LEVERAGE_RULE = (
     "leveraged setup. Read each fund's leverage, direction and underlying from the universe in the context, never from "
     "memory; a fund and its inverse held together cancel out and only pay fees."
 )
-SIZING_RULE = (  # this repo's rule for every agent that buys (strategies/CLAUDE.md), not in lumibot
-    "Never buy for more than 'spendable' from get_account_balance (it already counts open orders and keeps 2% of the book back); read it again after each order."
+_BASKET_RULE = (  # the basket is traded by code, not by an agent (see basket.py)
+    "You decide the book. End by calling submit_basket with weights as fractions of the portfolio (0.35 means 35%), "
+    'for example {"TQQQ": 0.35, "UPRO": 0.25, "TMF": 0.25, "SHV": 0.15}. '
+    "The weights other than SHV add up to at most 0.98 and each is above 0.03. It is executed exactly as submitted: "
+    "every holding you leave out is sold, and whatever the weights leave unallocated is parked in SHV. "
+    "If submit_basket returns an error, fix the basket and call it again."
 )
 _RULES = DATA_USAGE_RULE + " " + LEVERAGE_RULE
 
@@ -112,14 +110,7 @@ SYSTEM_PROMPTS = {
         "Challenge all views with thoughtful disagreement. Identify the best diversified leveraged basket after stress "
         "testing. Check whether upstream agents actually used get_fred_snapshot/get_fred_latest and search_news. Do not "
         "re-call tools unless upstream evidence is entirely absent; if you must, make only one short FRED call and one "
-        "search_news call with limit <= 5. " + _RULES
-    ),
-    "trader": (
-        "Build a Ray Dalio-style idea-meritocracy leveraged ETF basket. This is not All Weather and not a one-ETF "
-        "momentum bet. Use the specialists' disagreement process, reconcile overrides, and size at least three positions "
-        "in normal conditions. Favor 3x ETFs for high-conviction sleeves, use 2x when conviction or drawdown risk is lower, "
-        "and use inverse ETFs only as carefully justified hedge or downside exposure. SHV/cash-like exposure may count as "
-        "one position only when evidence is too weak for full leveraged risk. " + _RULES + " " + ORDER_READINESS_RULE
+        "search_news call with limit <= 5. " + _BASKET_RULE + " " + _RULES
     ),
 }
 
@@ -135,14 +126,8 @@ TASK_PROMPTS = {
         "debt-and-liquidity view. Explain whether liquidity argues for 3x risk, 2x risk-down, inverse exposure, or SHV ballast."
     ),
     "thoughtful_disagreement": (
-        "Challenge the growth, inflation, and liquidity views. Prefer a diversified leveraged basket of at least three symbols unless risk evidence argues for SHV/cash-like ballast."
-    ),
-    "trader": (
-        "Rebalance into a diversified leveraged ETF basket of at least three positions. Bias toward 3x ETFs, use 2x only "
-        "as a risk-down choice, and use inverse ETFs only with explicit hedge/downside evidence. Before each order, call "
-        "get_account_balance, get_positions, and get_last_price for the exact ordered symbol in this same run. "
-        + SIZING_RULE
-        + " Explain which specialist advice you accepted or rejected and cite FRED/news evidence used."
+        "Challenge the growth, inflation, and liquidity views. Prefer a diversified leveraged basket of at least three symbols unless risk evidence argues for SHV/cash-like ballast. "
+        "Finish by calling submit_basket with your final basket."
     ),
 }
 
