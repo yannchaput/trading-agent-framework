@@ -6,7 +6,7 @@ An LLM team (growth, inflation and debt/liquidity analysts, a thoughtful-disagre
 
 ## Architecture
 
-- `agent_ray_dalio.py` -- `RayDalioStrategy`, `DalioState`, the LangGraph graph (`_build_graph`). `prompts.py` -- `UNIVERSE` (54 symbols: 53 leveraged ETFs + SHV), the system/task prompts and `CONTEXT`. `readiness.py` -- `require_readiness_before_orders`.
+- `agent_ray_dalio.py` -- `RayDalioStrategy`, `DalioState`, the LangGraph graph (`_build_graph`). `prompts.py` -- `UNIVERSE` (54 symbols: 53 leveraged funds + SHV, each mapped to its signed daily leverage, what it tracks and its issuer; `CONTEXT["universe"]` hands that table to every agent so they stop guessing funds from memory: the first backtest called TMF 2x and TWM a 3x S&P fund, and held UGL with its inverse GLL), the system/task prompts and `CONTEXT`. `readiness.py` -- `require_readiness_before_orders`.
 - Graph: `START -> growth_agent | inflation_agent | debt_liquidity_agent -> thoughtful_disagreement -> trader -> END`, one run per daily session (`sleeptime = "1D"`). Node names are the agent names (a node cannot share a name with a state slot).
 - Agents are created once in `initialize` (`AgentManager.create` rejects duplicate names); nodes only run them. Each agent gets its own tool instances (`news_tools` keeps a per-instance run memo).
 
@@ -31,4 +31,5 @@ An LLM team (growth, inflation and debt/liquidity analysts, a thoughtful-disagre
 
 - **Run it on an account holding only this strategy:** the trader may sell any position.
 - Alpaca news before 2026-04-29 is empty in backtests, so earlier windows run blind on news.
+- The fund descriptions were checked against Yahoo on 2026-11-21. ERX/ERY, GUSH/DRIP and NUGT/DUST were 3x before 2020, so the table is wrong for earlier windows.
 - The 54 tickers were taken from lumibot and not verified tradable; the default backtest window is `PredefinedWindow.BI_YEAR_LATEST` (about two years, so mostly before the news archive) on Yahoo daily bars.
