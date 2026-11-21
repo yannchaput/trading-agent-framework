@@ -2,11 +2,13 @@
 
 ## General
 
+* Fix pyright errors (consume tokens)
+* Update claude.md so that simplify skill is always run before commit as pony-tail. Check if a hook would be possible.
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
 * Set up a mlflow server for agent evaluation
-* create a PR template
+* ~~create a PR template~~
 * ~~ Migrate projects to the 2nd hard drive (with the models)~~
 * ~~Enable IBKR broker~~
 * ~~Build a log "purge" batch for logs more than 1 month old (except backstesting). Same for 'cache' (inclusing backtesting)~~
@@ -79,6 +81,11 @@
 ### Insider
 
 * Replace the fixed 10 stocks with the 100 first stocks of the cross momentum universe. As this universe won't be rabalanced, criteria is to decide.
+
+### Ray Dalio
+
+* Set guardrails if they are missing
+* Optimize and fix bugs of the strategy
 
 ### LLM benchmark
 
