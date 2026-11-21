@@ -31,15 +31,17 @@ def account_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
     """Account tools bound to `strategy`."""
 
     def get_account_balance() -> dict[str, Any]:
-        """Get cash, portfolio value and buying power."""
+        """Get cash, portfolio value, buying power and spendable (the most a buy may spend)."""
         try:
             account = strategy.broker.get_account()
+            spendable = strategy.spendable_cash(account)
         except BrokerError as exc:
             return {"error": str(exc)}
         return {
             "cash": float(account.cash),
             "portfolio_value": float(account.portfolio_value),
             "buying_power": float(account.buying_power),
+            "spendable": float(spendable),
         }
 
     def get_positions() -> dict[str, Any]:

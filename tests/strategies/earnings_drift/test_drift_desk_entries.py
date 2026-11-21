@@ -11,7 +11,7 @@ from tests.strategies.earnings_drift.drift_helpers import RIG_DATES, DeskRig, ma
 from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
 from trading_agent_framework.strategies.earnings_drift.book import TradeState
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
-from trading_agent_framework.utils.errors import OrderValidationError
+from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError, OrderValidationError
 
 
 def test_max_quantity_is_the_slot_budget_over_the_reaction_close(tmp_path: Path) -> None:
@@ -19,6 +19,18 @@ def test_max_quantity_is_the_slot_budget_over_the_reaction_close(tmp_path: Path)
     assert rig.desk.max_quantity("AAA") == 125  # 100000 / 8 / 100
     assert rig.desk.max_quantity("BBB") == 250
     assert rig.desk.max_quantity("ZZZ") == 0
+
+
+def test_max_quantity_is_zero_when_spendable_cash_cannot_be_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+
+    def unavailable() -> D:
+        raise BrokerError("no quote for an open order")
+
+    monkeypatch.setattr(rig.strategy, "spendable_cash", unavailable)
+    with caplog.at_level(logging.WARNING):
+        assert rig.desk.max_quantity("AAA") == 0
+    assert "no buy can be sized: no quote for an open order" in caplog.text
 
 
 def test_buy_submits_a_day_market_order_and_records_a_pending_trade(tmp_path: Path) -> None:
@@ -184,7 +196,43 @@ def test_baseline_buys_every_candidate_best_first_up_to_the_free_slots(tmp_path:
     trade = rig.state.trades["AAA"]
     assert trade.trail_percent == D("8.0") and trade.thesis == "baseline"
     order = rig.strategy.get_order(trade.entry_order_id)
-    assert order is not None and order.quantity == D(1000)  # one slot: the whole 100000, at the reaction close of 100
+    assert order is not None and order.quantity == D(980)  # one slot: the whole 100000 less 2% of the book (spendable), at the reaction close of 100
+
+
+def test_a_baseline_buy_sized_at_a_stale_reaction_close_is_retried_at_the_most_that_fits(tmp_path: Path) -> None:
+    # Sized at the reaction close of 99: 98000 / 99 = 989 shares, but the last price is 100, so 980 whole shares fit
+    rig = DeskRig(tmp_path, params=DriftParams(agent_enabled=False, max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
+    assert rig.desk.baseline_entries() == ["AAA"]
+    order = rig.strategy.get_order(rig.state.trades["AAA"].entry_order_id)
+    assert order is not None and order.quantity == D(980)
+    [line] = rig.lines(rig.decisions_path)
+    assert line["decision"] == "baseline" and line["quantity"] == 980
+
+
+def test_the_buy_tool_says_when_the_retry_bought_fewer_shares_than_requested(tmp_path: Path) -> None:
+    # max_quantity at the reaction close of 99 is 989; at the last price of 100 only 980 fit
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
+    result = rig.desk.buy("AAA", 989, 8.0, "beat and raise")
+    assert (result["quantity"], result["requested"]) == (980.0, 989)
+
+
+def test_the_buy_tool_has_no_requested_field_when_the_quantity_was_sent_as_asked(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    assert "requested" not in rig.desk.buy("AAA", 10, 8.0, "beat and raise")
+
+
+def test_a_buy_with_an_unknown_outcome_says_the_order_may_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+
+    def timeout(order: object) -> None:
+        raise BrokerUncertainError("read timed out")
+
+    monkeypatch.setattr(rig.strategy, "submit_order", timeout)
+    with caplog.at_level(logging.WARNING):
+        result = rig.desk.buy("AAA", 10, 8.0, "beat and raise")
+    assert result == {"error": "buy AAA: outcome unknown at the broker, the order may exist -- check the account: read timed out"}
+    assert "outcome unknown at the broker, the order may exist" in caplog.text and "refused" not in caplog.text
+    assert "AAA" in rig.state.traded_symbols  # kept, so the reconcile can adopt the position if it filled
 
 
 def test_candidate_sheets_and_balances(tmp_path: Path) -> None:
@@ -213,7 +261,7 @@ def test_holdings_context_lists_open_trades(tmp_path: Path) -> None:
     }
 
 
-# --- A1: the cycle's buys are deducted once (buying_power already nets them) ---------------------
+# --- A1: the cycle's buys are deducted once (`Strategy.spendable_cash` counts the open orders) ----------
 
 
 def test_a_cycle_buy_is_counted_once_in_max_quantity(tmp_path: Path) -> None:
@@ -222,19 +270,19 @@ def test_a_cycle_buy_is_counted_once_in_max_quantity(tmp_path: Path) -> None:
     assert "error" not in rig.desk.buy("AAA", 50, 8.0, "x")
     account = rig.broker.get_account()
     assert account.cash == D("10000") and account.buying_power == D("5000")  # the broker already nets the pending buy
-    assert rig.desk.max_quantity("BBB") == 100  # the second 5000 slot at 50, not 0
-    assert "error" not in rig.desk.buy("BBB", 100, 8.0, "y")
+    assert rig.desk.max_quantity("BBB") == 96  # spendable 10000 - 5000 - 2% of the book = 4800 at 50, not 0
+    assert "error" not in rig.desk.buy("BBB", 96, 8.0, "y")
 
 
 def test_sell_proceeds_are_credited_and_cycle_buys_deducted_once(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), budget=D("10000"))
     rig.open_aaa(quantity=50)  # filled at 101: cash 4950
     rig.desk.begin_session(RIG_DATES[1], RIG_DATES[:2], [make_candidate("BBB", day=RIG_DATES[1], close=50.0)], {})
-    assert rig.desk.max_quantity("BBB") == 99  # 4950 left, before any sell
+    assert rig.desk.max_quantity("BBB") == 94  # 4950 left, before any sell, less 2% of the 10050 book (201)
     assert rig.desk.sell("AAA", "rotate")["side"] == "sell"  # 50 x 102 = 5100 credited
-    assert rig.desk.max_quantity("BBB") == 201  # the whole 10050 slot
+    assert rig.desk.max_quantity("BBB") == 196  # 10050 - 201 = 9849 spendable, inside the 10050 slot
     assert "error" not in rig.desk.buy("BBB", 100, 8.0, "y")
-    assert rig.desk.max_quantity("BBB") == 101  # 10050 - 5000 committed = 5050, deducted once
+    assert rig.desk.max_quantity("BBB") == 96  # 9849 - 5000 committed = 4849, deducted once
 
 
 def test_a_stop_order_that_cannot_even_be_built_falls_back_to_the_backstop_sell(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -261,4 +309,4 @@ def test_a_cycle_buy_that_fills_inside_the_cycle_is_not_deducted_again(tmp_path:
     assert "error" not in rig.desk.buy("AAA", 50, 8.0, "x")  # estimated 50 x 100 = 5000
     rig.advance()  # the buy fills at the next bar (101): cash 4950; no new session, the cycle goes on
     assert rig.broker.get_account().cash == D("4950")
-    assert rig.desk.max_quantity("BBB") == 99  # 4950 at 50 a share, not 4950 - 5000
+    assert rig.desk.max_quantity("BBB") == 94  # 4950 less 2% of the 10050 book = 4749 at 50 a share, not 4950 - 5000

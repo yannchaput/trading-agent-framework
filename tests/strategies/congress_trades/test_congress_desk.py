@@ -137,9 +137,9 @@ def test_a_buy_beyond_the_smaller_of_buying_power_and_cash_is_refused(tmp_path: 
     low_power = _book(tmp_path, cash=5_000.0, buying_power=1_000.0)
 
     for book in (low_cash, low_power):
-        refused = book.place("AAA", "buy", 30)  # $1,500 against $1,000
-        assert "at most 20 shares" in refused["error"]
-        assert "error" not in book.place("AAA", "buy", 20)
+        refused = book.place("AAA", "buy", 30)  # $1,500 against $1,000 less the 2% buffer ($200) = $800
+        assert "at most 16 shares" in refused["error"]
+        assert "error" not in book.place("AAA", "buy", 16)
 
 
 def test_buying_power_alone_never_funds_a_buy_on_a_margin_account(tmp_path: Path) -> None:
@@ -152,8 +152,8 @@ def test_this_runs_buys_are_deducted_from_the_money_available(tmp_path: Path) ->
     book = _book(tmp_path, cash=2_000.0, buying_power=2_000.0)
     book.place("AAA", "buy", 30)  # $1,500
 
-    assert "at most 20 shares" in book.place("BBB", "buy", 21)["error"]  # $500 left; BBB $25 a share
-    assert "error" not in book.place("BBB", "buy", 20)
+    assert "at most 12 shares" in book.place("BBB", "buy", 13)["error"]  # $500 left less the $200 buffer; BBB $25 a share
+    assert "error" not in book.place("BBB", "buy", 12)
 
 
 def _fill(book: _Book, order_id: str, price: float) -> None:
@@ -170,8 +170,8 @@ def test_a_filled_buy_is_not_deducted_twice_once_the_account_cash_reflects_it(tm
     first = book.place("AAA", "buy", 30)  # $1,500
     _fill(book, first["order_id"], 50.0)  # cash is now $500
 
-    assert "at most 20 shares" in book.place("BBB", "buy", 21)["error"]  # $500 available, BBB $25 a share
-    assert "error" not in book.place("BBB", "buy", 20)
+    assert "at most 12 shares" in book.place("BBB", "buy", 13)["error"]  # $500 less the $200 buffer, BBB $25 a share
+    assert "error" not in book.place("BBB", "buy", 12)
 
 
 def test_a_filled_sells_proceeds_are_not_added_twice_once_the_account_cash_reflects_them(tmp_path: Path) -> None:
@@ -182,8 +182,8 @@ def test_a_filled_sells_proceeds_are_not_added_twice_once_the_account_cash_refle
     book.broker.account = AccountBalances(cash=Decimal(1_000), portfolio_value=Decimal(10_000), buying_power=Decimal(20_000))
     book.broker.positions = []
 
-    assert "at most 20 shares" in book.place("AAA", "buy", 30)["error"]  # $1,000, not $2,000
-    assert "error" not in book.place("AAA", "buy", 20)
+    assert "at most 16 shares" in book.place("AAA", "buy", 30)["error"]  # $1,000 less the $200 buffer, not $1,800
+    assert "error" not in book.place("AAA", "buy", 16)
 
 
 def test_the_proceeds_of_this_runs_sells_fund_the_buys(tmp_path: Path) -> None:
@@ -192,8 +192,8 @@ def test_the_proceeds_of_this_runs_sells_fund_the_buys(tmp_path: Path) -> None:
     assert "error" in book.place("AAA", "buy", 10)  # no cash yet
     book.desk.begin_run({"AAA": 0.15, "BBB": 0.05}, ("OLD",))
     assert "error" not in book.place("OLD", "sell", 100)
-    assert "at most 20 shares" in book.place("AAA", "buy", 30)["error"]  # the $1,000 of proceeds
-    assert "error" not in book.place("AAA", "buy", 20)
+    assert "at most 16 shares" in book.place("AAA", "buy", 30)["error"]  # the $1,000 of proceeds less the $200 buffer
+    assert "error" not in book.place("AAA", "buy", 16)
 
 
 # --- sells --------------------------------------------------------------------------------------------

@@ -61,12 +61,12 @@ def plan_entry(
     last_price: Decimal,
     daily_atr: float,
     equity: Decimal,
-    buying_power: Decimal,
-    cash: Decimal,
-    pending_sell_proceeds: Decimal,
+    spendable: Decimal,
     params: VwapPullbackParameters,
 ) -> EntryPlan:
     """The size, limit and stop of an entry, or `EntryRefused` with the reason.
+
+    `spendable` is `Strategy.spendable_cash()`: the money a new buy may spend (negative when fully invested).
 
     Refusals, in order: stop not below the trigger; R outside the ATR band; price already too far above the
     trigger (chasing); a size that rounds to zero shares.
@@ -89,9 +89,7 @@ def plan_entry(
     # Size = the smallest of three caps:
     by_risk = equity * _ratio(params.risk_per_trade) / r  # losing R per share costs risk_per_trade of equity
     by_size = equity * _ratio(params.max_position_pct) / limit  # no position above max_position_pct of equity
-    # Cash-account rule: never size against buying_power alone (a margin account's is a
-    # multiple of equity); sells already submitted are credited because they fund this buy.
-    by_cash = min(buying_power, cash + pending_sell_proceeds) * _ratio(params.cash_buffer) / limit
+    by_cash = spendable / limit  # the framework's figure already keeps its buffer and counts the open orders
     quantity = min(by_risk, by_size, by_cash).to_integral_value(rounding=ROUND_FLOOR)
     if quantity <= 0:
         raise EntryRefused("the position size rounds to 0 shares (not enough equity or cash for this stop distance)")

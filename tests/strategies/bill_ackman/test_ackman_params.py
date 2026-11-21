@@ -42,6 +42,7 @@ def test_the_params_are_frozen() -> None:
         {"min_weight": 0.4, "max_weight": 0.35, "rebalance_band": 0.05},
         {"min_weight": 0.04, "rebalance_band": 0.05},  # a chosen stock could sit below the band and never be bought
         {"cash_buffer": -0.01},
+        {"cash_buffer": 0.01},  # below the framework's 2% buy buffer
         {"cash_buffer": 1.0},
         {"forced_exit_fails": 0},
         {"rebalance_band": 0.0},
@@ -66,7 +67,7 @@ def test_an_out_of_range_value_is_refused(overrides: dict[str, object]) -> None:
 
 
 def test_boundary_values_are_accepted() -> None:
-    AckmanParams(min_weight=0.05, max_weight=0.05, rebalance_band=0.05, cash_buffer=0.0, max_positions=20, forced_exit_fails=1)
+    AckmanParams(min_weight=0.05, max_weight=0.05, rebalance_band=0.05, cash_buffer=0.02, max_positions=19, forced_exit_fails=1)  # 19 x 5% fits in 98%
 
 
 def test_a_cooldown_of_zero_and_the_temperature_bounds_are_accepted() -> None:

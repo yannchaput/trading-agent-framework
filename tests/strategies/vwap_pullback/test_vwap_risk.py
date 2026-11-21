@@ -18,9 +18,7 @@ def _plan(**overrides: object) -> risk.EntryPlan:
         "last_price": D("101.90"),
         "daily_atr": 2.0,
         "equity": D("100000"),
-        "buying_power": D("100000"),
-        "cash": D("100000"),
-        "pending_sell_proceeds": D(0),
+        "spendable": D("98000"),  # `Strategy.spendable_cash()`: 100000 less 2% of the book
         "params": PARAMS,
     }
     return risk.plan_entry(**(kwargs | overrides))  # ty: ignore[invalid-argument-type]
@@ -39,7 +37,16 @@ def test_plan_entry_takes_the_smallest_of_risk_size_and_cash_caps() -> None:
     assert plan.stop_price == D("100.90")
     assert plan.r_per_share == D("0.95")
     assert plan.limit_price == D("102.00")
-    assert plan.quantity == D(490)  # risk 526, 50% cap 490, cash 931
+    assert plan.quantity == D(490)  # risk 526, 50% cap 490, spendable 960
+
+
+def test_plan_entry_caps_the_quantity_by_spendable_over_the_limit() -> None:
+    assert _plan(spendable=D("10200")).quantity == D(100)  # 10200 at the 102.00 limit, below the risk and size caps
+
+
+def test_plan_entry_refuses_a_negative_spendable() -> None:
+    with pytest.raises(risk.EntryRefused, match="0 shares"):
+        _plan(spendable=D("-500"))  # a fully invested book
 
 
 def test_plan_entry_refuses_a_stop_too_tight_for_the_band() -> None:
@@ -54,7 +61,7 @@ def test_plan_entry_refuses_to_chase() -> None:
 
 def test_plan_entry_refuses_a_size_that_rounds_to_zero() -> None:
     with pytest.raises(risk.EntryRefused, match="0 shares"):
-        _plan(cash=D("50"), buying_power=D("50"))
+        _plan(spendable=D("50"))
 
 
 def test_entry_window() -> None:

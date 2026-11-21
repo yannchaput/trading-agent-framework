@@ -38,6 +38,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
         ({"stock_weight": 1.2}, "stock_weight must be in (0, 1]"),
         ({"stock_weight": 0.1}, "max_book_size x stock_weight must fit in 1 - cash_buffer"),  # 10 x 10% > 98%
         ({"stock_weight": 0.03}, "stock_weight must be above rebalance_band"),
+        ({"cash_buffer": 0.01}, "cash_buffer must be in [0.02, 1)"),  # below the framework's 2% buy buffer
         ({"stock_weight": math.nan}, "must be finite"),
         ({"candidate_count": 35}, "retention_rank must be above candidate_count"),
         ({"retention_rank": 15}, "retention_rank must be above candidate_count"),
@@ -62,6 +63,10 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
 def test_an_invalid_value_is_refused_with_a_reason(overrides: dict, message: str) -> None:
     with pytest.raises(ValueError, match=re.escape(message)):  # messages contain "(0, 1]"
         BullBearParams(**overrides)
+
+
+def test_a_cash_buffer_equal_to_the_framework_buy_buffer_is_accepted() -> None:
+    assert BullBearParams(cash_buffer=0.02).cash_buffer == 0.02
 
 
 @pytest.mark.parametrize("field", ["shortlist_size", "min_picks", "max_picks", "book_size", "max_vetoes"])

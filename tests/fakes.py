@@ -659,6 +659,23 @@ class FakeBroker(Broker):
         self.calls.append("stop_stream")
 
 
+class TickingBroker(FakeBroker):
+    """A `FakeBroker` whose last price of a symbol in `ticks` moves to its new value right after its first read.
+
+    It models a live quote ticking between a caller's sizing read and the budget check in `Strategy.submit_order`.
+    """
+
+    def __init__(self, clock: MarketClock, strategy_name: str = "momentum", *, ticks: dict[str, Decimal]) -> None:
+        super().__init__(clock, strategy_name)
+        self.ticks = dict(ticks)
+
+    def get_last_price(self, asset: Asset) -> Decimal | None:
+        price = super().get_last_price(asset)
+        if asset.symbol in self.ticks:
+            self.last_prices[asset.symbol] = self.ticks.pop(asset.symbol)
+        return price
+
+
 # --- agent memory ---------------------------------------------------------------
 
 MEMORY_START = et(2026, 9, 14, 10, 0)

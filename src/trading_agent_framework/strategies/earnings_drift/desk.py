@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.common.rebalancer import submit_buy
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.stops import StopRelease, release_stop
 from trading_agent_framework.strategies.earnings_drift.book import DriftState, Trade, TradeState, sessions_held
@@ -27,7 +28,7 @@ from trading_agent_framework.strategies.earnings_drift.fact_sheet import fact_sh
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.screening import Candidate
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -40,15 +41,6 @@ _DATA_ERRORS = (BrokerError, BacktestError)
 def _lean(order: Order) -> dict[str, Any]:
     """Compact order summary for the agent."""
     return {"identifier": order.identifier, "symbol": order.asset.symbol, "side": order.side.value, "quantity": float(order.quantity or 0), "status": order.status.value}
-
-
-def _unfilled_value(orders: Sequence[tuple[Order, Decimal]]) -> Decimal:
-    """Estimated dollars of the active orders still to fill, each open quantity at its sizing price.
-
-    A filled part is already in the broker's cash (a market order sent while the market is open fills within seconds), so
-    counting it again took a buy's cost off twice; an order no longer active (filled, canceled, rejected) moves nothing more.
-    """
-    return sum((Decimal(order.quantity - order.filled_quantity) * price for order, price in orders if order.is_active() and order.quantity is not None), Decimal(0))
 
 
 def _is_long(position: Position) -> bool:
@@ -106,10 +98,6 @@ class Desk:
         self._trading_dates: list[date] = []
         self._candidates: dict[str, Candidate] = {}
         self._decided: set[str] = set()
-        # The buys and market sells submitted this cycle with the price their cost or proceeds were estimated at: only the part
-        # still to fill counts toward the money available, since a filled part is already in the account's cash.
-        self._cycle_buys: list[tuple[Order, Decimal]] = []
-        self._cycle_sells: list[tuple[Order, Decimal]] = []
 
     # --- session ---------------------------------------------------------------------------------
 
@@ -121,8 +109,6 @@ class Desk:
             self._trading_dates = sorted(set(trading_dates)) if trading_dates else sorted({*self._trading_dates, today})
             self._candidates = {candidate.symbol: candidate for candidate in candidates}
             self._decided = set()
-            self._cycle_buys = []
-            self._cycle_sells = []
             for symbol, reason in sorted(rejections.items()):
                 self._log_decision(symbol, "rejected", reason=reason)
 
@@ -161,13 +147,11 @@ class Desk:
                 return 0
             price = Decimal(str(candidate.reaction.close))
             try:
-                account = self._strategy.broker.get_account()
+                cap = self._strategy.broker.get_account().portfolio_value / self._params.max_positions
+                available = self._strategy.spendable_cash()  # counts the open orders, keeps 2% of the book back
             except _DATA_ERRORS as exc:
                 self._strategy.log_warning(f"[earnings_drift] account unavailable, no buy can be sized: {exc}")
                 return 0
-            cap = account.portfolio_value / self._params.max_positions
-            # `buying_power` already nets the pending orders (this cycle's buys included); raw `cash` does not.
-            available = min(account.buying_power, account.cash + _unfilled_value(self._cycle_sells) - _unfilled_value(self._cycle_buys))
             budget = min(cap, available)
             if price <= 0 or budget <= 0:
                 return 0
@@ -597,8 +581,12 @@ class Desk:
             # still fill, and `traded_symbols` is what lets the reconcile adopt such a position and give it a stop.
             self._state.traded_symbols.add(symbol)
             self._save_state()
-            try:
-                order = self._strategy.submit_order(self._strategy.create_order(symbol, shares, "buy"))
+            try:  # sized at the reaction close: refused after an uptick, it is retried once at the whole shares that fit
+                order, sent = submit_buy(self._strategy, symbol, shares, float(candidate.reaction.close), decimals=0)
+            except BrokerUncertainError as exc:  # the first attempt or its retry may exist at the broker: never resent
+                message = f"buy {symbol}: outcome unknown at the broker, the order may exist -- check the account: {exc}"
+                self._strategy.log_warning(f"[earnings_drift] {message}")
+                return {"error": message}
             except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
                 self._strategy.log_warning(f"[earnings_drift] buy {symbol} refused by the broker: {exc}")
                 return {"error": str(exc)}
@@ -611,11 +599,13 @@ class Desk:
                 accession_number=candidate.event.accession_number,
                 reaction_low=Decimal(str(candidate.reaction.reaction_low)),
             )
-            self._cycle_buys.append((order, Decimal(str(candidate.reaction.close))))
             self._decided.add(symbol)
-            self._log_decision(symbol, decision, quantity=int(shares), trail_percent=float(trail), reason=thesis)
+            self._log_decision(symbol, decision, quantity=int(sent), trail_percent=float(trail), reason=thesis)
             self._save_state()
-            return {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
+            result = {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
+            if sent != shares:  # the price ticked up since the reaction close: the retry bought fewer shares
+                result["requested"] = int(shares)
+            return result
 
     def _entry_filled(self, trade: Trade, order: Order) -> None:
         """Mark the trade open with its filled quantity and place its trailing stop."""
@@ -744,9 +734,6 @@ class Desk:
             self._strategy.log_error(f"[earnings_drift] market sell of {trade.quantity} {trade.symbol} failed ({exit_reason}): {exc}")
             return None
         trade.exit_order_id, trade.exit_reason = submitted.identifier, exit_reason
-        price = self._price(trade.symbol)
-        if price is not None:
-            self._cycle_sells.append((submitted, price))
         return submitted
 
     def _open_trades(self) -> list[Trade]:

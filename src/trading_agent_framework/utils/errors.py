@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 
 class TradingFrameworkError(Exception):
     """Base exception for all trading-agent-framework errors."""
@@ -21,6 +23,16 @@ class BrokerUncertainError(BrokerError):
 
 class OrderValidationError(BrokerError, ValueError):
     """Raised when an order fails validation before submission."""
+
+
+class InsufficientFundsError(OrderValidationError):
+    """A buy costs more than `Strategy.spendable_cash()`; `max_quantity` is the most that fits."""
+
+    def __init__(self, message: str, *, spendable: Decimal, max_quantity: Decimal) -> None:
+        """Keep the spendable cash (may be negative) and the largest quantity that fits (0 when none)."""
+        super().__init__(message)
+        self.spendable = spendable
+        self.max_quantity = max_quantity
 
 
 class OrderEventError(BrokerError, ValueError):

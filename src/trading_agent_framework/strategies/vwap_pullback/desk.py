@@ -23,7 +23,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from trading_agent_framework.entities.enums import OrderSide, OrderType
+from trading_agent_framework.entities.enums import OrderSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.stops import Release, StopRelease, release_stop
@@ -152,6 +152,7 @@ class Desk:
         try:
             last = self._strategy.get_last_price(symbol)
             account = self._strategy.broker.get_account()
+            spendable = self._strategy.spendable_cash(account)
         except _DATA_ERRORS as exc:
             return {"error": f"price or account unavailable: {exc}"}
         if last is None or setup.trigger_close is None or setup.pullback_low is None:
@@ -163,9 +164,7 @@ class Desk:
                 last_price=last,
                 daily_atr=info.daily_atr,
                 equity=account.portfolio_value,
-                buying_power=account.buying_power,
-                cash=account.cash,
-                pending_sell_proceeds=self._pending_sell_proceeds(),
+                spendable=spendable,
                 params=self._params,
             )
         except risk.EntryRefused as exc:
@@ -206,16 +205,6 @@ class Desk:
             return self._strategy.get_position(symbol) is not None
         except _DATA_ERRORS:
             return True  # unknown: refuse rather than double up
-
-    def _pending_sell_proceeds(self) -> Decimal:
-        """What working market/limit sells should bring in (a stop only sells if triggered)."""
-        total = Decimal(0)
-        for order in self._strategy.broker.tracker.get_active_orders():
-            if order.side is OrderSide.SELL and order.order_type in (OrderType.MARKET, OrderType.LIMIT) and order.quantity is not None:
-                price = order.limit_price or self.last_close(order.asset.symbol)
-                if price is not None:
-                    total += order.quantity * price
-        return total
 
     # --- order events ----------------------------------------------------------------
 

@@ -85,7 +85,7 @@ LEVERAGE_RULE = (
     "leveraged setup."
 )
 SIZING_RULE = (  # this repo's rule for every agent that buys (strategies/CLAUDE.md), not in lumibot
-    "Size every buy against the SMALLER of buying_power and cash plus the proceeds of the sells you submitted in this run, never against buying_power alone."
+    "Never buy for more than 'spendable' from get_account_balance (it already counts open orders and keeps 2% of the book back); read it again after each order."
 )
 _RULES = DATA_USAGE_RULE + " " + LEVERAGE_RULE
 

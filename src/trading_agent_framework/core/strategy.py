@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -39,13 +39,22 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.memory.store import MemoryStore, memory_db_path
 from trading_agent_framework.utils.clock import MARKET_TZ, MarketClock
-from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, LLMStatsError, OrderValidationError, RegimeDataError
+from trading_agent_framework.utils.errors import (
+    BrokerError,
+    ConfigurationError,
+    InsufficientFundsError,
+    LLMStatsError,
+    OrderValidationError,
+    RegimeDataError,
+)
+from trading_agent_framework.utils.helpers import BUY_BUFFER
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.data.base import BacktestDataSource
     from trading_agent_framework.backtesting.runner import BacktestResult
     from trading_agent_framework.brokers.news import NewsProvider
+    from trading_agent_framework.entities.account import AccountBalances
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +76,11 @@ def _to_asset(asset: Asset | str) -> Asset:
 def _to_decimal(value: Number) -> Decimal:
     """Coerce a number to `Decimal` via `str`, avoiding float binary artefacts."""
     return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def _is_stop(order: Order) -> bool:
+    """A stop, stop-limit or trailing-stop order: it may never trigger."""
+    return order.stop_price is not None or order.trail_price is not None or order.trail_percent is not None
 
 
 def _to_optional_decimal(value: Number | None) -> Decimal | None:
@@ -534,13 +548,72 @@ class Strategy:
             trail_percent=trail_pct,
         )
 
+    def spendable_cash(self, account: AccountBalances | None = None) -> Decimal:
+        """Money a new buy may spend: the smaller of buying power and cash (after open orders), less 2% of the book.
+
+        Open orders count for their unfilled part only (a filled part is already in cash): a sell credits its
+        limit price (market: last price; a stop or trailing stop credits nothing, it may never trigger), a buy
+        costs its limit price (market: last price). Negative when the book is fully invested.
+        The account is read BEFORE the orders: a sell filling in between is then counted nowhere, never twice.
+
+        Args:
+            account: An account snapshot the caller just read, used instead of reading it again (the open
+                orders are still read after it, so the order above holds). None reads the account.
+        """
+        if account is None:
+            account = self.broker.get_account()
+        net_credit = Decimal(0)
+        open_orders = self.broker.tracker.get_active_orders()
+        # A stop sell is never priced: it credits nothing (below). A stop buy still costs money, so it is.
+        unpriced = {o.asset for o in open_orders if o.quantity is not None and (o.limit_price or o.stop_limit_price) is None and not (o.side is OrderSide.SELL and _is_stop(o))}
+        last_prices = self.get_last_prices(unpriced) if unpriced else {}  # one batched lookup, not one per order
+        for order in open_orders:
+            value = self._unfilled_value(order, last_prices)
+            if order.side is OrderSide.BUY:
+                net_credit -= value
+            elif not _is_stop(order):
+                net_credit += value
+        spendable = min(account.buying_power, account.cash + net_credit)
+        return spendable - BUY_BUFFER * account.portfolio_value
+
+    def _unfilled_value(self, order: Order, last_prices: Mapping[Asset, Decimal | None]) -> Decimal:
+        """Estimated money of the part of `order` still to fill; zero when it has no price estimate."""
+        if order.quantity is None:
+            return order.notional or Decimal(0)  # a partly filled notional order counts in full: rare, the broker is the last check
+        price = order.limit_price or order.stop_limit_price or last_prices.get(order.asset)
+        return (order.quantity - order.filled_quantity) * price if price is not None else Decimal(0)
+
+    def _order_price(self, order: Order) -> Decimal | None:
+        """The order's own limit price, else the asset's last price (`None` when neither is known)."""
+        return order.limit_price or order.stop_limit_price or self.get_last_price(order.asset)
+
+    def _check_buy_budget(self, order: Order) -> None:
+        """Raise `InsufficientFundsError` when a buy with a quantity costs more than `spendable_cash()`."""
+        if order.side is not OrderSide.BUY or order.quantity is None:
+            return
+        price = self._order_price(order)
+        if price is None:
+            return
+        cost = order.quantity * price
+        spendable = self.spendable_cash()
+        if cost <= spendable:
+            return
+        max_quantity = (spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN) if spendable > 0 else Decimal(0)
+        raise InsufficientFundsError(
+            f"buy {order.quantity.normalize():f} {order.asset.symbol} needs ~${cost:,.2f}, spendable is ${spendable:,.2f} "
+            f"(cash after open orders, {BUY_BUFFER:.0%} of the book kept back): at most {max_quantity.normalize():f} shares",
+            spendable=spendable,
+            max_quantity=max_quantity,
+        )
+
     def submit_order(self, order: Order) -> Order:
-        """Submit one order to the broker and return it with its broker-assigned state."""
+        """Submit one order to the broker and return it; a buy above `spendable_cash()` raises `InsufficientFundsError`."""
+        self._check_buy_budget(order)
         return self.broker.submit_order(order)
 
     def submit_orders(self, orders: Sequence[Order]) -> list[Order]:
-        """Submit several orders and return them in the same order."""
-        return self.broker.submit_orders(orders)
+        """Submit several orders and return them in the same order; each buy sees the ones before it as open orders."""
+        return [self.submit_order(order) for order in orders]
 
     def cancel_order(self, order: Order) -> None:
         """Cancel one open order."""

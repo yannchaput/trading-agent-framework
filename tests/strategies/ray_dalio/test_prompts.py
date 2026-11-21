@@ -44,3 +44,7 @@ def test_only_the_trader_is_told_about_orders_and_sizing():
     assert all("submit_order" not in SYSTEM_PROMPTS[name] for name in others)
     assert all("submit_order" not in TASK_PROMPTS[name] for name in others)
     assert all(ORDER_READINESS_RULE not in SYSTEM_PROMPTS[name] and SIZING_RULE not in TASK_PROMPTS[name] for name in others)
+
+
+def test_sizing_rule_points_at_spendable():
+    assert "spendable" in SIZING_RULE and "buying_power" not in SIZING_RULE

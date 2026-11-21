@@ -4,9 +4,8 @@ The trading agent decides which orders to send, but this desk makes a bad order 
 refusal comes back as `{"error": ...}` (with the numbers the agent needs to correct it) and is logged as a warning:
 
 - a buy only for a stock in the target portfolio, never beyond its target weight (held + open buys + this order, within
-  the rebalance band), and never beyond the money: the SMALLER of `buying_power` and `cash` + the estimated proceeds of the
-  sells placed this run still to fill, less what the buys placed this run still have to cost (a filled part is already in
-  `cash`; never `buying_power` alone: on a margin account it exceeds cash);
+  the rebalance band), and never beyond the money: `Strategy.spendable_cash()`, the framework's budget (the smaller of
+  `buying_power` and `cash` after every open order's unfilled part, less 2% of the book);
 - a sell only of a position this strategy owns (a target stock or one it ordered before: a shared account's other positions are
   left alone), never above what is held and not already being sold, and never below a target stock's weight;
 - sells go out before the first buy of the run, there are no shorts, and an order below the minimum trade size is refused
@@ -32,12 +31,12 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
-from trading_agent_framework.entities.enums import OrderSide, OrderStatus, PositionSide
+from trading_agent_framework.entities.enums import OrderStatus, PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.common.handoff import OrderView
 from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, TradingFrameworkError
-from trading_agent_framework.utils.helpers import fractional_qty
+from trading_agent_framework.utils.helpers import BUY_BUFFER, fractional_qty
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -118,7 +117,6 @@ class TradeDesk:
         self._orders: dict[str, Order] = {}
         self._checked: set[str] = set()
         self._buys_placed = False
-        self._prices: dict[str, float] = {}  # order id -> the price its cost or proceeds were estimated at
 
     # --- the run -----------------------------------------------------------------------------------
 
@@ -130,7 +128,6 @@ class TradeDesk:
             self._orders = {}
             self._checked = set()
             self._buys_placed = False
-            self._prices = {}
 
     def set_target(self, target: Mapping[str, float]) -> None:
         """Install the target weights mid-run, keeping the orders already placed and the tickers traded."""
@@ -198,26 +195,13 @@ class TradeDesk:
 
     # --- reading the book ----------------------------------------------------------------------------
 
-    def _book(self) -> tuple[float, float, float, dict[str, float], dict[str, float], dict[str, float]]:
-        """(portfolio value, cash, buying power, held, buys in flight, sells in flight); quantities per symbol."""
+    def _book(self) -> tuple[float, dict[str, float], dict[str, float], dict[str, float]]:
+        """(portfolio value, held, buys in flight, sells in flight); quantities per symbol."""
         strategy = self._strategy
         account = strategy.broker.get_account()
         held = {p.asset.symbol: float(p.quantity) for p in strategy.get_positions() if p.side is PositionSide.LONG and p.quantity > 0}
         incoming, outgoing = in_flight_quantities(strategy.broker.tracker.get_active_orders())
-        return float(account.portfolio_value), float(account.cash), float(account.buying_power), held, incoming, outgoing
-
-    def _unfilled_value(self, side: OrderSide) -> float:
-        """Estimated dollars of this run's active orders on `side` still to fill, each at its sizing price.
-
-        A filled part is already in the account's cash (live market orders fill within seconds), so counting it
-        again took a buy's cost off twice and left $0.00 available; an order no longer active moves nothing more.
-        In a daily backtest nothing fills before the next session, so every order counts in full.
-        """
-        return sum(
-            float(order.quantity - order.filled_quantity) * self._prices[identifier]
-            for identifier, order in self._orders.items()
-            if order.side is side and order.quantity is not None and order.is_active() and identifier in self._prices
-        )
+        return float(account.portfolio_value), held, incoming, outgoing
 
     def _price(self, symbol: str) -> float | None:
         """Positive last price for `symbol`, or `None` when unavailable."""
@@ -250,8 +234,9 @@ class TradeDesk:
             if self._target is None:
                 return self._refuse("no target yet: call submit_target first")
             try:
-                portfolio_value, cash, buying_power, held, incoming, outgoing = self._book()
+                portfolio_value, held, incoming, outgoing = self._book()
                 price = self._price(symbol)
+                spendable = float(self._strategy.spendable_cash()) if side == "buy" else 0.0
             except _DATA_ERRORS as exc:
                 return self._refuse(f"cannot read the account or the price of {symbol}: {exc}")
             if portfolio_value <= 0:
@@ -264,16 +249,14 @@ class TradeDesk:
             effective = (held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0)) * price
             cost = quantity * price
             if side == "buy":
-                problem = self._check_buy(symbol, quantity, price, cost, effective, portfolio_value, band, min_trade, cash, buying_power)
+                problem = self._check_buy(symbol, quantity, price, cost, effective, portfolio_value, band, min_trade, spendable)
             else:
                 problem = self._check_sell(symbol, quantity, price, cost, effective, held, outgoing, portfolio_value, band, min_trade)
             if problem is not None:
                 return self._refuse(problem)
             return self._submit(symbol, side, quantity, price, cost)
 
-    def _check_buy(
-        self, symbol: str, quantity: float, price: float, cost: float, effective: float, portfolio_value: float, band: float, min_trade: float, cash: float, buying_power: float
-    ) -> str | None:
+    def _check_buy(self, symbol: str, quantity: float, price: float, cost: float, effective: float, portfolio_value: float, band: float, min_trade: float, spendable: float) -> str | None:
         """Reason a buy must be refused (unknown stock, over-weight, cash, minimum size), or `None` when it passes."""
         weight = self._weights.get(symbol)
         if weight is None:
@@ -286,11 +269,10 @@ class TradeDesk:
                 f"buy {quantity:g} {symbol} (${cost:,.2f}) would exceed its target weight of {weight:.4f} (${weight * portfolio_value:,.2f} of ${portfolio_value:,.2f}; "
                 f"${effective:,.2f} held or on order): at most {fractional_qty(max(room, 0.0) / price):g} shares"
             )
-        available = min(buying_power, cash + self._unfilled_value(OrderSide.SELL) - self._unfilled_value(OrderSide.BUY))
-        if cost > available + _EPS:
+        if cost > spendable + _EPS:
             return (
-                f"buy {quantity:g} {symbol} (${cost:,.2f}) exceeds the money available (${max(available, 0.0):,.2f}: the smaller of buying power ${buying_power:,.2f} "
-                f"and cash plus this run's sells less this run's buys): at most {fractional_qty(max(available, 0.0) / price):g} shares"
+                f"buy {quantity:g} {symbol} (${cost:,.2f}) exceeds the money available (${max(spendable, 0.0):,.2f}: the smaller of buying power and cash "
+                f"after the open orders, less {BUY_BUFFER:.0%} of the book kept back): at most {fractional_qty(max(spendable, 0.0) / price):g} shares"
             )
         return None
 
@@ -338,7 +320,6 @@ class TradeDesk:
         except TradingFrameworkError as exc:
             return self._refuse(f"{side} {quantity:g} {symbol} was refused by the broker: {exc}")
         self._orders[order.identifier] = order
-        self._prices[order.identifier] = price
         if side == "buy":
             self._buys_placed = True
         strategy.log_info(f"[{self._log_tag}] {side} {quantity:g} {symbol} @ ~${price:,.2f}")
@@ -388,7 +369,7 @@ class TradeDesk:
             if self._target is None:
                 return Audit(unfilled, shortfalls)
             try:
-                portfolio_value, _cash, _bp, held, incoming, outgoing = self._book()
+                portfolio_value, held, incoming, outgoing = self._book()
             except _DATA_ERRORS as exc:
                 self._strategy.log_warning(f"[{self._log_tag}] audit: the account is unavailable, only unfilled orders are reported: {exc}")
                 return Audit(unfilled, shortfalls)

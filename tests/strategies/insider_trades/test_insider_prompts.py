@@ -94,8 +94,8 @@ def test_the_trading_prompts_state_the_order_rules_the_desk_enforces() -> None:
     for text in (prompts.trader_system(PARAMS), prompts.trader_retry_system()):
         text = " ".join(text.split())
         assert "Send every sell before the first buy" in text
-        assert "SMALLER of buying_power and (cash + the proceeds of the sells you placed in this run)" in text
-        assert "never against buying_power alone" in text
+        assert "Never buy for more than 'spendable' from get_account_balance" in text
+        assert "SMALLER of buying_power" not in text
         assert "Never short" in text
         assert "still working" in text and "do not cancel or repeat it" in text
 

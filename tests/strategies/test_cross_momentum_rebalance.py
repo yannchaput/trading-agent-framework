@@ -1,11 +1,12 @@
 """`CrossMomentumStrategy.rebalance` cash budgeting.
 
-Market orders fill at a later bar's open (plus fees), so the cash the strategy computes at decision
-time is only an estimate. `cash_buffer_pct` holds a slice of it back so the buys still land.
+The buys are sized from `Strategy.spendable_cash()` (the framework's figure: the smaller of buying power and cash
+after open orders, less 2% of the book), read after this run's sells; the fake below models it.
 """
 
+import json
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from types import SimpleNamespace
 
 import pandas as pd
@@ -17,9 +18,9 @@ from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide, TimeInForce
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
-from trading_agent_framework.strategies.cross_momentum.utils import unfilled_sell_proceeds
+from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError
+from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError, InsufficientFundsError, OrderValidationError
 
 TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
@@ -40,6 +41,12 @@ class FakeStrategy:
 
     `sell_fill` is the share of each sell that fills the moment it is submitted, its proceeds credited to the cash,
     as a live market sell at noon does; 0.0 (the default) is a backtest, where nothing fills before the next session.
+    `live` makes it a paper/live run: `wait_for_orders_execution` fills every sell waited on. `cash_account` makes the
+    buying power the cash less the open buys (an unfilled sell funds nothing yet); otherwise it never binds (margin).
+    `buy_fee` is netted per open buy of this run, as a backtest's buying power nets the pending buys' fees.
+    `errors` maps a symbol to the exception each of its submits raises (`reject` raises a plain RuntimeError).
+    `ticks` is the price `Strategy.submit_order`'s budget check sees for a symbol (a live quote that moved since sizing):
+    a buy above `spendable_cash()` at it raises `InsufficientFundsError` with the most that fits.
     """
 
     def __init__(
@@ -48,28 +55,38 @@ class FakeStrategy:
         cash,
         positions=(),
         last_prices=None,
-        cash_buffer_pct=0.05,
         min_trade_pct=0.01,
         reject=(),
+        errors=None,
         uncertain=(),
         price_errors=(),
         trend_assets=(),
         bars=None,
         sell_fill=0.0,
         open_orders=(),
+        live=False,
+        cash_account=False,
+        buy_fee=0.0,
+        ticks=None,
     ):
+        self._ticks = ticks or {}
         self._sell_fill = sell_fill
+        self._open_orders = list(open_orders)
+        self.is_backtesting = not live
+        self._cash_account = cash_account
+        self._buy_fee = buy_fee
+        self.waited: list[int] = []  # the number of orders of each wait_for_orders_execution call
         # Orders still open from an earlier rebalance (e.g. before a restart), as the broker's tracker reports them
         self.broker = SimpleNamespace(tracker=SimpleNamespace(get_active_orders=lambda: list(open_orders)))
         self.parameters = {
             "sell_rank_threshold": 35,
-            "cash_buffer_pct": cash_buffer_pct,
             "parking": {"symbol": "SHV", "trend_assets": tuple(trend_assets), "trend_sma_window": 3, "min_trade_pct": min_trade_pct},
         }
         self._cash = cash
         self._positions = list(positions)
         self._last_prices = last_prices or {}
         self._reject = set(reject)
+        self._errors = dict(errors or {})  # symbol -> the exception every submit of it raises
         self._uncertain = set(uncertain)
         self.attempts: dict[str, int] = {}  # submit_order calls per symbol, the failed ones included
         self._price_errors = set(price_errors)
@@ -102,8 +119,22 @@ class FakeStrategy:
     def get_positions(self):
         return self._positions
 
-    def get_cash(self):
-        return self._cash
+    def spendable_cash(self):
+        """`Strategy.spendable_cash()` on this fake: open orders count for their unfilled part at the last price."""
+        unfilled = [(o.side.value, float(o.quantity - o.filled_quantity), o.asset.symbol) for o in self._open_orders]
+        unfilled += [(o.side, o.quantity - o.filled_quantity, o.symbol) for o in self.orders if o.is_active()]
+        sells = sum(quantity * self._last_prices.get(symbol, 0.0) for side, quantity, symbol in unfilled if side == "sell")
+        buys = sum(quantity * self._last_prices.get(symbol, 0.0) for side, quantity, symbol in unfilled if side == "buy")
+        buys += self._buy_fee * sum(1 for o in self.orders if o.side == "buy" and o.is_active())
+        buying_power = self._cash - buys if self._cash_account else float("inf")
+        return Decimal(str(round(min(buying_power, self._cash + sells - buys) - 0.02 * self.portfolio_value, 2)))  # cents, as an account reports
+
+    def wait_for_orders_execution(self, orders, timeout=None):
+        self.waited.append(len(orders))
+        for order in orders:
+            self._cash += (order.quantity - order.filled_quantity) * self._last_prices[order.symbol]
+            order.filled_quantity, order.active = order.quantity, False
+        return True
 
     def get_last_price(self, symbol):
         if symbol in self._price_errors:
@@ -111,7 +142,7 @@ class FakeStrategy:
         return self._last_prices.get(symbol)
 
     def create_order(self, symbol, quantity, side, **kwargs):
-        return FakeOrder(symbol, quantity, side)
+        return FakeOrder(symbol, float(quantity), side)  # this fake's orders hold floats
 
     def submit_order(self, order):
         self.attempts[order.symbol] = self.attempts.get(order.symbol, 0) + 1
@@ -119,6 +150,12 @@ class FakeStrategy:
             raise BrokerUncertainError(f"timeout {order.symbol}")
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
+        if order.symbol in self._errors:
+            raise self._errors[order.symbol]
+        if order.side == "buy" and order.symbol in self._ticks:
+            price, spendable = Decimal(str(self._ticks[order.symbol])), self.spendable_cash()
+            if Decimal(str(order.quantity)) * price > spendable:
+                raise InsufficientFundsError(f"{order.symbol} ticked up", spendable=spendable, max_quantity=(spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN))
         self.orders.append(order)
         if order.side == "sell" and self._sell_fill > 0:
             filled = order.quantity * self._sell_fill
@@ -147,48 +184,85 @@ def _planned_buy_cost(fake, prices):
     return sum(o.quantity * prices[o.symbol] for o in fake.orders if o.side == "buy")
 
 
-def test_buys_leave_the_cash_buffer_unspent():
+def test_the_strategy_has_no_cash_buffer_of_its_own():
+    assert "cash_buffer_pct" not in CONFIG  # the framework keeps 2% of the book back (`Strategy.spendable_cash`)
+
+
+def test_buys_spend_spendable_cash_and_no_more():
     prices = {"AAA": 100.0, "BBB": 50.0}
-    fake = FakeStrategy(cash=1000.0, last_prices=prices, cash_buffer_pct=0.05)
+    fake = FakeStrategy(cash=1000.0, last_prices=prices)
     target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
 
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
 
-    assert _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+    assert _planned_buy_cost(fake, prices) == pytest.approx(1000.0 - 20.0)  # spendable: 1000 less 2% of the 1000 book
 
 
-def test_buffer_applies_to_estimated_sell_proceeds_too():
+def test_the_buys_are_bounded_by_the_buying_power_in_spendable_cash():
+    # A cash account with an open buy from an earlier run: buying power 1000 - 400 = 600, spendable 600 - 20 = 580
+    prices = {"AAA": 10.0, "OPEN": 100.0}
+    fake = FakeStrategy(cash=1000.0, last_prices=prices, cash_account=True, open_orders=[_open("OPEN", 4, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 10.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "AAA", "buy") == [58.0]
+
+
+def test_this_runs_sell_proceeds_fund_the_buys_and_a_backtest_does_not_wait():
     prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
     held = _held("OLD", 100.0)  # worth 1000
-    fake = FakeStrategy(cash=0.0, positions=[held], last_prices=prices, cash_buffer_pct=0.05)
+    fake = FakeStrategy(cash=0.0, positions=[held], last_prices=prices)
 
     target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
 
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})  # OLD is unranked -> sold
 
-    assert _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+    assert _planned_buy_cost(fake, prices) == pytest.approx(1000.0 - 20.0)
+    assert fake.waited == []
 
 
 def test_a_sell_filled_before_the_buys_are_sized_is_not_counted_twice():
     # Live: OLD's market sell fills at once, so its 1000 is already in the cash when the buys are sized
     prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
-    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, cash_buffer_pct=0.05, sell_fill=1.0)
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, sell_fill=1.0)
     target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
 
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
 
-    assert _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+    assert _planned_buy_cost(fake, prices) <= 1000.0 - 20.0 + 1e-6
 
 
 def test_only_the_unfilled_part_of_a_partly_filled_sell_is_added_to_the_cash():
-    # Half of OLD fills at once (500 in the cash); the other 500 is still to come. Spendable: 1000 less the 5% reserve.
+    # Half of OLD fills at once (500 in the cash); the other 500 is still to come. Spendable: 1000 less 2% of the book.
     prices = {"OLD": 10.0, "AAA": 100.0, "BBB": 50.0}
-    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, cash_buffer_pct=0.05, sell_fill=0.5)
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, sell_fill=0.5)
     target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
 
     CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
 
-    assert 1000.0 * 0.95 - 50.0 < _planned_buy_cost(fake, prices) <= 1000.0 * 0.95 + 1e-6
+    assert _planned_buy_cost(fake, prices) == pytest.approx(1000.0 - 20.0)
+
+
+def test_live_buys_wait_for_this_runs_sells_to_fill():
+    # A cash account credits a sell only once it fills: sized at once, the buys would get nothing from OLD's 1000
+    prices = {"OLD": 10.0, "AAA": 100.0}
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, live=True, cash_account=True)
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1)], {"AAA": 1})
+
+    assert fake.waited == [1]
+    assert _orders(fake, "AAA", "buy") == [5.0]
+
+
+def test_live_buys_go_out_on_the_account_as_it_stands_when_the_sells_do_not_fill_in_time():
+    prices = {"OLD": 10.0, "AAA": 100.0}
+    fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 100.0)], last_prices=prices, live=True)
+    fake.wait_for_orders_execution = lambda orders, timeout=None: False  # the sell is still working after 30 s
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1)], {"AAA": 1})
+
+    assert "1 sell(s) did not fill within 30s: sizing the buys on the account as it stands" in fake.warnings
+    assert _orders(fake, "AAA", "buy") == [5.0]  # a margin account: the open sell's 1000 still counts in spendable
 
 
 def test_the_buy_budget_logs_how_many_sells_had_already_filled():
@@ -200,28 +274,103 @@ def test_the_buy_budget_logs_how_many_sells_had_already_filled():
     assert any("1 of 1 sells already filled" in line for line in fake.infos)
 
 
-def test_unfilled_sell_proceeds_counts_the_open_quantity_of_active_sells_only():
-    new = FakeOrder("A", 10.0, "sell")  # nothing filled yet: all of it to come
-    partly = FakeOrder("B", 10.0, "sell")
-    partly.filled_quantity = 4.0  # 6 still to come
-    filled = FakeOrder("C", 10.0, "sell")
-    filled.filled_quantity, filled.active = 10.0, False  # already in the cash
-    canceled = FakeOrder("D", 10.0, "sell")
-    canceled.active = False  # brings nothing
+def test_each_buy_is_capped_by_a_fresh_spendable_cash_that_nets_the_earlier_buys_fees():
+    # A backtest's buying power nets each pending buy's fee: after AAA (300 + 1 fee) spendable is 679, not the 680 the
+    # running figure says, and SHV's 680 target sized on that figure would be refused by `Strategy.submit_order`.
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, buy_fee=1.0)
 
-    proceeds = unfilled_sell_proceeds([(new, 2.0), (partly, 3.0), (filled, 5.0), (canceled, 7.0)])
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert proceeds == pytest.approx(10.0 * 2.0 + 6.0 * 3.0)
+    assert _orders(fake, "AAA", "buy") == [3.0]
+    assert _orders(fake, "SHV", "buy") == [13.58]
 
 
-def test_zero_buffer_spends_everything_available():
-    prices = {"AAA": 100.0, "BBB": 50.0}
-    fake = FakeStrategy(cash=1000.0, last_prices=prices, cash_buffer_pct=0.0)
-    target = [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)]
+def test_the_last_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up():
+    # BBB is sized at 100 to the 490 left; the check sees 100.01, so 4.9 shares are refused and 4.899510 fit
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 100.0}, ticks={"BBB": 100.01})
 
-    CrossMomentumStrategy.rebalance(fake, target, {"AAA": 1, "BBB": 2})
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.49, 100.0, 1), _target("BBB", 0.49, 100.0, 2)], {"AAA": 1, "BBB": 2})
 
-    assert _planned_buy_cost(fake, prices) > 1000.0 * 0.99
+    assert _orders(fake, "AAA", "buy") == [4.9]
+    assert _orders(fake, "BBB", "buy") == [4.89951]
+    assert fake.attempts["BBB"] == 2
+
+
+def test_a_retry_with_an_unknown_outcome_logs_the_retried_quantity():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 100.0}, ticks={"BBB": 100.01})
+    submit = fake.submit_order
+
+    def retry_times_out(order):  # BBB's first buy is refused for money; its retry at 4.89951 times out
+        if order.symbol == "BBB" and fake.attempts.get("BBB"):
+            raise BrokerUncertainError("timeout")
+        return submit(order)
+
+    fake.submit_order = retry_times_out
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.49, 100.0, 1), _target("BBB", 0.49, 100.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert any(message.startswith("buy 4.89951 BBB (toward target): outcome unknown at the broker") for message in fake.warnings)
+
+
+def test_a_parking_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, ticks={"SHV": 50.5})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "SHV", "buy") == [13.465346]  # the 680 left, at 50.50 instead of 50.00 (13.6 shares)
+
+
+def test_an_alpaca_buying_power_refusal_sizes_the_next_buy_on_the_brokers_figure():
+    alpaca = BrokerError(json.dumps({"buying_power": "300", "code": 40310000, "message": "insufficient buying power"}))
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 50.0}, errors={"AAA": alpaca})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1), _target("BBB", 0.4, 50.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert _orders(fake, "BBB", "buy") == [5.6]  # the broker's 300 less 2% of the 1,000 book = 280, not the 580 we estimated
+    assert "Resyncing available cash to broker-reported buying power: $300.00" in fake.warnings
+
+
+def _overweight_book(**kwargs):
+    """HELD (1,000) is kept, so AAA and BBB (980 each) compete for the 960 spendable: what AAA costs, BBB cannot have."""
+    return FakeStrategy(cash=1000.0, positions=[_held("HELD", 100.0)], last_prices={"HELD": 10.0, "AAA": 100.0, "BBB": 50.0}, **kwargs)
+
+
+_OVERWEIGHT_TARGET = [_target("HELD", 0.49, 10.0, 1), _target("AAA", 0.49, 100.0, 2), _target("BBB", 0.49, 50.0, 3)]
+
+
+def test_a_buy_refused_by_validation_gives_its_cost_back_to_the_next_buy():
+    fake = _overweight_book(errors={"AAA": OrderValidationError("quantity must be positive")})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == [19.2]  # refused before any request: BBB gets the 960
+
+
+def test_a_buy_failing_with_any_other_broker_error_keeps_its_cost_spent():
+    """Alpaca wraps a read timeout after the POST as a plain BrokerError and stops tracking the order: it may have gone through."""
+    fake = _overweight_book(errors={"AAA": BrokerError("read timed out")})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == []  # AAA's 960 stays spent
+
+
+def test_a_buy_refused_again_after_its_retry_gives_its_cost_back():
+    refusal = InsufficientFundsError("AAA ticked up", spendable=Decimal(960), max_quantity=Decimal(9))
+    fake = _overweight_book(errors={"AAA": refusal})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert fake.attempts["AAA"] == 2  # the buy and its retry at 9, both refused
+    assert _orders(fake, "BBB", "buy") == [19.2]
+
+
+def test_an_unknown_buy_keeps_its_cost_from_the_next_buy():
+    fake = _overweight_book(uncertain={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == []  # AAA may have taken the whole 960
 
 
 def _held(symbol, quantity, side=PositionSide.LONG):
@@ -250,16 +399,16 @@ def test_a_rerun_does_not_buy_again_what_an_open_buy_already_brings():
 
 
 def test_cash_committed_to_an_open_buy_is_not_spent_again():
-    # BBB's open buy (5 x 100) has not debited the cash yet: 1000 - 500 = 500, less the 5% reserve = 475 for AAA
+    # BBB's open buy (5 x 100) has not debited the cash yet: 1000 - 500 = 500, less 2% of the 1000 book = 480 for AAA
     fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 50.0, "BBB": 100.0}, open_orders=[_open("BBB", 5, "buy")])
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 50.0, 1)], {"AAA": 1})
 
-    assert _orders(fake, "AAA", "buy") == [9.5]
+    assert _orders(fake, "AAA", "buy") == [9.6]
 
 
 def test_a_position_already_being_exited_is_not_sold_again_and_its_proceeds_fund_the_buys():
-    # OLD's exit (10 x 100) is still open: no second sell, and its 1000 is counted, less the 5% reserve
+    # OLD's exit (10 x 100) is still open: no second sell, and its 1000 is counted, less 2% of the book
     fake = FakeStrategy(cash=0.0, positions=[_held("OLD", 10.0)], last_prices={"OLD": 100.0, "AAA": 50.0}, open_orders=[_open("OLD", 10, "sell")])
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 50.0, 1)], {"AAA": 1})  # OLD is unranked
@@ -321,7 +470,7 @@ def test_idle_cash_is_swept_into_shv():
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
     assert _orders(fake, "AAA", "buy") == [3.0]
-    assert _orders(fake, "SHV", "buy") == [13.0]  # 950 - 300 = 650 parked, the 5% reserve stays cash
+    assert _orders(fake, "SHV", "buy") == [13.6]  # 980 - 300 = 680 parked, the framework's 2% stays cash
 
 
 def test_an_exposure_drop_trims_the_position_and_parks_the_proceeds():
@@ -330,7 +479,7 @@ def test_an_exposure_drop_trims_the_position_and_parks_the_proceeds():
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1)], {"AAA": 1})
 
     assert _orders(fake, "AAA", "sell") == [6.0]
-    assert _orders(fake, "SHV", "buy") == [11.0]  # target 950 - 400 = 550
+    assert _orders(fake, "SHV", "buy") == [11.6]  # target 980 - 400 = 580
 
 
 def test_an_exposure_rise_sells_shv_before_funding_the_stock_buys():
@@ -338,7 +487,7 @@ def test_an_exposure_rise_sells_shv_before_funding_the_stock_buys():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 100.0, 1)], {"AAA": 1})
 
-    assert [(o.symbol, o.side, o.quantity) for o in fake.orders] == [("SHV", "sell", 19.0), ("AAA", "buy", 9.0)]
+    assert [(o.symbol, o.side, o.quantity) for o in fake.orders] == [("SHV", "sell", 18.4), ("AAA", "buy", 9.0)]
 
 
 def test_shv_within_its_band_is_left_alone_and_never_exited_as_unranked():
@@ -370,7 +519,7 @@ def test_a_trim_below_the_minimum_trade_is_skipped():
 def test_an_shv_buy_below_the_minimum_trade_is_skipped():
     fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0})
 
-    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.945, 100.0, 1)], {"AAA": 1})  # SHV target 5 < 10
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.975, 100.0, 1)], {"AAA": 1})  # SHV target 5 < 10
 
     assert _orders(fake, "SHV", "buy") == []
 
@@ -392,7 +541,7 @@ def test_hysteresis_holdings_reduce_the_parking_target():
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1, "HYS": 30})
 
     assert _orders(fake, "HYS", "sell") == []
-    assert _orders(fake, "SHV", "buy") == [9.0]  # 950 - 300 - 200 = 450
+    assert _orders(fake, "SHV", "buy") == [9.6]  # 980 - 300 - 200 = 480
 
 
 def test_a_rejected_shv_buy_is_logged_and_does_not_raise():
@@ -409,7 +558,7 @@ def test_an_unknown_buy_keeps_its_cost_and_is_logged_as_unknown():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.5, 100.0, 1), _target("BBB", 0.5, 50.0, 2)], {"AAA": 1, "BBB": 2})
 
-    assert _orders(fake, "BBB", "buy") == [9.0]  # 950 less AAA's 500 leaves 450
+    assert _orders(fake, "BBB", "buy") == [9.6]  # 980 less AAA's 500 leaves 480
     assert fake.attempts["AAA"] == 1
     assert any("outcome unknown at the broker, not resent" in message for message in fake.warnings)
     assert not any("Failed to submit buy order for AAA" in message for message in fake.warnings)
@@ -440,12 +589,12 @@ def test_an_unknown_parking_sell_brings_no_proceeds_to_the_stock_buy():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.9, 100.0, 1)], {"AAA": 1})
 
-    # Portfolio 20 x 50 = 1000; AAA target 0.9 -> 900, SHV target 950 - 900 = 50 (1 share), so 19 SHV are sold.
-    # Known outcome (test_an_exposure_rise_sells_shv_...): the 19 x 50 = 950 proceeds fund a 9-share AAA buy.
+    # Portfolio 20 x 50 = 1000; AAA target 0.9 -> 900, SHV target 980 - 900 = 80 (1.6 shares), so 18.4 SHV are sold.
+    # Known outcome (test_an_exposure_rise_sells_shv_...): the 18.4 x 50 = 920 proceeds, less 20, fund a 9-share AAA buy.
     # Unknown outcome: the sell brings nothing, the budget stays at the cash of 0, so no AAA share is bought.
     assert fake.attempts["SHV"] == 1
     assert _orders(fake, "AAA", "buy") == []
-    assert any("sell 19 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
+    assert any("sell 18.4 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
     assert not any("Failed to submit parking sell order" in message for message in fake.warnings)
 
 
@@ -454,10 +603,10 @@ def test_an_unknown_parking_buy_is_not_resent_nor_logged_as_failed():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    # Same setup as test_idle_cash_is_swept_into_shv: AAA 3 shares, then 13 SHV; here the SHV buy is unknown
+    # Same setup as test_idle_cash_is_swept_into_shv: AAA 3 shares, then 13.6 SHV; here the SHV buy is unknown
     assert _orders(fake, "AAA", "buy") == [3.0]
     assert fake.attempts["SHV"] == 1
-    assert any("buy 13 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
+    assert any("buy 13.6 SHV" in message and "outcome unknown at the broker, not resent" in message for message in fake.warnings)
     assert not any("Failed to submit parking buy order" in message for message in fake.warnings)
 
 
@@ -564,7 +713,7 @@ def test_a_target_without_a_price_is_neither_bought_nor_trimmed():
 
 
 # ── Trend sleeve ───────────────────────────────────────────────────────────────
-# With cash 1000 and AAA at 30%, the parking target is 950 - 300 = 650: 325 per trend asset that trends.
+# With cash 1000 and AAA at 30%, the parking target is 980 - 300 = 680: 340 per trend asset that trends.
 
 
 def test_idle_cash_with_both_trends_on_is_split_between_gld_and_ief():
@@ -572,7 +721,7 @@ def test_idle_cash_with_both_trends_on_is_split_between_gld_and_ief():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("IEF", "buy", 32.5)]
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 34.0), ("IEF", "buy", 34.0)]
 
 
 def test_sleeve_symbols_are_never_sold_as_unranked():
@@ -592,7 +741,7 @@ def test_a_trend_turning_off_sells_the_whole_holding_and_parks_it_in_shv():
 
     assert _orders(fake, "IEF", "sell") == [32.5]
     assert _orders(fake, "GLD", "sell") == [] and _orders(fake, "GLD", "buy") == []
-    assert _orders(fake, "SHV", "buy") == [6.5]  # SHV target 325
+    assert _orders(fake, "SHV", "buy") == [6.8]  # SHV target 340
 
 
 def test_trend_assets_are_bought_before_shv_and_within_the_cash_left():
@@ -600,8 +749,25 @@ def test_trend_assets_are_bought_before_shv_and_within_the_cash_left():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("SHV", "buy", 6.5)]
-    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 1000.0 * 0.95 + 1e-6
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 34.0), ("SHV", "buy", 6.8)]
+    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 1000.0 - 20.0 + 1e-6
+
+
+def test_a_refused_sleeve_buy_gives_its_cost_back_to_the_next_sleeve_asset():
+    # An earlier open buy (ZZZ, 300) leaves 680 - AAA's 300 = 380 for the sleeve: GLD's 340 is refused, so IEF gets its 340
+    fake = _sleeve_fake(errors={"GLD": OrderValidationError("not tradable")}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0)]
+
+
+def test_a_sleeve_buy_failing_with_any_other_broker_error_keeps_its_cost_spent():
+    fake = _sleeve_fake(errors={"GLD": BrokerError("read timed out")}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 4.0)]  # GLD's 340 stays spent: 40 is left for IEF
 
 
 def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():
@@ -609,7 +775,7 @@ def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5)]
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0)]
     assert any("GLD" in message for message in fake.warnings)
 
 
@@ -618,7 +784,7 @@ def test_a_failed_bars_fetch_for_a_trend_asset_sends_its_half_to_shv():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0), ("SHV", "buy", 6.8)]
     assert any("GLD" in message for message in fake.warnings)
 
 
@@ -627,7 +793,7 @@ def test_a_backtest_data_error_for_a_trend_asset_sends_its_half_to_shv():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0), ("SHV", "buy", 6.8)]
     assert any("GLD" in message for message in fake.warnings)
 
 
@@ -641,13 +807,13 @@ def test_an_unexpected_trend_fetch_error_aborts_before_any_order_is_sent():
 
 
 def test_the_first_deployment_sells_shv_and_buys_the_trend_assets():
-    # pv 1000 (20 SHV x 50), parking target 950 - 300 = 650: GLD 325, IEF 325, SHV 0
+    # pv 1000 (20 SHV x 50), parking target 980 - 300 = 680: GLD 340, IEF 340, SHV 0
     fake = _sleeve_fake(cash=0.0, positions=[_held("SHV", 20.0)])
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("SHV", "sell", 20.0), ("AAA", "buy", 3.0), ("GLD", "buy", 32.5), ("IEF", "buy", 32.5)]
-    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 0.0 + 20.0 * 50.0 - 1000.0 * 0.05 + 1e-6
+    assert _sequence(fake) == [("SHV", "sell", 20.0), ("AAA", "buy", 3.0), ("GLD", "buy", 34.0), ("IEF", "buy", 34.0)]
+    assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 0.0 + 20.0 * 50.0 - 1000.0 * 0.02 + 1e-6
 
 
 def test_empty_bars_for_a_trend_asset_send_its_half_to_shv():
@@ -655,7 +821,7 @@ def test_empty_bars_for_a_trend_asset_send_its_half_to_shv():
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
-    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 32.5), ("SHV", "buy", 6.5)]
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0), ("SHV", "buy", 6.8)]
     assert any("GLD" in message for message in fake.warnings)
 
 
@@ -665,7 +831,7 @@ def test_a_partial_bar_for_today_is_ignored_by_the_trend_test():
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
     assert _orders(fake, "GLD", "buy") == []
-    assert _orders(fake, "SHV", "buy") == [6.5]
+    assert _orders(fake, "SHV", "buy") == [6.8]
 
 
 def test_the_trend_assets_are_read_over_the_strategy_history_window():
