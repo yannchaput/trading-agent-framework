@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.entities.enums import OrderSide, OrderType, PositionSide
 from trading_agent_framework.entities.order import Order
+from trading_agent_framework.strategies.common.rebalancer import submit_buy
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.stops import StopRelease, release_stop
 from trading_agent_framework.strategies.earnings_drift.book import DriftState, Trade, TradeState, sessions_held
@@ -580,8 +581,8 @@ class Desk:
             # still fill, and `traded_symbols` is what lets the reconcile adopt such a position and give it a stop.
             self._state.traded_symbols.add(symbol)
             self._save_state()
-            try:
-                order = self._strategy.submit_order(self._strategy.create_order(symbol, shares, "buy"))
+            try:  # sized at the reaction close: refused after an uptick, it is retried once at the whole shares that fit
+                order, sent = submit_buy(self._strategy, symbol, shares, float(candidate.reaction.close), decimals=0)
             except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
                 self._strategy.log_warning(f"[earnings_drift] buy {symbol} refused by the broker: {exc}")
                 return {"error": str(exc)}
@@ -595,7 +596,7 @@ class Desk:
                 reaction_low=Decimal(str(candidate.reaction.reaction_low)),
             )
             self._decided.add(symbol)
-            self._log_decision(symbol, decision, quantity=int(shares), trail_percent=float(trail), reason=thesis)
+            self._log_decision(symbol, decision, quantity=int(sent), trail_percent=float(trail), reason=thesis)
             self._save_state()
             return {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
 

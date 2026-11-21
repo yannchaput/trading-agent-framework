@@ -6,7 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from tests.fakes import FakeBroker, FakeClock, et
+from tests.fakes import FakeBroker, FakeClock, TickingBroker, et
 
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
@@ -17,7 +17,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
-from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
+from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer, submit_buy
 from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError, InsufficientFundsError
 
 # Portfolio value 10,000 in every test: the band is 500 (5%), the smallest order 50 (0.5%), the cash reserve 200 (2%).
@@ -161,9 +161,80 @@ def test_a_buy_over_the_framework_budget_resyncs_from_its_spendable_figure_and_g
 
     placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25}, cash_buffer=0.02))
 
-    # B is sized against the 1,000 the check reported (already net of the 2% buffer), and A is not retried
+    # A is retried once at the 19 that fit, refused again, not a third time; B is sized against the 1,000 the check reported
     assert placed == [PlacedOrder("SHV", "sell", 60.0), PlacedOrder("B", "buy", 40.0)]
-    assert calls["A"] == 1
+    assert calls["A"] == 2
+
+
+def test_a_refused_buy_whose_most_that_fits_is_under_the_minimum_trade_is_not_retried(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"SHV": 98}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    calls = _raising_for(strategy, monkeypatch, "A", OrderSide.BUY, InsufficientFundsError("A ticked up", spendable=Decimal(40), max_quantity=Decimal("0.8")))
+
+    rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25}, cash_buffer=0.02))
+
+    assert calls["A"] == 1  # 0.8 x 50 = 40 is under the 50 minimum trade
+    assert not any(symbol == "A" for symbol, _, _ in _orders(broker))
+
+
+def test_the_buy_that_spends_the_last_of_the_money_is_retried_when_its_price_ticks_up(tmp_path: Path) -> None:
+    """Live, B ticks a cent between the review's price read and the check: it is bought at the most that fits, not dropped."""
+    broker = TickingBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman", ticks={"B": Decimal("100.01")})
+    broker.last_prices = {"A": Decimal(100), "B": Decimal(100), "SHV": Decimal(100)}
+    broker.account = AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(1_000_000))
+    strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
+    rebalancer = Rebalancer(strategy, AckmanParams())
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.49, "B": 0.49}, cash_buffer=0.02))
+
+    # B: 49 x 100.01 is over the 4,900 left; 4,900 / 100.01 = 48.9951 shares fit
+    assert placed == [PlacedOrder("A", "buy", 49.0), PlacedOrder("B", "buy", 48.9951)]
+    assert _orders(broker) == [("A", "buy", 49.0), ("B", "buy", 48.9951)]
+    assert rebalancer.refused == 0
+
+
+def _strategy_at(tmp_path: Path, price: str, ticked: str) -> tuple[Strategy, TickingBroker]:
+    """A paper strategy with 10,000 in cash (spendable 9,800) whose AAA quote moves from `price` to `ticked` after one read."""
+    broker = TickingBroker(FakeClock(et(2026, 9, 14, 10)), ticks={"AAA": Decimal(ticked)})
+    broker.last_prices = {"AAA": Decimal(price)}
+    broker.account = AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(1_000_000))
+    return Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path), broker
+
+
+def test_submit_buy_sends_a_buy_that_fits_unchanged(tmp_path: Path) -> None:
+    strategy, broker = _strategy_at(tmp_path, "100", "100")
+
+    order, sent = submit_buy(strategy, "AAA", 98.0, 100.0)
+
+    assert sent == Decimal(98) and order.quantity == Decimal(98)
+    assert [o.quantity for o in broker.submitted] == [Decimal(98)]
+
+
+def test_submit_buy_resends_a_refused_buy_once_at_the_most_that_fits(tmp_path: Path) -> None:
+    strategy, broker = _strategy_at(tmp_path, "100", "100.5")
+    price = float(strategy.get_last_price("AAA") or 0)  # the caller's sizing read; the quote then ticks up
+
+    order, sent = submit_buy(strategy, "AAA", 98.0, price, min_trade=50.0)
+
+    assert sent == Decimal("97.512437")  # 9,800 / 100.50, floored to 6 decimals
+    assert order.quantity == Decimal("97.512437") and [o.quantity for o in broker.submitted] == [Decimal("97.512437")]
+
+
+def test_submit_buy_keeps_the_callers_whole_shares(tmp_path: Path) -> None:
+    strategy, broker = _strategy_at(tmp_path, "100", "100.5")
+    strategy.get_last_price("AAA")
+
+    _, sent = submit_buy(strategy, "AAA", 98.0, 100.0, decimals=0)
+
+    assert sent == Decimal(97) and [o.quantity for o in broker.submitted] == [Decimal(97)]
+
+
+def test_submit_buy_sends_nothing_when_the_most_that_fits_is_under_the_minimum_trade(tmp_path: Path) -> None:
+    strategy, broker = _strategy_at(tmp_path, "100", "10000")  # 9,800 buys 0.98 shares at 10,000: worth 98 at the caller's 100
+    strategy.get_last_price("AAA")
+
+    with pytest.raises(InsufficientFundsError):
+        submit_buy(strategy, "AAA", 98.0, 100.0, min_trade=100.0)
+    assert broker.submitted == []
 
 
 def test_the_buys_are_sized_from_spendable_cash_so_a_stop_sell_funds_nothing(tmp_path: Path) -> None:

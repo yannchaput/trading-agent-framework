@@ -43,7 +43,7 @@ from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
-from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities
+from trading_agent_framework.strategies.common.rebalancer import in_flight_quantities, submit_buy
 from trading_agent_framework.strategies.common.scoring import apply_filters, momentum_inputs, momentum_score
 from trading_agent_framework.strategies.common.sessions import completed_bars, parse_rebalance_time
 from trading_agent_framework.strategies.common.universe_backtest_data import UniverseBacktestData, universe_parameters
@@ -568,13 +568,17 @@ class CrossMomentumStrategy(Strategy):
         finally:
             self.vars.yahoo_bars = {}
 
-    def _send(self, side: str, quantity: float | Decimal, symbol: str, why: str) -> tuple[Order | None, Exception | None, bool]:
+    def _send(self, side: str, quantity: float | Decimal, symbol: str, why: str, *, price: float = 0.0, min_trade: float = 0.0) -> tuple[Order | None, Exception | None, bool]:
         """Create and submit one day order: (the submitted order or None, the exception raised or None, unknown).
 
+        A buy goes through `submit_buy`: refused for money (its `price` ticked up since sizing), it is sent once more
+        at the most that fits when that is worth at least `min_trade`; the returned order carries the quantity sent.
         `unknown` is True on `BrokerUncertainError`: the order was sent but the broker could not confirm it. It stays
         tracked and is never resent here (logged with `why`); the caller adds no proceeds and keeps any cost deducted.
         """
         try:
+            if side == "buy":
+                return submit_buy(self, symbol, quantity, price, min_trade=min_trade)[0], None, False
             return self.submit_order(self.create_order(symbol, quantity, side, time_in_force="day")), None, False
         except BrokerUncertainError as exc:
             self.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
@@ -790,7 +794,9 @@ class CrossMomentumStrategy(Strategy):
             available_cash -= cost
 
             self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (target weight: {target_weight:.1%}, rank: {entry['rank']})")
-            _, exc, unknown = self._send("buy", quantity, symbol, "toward target")
+            order, exc, unknown = self._send("buy", quantity, symbol, "toward target", price=price)
+            if order is not None and order.quantity is not None:
+                available_cash += cost - float(order.quantity) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit buy order for {symbol}: {exc}")
                 # Alpaca reported a smaller buying power than the estimate: size the remaining targets on it, less
@@ -814,7 +820,9 @@ class CrossMomentumStrategy(Strategy):
                 continue
             available_cash -= quantity * price
             self.log_info(f"Buying {quantity} {symbol} @ ${price:.2f} (parking)")
-            _, exc, unknown = self._send("buy", quantity, symbol, "parking")
+            order, exc, unknown = self._send("buy", quantity, symbol, "parking", price=price, min_trade=book.min_trade_value)
+            if order is not None and order.quantity is not None:
+                available_cash += (quantity - float(order.quantity)) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit parking buy order for {symbol}: {exc}")
 

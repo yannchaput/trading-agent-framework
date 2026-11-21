@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable
 from dataclasses import dataclass
+from decimal import ROUND_DOWN, Decimal
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from trading_agent_framework.entities.enums import OrderSide, PositionSide
@@ -93,6 +94,40 @@ def in_flight_quantities(open_orders: Iterable[Order]) -> tuple[dict[str, float]
         book = buys if order.side is OrderSide.BUY else sells
         book[order.asset.symbol] = book.get(order.asset.symbol, 0.0) + remaining
     return buys, sells
+
+
+def submit_buy(strategy: Strategy, symbol: str, quantity: float | Decimal, price: float, *, min_trade: float = 0.0, decimals: int = 6) -> tuple[Order, Decimal]:
+    """Submit a day market buy; one the framework refuses for money is sent once more at the most that fits.
+
+    A caller sizes its last buy to exactly `spendable_cash()` at a price read earlier; live, any uptick since then
+    makes `Strategy.submit_order` refuse it (`InsufficientFundsError`). The retry sends `exc.max_quantity` floored
+    to `decimals` (6: fractional shares, 0: whole shares), unless that is nothing or worth less than `min_trade` at
+    the caller's `price`. The first attempt sends `quantity` as given. Shared by the Rebalancer, cross_momentum and
+    earnings_drift.
+
+    Args:
+        strategy: Strategy the order goes through.
+        symbol: Ticker to buy.
+        quantity: Shares the caller sized.
+        price: The caller's price estimate, used only to value the reduced buy against `min_trade`.
+        min_trade: Smallest buy worth sending, in money.
+        decimals: Decimal places a quantity keeps.
+
+    Returns:
+        The order and the quantity actually sent (the caller's running budget deducts that one).
+
+    Raises:
+        InsufficientFundsError: The most that fits is nothing or under `min_trade` (no order sent), or the retry
+            was refused too. Any other error of `Strategy.submit_order` propagates unchanged.
+    """
+    try:
+        return strategy.submit_order(strategy.create_order(symbol, quantity, "buy")), Decimal(str(quantity))
+    except InsufficientFundsError as exc:
+        reduced = exc.max_quantity.quantize(Decimal(1).scaleb(-decimals), rounding=ROUND_DOWN)
+        if reduced <= 0 or float(reduced) * price < min_trade:
+            raise
+        strategy.log_warning(f"buy {quantity:g} {symbol} refused ({exc}): sending {reduced:g} instead")
+        return strategy.submit_order(strategy.create_order(symbol, reduced, "buy")), reduced
 
 
 Outcome = Literal["accepted", "refused", "unknown"]
@@ -235,7 +270,11 @@ class Rebalancer:
 
         def submit(symbol: str, side: str, quantity: float, why: str) -> Outcome:
             try:
-                order = strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
+                if side == "buy":  # refused for money, retried once at the most that fits: `quantity` is what was sent
+                    order, sent = submit_buy(strategy, symbol, quantity, prices[symbol], min_trade=min_trade)
+                    quantity = float(sent)
+                else:
+                    order = strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
             except BrokerUncertainError as exc:  # the broker keeps the order tracked and resolves it later: never resend, never refund
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
                 self.placed.append(PlacedOrder(symbol, side, quantity, confirmed=False))
@@ -338,8 +377,8 @@ class Rebalancer:
                 continue
             outcome = submit(symbol, "buy", quantity, "toward target")
             if outcome != "refused":  # an unknown outcome may have gone through: its cost stays spent
-                available -= quantity * price
-            elif isinstance(refusals[0], InsufficientFundsError):  # the price moved since sizing: never above the framework's figure
+                available -= self.placed[-1].quantity * price  # what was sent: a retry at the most that fits buys less
+            elif isinstance(refusals[0], InsufficientFundsError):  # refused again after the retry, or too small to retry: never above the framework's figure
                 strategy.log_warning(f"Resyncing available cash to the spendable cash: ${refusals[0].spendable:.2f}")
                 available = min(available, float(refusals[0].spendable))
             elif (real := parse_insufficient_buying_power(refusals[0])) is not None:  # the broker's own figure, not our (drifted) estimate

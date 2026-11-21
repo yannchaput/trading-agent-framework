@@ -125,9 +125,14 @@ spendable = min(buying_power, cash + unfilled open sells - unfilled open buys) -
   invest about 3% more, so their backtests change: expected, not a regression. cross_momentum's parking target
   (`agent_cross_momentum.py:707`, `portfolio_value x (1 - cash_buffer_pct)`) uses `1 - BUY_BUFFER` instead, and its
   buying-power resync (`:809`) the framework figure.
-- **A refused buy is skipped, as today (my call).** Code callers size with `spendable_cash()`, so the check only fires
-  when a price ticks up between sizing and submission. The Rebalancer resyncs `available` from `exc.spendable` and
-  goes on with the next symbol; the next review buys the refused one. No retry at `max_quantity`.
+- **A refused buy is retried once at `max_quantity` (final review finding: the binding buy is refused on any uptick
+  live).** Code callers size their last buy to exactly `spendable_cash()` at a price read earlier (before the sells
+  and the 30 s fill wait, or at earnings_drift's reaction close), so live any uptick refuses it, and a whole target
+  stock was dropped. One shared helper, `strategies/common/rebalancer.submit_buy`, used by the Rebalancer,
+  cross_momentum and earnings_drift, resends it once at `exc.max_quantity` floored to the caller's precision
+  (6 decimals, or whole shares for earnings_drift) when that is still worth the caller's minimum trade, and returns
+  the quantity sent so the running budget deducts what was really bought. Refused again, or too small to retry, it is
+  skipped as before: the Rebalancer resyncs `available` from `exc.spendable` and goes on with the next symbol.
 - **`InsufficientFundsError` subclasses `OrderValidationError` (my call).** The sites that catch `BrokerError` around a
   submit (`cross_momentum:301`, `earnings_drift/desk.py:519`, `vwap_pullback/desk.py:460,607`) then treat it as that
   order being refused (logged, skipped), which is what it is. `news_builtin`'s 3-failures abort counts LLM failures,

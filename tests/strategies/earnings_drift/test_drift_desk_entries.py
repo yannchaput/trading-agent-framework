@@ -199,6 +199,16 @@ def test_baseline_buys_every_candidate_best_first_up_to_the_free_slots(tmp_path:
     assert order is not None and order.quantity == D(980)  # one slot: the whole 100000 less 2% of the book (spendable), at the reaction close of 100
 
 
+def test_a_baseline_buy_sized_at_a_stale_reaction_close_is_retried_at_the_most_that_fits(tmp_path: Path) -> None:
+    # Sized at the reaction close of 99: 98000 / 99 = 989 shares, but the last price is 100, so 980 whole shares fit
+    rig = DeskRig(tmp_path, params=DriftParams(agent_enabled=False, max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
+    assert rig.desk.baseline_entries() == ["AAA"]
+    order = rig.strategy.get_order(rig.state.trades["AAA"].entry_order_id)
+    assert order is not None and order.quantity == D(980)
+    [line] = rig.lines(rig.decisions_path)
+    assert line["decision"] == "baseline" and line["quantity"] == 980
+
+
 def test_candidate_sheets_and_balances(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path)
     sheets = rig.desk.candidate_sheets()

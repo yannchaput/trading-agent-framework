@@ -5,7 +5,7 @@ after open orders, less 2% of the book), read after this run's sells; the fake b
 """
 
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from types import SimpleNamespace
 
 import pandas as pd
@@ -19,7 +19,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError
+from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError, InsufficientFundsError
 
 TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
@@ -43,6 +43,8 @@ class FakeStrategy:
     `live` makes it a paper/live run: `wait_for_orders_execution` fills every sell waited on. `cash_account` makes the
     buying power the cash less the open buys (an unfilled sell funds nothing yet); otherwise it never binds (margin).
     `buy_fee` is netted per open buy of this run, as a backtest's buying power nets the pending buys' fees.
+    `ticks` is the price `Strategy.submit_order`'s budget check sees for a symbol (a live quote that moved since sizing):
+    a buy above `spendable_cash()` at it raises `InsufficientFundsError` with the most that fits.
     """
 
     def __init__(
@@ -62,7 +64,9 @@ class FakeStrategy:
         live=False,
         cash_account=False,
         buy_fee=0.0,
+        ticks=None,
     ):
+        self._ticks = ticks or {}
         self._sell_fill = sell_fill
         self._open_orders = list(open_orders)
         self.is_backtesting = not live
@@ -134,7 +138,7 @@ class FakeStrategy:
         return self._last_prices.get(symbol)
 
     def create_order(self, symbol, quantity, side, **kwargs):
-        return FakeOrder(symbol, quantity, side)
+        return FakeOrder(symbol, float(quantity), side)  # this fake's orders hold floats
 
     def submit_order(self, order):
         self.attempts[order.symbol] = self.attempts.get(order.symbol, 0) + 1
@@ -142,6 +146,10 @@ class FakeStrategy:
             raise BrokerUncertainError(f"timeout {order.symbol}")
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
+        if order.side == "buy" and order.symbol in self._ticks:
+            price, spendable = Decimal(str(self._ticks[order.symbol])), self.spendable_cash()
+            if Decimal(str(order.quantity)) * price > spendable:
+                raise InsufficientFundsError(f"{order.symbol} ticked up", spendable=spendable, max_quantity=(spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN))
         self.orders.append(order)
         if order.side == "sell" and self._sell_fill > 0:
             filled = order.quantity * self._sell_fill
@@ -269,6 +277,25 @@ def test_each_buy_is_capped_by_a_fresh_spendable_cash_that_nets_the_earlier_buys
 
     assert _orders(fake, "AAA", "buy") == [3.0]
     assert _orders(fake, "SHV", "buy") == [13.58]
+
+
+def test_the_last_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up():
+    # BBB is sized at 100 to the 490 left; the check sees 100.01, so 4.9 shares are refused and 4.899510 fit
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 100.0}, ticks={"BBB": 100.01})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.49, 100.0, 1), _target("BBB", 0.49, 100.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert _orders(fake, "AAA", "buy") == [4.9]
+    assert _orders(fake, "BBB", "buy") == [4.89951]
+    assert fake.attempts["BBB"] == 2
+
+
+def test_a_parking_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up():
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "SHV": 50.0}, ticks={"SHV": 50.5})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _orders(fake, "SHV", "buy") == [13.465346]  # the 680 left, at 50.50 instead of 50.00 (13.6 shares)
 
 
 def _held(symbol, quantity, side=PositionSide.LONG):
