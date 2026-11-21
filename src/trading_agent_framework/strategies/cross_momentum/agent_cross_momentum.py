@@ -50,7 +50,7 @@ from trading_agent_framework.strategies.common.universe_backtest_data import Uni
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory, market_day, month_universe, window_symbols
 from trading_agent_framework.strategies.common.yahoo_daily_bars import UnusableBatch, YahooDailyBars, fetch_usable_batch
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError, OrderValidationError
 from trading_agent_framework.utils.helpers import BUY_BUFFER, fractional_qty, get_thread_capacity, parse_insufficient_buying_power
 
 from .log_diagnostics import DiagnosticLogger
@@ -94,6 +94,15 @@ _MIN_YAHOO_COVERAGE = 0.5
 # Seconds before each new attempt at a failed or incomplete Yahoo batch: the rebalance runs once a week, so a transient
 # throttle is waited out (~4 minutes at most) rather than costing the week.
 _YAHOO_RETRY_DELAYS = (60.0, 180.0)
+
+
+def _surely_not_sent(error: Exception) -> bool:
+    """A refused buy that certainly sent nothing: refused before any request, or Alpaca answering "insufficient buying power".
+
+    Any other error keeps the buy's cost spent: Alpaca wraps a read timeout after the POST as a plain `BrokerError`
+    and stops tracking the order, so neither a refund nor a fresh `spendable_cash()` would see a buy that went through.
+    """
+    return isinstance(error, OrderValidationError) or parse_insufficient_buying_power(error) is not None
 
 
 @dataclass(frozen=True)
@@ -801,7 +810,8 @@ class CrossMomentumStrategy(Strategy):
                 available_cash += cost - float(order.quantity) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit buy order for {symbol}: {exc}")
-                available_cash += cost  # refused: nothing was sent (an unknown outcome keeps its cost spent)
+                if _surely_not_sent(exc):  # any other error may hide a buy that went through: its cost stays spent
+                    available_cash += cost
                 # Alpaca reported a smaller buying power than the estimate: size the remaining targets on it, less
                 # the framework's buffer, instead of repeating the same rejection down the list.
                 real_buying_power = parse_insufficient_buying_power(exc)
@@ -828,7 +838,8 @@ class CrossMomentumStrategy(Strategy):
                 available_cash += (quantity - float(order.quantity)) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit parking buy order for {symbol}: {exc}")
-                available_cash += quantity * price  # refused: nothing was sent
+                if _surely_not_sent(exc):
+                    available_cash += quantity * price
 
     # ── Main iteration ────────────────────────────────────────────────────────
 

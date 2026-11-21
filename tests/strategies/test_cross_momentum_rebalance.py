@@ -20,7 +20,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.strategies.cross_momentum.agent_cross_momentum import CrossMomentumStrategy
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError, InsufficientFundsError
+from trading_agent_framework.utils.errors import BacktestDataError, BrokerError, BrokerUncertainError, InsufficientFundsError, OrderValidationError
 
 TODAY = date(2026, 10, 7)
 RISING, FALLING = [1.0, 2.0, 3.0], [3.0, 2.0, 1.0]  # last close above / below the fake's 3-day SMA (2.0)
@@ -338,12 +338,21 @@ def _overweight_book(**kwargs):
 _OVERWEIGHT_TARGET = [_target("HELD", 0.49, 10.0, 1), _target("AAA", 0.49, 100.0, 2), _target("BBB", 0.49, 50.0, 3)]
 
 
-def test_a_refused_buy_gives_its_cost_back_to_the_next_buy():
-    fake = _overweight_book(reject={"AAA"})
+def test_a_buy_refused_by_validation_gives_its_cost_back_to_the_next_buy():
+    fake = _overweight_book(errors={"AAA": OrderValidationError("quantity must be positive")})
 
     CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
 
-    assert _orders(fake, "BBB", "buy") == [19.2]  # nothing was sent for AAA: BBB gets the 960
+    assert _orders(fake, "BBB", "buy") == [19.2]  # refused before any request: BBB gets the 960
+
+
+def test_a_buy_failing_with_any_other_broker_error_keeps_its_cost_spent():
+    """Alpaca wraps a read timeout after the POST as a plain BrokerError and stops tracking the order: it may have gone through."""
+    fake = _overweight_book(errors={"AAA": BrokerError("read timed out")})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == []  # AAA's 960 stays spent
 
 
 def test_a_buy_refused_again_after_its_retry_gives_its_cost_back():
@@ -746,11 +755,19 @@ def test_trend_assets_are_bought_before_shv_and_within_the_cash_left():
 
 def test_a_refused_sleeve_buy_gives_its_cost_back_to_the_next_sleeve_asset():
     # An earlier open buy (ZZZ, 300) leaves 680 - AAA's 300 = 380 for the sleeve: GLD's 340 is refused, so IEF gets its 340
-    fake = _sleeve_fake(reject={"GLD"}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
+    fake = _sleeve_fake(errors={"GLD": OrderValidationError("not tradable")}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
 
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
     assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0)]
+
+
+def test_a_sleeve_buy_failing_with_any_other_broker_error_keeps_its_cost_spent():
+    fake = _sleeve_fake(errors={"GLD": BrokerError("read timed out")}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 4.0)]  # GLD's 340 stays spent: 40 is left for IEF
 
 
 def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():
