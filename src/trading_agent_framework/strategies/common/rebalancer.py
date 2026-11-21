@@ -96,6 +96,15 @@ def in_flight_quantities(open_orders: Iterable[Order]) -> tuple[dict[str, float]
     return buys, sells
 
 
+class UncertainRetryError(BrokerUncertainError):
+    """`submit_buy`'s retry has an unknown outcome; `quantity` is what the retry sent (not the caller's quantity)."""
+
+    def __init__(self, message: str, *, quantity: Decimal) -> None:
+        """Keep the retried quantity next to the broker's message."""
+        super().__init__(message)
+        self.quantity = quantity
+
+
 def submit_buy(strategy: Strategy, symbol: str, quantity: float | Decimal, price: float, *, min_trade: float = 0.0, decimals: int = 6) -> tuple[Order, Decimal]:
     """Submit a day market buy; one the framework refuses for money is sent once more at the most that fits.
 
@@ -118,7 +127,9 @@ def submit_buy(strategy: Strategy, symbol: str, quantity: float | Decimal, price
 
     Raises:
         InsufficientFundsError: The most that fits is nothing or under `min_trade` (no order sent), or the retry
-            was refused too. Any other error of `Strategy.submit_order` propagates unchanged.
+            was refused too.
+        UncertainRetryError: The retry's outcome is unknown (a `BrokerUncertainError` carrying the retried quantity).
+            Any other error of `Strategy.submit_order` propagates unchanged.
     """
     try:
         return strategy.submit_order(strategy.create_order(symbol, quantity, "buy")), Decimal(str(quantity))
@@ -127,7 +138,10 @@ def submit_buy(strategy: Strategy, symbol: str, quantity: float | Decimal, price
         if reduced <= 0 or float(reduced) * price < min_trade:
             raise
         strategy.log_warning(f"buy {quantity:g} {symbol} refused ({exc}): sending {reduced:g} instead")
-        return strategy.submit_order(strategy.create_order(symbol, reduced, "buy")), reduced
+        try:
+            return strategy.submit_order(strategy.create_order(symbol, reduced, "buy")), reduced
+        except BrokerUncertainError as unknown:
+            raise UncertainRetryError(str(unknown), quantity=reduced) from unknown
 
 
 Outcome = Literal["accepted", "refused", "unknown"]
@@ -225,8 +239,9 @@ class Rebalancer:
         read: a live broker credits buying power only on a fill (2026-10-27 bull_bear: read 350 ms before SYRE's fill,
         the buy was skipped). A backtest never waits (its buying power credits a submitted sell). On a timeout the
         buys are sized on buying power as it stands, with a warning. The parking sell and the funding trims that follow
-        add their estimated proceeds to that figure and are waited on the same way before the first buy (every sell of
-        this run, parking too, is in the waited list), each buy takes its cost off it, and every buy (parking too) is
+        add their estimated proceeds to that figure and, when a buy is planned, are waited on the same way before the
+        first buy (only they: a stock sell that timed out in the first wait is not waited on again), each buy takes its
+        cost off it (an unknown buy after a retry keeps the larger, planned cost), and every buy (parking too) is
         capped by `spendable_cash()` read again just before it (a backtest's buying power nets the earlier buys' fees).
         A failed `spendable_cash()` raises, like the account read it replaced: the caller abandons the review and
         `placed` keeps the sells already sent.
@@ -276,6 +291,8 @@ class Rebalancer:
                 else:
                     order = strategy.submit_order(strategy.create_order(symbol, quantity, side, time_in_force="day"))
             except BrokerUncertainError as exc:  # the broker keeps the order tracked and resolves it later: never resend, never refund
+                if isinstance(exc, UncertainRetryError):  # the retry, not the first attempt, is the order that may exist
+                    quantity = float(exc.quantity)
                 strategy.log_warning(f"{side} {quantity:g} {symbol} ({why}): outcome unknown at the broker, not resent -- check the account: {exc}")
                 self.placed.append(PlacedOrder(symbol, side, quantity, confirmed=False))
                 if side == "sell":  # it may have gone through: never sell the same shares twice
@@ -314,6 +331,7 @@ class Rebalancer:
         # fills on the next bar, so waiting there would only move the simulated clock.
         if sells and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
             strategy.log_warning(f"{len(sells)} sell(s) did not fill within {self._fill_wait_seconds:g}s: sizing the buys on the broker's buying power as it stands")
+        waited = len(sells)  # the second wait is only for the sells sent after this one: these already had their 30 s
 
         # What the buys need, and what is available for them: the framework's budget, now that the sells are out.
         plan: list[tuple[str, float]] = []
@@ -361,8 +379,9 @@ class Rebalancer:
                 available += quantity * prices[symbol]
                 unfunded -= quantity * prices[symbol]
                 trimmed = True
-        if (parked or trimmed) and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
-            strategy.log_warning(f"{len(sells)} sell(s) did not fill within {self._fill_wait_seconds:g}s: the buys go out on the broker's buying power as it stands")
+        funding = sells[waited:]  # the parking sell and the funding trims
+        if (parked or trimmed) and plan and not strategy.is_backtesting and not strategy.wait_for_orders_execution(funding, self._fill_wait_seconds):
+            strategy.log_warning(f"{len(funding)} sell(s) did not fill within {self._fill_wait_seconds:g}s: the buys go out on the broker's buying power as it stands")
 
         # 2. Buys, in the trader's order. Each buy reads the framework's figure again: it counts what our running
         # estimate cannot (a backtest's buying power nets the earlier buys' fees, which would refuse a buy sized to the last dollar).
@@ -376,8 +395,10 @@ class Rebalancer:
             if quantity * price < min_trade:
                 continue
             outcome = submit(symbol, "buy", quantity, "toward target")
-            if outcome != "refused":  # an unknown outcome may have gone through: its cost stays spent
+            if outcome == "accepted":
                 available -= self.placed[-1].quantity * price  # what was sent: a retry at the most that fits buys less
+            elif outcome == "unknown":  # it may have gone through, at the planned or the retried size: the larger stays spent
+                available -= quantity * price
             elif isinstance(refusals[0], InsufficientFundsError):  # refused again after the retry, or too small to retry: never above the framework's figure
                 strategy.log_warning(f"Resyncing available cash to the spendable cash: ${refusals[0].spendable:.2f}")
                 available = min(available, float(refusals[0].spendable))

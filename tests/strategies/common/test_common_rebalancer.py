@@ -192,6 +192,44 @@ def test_the_buy_that_spends_the_last_of_the_money_is_retried_when_its_price_tic
     assert rebalancer.refused == 0
 
 
+def _refused_once_then(strategy: Strategy, monkeypatch: pytest.MonkeyPatch, retry_error: Exception | None = None) -> None:
+    """The first A buy is refused for money (40 shares fit); the retry raises `retry_error`, or goes through. Spendable stays 5,000."""
+    original = strategy.submit_order
+    refusals = [InsufficientFundsError("A ticked up", spendable=Decimal(2000), max_quantity=Decimal(40))]
+
+    def submit(order):
+        if order.asset.symbol == "A" and refusals:
+            raise refusals.pop()
+        if order.asset.symbol == "A" and retry_error is not None:
+            raise retry_error
+        return original(order)
+
+    monkeypatch.setattr(strategy, "submit_order", submit)
+    monkeypatch.setattr(strategy, "spendable_cash", lambda account=None: Decimal(5000))  # large: the per-buy cap never hides the running figure
+
+
+def test_the_running_budget_deducts_what_a_retry_really_bought(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, _, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=10_000)
+    _refused_once_then(strategy, monkeypatch)
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.35}, cash_buffer=0.02))
+
+    # 5,000 - the 40 x 50 really bought = 3,000 for B (120 shares), not 5,000 - the 70 x 50 planned (60 shares)
+    assert placed == [PlacedOrder("A", "buy", 40.0), PlacedOrder("B", "buy", 120.0)]
+
+
+def test_a_retry_with_an_unknown_outcome_reports_the_retried_quantity_and_keeps_the_planned_cost_spent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=10_000)
+    _refused_once_then(strategy, monkeypatch, BrokerUncertainError("timeout"))
+
+    with caplog.at_level(logging.WARNING):
+        placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.35}, cash_buffer=0.02))
+
+    # the retry sent 40; the planned 70 x 50 stays spent (the safe side), so B gets 1,500 (60 shares)
+    assert placed == [PlacedOrder("A", "buy", 40.0, confirmed=False), PlacedOrder("B", "buy", 60.0)]
+    assert "buy 40 A (toward target): outcome unknown at the broker" in caplog.text
+
+
 def _strategy_at(tmp_path: Path, price: str, ticked: str) -> tuple[Strategy, TickingBroker]:
     """A paper strategy with 10,000 in cash (spendable 9,800) whose AAA quote moves from `price` to `ticked` after one read."""
     broker = TickingBroker(FakeClock(et(2026, 9, 14, 10)), ticks={"AAA": Decimal(ticked)})
@@ -608,9 +646,9 @@ class _DeferredFillBroker(FakeBroker):
     `fill_sells` is what the fill looks like; the test's clock runs it during the rebalancer's wait.
     """
 
-    def fill_sells(self) -> None:
+    def fill_sells(self, symbols: set[str] | None = None) -> None:
         for order in self.submitted:
-            if order.side is OrderSide.SELL and order.status is not OrderStatus.FILL:
+            if order.side is OrderSide.SELL and order.status is not OrderStatus.FILL and (symbols is None or order.asset.symbol in symbols):
                 proceeds = self.last_prices[order.asset.symbol] * order.quantity
                 cash = self.account.cash + proceeds
                 self.account = AccountBalances(cash=cash, portfolio_value=self.account.portfolio_value, buying_power=cash)
@@ -677,6 +715,32 @@ def test_a_sell_that_never_fills_costs_the_buys_but_not_the_review(tmp_path: Pat
     assert placed == [PlacedOrder("A", "sell", 100.0)]
     assert "did not fill" in caplog.text
     assert sum(clock.waits) == pytest.approx(30.0)
+
+
+def test_a_parking_sell_with_no_buy_planned_is_not_waited_on(tmp_path: Path) -> None:
+    """SHV is sold only because it sits above its target: no buy needs its money, so nothing waits for it."""
+    broker, clock, rebalancer = _deferred_book(tmp_path)
+    broker.positions = [Position(strategy_name="bill_ackman", asset=Asset("SHV"), quantity=Decimal(98), side=PositionSide.LONG)]
+
+    placed = rebalancer.rebalance(target_portfolio({}, cash_buffer=0.5))  # parking target 5,000, holding 9,800
+
+    assert placed == [PlacedOrder("SHV", "sell", 48.0)]
+    assert clock.waits == []
+
+
+def test_after_a_timed_out_wait_only_the_later_sells_are_waited_on(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """A's sell never fills (first wait times out); the SHV sell sent next fills at once and is all the second wait waits for."""
+    broker, clock, rebalancer = _deferred_book(tmp_path, fills_on_wait=False)
+    broker.positions.append(Position(strategy_name="bill_ackman", asset=Asset("SHV"), quantity=Decimal(30), side=PositionSide.LONG))
+    clock.on_wait = lambda: broker.fill_sells({"SHV"})
+
+    with caplog.at_level(logging.WARNING):
+        placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    # spendable after the SHV fill: min(3,200, 3,200 + A's open 5,000) - 200 = 3,000 for B
+    assert placed == [PlacedOrder("A", "sell", 100.0), PlacedOrder("SHV", "sell", 30.0), PlacedOrder("B", "buy", 120.0)]
+    # the second wait ends once SHV has filled: it no longer waits (and times out) on A again
+    assert "the buys go out on the broker's buying power as it stands" not in caplog.text
 
 
 def test_no_wait_without_a_sell(tmp_path: Path) -> None:
