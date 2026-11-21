@@ -17,7 +17,7 @@ class SectorPodsParams:
     Attributes:
         rebalance_weekday: 0 is Monday ... 4 is Friday.
         rebalance_time: Market time (ET) of the weekly review.
-        cash_buffer: Share of the portfolio never invested.
+        cash_buffer: Share of the portfolio held back from the target weights; the framework keeps 2% in cash anyway (`BUY_BUFFER`), so it must be >= 0.02.
         rebalance_band: Drift that triggers a trade.
         min_trade_pct: Smallest order.
         parking_symbol: Where unspent money goes.
@@ -42,7 +42,7 @@ class SectorPodsParams:
 
     rebalance_weekday: int = 1  # 0 = Monday ... 4 = Friday; 1 = Tuesday
     rebalance_time: str = "12:00"  # market time (ET) of the weekly review
-    cash_buffer: float = 0.02  # never invested
+    cash_buffer: float = 0.02  # held back from the target weights; must be >= 0.02 (the framework's own 2% cash)
     rebalance_band: float = 0.03  # drift that triggers a trade
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes

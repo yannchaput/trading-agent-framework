@@ -27,7 +27,7 @@ class BullBearParams:
         max_book_size: Most stocks the judge may put in.
         stock_weight: Weight of every stock in the book, whatever its strength (fraction of portfolio value): a full book
             of 10 makes 98%, a shorter one parks the rest.
-        cash_buffer: Share of the portfolio never invested (fees, fill drift).
+        cash_buffer: Share of the portfolio held back from the target weights; the framework keeps 2% in cash anyway (`BUY_BUFFER`), so it must be >= 0.02.
         rebalance_band: Drift that triggers a trade.
         min_trade_pct: Smallest order.
         parking_symbol: Where unspent money goes.
@@ -58,7 +58,7 @@ class BullBearParams:
     candidate_count: int = 15  # the top ranks the judge rules on every review (plus the holdings ranked up to retention_rank)
     max_book_size: int = 10  # most stocks the judge may put in
     stock_weight: float = 0.098  # every stock in the book, whatever its strength (fraction of portfolio value): a full book of 10 makes 98%, a shorter one parks the rest
-    cash_buffer: float = 0.02  # never invested (fees, fill drift)
+    cash_buffer: float = 0.02  # held back from the target weights; must be >= 0.02 (the framework's own 2% cash)
     rebalance_band: float = 0.03  # drift that triggers a trade
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes

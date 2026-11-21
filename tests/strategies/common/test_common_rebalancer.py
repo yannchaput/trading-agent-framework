@@ -398,7 +398,7 @@ def test_a_target_without_a_price_is_skipped_with_a_warning_and_the_others_proce
     assert "A" in caplog.text and "No price" in caplog.text
 
 
-def test_a_failed_price_lookup_does_not_stop_a_forced_exit(tmp_path: Path) -> None:
+def test_a_failed_price_lookup_abandons_the_review_after_the_forced_exit_went_out(tmp_path: Path) -> None:
     _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={}, cash=0)
     broker.market_data_error = BrokerError("market data is down")
 
