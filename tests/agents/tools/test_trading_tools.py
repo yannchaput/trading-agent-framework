@@ -65,6 +65,16 @@ def test_submit_order_builds_and_submits_a_market_order() -> None:
     assert submitted.asset == Asset("SPY")
 
 
+def test_submit_order_over_the_budget_returns_an_error_naming_the_max_quantity() -> None:
+    strategy, broker = _strategy()
+    broker.last_prices["SPY"] = Decimal(100)
+
+    result = _tools(strategy)["submit_order"]("SPY", 96, "buy")  # spendable is 9500
+
+    assert "at most 95 shares" in result["error"]
+    assert broker.submitted == []
+
+
 def test_submit_order_with_a_limit_price_builds_a_limit_order() -> None:
     strategy, broker = _strategy()
     tools = _tools(strategy)

@@ -472,19 +472,16 @@ def test_run_backtesting_wires_alpaca_data_and_preload(tmp_path: Path, monkeypat
     assert captured["timestep"] == "minute"
 
 
-def test_system_prompt_sizes_within_cash_and_only_names_real_tools(tmp_path: Path) -> None:
+def test_system_prompt_sizes_from_spendable_and_only_names_real_tools(tmp_path: Path) -> None:
     strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
     strategy.initialize()
     [created] = agents.created
     prompt = str(created["system_prompt"])
     tool_names = {tool.__name__ for tool in created["tools"]}  # ty: ignore[unresolved-attribute]
 
-    assert "95%" in prompt
-    assert "get_account_balance" in prompt
-    # `buying_power` is a multiple of cash on a live margin account, so it may only ever be named as
-    # the smaller-of bound alongside cash -- never as the amount to size against on its own.
-    assert "SMALLER of 'buying_power' and ('cash' + the proceeds of the sells you submitted in this run" in prompt
-    assert "buying on margin is forbidden" in prompt
+    assert "'spendable' from get_account_balance" in prompt
+    assert "95%" not in prompt
+    assert "buying_power" not in prompt
     assert "'error'" in prompt
     assert "SHV" in prompt
     mentioned = {"search_memory", "search_news", "get_positions", "get_orders", "remember_decision", "open_thesis", "close_thesis", "get_account_balance"}
@@ -602,13 +599,12 @@ def test_system_prompt_does_not_promise_a_sell_funds_the_buy_in_every_mode(tmp_p
     assert "is credited toward the buy" in prompt
 
 
-def test_system_prompt_counts_pending_buys_as_held_and_excludes_refused_sells(tmp_path: Path) -> None:
+def test_system_prompt_counts_pending_buys_as_held(tmp_path: Path) -> None:
     strategy, agents, _ = _strategy(tmp_path, TradingMode.PAPER)
     strategy.initialize()
     prompt = str(agents.created[0]["system_prompt"])
 
     assert "count an open buy order from get_orders as already held" in prompt
-    assert "sells you submitted in this run that were accepted (no 'error')" in prompt
     assert "combined value of the instruments for the regime" in prompt
 
 

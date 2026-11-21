@@ -4,6 +4,7 @@ from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
+import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.tools.account import account_tools
@@ -30,13 +31,13 @@ def test_returns_three_tools_with_one_line_docstrings() -> None:
         assert len(tool.__doc__.splitlines()) == 1
 
 
-def test_get_account_balance_reports_cash_portfolio_value_and_buying_power() -> None:
+def test_get_account_balance_reports_cash_portfolio_value_buying_power_and_spendable() -> None:
     strategy, _ = _strategy()
     tools = _tools(strategy)
 
     result = tools["get_account_balance"]()
 
-    assert result == {"cash": 10000.0, "portfolio_value": 25000.0, "buying_power": 20000.0}
+    assert result == {"cash": 10000.0, "portfolio_value": 25000.0, "buying_power": 20000.0, "spendable": 9500.0}
 
 
 def test_get_account_balance_returns_error_on_broker_failure() -> None:
@@ -49,6 +50,21 @@ def test_get_account_balance_returns_error_on_broker_failure() -> None:
     tools = _tools(strategy)
 
     assert tools["get_account_balance"]() == {"error": "account unavailable"}
+
+
+def test_get_account_balance_returns_error_when_spendable_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker = _strategy()
+    reads = iter([broker.account])
+
+    def _second_read_fails() -> object:
+        try:
+            return next(reads)
+        except StopIteration:
+            raise BrokerError("account unavailable") from None
+
+    monkeypatch.setattr(broker, "get_account", _second_read_fails)
+
+    assert _tools(strategy)["get_account_balance"]() == {"error": "account unavailable"}
 
 
 def test_get_positions_lists_every_position() -> None:
