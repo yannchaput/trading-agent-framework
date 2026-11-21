@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -366,6 +367,27 @@ class AgentManager:
 
         return ToolBudgetLimit()
 
+    def _serialized_tools_middleware(self) -> Any:
+        """Middleware for an agent that can trade: its tool calls run one at a time, in every trading mode.
+
+        LangGraph runs the tool calls of one model turn on worker threads at once. Broker state is not built for that
+        (the backtest broker's account read raised `dictionary changed size during iteration` while a submit added an
+        order) and neither is a tool's check-then-act state (an order-readiness check). One lock per agent makes the
+        calls take turns; the strategy thread is blocked in the agent run meanwhile. Read-only agents do not get it,
+        so their news and data calls stay parallel.
+        """
+        from langchain.agents.middleware import wrap_tool_call
+
+        lock = threading.RLock()
+
+        @wrap_tool_call
+        def one_tool_call_at_a_time(request: Any, handler: Callable[[Any], Any]) -> Any:
+            """Run the tool call while holding this agent's lock."""
+            with lock:
+                return handler(request)
+
+        return one_tool_call_at_a_time
+
     def _final_tools_middleware(self, final_tools: Sequence[str]) -> Any:
         """Middleware for an agent with `final_tools`: once one of them succeeded this run, end it without another model call.
 
@@ -570,6 +592,8 @@ class AgentManager:
                 self._forced_tool_choice_middleware(),
                 limiter,
             ]
+            if any(getattr(tool, "mutates_trading", False) for tool in tool_list):
+                stack.append(self._serialized_tools_middleware())
             if final_tools:
                 stack.append(self._final_tools_middleware(final_tools))
             stack.extend(middleware or ())

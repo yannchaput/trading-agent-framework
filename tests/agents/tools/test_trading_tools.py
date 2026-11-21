@@ -10,7 +10,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 from trading_agent_framework.agents.tools.trading import trading_tools
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.asset import Asset
-from trading_agent_framework.entities.enums import OrderSide, OrderType
+from trading_agent_framework.entities.enums import OrderEvent, OrderSide, OrderType
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.utils.errors import BrokerError
@@ -250,6 +250,21 @@ def test_get_orders_lists_every_tracked_order() -> None:
     result = tools["get_orders"]()
 
     assert {o["symbol"] for o in result["orders"]} == {"SPY", "QQQ"}
+
+
+def test_get_orders_lists_only_open_orders() -> None:
+    # Regression: it listed every order ever tracked, so a daily trader's context grew until the model refused it.
+    strategy, broker = _strategy()
+    tools = _tools(strategy)
+    tools["submit_order"]("SPY", 1, "buy")
+    filled = tools["submit_order"]("QQQ", 2, "sell")
+    order = strategy.get_order(filled["identifier"])
+    assert order is not None
+    broker.tracker.process_trade_event(order, OrderEvent.FILLED, price=Decimal("100"), filled_quantity=Decimal(2))
+
+    result = tools["get_orders"]()
+
+    assert [o["symbol"] for o in result["orders"]] == ["SPY"]
 
 
 def test_get_order_unknown_id_returns_error() -> None:

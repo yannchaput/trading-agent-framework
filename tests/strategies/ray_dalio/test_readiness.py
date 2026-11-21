@@ -133,3 +133,16 @@ def test_wrapped_tools_keep_their_names_and_signatures() -> None:
     assert inspect.signature(guarded[3]) == inspect.signature(raw[3])
     assert guarded[3].__doc__ == "Fake order."
     assert guarded[4] is raw[4]
+
+
+def test_the_guarded_submit_order_keeps_the_trading_flag() -> None:
+    # AgentManager serializes the tool calls of an agent holding a `mutates_trading` tool; the wrapper must keep it.
+    def submit_order(symbol: str) -> dict[str, Any]:
+        """Fake order."""
+        return {}
+
+    vars(submit_order)["mutates_trading"] = True
+    raw, _ = _tools([])
+    guarded = {t.__name__: t for t in require_readiness_before_orders([*raw[:3], submit_order])}
+
+    assert getattr(guarded["submit_order"], "mutates_trading", False) is True

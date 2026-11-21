@@ -9,8 +9,11 @@ half below the "--- fills" marker.
 from __future__ import annotations
 
 import dataclasses
+import functools
 import logging
-from collections.abc import Sequence
+import threading
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -63,6 +66,33 @@ class _Projection:
     pending_sells: dict[Asset, Decimal]
 
 
+_TWO_THREADS = (
+    "BacktestBroker was entered from two threads at once: its account and order state is single-threaded. Serialize the caller (AgentManager does it for an agent holding a `mutates_trading` tool)"
+)
+
+
+def _one_thread_at_a_time[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    """Run a method that writes the simulated account inside `BacktestBroker._one_thread(write=True)`."""
+
+    @functools.wraps(method)
+    def run(*args: P.args, **kwargs: P.kwargs) -> R:
+        with cast("BacktestBroker", args[0])._one_thread(write=True):
+            return method(*args, **kwargs)
+
+    return run
+
+
+def _read_only[**P, R](method: Callable[P, R]) -> Callable[P, R]:
+    """Run a method that only reads the simulated account inside `BacktestBroker._one_thread(write=False)`."""
+
+    @functools.wraps(method)
+    def run(*args: P.args, **kwargs: P.kwargs) -> R:
+        with cast("BacktestBroker", args[0])._one_thread(write=False):
+            return method(*args, **kwargs)
+
+    return run
+
+
 class BacktestBroker(Broker):
     """`Broker` implementation backed by simulated fills against a `BacktestDataSource`."""
 
@@ -104,6 +134,41 @@ class BacktestBroker(Broker):
         self._news_source = news_source
         self._pending: dict[str, _PendingOrder] = {}
         self.ledger = Ledger()
+        # The tripwire (`_one_thread`): the threads inside (thread id -> depth), which of them writes, the first overlap.
+        self._entry_lock = threading.Lock()
+        self._inside: dict[int, int] = {}
+        self._writer: int | None = None
+        self._overlap: str | None = None
+
+    @contextmanager
+    def _one_thread(self, *, write: bool) -> Iterator[None]:
+        """Let readers in together but a writer only alone; an overlap with another thread's write raises `BacktestError`.
+
+        Reads (`get_account`, `pull_positions`) may run on several threads at once: ray_dalio's analysts read the
+        account in parallel and nothing changes meanwhile. A write (orders, fills) next to any other thread is the race
+        (an account read iterated `_pending` while a submit added to it). Re-entering from the same thread is fine.
+        The overlap is also remembered, and the next `on_advance` raises again: a tool that catches every exception
+        (`submit_order`'s) would otherwise hide it. This locks nothing for the caller; live brokers get no such lock,
+        so a backtest fails where a live run would race.
+        """
+        me = threading.get_ident()
+        with self._entry_lock:
+            others = self._inside.keys() - {me}
+            if (self._writer is not None and self._writer != me) or (write and others):
+                self._overlap = self._overlap or _TWO_THREADS
+                raise BacktestError(_TWO_THREADS)
+            self._inside[me] = self._inside.get(me, 0) + 1
+            if write and self._writer is None:
+                self._writer = me
+        try:
+            yield
+        finally:
+            with self._entry_lock:
+                self._inside[me] -= 1
+                if self._inside[me] == 0:
+                    del self._inside[me]
+                    if self._writer == me:
+                        self._writer = None
 
     # --- Broker ABC: orders ------------------------------------------------------------
 
@@ -111,6 +176,7 @@ class BacktestBroker(Broker):
         """Return `order` unchanged: there is no venue tick rounding to simulate."""
         return order  # no broker-specific tick rounding to simulate
 
+    @_one_thread_at_a_time
     def _submit_order(self, order: Order) -> Order:
         """Validate and accept `order` as pending; it fills on a later bar."""
         if order.notional is not None:
@@ -140,6 +206,7 @@ class BacktestBroker(Broker):
         self._pending[order.identifier] = _PendingOrder(order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference)
         return order
 
+    @_one_thread_at_a_time
     def cancel_order(self, order: Order) -> None:
         """Drop a pending order and record the cancellation."""
         self._pending.pop(order.identifier, None)
@@ -153,6 +220,7 @@ class BacktestBroker(Broker):
         """Up to `limit` tracked orders."""
         return self.tracker.get_all_tracked_orders()[:limit]
 
+    @_read_only
     def pull_positions(self) -> list[Position]:
         """The simulated open positions."""
         return list(self._positions.values())
@@ -171,6 +239,7 @@ class BacktestBroker(Broker):
                 raise BrokerError(f"no news source available for backtesting: {exc}") from exc
         return self._news_source
 
+    @_read_only
     def get_account(self) -> AccountBalances:
         """Balances, with `buying_power` net of orders still pending.
 
@@ -185,6 +254,7 @@ class BacktestBroker(Broker):
         portfolio_value = self._portfolio_value(now)
         return AccountBalances(cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash)
 
+    @_one_thread_at_a_time
     def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
         """Replace a pending order with one carrying new limit/stop prices."""
         if order.identifier not in self._pending:
@@ -213,6 +283,7 @@ class BacktestBroker(Broker):
         """
         self._data_source.load(assets, start, end, timestep)
 
+    @_one_thread_at_a_time
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         """Sell `fraction` of the position in `asset` at market; `None` when flat."""
         position = self._positions.get(asset)
@@ -223,6 +294,7 @@ class BacktestBroker(Broker):
         order = Order(strategy_name=self.strategy_name, asset=asset, side=side, quantity=quantity)
         return self.submit_order(order)
 
+    @_one_thread_at_a_time
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
         """Cancel pending orders (by default) and close every position."""
         if cancel_orders:
@@ -459,8 +531,11 @@ class BacktestBroker(Broker):
 
     # --- fills: called by BacktestClock.on_advance --------------------------------------
 
+    @_one_thread_at_a_time
     def on_advance(self, previous_now: datetime, new_now: datetime) -> None:
-        """Registered as `BacktestClock.on_advance`: process fills, then sample equity."""
+        """Registered as `BacktestClock.on_advance`: process fills, then sample equity; aborts after a two-thread overlap."""
+        if self._overlap is not None:
+            raise BacktestError(self._overlap)
         self._process_pending(new_now)
         self._sample_equity(new_now)
 

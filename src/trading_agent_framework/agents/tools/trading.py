@@ -146,8 +146,8 @@ def trading_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
         return {"orders": [_lean_order(order) for order in orders]}
 
     def get_orders() -> dict[str, Any]:
-        """List every tracked order."""
-        return {"orders": [_lean_order(order) for order in strategy.get_orders()]}
+        """List the open orders (not yet filled, cancelled or rejected); use get_order for one by identifier."""
+        return {"orders": [_lean_order(order) for order in strategy.get_orders() if order.is_active()]}
 
     def get_order(order_id: str) -> dict[str, Any]:
         """Look up one order by its identifier."""
