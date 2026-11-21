@@ -177,6 +177,26 @@ def test_the_buys_are_sized_from_spendable_cash_so_a_stop_sell_funds_nothing(tmp
     assert rebalancer.refused == 0
 
 
+def test_a_refusal_never_raises_the_available_cash_back_above_the_running_figure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A's outcome is unknown (its cost stays spent, but the broker does not track it here); B is then refused with a spendable that misses A."""
+    strategy, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "C": 20, "SHV": 100}, cash=5200)
+    original = strategy.submit_order
+
+    def submit(order):
+        if order.asset.symbol == "A":
+            raise BrokerUncertainError("timeout")
+        if order.asset.symbol == "B":
+            raise InsufficientFundsError("B ticked up", spendable=Decimal(5000), max_quantity=Decimal(199))
+        return original(order)
+
+    monkeypatch.setattr(strategy, "submit_order", submit)
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25, "C": 0.25}, cash_buffer=0.02))
+
+    # 5,000 - A's 3,500 = 1,500 left for C (75 shares), not the refusal's 5,000 (125 shares)
+    assert placed == [PlacedOrder("A", "buy", 70.0, confirmed=False), PlacedOrder("C", "buy", 75.0)]
+
+
 def test_a_refused_sell_is_not_counted_as_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     strategy, broker, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500)
     original = strategy.submit_order
@@ -304,7 +324,7 @@ def test_each_buy_is_capped_by_a_fresh_spendable_cash_that_counts_the_earlier_bu
     _, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=10_000)
 
     def get_account() -> AccountBalances:
-        pending = sum(order.quantity * broker.last_prices[order.asset.symbol] for order in broker.tracker.get_active_orders() if order.side is OrderSide.BUY)
+        pending = sum((order.quantity or Decimal(0)) * broker.last_prices[order.asset.symbol] for order in broker.tracker.get_active_orders() if order.side is OrderSide.BUY)
         return AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(10_000) - pending * Decimal("1.001"))
 
     monkeypatch.setattr(broker, "get_account", get_account)
@@ -538,6 +558,18 @@ def _deferred_book(tmp_path: Path, *, fills_on_wait: bool = True) -> tuple[_Defe
         clock.on_wait = broker.fill_sells
     strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
     return broker, clock, Rebalancer(strategy, AckmanParams())
+
+
+def test_buys_funded_by_the_parking_sell_wait_for_it_to_fill(tmp_path: Path) -> None:
+    """A cash account (buying power = cash): the SHV sale is the only money for A and B, and buying power has it only once it fills."""
+    broker, clock, rebalancer = _deferred_book(tmp_path)
+    broker.positions = [Position(strategy_name="bill_ackman", asset=Asset("SHV"), quantity=Decimal(98), side=PositionSide.LONG)]
+    broker.last_prices = {"A": Decimal(50), "B": Decimal(25), "SHV": Decimal(100)}
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25}, cash_buffer=0.02))
+
+    assert placed == [PlacedOrder("SHV", "sell", 60.0), PlacedOrder("A", "buy", 70.0), PlacedOrder("B", "buy", 100.0)]
+    assert clock.waits  # it waited on the clock for the SHV sell
 
 
 def test_buys_wait_for_the_sells_to_fill_so_buying_power_has_the_proceeds(tmp_path: Path) -> None:

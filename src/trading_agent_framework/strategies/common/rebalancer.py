@@ -190,14 +190,16 @@ class Rebalancer:
         read: a live broker credits buying power only on a fill (2026-10-27 bull_bear: read 350 ms before SYRE's fill,
         the buy was skipped). A backtest never waits (its buying power credits a submitted sell). On a timeout the
         buys are sized on buying power as it stands, with a warning. The parking sell and the funding trims that follow
-        add their estimated proceeds to that figure, each buy takes its cost off it, and every buy (parking too) is
+        add their estimated proceeds to that figure and are waited on the same way before the first buy (every sell of
+        this run, parking too, is in the waited list), each buy takes its cost off it, and every buy (parking too) is
         capped by `spendable_cash()` read again just before it (a backtest's buying power nets the earlier buys' fees).
         A failed `spendable_cash()` raises, like the account read it replaced: the caller abandons the review and
         `placed` keeps the sells already sent.
         NOT covered: an open BUY that fills between `spendable_cash()`'s account read and its open-order read (its cost
         is counted nowhere); buying power, one side of its `min()`, bounds that on a cash account only. A buy refused
-        by the framework's check (`InsufficientFundsError`) or by the broker for buying power replaces `available`
-        with that figure, and the next stock is sized on it.
+        by the framework's check (`InsufficientFundsError`) lowers `available` to its `spendable` (never raises it: an
+        unknown buy's cost stays spent), one refused by the broker for buying power replaces it with the broker's
+        figure, and the next stock is sized on it.
         """
         strategy, params = self._strategy, self._params
         self.placed = []
@@ -229,7 +231,7 @@ class Rebalancer:
             """The position's value counting open orders: held, plus buys in flight, minus sells in flight and sold by this run."""
             return max(0.0, held.get(symbol, 0.0) + incoming.get(symbol, 0.0) - outgoing.get(symbol, 0.0) - sold.get(symbol, 0.0)) * prices.get(symbol, 0.0)
 
-        sells: list[Order] = []  # the stock sells of this run, whose fills the buys wait for
+        sells: list[Order] = []  # this run's sells (parking too), whose fills the buys wait for
 
         def submit(symbol: str, side: str, quantity: float, why: str) -> Outcome:
             try:
@@ -247,8 +249,7 @@ class Rebalancer:
                 return "refused"
             if side == "sell":
                 sold[symbol] = sold.get(symbol, 0.0) + quantity
-                if symbol != parking:
-                    sells.append(order)
+                sells.append(order)
             note = _estimated_pnl(prices[symbol], costs[symbol], quantity) if side == "sell" and symbol in costs and prices[symbol] > 0 else ""
             strategy.log_info(f"{side} {quantity:g} {symbol} @ ${prices[symbol]:.2f} ({why}{note})")
             self.placed.append(PlacedOrder(symbol, side, quantity))
@@ -290,6 +291,7 @@ class Rebalancer:
         parking_price = prices[parking]
         parking_value = value_of(parking)
         parking_target = target.parking_weight * portfolio_value
+        parked = False
         if parking_price > 0 and sellable(parking) > 0:
             sell_value = 0.0
             excess = parking_value - parking_target
@@ -303,6 +305,7 @@ class Rebalancer:
                 if quantity > 0 and submit(parking, "sell", quantity, "above target or funding the buys") == "accepted":
                     available += quantity * parking_price
                     parking_value -= quantity * parking_price
+                    parked = True
 
         # The buys may still lack money: a fully invested book has no parking to sell and no cash. Parking went first above; now trim
         # the stocks above their targets, inside their band too, the largest excess first, and only by what the buys are short.
@@ -319,7 +322,7 @@ class Rebalancer:
                 available += quantity * prices[symbol]
                 unfunded -= quantity * prices[symbol]
                 trimmed = True
-        if trimmed and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
+        if (parked or trimmed) and not strategy.is_backtesting and not strategy.wait_for_orders_execution(sells, self._fill_wait_seconds):
             strategy.log_warning(f"{len(sells)} sell(s) did not fill within {self._fill_wait_seconds:g}s: the buys go out on the broker's buying power as it stands")
 
         # 2. Buys, in the trader's order. Each buy reads the framework's figure again: it counts what our running
@@ -336,9 +339,9 @@ class Rebalancer:
             outcome = submit(symbol, "buy", quantity, "toward target")
             if outcome != "refused":  # an unknown outcome may have gone through: its cost stays spent
                 available -= quantity * price
-            elif isinstance(refusals[0], InsufficientFundsError):  # the price moved since sizing: go on from the framework's figure
+            elif isinstance(refusals[0], InsufficientFundsError):  # the price moved since sizing: never above the framework's figure
                 strategy.log_warning(f"Resyncing available cash to the spendable cash: ${refusals[0].spendable:.2f}")
-                available = float(refusals[0].spendable)
+                available = min(available, float(refusals[0].spendable))
             elif (real := parse_insufficient_buying_power(refusals[0])) is not None:  # the broker's own figure, not our (drifted) estimate
                 strategy.log_warning(f"Resyncing available cash to the broker-reported buying power: ${real:.2f}")
                 available = real - float(BUY_BUFFER) * portfolio_value
