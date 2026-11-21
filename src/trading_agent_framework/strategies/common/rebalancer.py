@@ -191,8 +191,9 @@ class Rebalancer:
         the buy was skipped). A backtest never waits (its buying power credits a submitted sell). On a timeout the
         buys are sized on buying power as it stands, with a warning. The parking sell and the funding trims that follow
         add their estimated proceeds to that figure, each buy takes its cost off it, and every buy (parking too) is
-        capped by `spendable_cash()` read again just before it (a backtest's buying power nets the earlier buys' fees). A failed `spendable_cash()` raises, like the account read it
-        replaced: the caller abandons the review and `placed` keeps the sells already sent.
+        capped by `spendable_cash()` read again just before it (a backtest's buying power nets the earlier buys' fees).
+        A failed `spendable_cash()` raises, like the account read it replaced: the caller abandons the review and
+        `placed` keeps the sells already sent.
         NOT covered: an open BUY that fills between `spendable_cash()`'s account read and its open-order read (its cost
         is counted nowhere); buying power, one side of its `min()`, bounds that on a cash account only. A buy refused
         by the framework's check (`InsufficientFundsError`) or by the broker for buying power replaces `available`
