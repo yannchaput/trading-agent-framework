@@ -6,6 +6,7 @@ import math
 from dataclasses import dataclass, field
 
 from trading_agent_framework.strategies.bill_ackman.screen import ScreenParams
+from trading_agent_framework.utils.helpers import BUY_BUFFER
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +59,7 @@ class AckmanParams:
             "weights, cash_buffer, rebalance_band and min_trade_pct must be finite": not all(math.isfinite(value) for value in floats),
             "min_weight must be above 0 and at most max_weight, which is at most 1": not 0 < self.min_weight <= self.max_weight <= 1,
             "min_weight must be at least rebalance_band (a chosen stock below the band would never be bought)": self.min_weight < self.rebalance_band,
-            "cash_buffer must be in [0, 1)": not 0 <= self.cash_buffer < 1,
+            f"cash_buffer must be in [{BUY_BUFFER}, 1)": not float(BUY_BUFFER) <= self.cash_buffer < 1,  # at least the buy buffer `Strategy.spendable_cash` keeps back
             "rebalance_band must be in (0, 1)": not 0 < self.rebalance_band < 1,
             "min_trade_pct must be in [0, 1)": not 0 <= self.min_trade_pct < 1,
             "forced_exit_fails must be at least 1": self.forced_exit_fails < 1,

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from trading_agent_framework.agents.tools.text import TextLimit
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.utils.errors import ConfigurationError
+from trading_agent_framework.utils.helpers import BUY_BUFFER
 
 _EPS = 1e-9  # 10 x 0.098 is a hair above 0.98 in floating point
 
@@ -122,7 +123,7 @@ class BullBearParams:
             "stock_weight must be in (0, 1]": not 0 < self.stock_weight <= 1,
             "max_book_size x stock_weight must fit in 1 - cash_buffer": self.max_book_size * self.stock_weight > investable + _EPS,
             "stock_weight must be above rebalance_band (a new stock would never be bought)": self.stock_weight <= self.rebalance_band,
-            "cash_buffer must be in [0, 1)": not 0 <= self.cash_buffer < 1,
+            f"cash_buffer must be in [{BUY_BUFFER}, 1)": not float(BUY_BUFFER) <= self.cash_buffer < 1,  # at least the buy buffer `Strategy.spendable_cash` keeps back
             "rebalance_band must be in (0, 1)": not 0 < self.rebalance_band < 1,
             "min_trade_pct must be in [0, 1)": not 0 <= self.min_trade_pct < 1,
             "parking_symbol must not be blank": not self.parking_symbol.strip(),

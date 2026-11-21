@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from trading_agent_framework.agents.tools.text import TextLimit
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.utils.errors import ConfigurationError
+from trading_agent_framework.utils.helpers import BUY_BUFFER
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +73,7 @@ class SectorPodsParams:
         problems = {
             "max_etf_weight, max_pod_weight and min_yahoo_coverage must be in (0, 1]": not all(0 < value <= 1 for value in (self.max_etf_weight, self.max_pod_weight, self.min_yahoo_coverage)),
             "max_etf_weight must not exceed max_pod_weight": self.max_etf_weight > self.max_pod_weight,
-            "cash_buffer must be in [0, 1)": not 0 <= self.cash_buffer < 1,
+            f"cash_buffer must be in [{BUY_BUFFER}, 1)": not float(BUY_BUFFER) <= self.cash_buffer < 1,  # at least the buy buffer `Strategy.spendable_cash` keeps back
             "rebalance_band must be in (0, 1)": not 0 < self.rebalance_band < 1,
             "min_trade_pct must be in [0, 1)": not 0 <= self.min_trade_pct < 1,
             "rebalance_weekday must be a weekday (0 = Monday ... 4 = Friday)": not 0 <= self.rebalance_weekday <= 4,

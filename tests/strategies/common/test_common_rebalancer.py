@@ -18,7 +18,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.bill_ackman.parameters import AckmanParams
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import PlacedOrder, Rebalancer
-from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError
+from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError, InsufficientFundsError
 
 # Portfolio value 10,000 in every test: the band is 500 (5%), the smallest order 50 (0.5%), the cash reserve 200 (2%).
 
@@ -155,6 +155,28 @@ def test_a_refused_buy_resyncs_the_available_cash_from_the_brokers_figure(tmp_pa
     assert placed == [PlacedOrder("SHV", "sell", 60.0), PlacedOrder("B", "buy", 32.0)]
 
 
+def test_a_buy_over_the_framework_budget_resyncs_from_its_spendable_figure_and_goes_on(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker, rebalancer = _book(tmp_path, positions={"SHV": 98}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    calls = _raising_for(strategy, monkeypatch, "A", OrderSide.BUY, InsufficientFundsError("A ticked up", spendable=Decimal(1000), max_quantity=Decimal(19)))
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.35, "B": 0.25}, cash_buffer=0.02))
+
+    # B is sized against the 1,000 the check reported (already net of the 2% buffer), and A is not retried
+    assert placed == [PlacedOrder("SHV", "sell", 60.0), PlacedOrder("B", "buy", 40.0)]
+    assert calls["A"] == 1
+
+
+def test_the_buys_are_sized_from_spendable_cash_so_a_stop_sell_funds_nothing(tmp_path: Path) -> None:
+    """An earlier stop-loss on A may never trigger: `spendable_cash()` gives it no credit, so no buy is sent only to be refused."""
+    strategy, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=200)
+    broker.tracker.track_unprocessed(strategy.create_order("A", 100, "sell", stop_price=45))
+
+    placed = rebalancer.rebalance(target_portfolio({"B": 0.35}, cash_buffer=0.02))
+
+    assert placed == []
+    assert rebalancer.refused == 0
+
+
 def test_a_refused_sell_is_not_counted_as_proceeds(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     strategy, broker, rebalancer = _book(tmp_path, positions={"B": 100}, prices={"A": 50, "B": 25, "SHV": 100}, cash=7500)
     original = strategy.submit_order
@@ -251,9 +273,12 @@ def test_a_failed_price_lookup_does_not_stop_a_forced_exit(tmp_path: Path) -> No
     _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={}, cash=0)
     broker.market_data_error = BrokerError("market data is down")
 
-    placed = rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
+    # The quantity needs no price, so the sell goes out; sizing the buys then needs the open sell's price, and the
+    # rebalance raises like any broker failure after a sell (the pipeline abandons the review and logs `placed`).
+    with pytest.raises(BrokerError, match="market data is down"):
+        rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
 
-    assert placed == [PlacedOrder("A", "sell", 100.0)]  # the quantity needs no price; no parking buy without one
+    assert rebalancer.placed == [PlacedOrder("A", "sell", 100.0)]
 
 
 def test_an_order_below_the_minimum_size_is_skipped(tmp_path: Path) -> None:
@@ -272,6 +297,23 @@ def test_quantities_are_floored_so_a_cost_never_exceeds_the_money(tmp_path: Path
     (_, _, quantity) = next(order for order in _orders(broker) if order[0] == "A")
     assert quantity == 105.010501
     assert quantity * 33.33 <= 3500
+
+
+def test_each_buy_is_capped_by_a_fresh_spendable_cash_that_counts_the_earlier_buys_fees(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A backtest's buying power nets the fees of pending buys (`BacktestBroker._projection`); our estimate only their cost."""
+    _, broker, rebalancer = _book(tmp_path, positions={}, prices={"A": 50, "B": 25, "SHV": 100}, cash=10_000)
+
+    def get_account() -> AccountBalances:
+        pending = sum(order.quantity * broker.last_prices[order.asset.symbol] for order in broker.tracker.get_active_orders() if order.side is OrderSide.BUY)
+        return AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(10_000) - pending * Decimal("1.001"))
+
+    monkeypatch.setattr(broker, "get_account", get_account)
+
+    placed = rebalancer.rebalance(target_portfolio({"A": 0.49, "B": 0.49}, cash_buffer=0.02))
+
+    # B gets what is left after A's 4,900 and its 4.90 fee, less the 200 buffer: 4,895.10 = 195.804 shares, not a refused 196
+    assert placed == [PlacedOrder("A", "buy", 98.0), PlacedOrder("B", "buy", 195.804)]
+    assert rebalancer.refused == 0
 
 
 def test_buying_power_below_cash_limits_the_buys(tmp_path: Path) -> None:
@@ -606,7 +648,7 @@ def test_a_sell_priced_at_zero_logs_no_pnl(tmp_path: Path, caplog: pytest.LogCap
     _, broker, rebalancer = _book(tmp_path, positions={"A": 100}, prices={}, cash=0, costs={"A": 60})
     broker.market_data_error = BrokerError("market data is down")
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.INFO), pytest.raises(BrokerError):  # sizing the buys then fails: see the test above
         rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
 
     assert "sell 100 A @ $0.00 (forced exit)" in caplog.text

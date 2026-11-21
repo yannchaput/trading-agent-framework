@@ -1,5 +1,7 @@
 """Tests for `SectorPodsParams`."""
 
+import re
+
 import pytest
 
 from trading_agent_framework.agents.tools.text import TextLimit
@@ -33,6 +35,12 @@ def test_defaults():
 def test_params_reject_bad_values(kwargs):
     with pytest.raises(ConfigurationError):
         SectorPodsParams(**kwargs)
+
+
+def test_a_cash_buffer_below_the_framework_buy_buffer_is_rejected_and_2_percent_is_accepted():
+    with pytest.raises(ConfigurationError, match=re.escape("cash_buffer must be in [0.02, 1)")):
+        SectorPodsParams(cash_buffer=0.01)
+    assert SectorPodsParams(cash_buffer=0.02).cash_buffer == 0.02
 
 
 @pytest.mark.parametrize("weekday", [0, 4])

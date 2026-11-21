@@ -96,3 +96,18 @@ def test_the_log_tag_prefixes_the_order_line(tmp_path: Path, caplog: pytest.LogC
         place("AAA", "buy", 1)
 
     assert "[congress_trades] buy 1 AAA @ ~$50.00" in caplog.text
+
+
+def test_a_buy_above_spendable_cash_is_refused_by_the_desk_with_the_most_that_fits(tmp_path: Path) -> None:
+    """The desk sizes from `Strategy.spendable_cash()`: an earlier run's open buy and the 2% buffer count, not only this run's orders."""
+    desk = _desk(tmp_path)
+    desk.begin_run({"AAA": 0.5}, [])
+    strategy = desk._strategy
+    strategy.broker.tracker.track_unprocessed(strategy.create_order("AAA", 40, "buy"))  # $2,000 still to fill from an earlier run
+    place = {t.__name__: t for t in desk.tools()}["place_order"]
+
+    refused = place("AAA", "buy", 60)  # $3,000 against 5,000 - 2,000 - 200 = $2,800
+
+    assert refused["error"].startswith("buy 60 AAA ($3,000.00) exceeds the money available ($2,800.00")
+    assert "at most 56 shares" in refused["error"]
+    assert "error" not in place("AAA", "buy", 56)

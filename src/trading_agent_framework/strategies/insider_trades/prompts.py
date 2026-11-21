@@ -15,8 +15,8 @@ _ENGLISH = "Write everything in English: your reasons and every tool argument, e
 _DESK_RULES = (
     "Rules (the order desk enforces them and refuses an order that breaks one, with a reason and the largest quantity it allows):\n"
     "- Send every sell before the first buy; a sell you placed is credited toward the buys.\n"
-    "- Size a buy against the SMALLER of buying_power and (cash + the proceeds of the sells you placed in this run), never "
-    "against buying_power alone: on a margin account it exceeds the cash, and buying on margin is forbidden. Never short.\n"
+    "- Never buy for more than 'spendable' from get_account_balance (it already counts open orders and keeps 2% of the "
+    "book back); read it again after each order. Buying on margin is forbidden. Never short.\n"
     "- Never buy beyond a stock's target weight, and never sell a target stock below it. Trade only the shortfalls; an order "
     "already working counts toward them, so never place the same order twice.\n"
     "- If place_order returns an error, nothing was placed: read the reason, correct the quantity once, or skip that stock.\n\n"
