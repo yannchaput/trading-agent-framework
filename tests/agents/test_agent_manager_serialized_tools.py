@@ -59,8 +59,18 @@ def test_an_agent_that_can_trade_runs_its_tool_calls_one_at_a_time() -> None:
 
 
 def test_a_read_only_agent_keeps_its_parallel_tool_calls() -> None:
-    overlap = _Overlap()
+    # All four calls must be inside at once to pass the barrier: run one at a time, it breaks and the run raises.
+    barrier = threading.Barrier(4, timeout=5)
 
-    _run([overlap.tool("search_news"), overlap.tool("get_fred_latest"), overlap.tool("get_bars"), overlap.tool("get_quote")])
+    def make(name: str) -> Callable[..., dict[str, Any]]:
+        def call(symbol: str) -> dict[str, Any]:
+            barrier.wait()
+            return {"symbol": symbol}
 
-    assert overlap.peak > 1
+        call.__name__ = name
+        call.__doc__ = f"{name} a symbol."
+        return call
+
+    _run([make("search_news"), make("get_fred_latest"), make("get_bars"), make("get_quote")])
+
+    assert not barrier.broken

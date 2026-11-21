@@ -71,26 +71,18 @@ _TWO_THREADS = (
 )
 
 
-def _one_thread_at_a_time[**P, R](method: Callable[P, R]) -> Callable[P, R]:
-    """Run a method that writes the simulated account inside `BacktestBroker._one_thread(write=True)`."""
+def _tripwire[**P, R](*, write: bool) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    """Run a method that reads (`write=False`) or writes the simulated account inside `BacktestBroker._one_thread`."""
 
-    @functools.wraps(method)
-    def run(*args: P.args, **kwargs: P.kwargs) -> R:
-        with cast("BacktestBroker", args[0])._one_thread(write=True):
-            return method(*args, **kwargs)
+    def decorate(method: Callable[P, R]) -> Callable[P, R]:
+        @functools.wraps(method)
+        def run(*args: P.args, **kwargs: P.kwargs) -> R:
+            with cast("BacktestBroker", args[0])._one_thread(write=write):
+                return method(*args, **kwargs)
 
-    return run
+        return run
 
-
-def _read_only[**P, R](method: Callable[P, R]) -> Callable[P, R]:
-    """Run a method that only reads the simulated account inside `BacktestBroker._one_thread(write=False)`."""
-
-    @functools.wraps(method)
-    def run(*args: P.args, **kwargs: P.kwargs) -> R:
-        with cast("BacktestBroker", args[0])._one_thread(write=False):
-            return method(*args, **kwargs)
-
-    return run
+    return decorate
 
 
 class BacktestBroker(Broker):
@@ -176,7 +168,7 @@ class BacktestBroker(Broker):
         """Return `order` unchanged: there is no venue tick rounding to simulate."""
         return order  # no broker-specific tick rounding to simulate
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def _submit_order(self, order: Order) -> Order:
         """Validate and accept `order` as pending; it fills on a later bar."""
         if order.notional is not None:
@@ -206,7 +198,7 @@ class BacktestBroker(Broker):
         self._pending[order.identifier] = _PendingOrder(order=order, asset=order.asset, last_evaluated=now, needs_skip=needs_skip, trail_reference=trail_reference)
         return order
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def cancel_order(self, order: Order) -> None:
         """Drop a pending order and record the cancellation."""
         self._pending.pop(order.identifier, None)
@@ -220,7 +212,7 @@ class BacktestBroker(Broker):
         """Up to `limit` tracked orders."""
         return self.tracker.get_all_tracked_orders()[:limit]
 
-    @_read_only
+    @_tripwire(write=False)
     def pull_positions(self) -> list[Position]:
         """The simulated open positions."""
         return list(self._positions.values())
@@ -239,7 +231,7 @@ class BacktestBroker(Broker):
                 raise BrokerError(f"no news source available for backtesting: {exc}") from exc
         return self._news_source
 
-    @_read_only
+    @_tripwire(write=False)
     def get_account(self) -> AccountBalances:
         """Balances, with `buying_power` net of orders still pending.
 
@@ -254,7 +246,7 @@ class BacktestBroker(Broker):
         portfolio_value = self._portfolio_value(now)
         return AccountBalances(cash=self._cash, portfolio_value=portfolio_value, buying_power=self._projection(now).cash)
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def modify_order(self, order: Order, *, limit_price: Decimal | None = None, stop_price: Decimal | None = None) -> Order:
         """Replace a pending order with one carrying new limit/stop prices."""
         if order.identifier not in self._pending:
@@ -283,7 +275,7 @@ class BacktestBroker(Broker):
         """
         self._data_source.load(assets, start, end, timestep)
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def close_position(self, asset: Asset, fraction: Decimal = Decimal(1)) -> Order | None:
         """Sell `fraction` of the position in `asset` at market; `None` when flat."""
         position = self._positions.get(asset)
@@ -294,7 +286,7 @@ class BacktestBroker(Broker):
         order = Order(strategy_name=self.strategy_name, asset=asset, side=side, quantity=quantity)
         return self.submit_order(order)
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def close_all_positions(self, cancel_orders: bool = True) -> list[Order]:
         """Cancel pending orders (by default) and close every position."""
         if cancel_orders:
@@ -531,7 +523,7 @@ class BacktestBroker(Broker):
 
     # --- fills: called by BacktestClock.on_advance --------------------------------------
 
-    @_one_thread_at_a_time
+    @_tripwire(write=True)
     def on_advance(self, previous_now: datetime, new_now: datetime) -> None:
         """Registered as `BacktestClock.on_advance`: process fills, then sample equity; aborts after a two-thread overlap."""
         if self._overlap is not None:
