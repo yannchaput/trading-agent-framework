@@ -3,6 +3,7 @@
 ## General
 
 * Fix pyright errors (consume tokens)
+* Add a parameter start/stop for the backtest
 * Update claude.md so that simplify skill is always run before commit as pony-tail. Check if a hook would be possible. Add documentation by default
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
