@@ -7,30 +7,32 @@ Adapted from LumiBot's idea-meritocracy example (see `prompts.py`). The flow is 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
-from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.agents.tools.fundamentals import fundamentals_tools
 from trading_agent_framework.agents.tools.indicators import indicator_tools
 from trading_agent_framework.agents.tools.macro import macro_tools
 from trading_agent_framework.agents.tools.market_data import market_data_tools
 from trading_agent_framework.agents.tools.news import news_tools
-from trading_agent_framework.agents.tools.trading import trading_tools
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.news import require_news_provider
-from trading_agent_framework.strategies.ray_dalio.prompts import ANALYSTS, CONTEXT, DISAGREEMENT, SYSTEM_PROMPTS, TASK_PROMPTS, TRADER, UNIVERSE
-from trading_agent_framework.strategies.ray_dalio.readiness import require_readiness_before_orders
+from trading_agent_framework.strategies.common.portfolio import target_portfolio
+from trading_agent_framework.strategies.common.rebalancer import Rebalancer
+from trading_agent_framework.strategies.ray_dalio.basket import basket_tool
+from trading_agent_framework.strategies.ray_dalio.prompts import ANALYSTS, CONTEXT, DISAGREEMENT, SYSTEM_PROMPTS, TASK_PROMPTS, UNIVERSE
+from trading_agent_framework.utils.helpers import BUY_BUFFER
 
 if TYPE_CHECKING:
     from trading_agent_framework.backtesting.runner import BacktestResult
 
-_ORDER_TOOLS = {"submit_order", "cancel_order", "cancel_open_orders", "get_orders", "get_order"}
+REBALANCE = "rebalance"  # the plain-code node that trades the basket
 _DEBATE = tuple(ANALYSTS.values())  # the state slots the analysts write
 
 
@@ -39,18 +41,28 @@ def _size(quantity: Decimal | None) -> str:
     return "?" if quantity is None else f"{quantity.normalize():f}"
 
 
+@dataclass(frozen=True)
+class _RebalanceSettings:
+    """The three settings `Rebalancer` reads (pyright refuses a plain namespace for them): sector_pods' band and minimum trade."""
+
+    parking_symbol: str = "SHV"
+    rebalance_band: float = 0.03
+    min_trade_pct: float = 0.005
+
+
 class DalioState(TypedDict, total=False):
-    """The shared state of one session: the date, each analyst's view and the disagreement round (one writer per slot)."""
+    """The shared state of one session: the date, each analyst's view, the disagreement round and its basket (one writer per slot)."""
 
     date: str
     growth: str
     inflation: str
     liquidity: str
     disagreement: str
+    basket: dict[str, float]
 
 
 class RayDalioStrategy(Strategy):
-    """Once a session: growth, inflation and debt/liquidity analysts in parallel, a disagreement round, then the trader."""
+    """Once a session: growth, inflation and debt/liquidity analysts in parallel, a disagreement round, then code trades its basket."""
 
     sleeptime = "1D"
 
@@ -65,13 +77,14 @@ class RayDalioStrategy(Strategy):
     _graph: Any = None
 
     def initialize(self) -> None:
-        """Create the five agents (once per run: names are unique) and compile the graph."""
+        """Create the four agents (once per run: names are unique), the rebalancer, and compile the graph."""
         self.sleeptime = "1D"
         require_news_provider(self.broker, "ray_dalio's agents need")
-        for name in (*ANALYSTS, DISAGREEMENT):
+        self._basket: dict[str, float] = {}  # filled by the disagreement agent's submit_basket tool
+        for name in ANALYSTS:
             self.agents.create(name=name, system_prompt=SYSTEM_PROMPTS[name], tools=self._research_tools())
-        trader_tools = require_readiness_before_orders([*self._research_tools(), *only(trading_tools(self), _ORDER_TOOLS)])  # no close_position / sell_all: they order without the guard
-        self.agents.create(name=TRADER, system_prompt=SYSTEM_PROMPTS[TRADER], tools=trader_tools)
+        self.agents.create(name=DISAGREEMENT, system_prompt=SYSTEM_PROMPTS[DISAGREEMENT], tools=[*self._research_tools(), basket_tool(self._basket)])
+        self._rebalancer = Rebalancer(self, _RebalanceSettings())
         self._graph = self._build_graph()
 
     def _research_tools(self) -> list[Callable[..., dict[str, Any]]]:
@@ -90,19 +103,36 @@ class RayDalioStrategy(Strategy):
 
         return run
 
+    def _disagreement_node(self, state: DalioState) -> dict[str, Any]:
+        """Run the disagreement agent; its accepted basket (empty if it never submitted one) goes to the state."""
+        self._basket.clear()  # a basket never carries over from an earlier session
+        update = self._node(DISAGREEMENT, "disagreement", _DEBATE)(state)
+        return {**update, "basket": dict(self._basket)}
+
+    def _rebalance_node(self, state: DalioState) -> dict[str, Any]:
+        """Trade the account to the basket: holdings it leaves out are sold, the rest of the book goes to SHV. Plain code, no agent."""
+        basket = state.get("basket", {})
+        if not basket:
+            self.log_warning("no basket submitted: holding the current book")
+            return {}
+        self.log_info(f"basket: {basket}")
+        stocks = {symbol: weight for symbol, weight in basket.items() if symbol != "SHV"}  # SHV is whatever the stocks leave over
+        self._rebalancer.rebalance(target_portfolio(stocks, cash_buffer=float(BUY_BUFFER)))
+        return {}
+
     def _build_graph(self) -> Any:
-        """Compile START -> three analysts in parallel -> disagreement -> trader -> END."""
+        """Compile START -> three analysts in parallel -> disagreement -> rebalance -> END."""
         from langgraph.graph import END, START, StateGraph
 
         graph = StateGraph(DalioState)
         for name, slot in ANALYSTS.items():  # node names are the agent names: a node may not share a name with a state slot
             graph.add_node(name, self._node(name, slot, ()))
             graph.add_edge(START, name)
-        graph.add_node(DISAGREEMENT, self._node(DISAGREEMENT, "disagreement", _DEBATE))
-        graph.add_node(TRADER, self._node(TRADER, None, (*_DEBATE, "disagreement")))
+        graph.add_node(DISAGREEMENT, self._disagreement_node)
+        graph.add_node(REBALANCE, self._rebalance_node)
         graph.add_edge(list(ANALYSTS), DISAGREEMENT)
-        graph.add_edge(DISAGREEMENT, TRADER)
-        graph.add_edge(TRADER, END)
+        graph.add_edge(DISAGREEMENT, REBALANCE)
+        graph.add_edge(REBALANCE, END)
         return graph.compile()
 
     def on_trading_iteration(self) -> None:

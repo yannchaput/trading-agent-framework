@@ -5,11 +5,8 @@ from trading_agent_framework.strategies.ray_dalio.prompts import (
     CONTEXT,
     DISAGREEMENT,
     LEVERAGE_RULE,
-    ORDER_READINESS_RULE,
-    SIZING_RULE,
     SYSTEM_PROMPTS,
     TASK_PROMPTS,
-    TRADER,
     UNIVERSE,
 )
 
@@ -51,7 +48,7 @@ def test_the_leverage_rule_points_at_the_descriptions():
 
 
 def test_every_agent_has_a_system_and_a_task_prompt():
-    assert set(SYSTEM_PROMPTS) == set(TASK_PROMPTS) == {*ANALYSTS, DISAGREEMENT, TRADER}
+    assert set(SYSTEM_PROMPTS) == set(TASK_PROMPTS) == {*ANALYSTS, DISAGREEMENT}
 
 
 def test_no_lumibot_tool_name_is_left():
@@ -61,13 +58,8 @@ def test_no_lumibot_tool_name_is_left():
         assert all(name not in text for text in texts), name
 
 
-def test_only_the_trader_is_told_about_orders_and_sizing():
-    assert ORDER_READINESS_RULE in SYSTEM_PROMPTS[TRADER] and SIZING_RULE in TASK_PROMPTS[TRADER]
-    others = (*ANALYSTS, DISAGREEMENT)
-    assert all("submit_order" not in SYSTEM_PROMPTS[name] for name in others)
-    assert all("submit_order" not in TASK_PROMPTS[name] for name in others)
-    assert all(ORDER_READINESS_RULE not in SYSTEM_PROMPTS[name] and SIZING_RULE not in TASK_PROMPTS[name] for name in others)
-
-
-def test_sizing_rule_points_at_spendable():
-    assert "spendable" in SIZING_RULE and "buying_power" not in SIZING_RULE
+def test_only_the_disagreement_agent_is_told_to_submit_a_basket():
+    assert "submit_basket" in SYSTEM_PROMPTS[DISAGREEMENT] and "submit_basket" in TASK_PROMPTS[DISAGREEMENT]
+    for name in ANALYSTS:
+        assert "submit_basket" not in SYSTEM_PROMPTS[name] and "submit_basket" not in TASK_PROMPTS[name]
+    assert all("submit_order" not in text for text in (*SYSTEM_PROMPTS.values(), *TASK_PROMPTS.values()))
