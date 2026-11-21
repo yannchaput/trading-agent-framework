@@ -343,7 +343,7 @@ A port of lumibot's "Bull vs Bear AI Stock Trading Bot": instead of a fixed list
 | **Benchmark** | SPY |
 | **Env file** | `env/.env.ray_dalio.<mode>`: `LLM_*`, `ALPACA_NEWS_*`, `FRED_API_KEY`, `SEC_EDGAR_USER_AGENT`, plus the broker keys in paper/live |
 
-Adapted from lumibot's idea-meritocracy leveraged ETF example; not affiliated with Ray Dalio or Bridgewater. Three analysts argue from macro data (FRED) and news, a disagreement round challenges them, and the trader holds at least three positions; an order is refused until the trader has read the account, the positions and the symbol's price. Run `uv run agent ray_dalio paper` (or `backtesting`, default window `PredefinedWindow.MONTH_LATEST`). **Use an account that holds only this strategy's positions:** the trader may sell any position. Alpaca's news archive before 2026-04-29 is empty, so earlier backtests run blind on news.
+Adapted from lumibot's idea-meritocracy leveraged ETF example; not affiliated with Ray Dalio or Bridgewater. Three analysts argue from macro data (FRED) and news, a disagreement round challenges them, and the trader holds at least three positions; an order is refused until the trader has read the account, the positions and the symbol's price. Run `uv run agent ray_dalio paper` (or `backtesting`, default window `PredefinedWindow.BI_YEAR_LATEST`, about two years of daily agent runs). **Use an account that holds only this strategy's positions:** the trader may sell any position. Alpaca's news archive before 2026-04-29 is empty, so earlier backtests run blind on news.
 
 ### 📈 `sector_pods` — Five sector pods, a risk manager and a portfolio manager over 27 sector ETFs
 

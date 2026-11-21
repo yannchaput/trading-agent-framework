@@ -29,4 +29,4 @@ An LLM team (growth, inflation and debt/liquidity analysts, a thoughtful-disagre
 
 - **Run it on an account holding only this strategy:** the trader may sell any position.
 - Alpaca news before 2026-04-29 is empty in backtests, so earlier windows run blind on news.
-- The 54 tickers were taken from lumibot and not verified tradable; the default backtest window is `PredefinedWindow.MONTH_LATEST` on Yahoo daily bars.
+- The 54 tickers were taken from lumibot and not verified tradable; the default backtest window is `PredefinedWindow.BI_YEAR_LATEST` (about two years, so mostly before the news archive) on Yahoo daily bars.

@@ -81,7 +81,7 @@ EXPECTED: dict[str, tuple[tuple[datetime, datetime], int, str]] = {
     "earnings_drift": (YEAR, 283, "day"),
     "insider_trades": (YEAR, 10, "day"),
     "news_builtin": (YEAR, 10, "minute"),
-    "ray_dalio": (backtest_window(PredefinedWindow.MONTH_LATEST), 10, "day"),
+    "ray_dalio": (backtest_window(PredefinedWindow.BI_YEAR_LATEST), 10, "day"),
     "vwap_pullback": ((et(2021, 9, 20), et(2026, 10, 5)), 75, "minute"),
 }
 

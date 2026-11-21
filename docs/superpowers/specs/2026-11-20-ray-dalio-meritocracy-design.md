@@ -120,8 +120,9 @@ through unchanged. A refusal is a tool result, so the model can make the calls a
 - `on_trading_iteration`: invoke the graph; log each agent's output (`log_info`). An agent error propagates: the
   executor logs it and runs again next session, as lumibot would.
 - `run_backtesting` defaults: `YahooBacktestData` daily bars (the framework default, lumibot's backtest data),
-  `timestep="day"`, 54 symbols + SPY preloaded, `agent_telemetry=True`, a short default window inside the news archive
-  (it starts 2026-04-29). Costs: the framework's broker fees plus 5 bps slippage per side (user's call, in place of
+  `timestep="day"`, 54 symbols + SPY preloaded, `agent_telemetry=True`, default window
+  `BI_YEAR_LATEST` (the user changed it from `MONTH_LATEST` after the merge; it starts before Alpaca's news archive,
+  which begins 2026-04-29). Costs: the framework's broker fees plus 5 bps slippage per side (user's call, in place of
   lumibot's 0.1% `percent_fee`), which is already `Strategy.backtesting_slippage`'s default: nothing to set.
 - Iterations start at the market open (`iteration_start_time` default), as lumibot's `"1D"` does.
 - Env: `env/.env.ray_dalio.<mode>`: `LLM_*`, `ALPACA_NEWS_*`, `FRED_API_KEY`, `SEC_EDGAR_USER_AGENT`, broker keys.
