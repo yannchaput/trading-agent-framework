@@ -101,7 +101,7 @@ def test_enter_long_sizes_from_spendable_cash_so_an_open_buy_is_not_spent_again(
 def test_enter_long_refuses_when_spendable_cash_cannot_be_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rig = Rig(tmp_path)
 
-    def unavailable() -> D:
+    def unavailable(account: object = None) -> D:
         raise BacktestError("no quote for an open order")
 
     monkeypatch.setattr(rig.strategy, "spendable_cash", unavailable)

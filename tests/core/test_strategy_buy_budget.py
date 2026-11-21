@@ -174,3 +174,35 @@ def test_an_open_stop_buy_is_still_priced_and_debited() -> None:
     _open(strategy, broker, "AAA", 10, "buy", stop_price=110)
     assert strategy.spendable_cash() == Decimal("8500")  # 9500 - 10 x the last price 100
     assert broker.batch_lookups == 1
+
+
+def test_open_stop_limit_and_trailing_sells_bring_no_credit() -> None:
+    broker = _broker()
+    strategy = Strategy(broker)
+    _open(strategy, broker, "AAA", 10, "sell", limit_price=95, stop_price=90)  # a stop-limit: its limit is no promise to sell
+    broker.tracker.track_unprocessed(strategy.create_order("BBB", 5, "sell", trail_price=10))
+    assert strategy.spendable_cash() == Decimal("9500")
+
+
+def test_an_open_limit_buy_is_deducted_at_its_limit_price() -> None:
+    broker = _broker()
+    strategy = Strategy(broker)
+    _open(strategy, broker, "BBB", 5, "buy", limit_price=150)  # last price 200
+    assert strategy.spendable_cash() == Decimal("8750")  # 9500 - 5 x 150
+
+
+def test_submit_orders_lets_an_earlier_sell_fund_a_later_buy() -> None:
+    broker = _broker()
+    strategy = Strategy(broker)
+    sell, buy = strategy.create_order("BBB", 10, "sell", limit_price=200), strategy.create_order("AAA", 110, "buy")
+    strategy.submit_orders([sell, buy])  # the buy alone ($11,000) is over the $9,500, the open sell adds $2,000
+    assert broker.submitted == [sell, buy]
+
+
+def test_spendable_cash_uses_a_given_account_snapshot_instead_of_reading_again() -> None:
+    broker = _broker()
+    strategy = Strategy(broker)
+    snapshot = AccountBalances(cash=Decimal(5000), portfolio_value=Decimal(10000), buying_power=Decimal(8000))
+    broker.account = AccountBalances(cash=Decimal(0), portfolio_value=Decimal(0), buying_power=Decimal(0))
+    _open(strategy, broker, "AAA", 10, "sell", limit_price=100)  # the open orders are still read
+    assert strategy.spendable_cash(account=snapshot) == Decimal("5800")  # min(8000, 5000 + 1000) - 2% x 10000

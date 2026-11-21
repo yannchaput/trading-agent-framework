@@ -151,8 +151,8 @@ class Desk:
             return {"error": f"{symbol} is not a candidate this session"}
         try:
             last = self._strategy.get_last_price(symbol)
-            equity = self._strategy.broker.get_account().portfolio_value
-            spendable = self._strategy.spendable_cash()
+            account = self._strategy.broker.get_account()
+            spendable = self._strategy.spendable_cash(account)
         except _DATA_ERRORS as exc:
             return {"error": f"price or account unavailable: {exc}"}
         if last is None or setup.trigger_close is None or setup.pullback_low is None:
@@ -163,7 +163,7 @@ class Desk:
                 pullback_low=setup.pullback_low,
                 last_price=last,
                 daily_atr=info.daily_atr,
-                equity=equity,
+                equity=account.portfolio_value,
                 spendable=spendable,
                 params=self._params,
             )

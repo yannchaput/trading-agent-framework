@@ -34,7 +34,7 @@ def account_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]: 
         """Get cash, portfolio value, buying power and spendable (the most a buy may spend)."""
         try:
             account = strategy.broker.get_account()
-            spendable = strategy.spendable_cash()
+            spendable = strategy.spendable_cash(account)
         except BrokerError as exc:
             return {"error": str(exc)}
         return {

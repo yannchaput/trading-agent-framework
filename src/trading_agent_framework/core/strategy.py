@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from trading_agent_framework.backtesting.data.base import BacktestDataSource
     from trading_agent_framework.backtesting.runner import BacktestResult
     from trading_agent_framework.brokers.news import NewsProvider
+    from trading_agent_framework.entities.account import AccountBalances
 
 logger = logging.getLogger(__name__)
 
@@ -547,15 +548,20 @@ class Strategy:
             trail_percent=trail_pct,
         )
 
-    def spendable_cash(self) -> Decimal:
+    def spendable_cash(self, account: AccountBalances | None = None) -> Decimal:
         """Money a new buy may spend: the smaller of buying power and cash (after open orders), less 2% of the book.
 
         Open orders count for their unfilled part only (a filled part is already in cash): a sell credits its
         limit price (market: last price; a stop or trailing stop credits nothing, it may never trigger), a buy
         costs its limit price (market: last price). Negative when the book is fully invested.
         The account is read BEFORE the orders: a sell filling in between is then counted nowhere, never twice.
+
+        Args:
+            account: An account snapshot the caller just read, used instead of reading it again (the open
+                orders are still read after it, so the order above holds). None reads the account.
         """
-        account = self.broker.get_account()
+        if account is None:
+            account = self.broker.get_account()
         net_credit = Decimal(0)
         open_orders = self.broker.tracker.get_active_orders()
         # A stop sell is never priced: it credits nothing (below). A stop buy still costs money, so it is.

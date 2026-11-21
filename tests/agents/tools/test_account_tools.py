@@ -9,6 +9,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.agents.tools.account import account_tools
 from trading_agent_framework.core.strategy import Strategy
+from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
@@ -52,19 +53,22 @@ def test_get_account_balance_returns_error_on_broker_failure() -> None:
     assert tools["get_account_balance"]() == {"error": "account unavailable"}
 
 
-def test_get_account_balance_returns_error_when_spendable_cannot_be_read(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_get_account_balance_returns_error_when_spendable_cannot_be_read() -> None:
     strategy, broker = _strategy()
-    reads = iter([broker.account])
+    broker.tracker.track_unprocessed(strategy.create_order("SPY", 1, "buy"))  # an open market buy: spendable needs its price
+    broker.market_data_error = BrokerError("market data is down")
 
-    def _second_read_fails() -> object:
-        try:
-            return next(reads)
-        except StopIteration:
-            raise BrokerError("account unavailable") from None
+    assert _tools(strategy)["get_account_balance"]() == {"error": "market data is down"}
 
-    monkeypatch.setattr(broker, "get_account", _second_read_fails)
 
-    assert _tools(strategy)["get_account_balance"]() == {"error": "account unavailable"}
+def test_get_account_balance_derives_spendable_from_the_balances_it_reports(monkeypatch: pytest.MonkeyPatch) -> None:
+    strategy, broker = _strategy()
+    reads = iter([broker.account, AccountBalances(cash=Decimal(0), portfolio_value=Decimal(25000), buying_power=Decimal(0))])
+    monkeypatch.setattr(broker, "get_account", lambda: next(reads))  # the cash is gone by a second read
+
+    result = _tools(strategy)["get_account_balance"]()
+
+    assert (result["cash"], result["spendable"]) == (10000.0, 9500.0)
 
 
 def test_get_positions_lists_every_position() -> None:
