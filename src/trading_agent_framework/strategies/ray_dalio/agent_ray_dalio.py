@@ -25,7 +25,7 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.news import require_news_provider
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
-from trading_agent_framework.strategies.ray_dalio.basket import basket_tool
+from trading_agent_framework.strategies.ray_dalio.basket import MIN_STOCK_WEIGHT, basket_tool
 from trading_agent_framework.strategies.ray_dalio.prompts import ANALYSTS, CONTEXT, DISAGREEMENT, SYSTEM_PROMPTS, TASK_PROMPTS, UNIVERSE
 from trading_agent_framework.utils.helpers import BUY_BUFFER
 
@@ -46,7 +46,7 @@ class _RebalanceSettings:
     """The three settings `Rebalancer` reads (pyright refuses a plain namespace for them): sector_pods' band and minimum trade."""
 
     parking_symbol: str = "SHV"
-    rebalance_band: float = 0.03
+    rebalance_band: float = MIN_STOCK_WEIGHT
     min_trade_pct: float = 0.005
 
 

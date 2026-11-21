@@ -12,6 +12,8 @@ from typing import Any
 from trading_agent_framework.strategies.ray_dalio.prompts import MIN_POSITIONS, UNIVERSE
 from trading_agent_framework.utils.helpers import BUY_BUFFER
 
+MIN_STOCK_WEIGHT = 0.03  # the rebalance band: the Rebalancer never buys a fund into an empty position for a target this small
+
 
 def basket_problem(weights: dict[str, float]) -> str | None:
     """Why `weights` (symbol -> fraction of the portfolio) is refused, or None if it is fine.
@@ -25,6 +27,9 @@ def basket_problem(weights: dict[str, float]) -> str | None:
         return "every weight must be above 0 (drop a symbol you do not want)"
     if len(weights) < MIN_POSITIONS:
         return f"a basket needs at least {MIN_POSITIONS} symbols (SHV counts as one)"
+    too_small = [symbol for symbol, weight in weights.items() if symbol != "SHV" and weight <= MIN_STOCK_WEIGHT]
+    if too_small:
+        return f"{', '.join(too_small)}: a weight of {MIN_STOCK_WEIGHT:g} or less is never bought, raise it above {MIN_STOCK_WEIGHT:g} or drop the symbol"
     limit = 1 - float(BUY_BUFFER)
     invested = sum(weight for symbol, weight in weights.items() if symbol != "SHV")
     if invested > limit + 1e-9:

@@ -20,6 +20,11 @@ def test_refusals_say_why():
     assert "0.98" in str(basket_problem({"TQQQ": 0.5, "UPRO": 0.5, "SHV": 0.0001}))
 
 
+def test_a_stock_weight_the_rebalancer_would_never_buy_is_refused():
+    assert "0.03" in str(basket_problem({"TQQQ": 0.9, "UPRO": 0.03, "TMF": 0.05}))  # at the rebalance band: never bought from an empty position
+    assert basket_problem({"TQQQ": 0.9, "UPRO": 0.05, "SHV": 0.01}) is None  # SHV is the remainder, so its own weight is free
+
+
 def test_a_nan_weight_is_refused():
     assert "above 0" in str(basket_problem({"TQQQ": float("nan"), "UPRO": 0.3, "SHV": 0.3}))
 

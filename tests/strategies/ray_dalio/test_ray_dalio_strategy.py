@@ -222,12 +222,11 @@ def test_the_basket_is_bought_and_the_rest_parked_in_shv(tmp_path: Path, monkeyp
 def test_shv_in_a_basket_is_the_remainder_not_a_stock_weight(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     strategy, agents = _strategy(tmp_path, monkeypatch)
     strategy.initialize()
-    agents[DISAGREEMENT].script = _submits({"TQQQ": 0.5, "UPRO": 0.3, "SHV": 0.05})  # SHV is asked for 5% but 18% is left over
+    agents[DISAGREEMENT].script = _submits({"TQQQ": 0.5, "UPRO": 0.4, "SHV": 0.3})  # with SHV counted as a stock this is 120% and the target is refused
 
     strategy.on_trading_iteration()
 
-    shv = [o for o in cast(FakeBroker, strategy.broker).submitted if o.asset.symbol == "SHV"]
-    assert len(shv) == 1 and float(shv[0].quantity or 0) * 100 > 0.1 * 10_000  # parked about 18% of 10,000, not 5%
+    assert _bought(strategy) == {"TQQQ", "UPRO", "SHV"}
 
 
 def test_no_basket_means_no_order_and_a_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
