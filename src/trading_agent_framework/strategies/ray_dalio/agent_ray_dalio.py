@@ -7,6 +7,7 @@ Adapted from LumiBot's idea-meritocracy example (see `prompts.py`). The flow is 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from trading_agent_framework.agents.tools import only
@@ -20,6 +21,8 @@ from trading_agent_framework.agents.tools.trading import trading_tools
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities.asset import Asset
+from trading_agent_framework.entities.order import Order
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.news import require_news_provider
 from trading_agent_framework.strategies.ray_dalio.prompts import ANALYSTS, CONTEXT, DISAGREEMENT, SYSTEM_PROMPTS, TASK_PROMPTS, TRADER, UNIVERSE
 from trading_agent_framework.strategies.ray_dalio.readiness import require_readiness_before_orders
@@ -29,6 +32,11 @@ if TYPE_CHECKING:
 
 _ORDER_TOOLS = {"submit_order", "cancel_order", "cancel_open_orders", "get_orders", "get_order"}
 _DEBATE = tuple(ANALYSTS.values())  # the state slots the analysts write
+
+
+def _size(quantity: Decimal | None) -> str:
+    """A share count for a log line; `?` for a notional order, which has none."""
+    return "?" if quantity is None else f"{quantity.normalize():f}"
 
 
 class DalioState(TypedDict, total=False):
@@ -105,3 +113,37 @@ class RayDalioStrategy(Strategy):
         """Backtest on Yahoo daily bars, the universe and SPY preloaded."""
         defaults: dict[str, Any] = dict(preload_assets=[Asset(symbol=symbol) for symbol in (*UNIVERSE, "SPY")], timestep="day", agent_telemetry=True)
         return super().run_backtesting(**{**defaults, **overrides})
+
+    # --- order events: logged here so a paper/live run shows what the rebalance did ---------------------------
+
+    def on_new_order(self, order: Order) -> None:
+        """Log a newly accepted order.
+
+        Args:
+            order: The order the broker accepted.
+        """
+        self.log_info(f"new order: {order.side.value} {_size(order.quantity)} {order.asset.symbol} ({order.order_type.value}, id {order.identifier})")
+
+    def on_partially_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Log a partial fill.
+
+        Args:
+            position: The position after the fill, or None if there is none.
+            order: The order that was partially filled.
+            price: Price of this fill.
+            quantity: Quantity of this fill.
+            multiplier: Contract multiplier (1 for stocks).
+        """
+        self.log_info(f"order partially filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
+
+    def on_filled_order(self, position: Position | None, order: Order, price: Decimal, quantity: Decimal, multiplier: int) -> None:
+        """Log a complete fill.
+
+        Args:
+            position: The position after the fill, or None if there is none.
+            order: The order that was filled.
+            price: Price of the last fill.
+            quantity: Quantity of the last fill.
+            multiplier: Contract multiplier (1 for stocks).
+        """
+        self.log_info(f"order filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")

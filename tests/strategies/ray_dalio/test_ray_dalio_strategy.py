@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import logging
 import threading
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -13,6 +15,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.memory.tools import agent_call_context
 from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
+from trading_agent_framework.strategies.ray_dalio.agent_ray_dalio import _size
 from trading_agent_framework.strategies.ray_dalio.prompts import ANALYSTS, CONTEXT, DISAGREEMENT, SYSTEM_PROMPTS, TASK_PROMPTS, TRADER, UNIVERSE
 from trading_agent_framework.utils.errors import AgentError, ConfigurationError
 
@@ -170,3 +173,45 @@ def test_disagreement_and_trader_run_on_the_strategy_thread(tmp_path: Path, monk
 
     assert agents[DISAGREEMENT].thread == threading.get_ident()
     assert agents[TRADER].thread == threading.get_ident()
+
+
+def _order_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [record.getMessage() for record in caplog.records if "order" in record.getMessage()]
+
+
+def test_a_new_order_is_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path, monkeypatch)
+    order = strategy.create_order("TQQQ", Decimal("7.842749"), "sell")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_new_order(order)
+
+    (line,) = _order_lines(caplog)
+    assert "new order: sell 7.842749 TQQQ" in line and order.identifier in line
+
+
+def test_a_partial_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path, monkeypatch)
+    order = strategy.create_order("UPRO", 10, "buy")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_partially_filled_order(None, order, Decimal("77.5"), Decimal(4), 1)
+
+    (line,) = _order_lines(caplog)
+    assert "order partially filled: buy 4 of 10 UPRO @ $77.50" in line and order.identifier in line
+
+
+def test_a_full_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _ = _strategy(tmp_path, monkeypatch)
+    order = strategy.create_order("SQQQ", Decimal("7.842749"), "sell")
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_filled_order(None, order, Decimal("96.84"), Decimal("7.842749"), 1)
+
+    (line,) = _order_lines(caplog)
+    assert "order filled: sell 7.842749 of 7.842749 SQQQ @ $96.84" in line and order.identifier in line
+
+
+def test_a_notional_order_has_no_share_count_to_log() -> None:
+    assert _size(None) == "?"
+    assert _size(Decimal("10.500")) == "10.5"
