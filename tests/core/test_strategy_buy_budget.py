@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from decimal import Decimal
 
 import pytest
@@ -9,6 +10,7 @@ from tests.fakes import FakeBroker, FakeClock, et
 
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
+from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.utils.errors import InsufficientFundsError, OrderValidationError
 
 
@@ -125,3 +127,30 @@ def test_submit_orders_checks_each_buy_against_the_ones_before() -> None:
     with pytest.raises(InsufficientFundsError):
         strategy.submit_orders([first, second])
     assert broker.submitted == [first]
+
+
+class _CountingBroker(FakeBroker):
+    """Counts price lookups, to show open orders are priced with one batched call."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        super().__init__(clock)
+        self.single_lookups = 0
+        self.batch_lookups = 0
+
+    def get_last_price(self, asset: Asset) -> Decimal | None:
+        self.single_lookups += 1
+        return super().get_last_price(asset)
+
+    def get_last_prices(self, assets: Sequence[Asset]) -> dict[Asset, Decimal | None]:
+        self.batch_lookups += 1
+        return super().get_last_prices(assets)
+
+
+def test_open_market_orders_are_priced_with_one_batched_lookup() -> None:
+    broker = _broker(_CountingBroker)
+    assert isinstance(broker, _CountingBroker)
+    strategy = Strategy(broker)
+    for _ in range(20):
+        _open(strategy, broker, "AAA", 1, "buy")
+    assert strategy.spendable_cash() == Decimal("7500")  # 9500 - 20 x 100
+    assert (broker.batch_lookups, broker.single_lookups) == (1, 0)

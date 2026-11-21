@@ -552,8 +552,11 @@ class Strategy:
         """
         account = self.broker.get_account()
         net_credit = Decimal(0)
-        for order in self.broker.tracker.get_active_orders():
-            value = self._unfilled_value(order)
+        open_orders = self.broker.tracker.get_active_orders()
+        unpriced = {o.asset for o in open_orders if o.quantity is not None and (o.limit_price or o.stop_limit_price) is None}
+        last_prices = self.get_last_prices(unpriced) if unpriced else {}  # one batched lookup, not one per order
+        for order in open_orders:
+            value = self._unfilled_value(order, last_prices)
             if order.side is OrderSide.BUY:
                 net_credit -= value
             elif order.stop_price is None and order.trail_price is None and order.trail_percent is None:
@@ -561,11 +564,11 @@ class Strategy:
         spendable = min(account.buying_power, account.cash + net_credit)
         return spendable - BUY_BUFFER * account.portfolio_value
 
-    def _unfilled_value(self, order: Order) -> Decimal:
+    def _unfilled_value(self, order: Order, last_prices: Mapping[Asset, Decimal | None]) -> Decimal:
         """Estimated money of the part of `order` still to fill; zero when it has no price estimate."""
         if order.quantity is None:
-            return order.notional or Decimal(0)
-        price = self._order_price(order)
+            return order.notional or Decimal(0)  # a partly filled notional order counts in full: rare, the broker is the last check
+        price = order.limit_price or order.stop_limit_price or last_prices.get(order.asset)
         return (order.quantity - order.filled_quantity) * price if price is not None else Decimal(0)
 
     def _order_price(self, order: Order) -> Decimal | None:
@@ -586,7 +589,7 @@ class Strategy:
         max_quantity = (spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN) if spendable > 0 else Decimal(0)
         raise InsufficientFundsError(
             f"buy {order.quantity.normalize():f} {order.asset.symbol} needs ~${cost:,.2f}, spendable is ${spendable:,.2f} "
-            f"(cash after open orders, 2% of the book kept back): at most {max_quantity.normalize():f} shares",
+            f"(cash after open orders, {BUY_BUFFER:.0%} of the book kept back): at most {max_quantity.normalize():f} shares",
             spendable=spendable,
             max_quantity=max_quantity,
         )
