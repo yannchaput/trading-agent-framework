@@ -598,7 +598,10 @@ class Desk:
             self._decided.add(symbol)
             self._log_decision(symbol, decision, quantity=int(sent), trail_percent=float(trail), reason=thesis)
             self._save_state()
-            return {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
+            result = {**_lean(order), "trail_percent": float(trail), "note": "fills at the next open; the trailing stop is placed when it fills"}
+            if sent != shares:  # the price ticked up since the reaction close: the retry bought fewer shares
+                result["requested"] = int(shares)
+            return result
 
     def _entry_filled(self, trade: Trade, order: Order) -> None:
         """Mark the trade open with its filled quantity and place its trailing stop."""

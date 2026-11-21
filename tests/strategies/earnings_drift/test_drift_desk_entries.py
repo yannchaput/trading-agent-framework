@@ -209,6 +209,18 @@ def test_a_baseline_buy_sized_at_a_stale_reaction_close_is_retried_at_the_most_t
     assert line["decision"] == "baseline" and line["quantity"] == 980
 
 
+def test_the_buy_tool_says_when_the_retry_bought_fewer_shares_than_requested(tmp_path: Path) -> None:
+    # max_quantity at the reaction close of 99 is 989; at the last price of 100 only 980 fit
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
+    result = rig.desk.buy("AAA", 989, 8.0, "beat and raise")
+    assert (result["quantity"], result["requested"]) == (980.0, 989)
+
+
+def test_the_buy_tool_has_no_requested_field_when_the_quantity_was_sent_as_asked(tmp_path: Path) -> None:
+    rig = DeskRig(tmp_path)
+    assert "requested" not in rig.desk.buy("AAA", 10, 8.0, "beat and raise")
+
+
 def test_candidate_sheets_and_balances(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path)
     sheets = rig.desk.candidate_sheets()

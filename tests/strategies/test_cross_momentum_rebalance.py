@@ -4,6 +4,7 @@ The buys are sized from `Strategy.spendable_cash()` (the framework's figure: the
 after open orders, less 2% of the book), read after this run's sells; the fake below models it.
 """
 
+import json
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_DOWN, Decimal
 from types import SimpleNamespace
@@ -43,6 +44,7 @@ class FakeStrategy:
     `live` makes it a paper/live run: `wait_for_orders_execution` fills every sell waited on. `cash_account` makes the
     buying power the cash less the open buys (an unfilled sell funds nothing yet); otherwise it never binds (margin).
     `buy_fee` is netted per open buy of this run, as a backtest's buying power nets the pending buys' fees.
+    `errors` maps a symbol to the exception each of its submits raises (`reject` raises a plain RuntimeError).
     `ticks` is the price `Strategy.submit_order`'s budget check sees for a symbol (a live quote that moved since sizing):
     a buy above `spendable_cash()` at it raises `InsufficientFundsError` with the most that fits.
     """
@@ -55,6 +57,7 @@ class FakeStrategy:
         last_prices=None,
         min_trade_pct=0.01,
         reject=(),
+        errors=None,
         uncertain=(),
         price_errors=(),
         trend_assets=(),
@@ -83,6 +86,7 @@ class FakeStrategy:
         self._positions = list(positions)
         self._last_prices = last_prices or {}
         self._reject = set(reject)
+        self._errors = dict(errors or {})  # symbol -> the exception every submit of it raises
         self._uncertain = set(uncertain)
         self.attempts: dict[str, int] = {}  # submit_order calls per symbol, the failed ones included
         self._price_errors = set(price_errors)
@@ -146,6 +150,8 @@ class FakeStrategy:
             raise BrokerUncertainError(f"timeout {order.symbol}")
         if order.symbol in self._reject:
             raise RuntimeError(f"rejected {order.symbol}")
+        if order.symbol in self._errors:
+            raise self._errors[order.symbol]
         if order.side == "buy" and order.symbol in self._ticks:
             price, spendable = Decimal(str(self._ticks[order.symbol])), self.spendable_cash()
             if Decimal(str(order.quantity)) * price > spendable:
@@ -296,6 +302,50 @@ def test_a_parking_buy_is_retried_at_the_most_that_fits_when_its_price_ticks_up(
     CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
 
     assert _orders(fake, "SHV", "buy") == [13.465346]  # the 680 left, at 50.50 instead of 50.00 (13.6 shares)
+
+
+def test_an_alpaca_buying_power_refusal_sizes_the_next_buy_on_the_brokers_figure():
+    alpaca = BrokerError(json.dumps({"buying_power": "300", "code": 40310000, "message": "insufficient buying power"}))
+    fake = FakeStrategy(cash=1000.0, last_prices={"AAA": 100.0, "BBB": 50.0}, errors={"AAA": alpaca})
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.4, 100.0, 1), _target("BBB", 0.4, 50.0, 2)], {"AAA": 1, "BBB": 2})
+
+    assert _orders(fake, "BBB", "buy") == [5.6]  # the broker's 300 less 2% of the 1,000 book = 280, not the 580 we estimated
+    assert "Resyncing available cash to broker-reported buying power: $300.00" in fake.warnings
+
+
+def _overweight_book(**kwargs):
+    """HELD (1,000) is kept, so AAA and BBB (980 each) compete for the 960 spendable: what AAA costs, BBB cannot have."""
+    return FakeStrategy(cash=1000.0, positions=[_held("HELD", 100.0)], last_prices={"HELD": 10.0, "AAA": 100.0, "BBB": 50.0}, **kwargs)
+
+
+_OVERWEIGHT_TARGET = [_target("HELD", 0.49, 10.0, 1), _target("AAA", 0.49, 100.0, 2), _target("BBB", 0.49, 50.0, 3)]
+
+
+def test_a_refused_buy_gives_its_cost_back_to_the_next_buy():
+    fake = _overweight_book(reject={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == [19.2]  # nothing was sent for AAA: BBB gets the 960
+
+
+def test_a_buy_refused_again_after_its_retry_gives_its_cost_back():
+    refusal = InsufficientFundsError("AAA ticked up", spendable=Decimal(960), max_quantity=Decimal(9))
+    fake = _overweight_book(errors={"AAA": refusal})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert fake.attempts["AAA"] == 2  # the buy and its retry at 9, both refused
+    assert _orders(fake, "BBB", "buy") == [19.2]
+
+
+def test_an_unknown_buy_keeps_its_cost_from_the_next_buy():
+    fake = _overweight_book(uncertain={"AAA"})
+
+    CrossMomentumStrategy.rebalance(fake, _OVERWEIGHT_TARGET, {"HELD": 1, "AAA": 2, "BBB": 3})
+
+    assert _orders(fake, "BBB", "buy") == []  # AAA may have taken the whole 960
 
 
 def _held(symbol, quantity, side=PositionSide.LONG):
@@ -676,6 +726,15 @@ def test_trend_assets_are_bought_before_shv_and_within_the_cash_left():
 
     assert _sequence(fake) == [("AAA", "buy", 3.0), ("GLD", "buy", 34.0), ("SHV", "buy", 6.8)]
     assert _planned_buy_cost(fake, SLEEVE_PRICES) <= 1000.0 - 20.0 + 1e-6
+
+
+def test_a_refused_sleeve_buy_gives_its_cost_back_to_the_next_sleeve_asset():
+    # An earlier open buy (ZZZ, 300) leaves 680 - AAA's 300 = 380 for the sleeve: GLD's 340 is refused, so IEF gets its 340
+    fake = _sleeve_fake(reject={"GLD"}, last_prices={**SLEEVE_PRICES, "ZZZ": 100.0}, open_orders=[_open("ZZZ", 3, "buy")])
+
+    CrossMomentumStrategy.rebalance(fake, [_target("AAA", 0.3, 100.0, 1)], {"AAA": 1})
+
+    assert _sequence(fake) == [("AAA", "buy", 3.0), ("IEF", "buy", 34.0)]
 
 
 def test_a_missing_price_for_one_sleeve_asset_skips_only_that_asset():

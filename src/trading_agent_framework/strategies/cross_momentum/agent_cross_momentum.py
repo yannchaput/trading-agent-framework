@@ -799,6 +799,7 @@ class CrossMomentumStrategy(Strategy):
                 available_cash += cost - float(order.quantity) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit buy order for {symbol}: {exc}")
+                available_cash += cost  # refused: nothing was sent (an unknown outcome keeps its cost spent)
                 # Alpaca reported a smaller buying power than the estimate: size the remaining targets on it, less
                 # the framework's buffer, instead of repeating the same rejection down the list.
                 real_buying_power = parse_insufficient_buying_power(exc)
@@ -825,6 +826,7 @@ class CrossMomentumStrategy(Strategy):
                 available_cash += (quantity - float(order.quantity)) * price  # a retry at the most that fits bought less
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit parking buy order for {symbol}: {exc}")
+                available_cash += quantity * price  # refused: nothing was sent
 
     # ── Main iteration ────────────────────────────────────────────────────────
 
