@@ -7,11 +7,15 @@ import logging
 import math
 import os
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from trading_agent_framework.config import TradingMode
 
 logger = logging.getLogger(__name__)
+
+# Share of the portfolio value `Strategy.spendable_cash` keeps back from every buy (fees, fill drift). Not a parameter.
+BUY_BUFFER = Decimal("0.02")
 
 
 def get_thread_capacity() -> int:
