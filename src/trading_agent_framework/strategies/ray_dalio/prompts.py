@@ -83,7 +83,8 @@ LEVERAGE_RULE = (
 )
 _BASKET_RULE = (  # the basket is traded by code, not by an agent (see basket.py)
     "You decide the book. End by calling submit_basket with weights as fractions of the portfolio (0.35 means 35%), "
-    'for example {"TQQQ": 0.35, "UPRO": 0.25, "TMF": 0.25, "SHV": 0.15}. It is executed exactly as submitted: '
+    'for example {"TQQQ": 0.35, "UPRO": 0.25, "TMF": 0.25, "SHV": 0.15}. '
+    "The weights other than SHV add up to at most 0.98 and each is above 0.03. It is executed exactly as submitted: "
     "every holding you leave out is sold, and whatever the weights leave unallocated is parked in SHV. "
     "If submit_basket returns an error, fix the basket and call it again."
 )

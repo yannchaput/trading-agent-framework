@@ -83,7 +83,7 @@ class RayDalioStrategy(Strategy):
         self._basket: dict[str, float] = {}  # filled by the disagreement agent's submit_basket tool
         for name in ANALYSTS:
             self.agents.create(name=name, system_prompt=SYSTEM_PROMPTS[name], tools=self._research_tools())
-        self.agents.create(name=DISAGREEMENT, system_prompt=SYSTEM_PROMPTS[DISAGREEMENT], tools=[*self._research_tools(), basket_tool(self._basket)])
+        self.agents.create(name=DISAGREEMENT, system_prompt=SYSTEM_PROMPTS[DISAGREEMENT], tools=[*self._research_tools(), basket_tool(self._basket, self.log_info)])
         self._rebalancer = Rebalancer(self, _RebalanceSettings())
         self._graph = self._build_graph()
 
@@ -115,7 +115,6 @@ class RayDalioStrategy(Strategy):
         if not basket:
             self.log_warning("no basket submitted: holding the current book")
             return {}
-        self.log_info(f"basket: {basket}")
         stocks = {symbol: weight for symbol, weight in basket.items() if symbol != "SHV"}  # SHV is whatever the stocks leave over
         self._rebalancer.rebalance(target_portfolio(stocks, cash_buffer=float(BUY_BUFFER)))
         return {}

@@ -60,6 +60,7 @@ def test_no_lumibot_tool_name_is_left():
 
 def test_only_the_disagreement_agent_is_told_to_submit_a_basket():
     assert "submit_basket" in SYSTEM_PROMPTS[DISAGREEMENT] and "submit_basket" in TASK_PROMPTS[DISAGREEMENT]
+    assert "0.98" in SYSTEM_PROMPTS[DISAGREEMENT]  # the limit the tool enforces
     for name in ANALYSTS:
         assert "submit_basket" not in SYSTEM_PROMPTS[name] and "submit_basket" not in TASK_PROMPTS[name]
     assert all("submit_order" not in text for text in (*SYSTEM_PROMPTS.values(), *TASK_PROMPTS.values()))

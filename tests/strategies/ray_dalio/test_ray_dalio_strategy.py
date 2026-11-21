@@ -229,6 +229,17 @@ def test_shv_in_a_basket_is_the_remainder_not_a_stock_weight(tmp_path: Path, mon
     assert _bought(strategy) == {"TQQQ", "UPRO", "SHV"}
 
 
+def test_an_accepted_basket_and_its_reason_are_logged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    strategy, agents = _strategy(tmp_path, monkeypatch)
+    strategy.initialize()
+    agents[DISAGREEMENT].script = _submits({"TQQQ": 0.4, "UPRO": 0.3, "SHV": 0.3})
+
+    with caplog.at_level(logging.INFO):
+        strategy.on_trading_iteration()
+
+    assert any("basket" in text and "TQQQ" in text and "test" in text for text in caplog.messages)  # `_submits` gives the reason "test"
+
+
 def test_no_basket_means_no_order_and_a_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     strategy, _ = _strategy(tmp_path, monkeypatch, held={"TMF": 40})
     strategy.initialize()
