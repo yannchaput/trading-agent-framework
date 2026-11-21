@@ -8,16 +8,10 @@ import math
 import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import pandas as pd
 
 from trading_agent_framework.utils.clock import MARKET_TZ
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from trading_agent_framework.entities.order import Order
 
 logger = logging.getLogger(__name__)
 
@@ -95,16 +89,6 @@ def inverse_volatility_weights(
         entry["target_weight"] = final[i]
 
     return selected
-
-
-def unfilled_sell_proceeds(sells: Iterable[tuple[Order, float]]) -> float:
-    """Estimated proceeds of the sells still to fill: each active sell's open quantity at its sizing price.
-
-    A filled part is already in the broker's cash and must not be counted again (live market sells fill within
-    seconds); a sell no longer active (filled, canceled, rejected) brings nothing more. In a backtest nothing fills
-    before the next session, so every sell counts in full.
-    """
-    return sum(float(order.quantity - order.filled_quantity) * price for order, price in sells if order.is_active() and order.quantity is not None)
 
 
 def close_series(df: pd.DataFrame) -> pd.Series:

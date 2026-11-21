@@ -91,6 +91,24 @@ def test_enter_long_sizes_the_trade_and_submits_a_limit_buy(tmp_path: Path) -> N
     assert order.order_type is OrderType.LIMIT and order.limit_price == D("100.10")
 
 
+def test_enter_long_sizes_from_spendable_cash_so_an_open_buy_is_not_spent_again(tmp_path: Path) -> None:
+    rig = Rig(tmp_path)
+    rig.strategy.submit_order(rig.strategy.create_order("MSFT", 900, "buy", limit_price=100))  # 90000 committed
+    # spendable: 100000 - 90000 - 2% of the 100000 book = 8000, i.e. 79 shares at the 100.10 limit (the risk cap is 249)
+    assert rig.desk.enter_long("AAA")["quantity"] == 79
+
+
+def test_enter_long_refuses_when_spendable_cash_cannot_be_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    rig = Rig(tmp_path)
+
+    def unavailable() -> D:
+        raise BacktestError("no quote for an open order")
+
+    monkeypatch.setattr(rig.strategy, "spendable_cash", unavailable)
+    assert rig.desk.enter_long("AAA") == {"error": "price or account unavailable: no quote for an open order"}
+    assert rig.state.book.get("AAA") is None
+
+
 @pytest.mark.parametrize(
     ("change", "message"),
     [

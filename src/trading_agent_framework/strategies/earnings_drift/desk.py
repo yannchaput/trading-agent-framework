@@ -42,15 +42,6 @@ def _lean(order: Order) -> dict[str, Any]:
     return {"identifier": order.identifier, "symbol": order.asset.symbol, "side": order.side.value, "quantity": float(order.quantity or 0), "status": order.status.value}
 
 
-def _unfilled_value(orders: Sequence[tuple[Order, Decimal]]) -> Decimal:
-    """Estimated dollars of the active orders still to fill, each open quantity at its sizing price.
-
-    A filled part is already in the broker's cash (a market order sent while the market is open fills within seconds), so
-    counting it again took a buy's cost off twice; an order no longer active (filled, canceled, rejected) moves nothing more.
-    """
-    return sum((Decimal(order.quantity - order.filled_quantity) * price for order, price in orders if order.is_active() and order.quantity is not None), Decimal(0))
-
-
 def _is_long(position: Position) -> bool:
     """A long holding: IBKR reports a short as a positive quantity with `side=SHORT`."""
     return position.side is PositionSide.LONG and position.quantity > 0
@@ -106,10 +97,6 @@ class Desk:
         self._trading_dates: list[date] = []
         self._candidates: dict[str, Candidate] = {}
         self._decided: set[str] = set()
-        # The buys and market sells submitted this cycle with the price their cost or proceeds were estimated at: only the part
-        # still to fill counts toward the money available, since a filled part is already in the account's cash.
-        self._cycle_buys: list[tuple[Order, Decimal]] = []
-        self._cycle_sells: list[tuple[Order, Decimal]] = []
 
     # --- session ---------------------------------------------------------------------------------
 
@@ -121,8 +108,6 @@ class Desk:
             self._trading_dates = sorted(set(trading_dates)) if trading_dates else sorted({*self._trading_dates, today})
             self._candidates = {candidate.symbol: candidate for candidate in candidates}
             self._decided = set()
-            self._cycle_buys = []
-            self._cycle_sells = []
             for symbol, reason in sorted(rejections.items()):
                 self._log_decision(symbol, "rejected", reason=reason)
 
@@ -161,13 +146,11 @@ class Desk:
                 return 0
             price = Decimal(str(candidate.reaction.close))
             try:
-                account = self._strategy.broker.get_account()
+                cap = self._strategy.broker.get_account().portfolio_value / self._params.max_positions
+                available = self._strategy.spendable_cash()  # counts the open orders, keeps 2% of the book back
             except _DATA_ERRORS as exc:
                 self._strategy.log_warning(f"[earnings_drift] account unavailable, no buy can be sized: {exc}")
                 return 0
-            cap = account.portfolio_value / self._params.max_positions
-            # `buying_power` already nets the pending orders (this cycle's buys included); raw `cash` does not.
-            available = min(account.buying_power, account.cash + _unfilled_value(self._cycle_sells) - _unfilled_value(self._cycle_buys))
             budget = min(cap, available)
             if price <= 0 or budget <= 0:
                 return 0
@@ -611,7 +594,6 @@ class Desk:
                 accession_number=candidate.event.accession_number,
                 reaction_low=Decimal(str(candidate.reaction.reaction_low)),
             )
-            self._cycle_buys.append((order, Decimal(str(candidate.reaction.close))))
             self._decided.add(symbol)
             self._log_decision(symbol, decision, quantity=int(shares), trail_percent=float(trail), reason=thesis)
             self._save_state()
@@ -744,9 +726,6 @@ class Desk:
             self._strategy.log_error(f"[earnings_drift] market sell of {trade.quantity} {trade.symbol} failed ({exit_reason}): {exc}")
             return None
         trade.exit_order_id, trade.exit_reason = submitted.identifier, exit_reason
-        price = self._price(trade.symbol)
-        if price is not None:
-            self._cycle_sells.append((submitted, price))
         return submitted
 
     def _open_trades(self) -> list[Trade]:

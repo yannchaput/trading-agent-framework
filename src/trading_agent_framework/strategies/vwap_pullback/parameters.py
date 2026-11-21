@@ -46,7 +46,6 @@ class VwapPullbackParameters:
     r_band_atr: tuple[float, float] = (0.15, 1.0)  # R must lie in [low, high] ATRs: not noise-tight, not meaningless
     risk_per_trade: float = 0.005  # equity fraction lost if the stop is hit (0.5%)
     max_position_pct: float = 0.50  # cap on one position's value, as a fraction of equity (0.25 left most of the risk budget unused)
-    cash_buffer: float = 0.95  # spend at most 95% of available cash (fees, price drift)
     max_positions: int = 4  # concurrent open trades + pending entries
     max_daily_loss_pct: float = 0.015  # circuit breaker: no new entries once session P&L <= -1.5% of opening equity
     chase_guard_r: float = 0.3  # refuse an entry when price already ran more than 0.3R past the trigger close

@@ -51,7 +51,7 @@ from trading_agent_framework.strategies.common.universe_history import UniverseH
 from trading_agent_framework.strategies.common.yahoo_daily_bars import UnusableBatch, YahooDailyBars, fetch_usable_batch
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError
-from trading_agent_framework.utils.helpers import fractional_qty, get_thread_capacity, parse_insufficient_buying_power
+from trading_agent_framework.utils.helpers import BUY_BUFFER, fractional_qty, get_thread_capacity, parse_insufficient_buying_power
 
 from .log_diagnostics import DiagnosticLogger
 from .parameters import CONFIG
@@ -71,7 +71,6 @@ from .utils import (
     sleeve_symbols,
     sleeve_weights,
     trend_reading,
-    unfilled_sell_proceeds,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +80,9 @@ logger = logging.getLogger(__name__)
 
 # A position within ±20% of its target value is left alone (no top-up, no trim) to avoid overtrading.
 _REBALANCE_BAND = 0.20
+
+# Paper/live: how long the buys wait for this run's sells to fill (a cash account credits a sell only once it fills).
+_SELL_FILL_WAIT_SECONDS = 30.0
 
 # Daily bars behind every computation (scores, filters, breadth, risk overlay), all from completed sessions.
 _HISTORY_BARS = 300
@@ -702,9 +704,9 @@ class CrossMomentumStrategy(Strategy):
 
         Returns (symbol, price, current value, target value) per priced sleeve symbol, for the parking buys.
         """
-        # Parking target: everything not meant for stocks, except the cash reserve, goes to the sleeve
+        # Parking target: everything not meant for stocks, except the framework's buy buffer, goes to the sleeve
         stock_target_value = book.portfolio_value * sum(entry["target_weight"] for entry in target)
-        parking_target = max(0.0, book.portfolio_value * (1 - self.parameters["cash_buffer_pct"]) - stock_target_value - sold.hysteresis_value)
+        parking_target = max(0.0, book.portfolio_value * (1 - float(BUY_BUFFER)) - stock_target_value - sold.hysteresis_value)
         sleeve: list[tuple[str, float, float, float]] = []
         for symbol in sleeve_order:
             position = sold.sleeve_positions.get(symbol)
@@ -730,25 +732,18 @@ class CrossMomentumStrategy(Strategy):
         return sleeve
 
     def _buy_phase(self, target: list[dict], book: _Book, current_positions: list, sells: list[tuple[Order, float]], sleeve: list[tuple[str, float, float, float]]) -> None:
-        """Phases 2 and 3: buy the targets within the budget, then park what is left up to each sleeve target."""
-        # The estimate is priced at the last trade, but orders fill a little later at the market (at the next
-        # bar's open in a backtest) plus fees, so hold a fixed reserve back: it is what lets the last buys land
-        # when prices move or sells fill lower.
-        # Live market sells fill within seconds, so the broker's cash already holds the proceeds of the filled ones:
-        # only the part still to fill is added. The cash is read BEFORE the sell states, so a sell filling in between
-        # is counted nowhere (a slightly smaller budget), never twice. In a backtest no sell fills before the next
-        # session, so all of them are added, as before.
-        incoming, outgoing = book.incoming, book.outgoing
-        cash = float(self.get_cash())
-        pending_proceeds = unfilled_sell_proceeds(sells)
+        """Phases 2 and 3: buy the targets within the budget, then park what is left up to each sleeve target.
+
+        The budget is `spendable_cash()` (the smaller of buying power and cash after open orders, less 2% of the book),
+        read after this run's sells; paper/live first waits (up to 30 s) for those sells to fill, since a cash account's
+        buying power credits a sell only once it fills. Each buy takes its cost off the running figure, which is also
+        capped by a fresh `spendable_cash()` before every buy (a backtest's buying power nets the earlier buys' fees).
+        """
+        if sells and not self.is_backtesting and not self.wait_for_orders_execution([order for order, _ in sells], _SELL_FILL_WAIT_SECONDS):
+            self.log_warning(f"{len(sells)} sell(s) did not fill within {_SELL_FILL_WAIT_SECONDS:g}s: sizing the buys on the account as it stands")
+        available_cash = float(self.spendable_cash())
         filled_sells = sum(1 for order, _ in sells if not order.is_active())
-        # Earlier open orders: a pending sell will bring its proceeds, a pending buy has already claimed its cost
-        earlier_credit = sum(quantity * self._price_or_zero(symbol) for symbol, quantity in outgoing.items()) - sum(quantity * self._price_or_zero(symbol) for symbol, quantity in incoming.items())
-        earlier_note = f" {'+' if earlier_credit >= 0 else '-'} ${abs(earlier_credit):,.0f} net from earlier open orders" if incoming or outgoing else ""
-        self.log_info(f"Buy budget: cash ${cash:,.0f} + ${pending_proceeds:,.0f} from unfilled sells ({filled_sells} of {len(sells)} sells already filled){earlier_note}")
-        spendable = cash + pending_proceeds + earlier_credit
-        cash_reserve = spendable * self.parameters["cash_buffer_pct"]
-        available_cash = spendable - cash_reserve
+        self.log_info(f"Buy budget: ${available_cash:,.0f} spendable ({filled_sells} of {len(sells)} sells already filled)")
         positions_by_symbol = {p.asset.symbol: p for p in current_positions}
         for entry in target:
             # Available cash safe guard: if available cash is zero or negative, skip remaining target stocks
@@ -764,7 +759,7 @@ class CrossMomentumStrategy(Strategy):
             target_value = book.portfolio_value * target_weight
 
             current_pos = positions_by_symbol.get(symbol)
-            current_value = (book.held_quantity(current_pos) if current_pos else incoming.get(symbol, 0.0)) * price
+            current_value = (book.held_quantity(current_pos) if current_pos else book.incoming.get(symbol, 0.0)) * price
 
             # Compute the difference between target and current value position
             diff_value = target_value - current_value
@@ -782,7 +777,8 @@ class CrossMomentumStrategy(Strategy):
                 continue
 
             cost = quantity * price
-            # If the cost exceeds the remaining spendable cash (the reserve is already excluded), reduce the quantity to fit
+            available_cash = min(available_cash, float(self.spendable_cash()))
+            # If the cost exceeds the money left (the framework's buffer is already excluded), reduce the quantity to fit
             if cost > available_cash:
                 quantity = fractional_qty(available_cash / price)
                 cost = quantity * price
@@ -797,22 +793,19 @@ class CrossMomentumStrategy(Strategy):
             _, exc, unknown = self._send("buy", quantity, symbol, "toward target")
             if exc is not None and not unknown:
                 self.log_warning(f"Failed to submit buy order for {symbol}: {exc}")
-                # The local available_cash estimate (get_cash() + estimated unfilled
-                # sell proceeds) can drift from the broker's real buying power —
-                # e.g. this iteration's sells hadn't settled yet. Resync to the
-                # broker's own reported value so the remaining targets in this loop
-                # aren't sized against a number already proven wrong, instead of
-                # repeating the same rejection down the list.
+                # Alpaca reported a smaller buying power than the estimate: size the remaining targets on it, less
+                # the framework's buffer, instead of repeating the same rejection down the list.
                 real_buying_power = parse_insufficient_buying_power(exc)
                 if real_buying_power is not None:
                     self.log_warning(f"Resyncing available cash to broker-reported buying power: ${real_buying_power:.2f}")
-                    available_cash = real_buying_power * (1 - self.parameters["cash_buffer_pct"])
+                    available_cash = real_buying_power - float(BUY_BUFFER) * book.portfolio_value
             # An unknown outcome keeps the cost deducted, with no buying-power resync
 
         # Phase 3: Park what the stock buys left, up to each sleeve target (the trend assets first, SHV last)
         for symbol, price, value, symbol_target in sleeve:
             if value >= symbol_target * (1 - _REBALANCE_BAND):
                 continue
+            available_cash = min(available_cash, float(self.spendable_cash()))
             buy_value = min(symbol_target - value, available_cash)
             if buy_value < book.min_trade_value:
                 continue
