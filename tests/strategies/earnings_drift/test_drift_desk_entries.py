@@ -11,7 +11,7 @@ from tests.strategies.earnings_drift.drift_helpers import RIG_DATES, DeskRig, ma
 from trading_agent_framework.entities.enums import OrderSide, OrderType, TimeInForce
 from trading_agent_framework.strategies.earnings_drift.book import TradeState
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
-from trading_agent_framework.utils.errors import BrokerError, OrderValidationError
+from trading_agent_framework.utils.errors import BrokerError, BrokerUncertainError, OrderValidationError
 
 
 def test_max_quantity_is_the_slot_budget_over_the_reaction_close(tmp_path: Path) -> None:
@@ -219,6 +219,20 @@ def test_the_buy_tool_says_when_the_retry_bought_fewer_shares_than_requested(tmp
 def test_the_buy_tool_has_no_requested_field_when_the_quantity_was_sent_as_asked(tmp_path: Path) -> None:
     rig = DeskRig(tmp_path)
     assert "requested" not in rig.desk.buy("AAA", 10, 8.0, "beat and raise")
+
+
+def test_a_buy_with_an_unknown_outcome_says_the_order_may_exist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    rig = DeskRig(tmp_path)
+
+    def timeout(order: object) -> None:
+        raise BrokerUncertainError("read timed out")
+
+    monkeypatch.setattr(rig.strategy, "submit_order", timeout)
+    with caplog.at_level(logging.WARNING):
+        result = rig.desk.buy("AAA", 10, 8.0, "beat and raise")
+    assert result == {"error": "buy AAA: outcome unknown at the broker, the order may exist -- check the account: read timed out"}
+    assert "outcome unknown at the broker, the order may exist" in caplog.text and "refused" not in caplog.text
+    assert "AAA" in rig.state.traded_symbols  # kept, so the reconcile can adopt the position if it filled
 
 
 def test_candidate_sheets_and_balances(tmp_path: Path) -> None:

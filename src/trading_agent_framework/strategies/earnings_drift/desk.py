@@ -28,7 +28,7 @@ from trading_agent_framework.strategies.earnings_drift.fact_sheet import fact_sh
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
 from trading_agent_framework.strategies.earnings_drift.screening import Candidate
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import BacktestError, BrokerError
+from trading_agent_framework.utils.errors import BacktestError, BrokerError, BrokerUncertainError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -583,6 +583,10 @@ class Desk:
             self._save_state()
             try:  # sized at the reaction close: refused after an uptick, it is retried once at the whole shares that fit
                 order, sent = submit_buy(self._strategy, symbol, shares, float(candidate.reaction.close), decimals=0)
+            except BrokerUncertainError as exc:  # the first attempt or its retry may exist at the broker: never resent
+                message = f"buy {symbol}: outcome unknown at the broker, the order may exist -- check the account: {exc}"
+                self._strategy.log_warning(f"[earnings_drift] {message}")
+                return {"error": message}
             except Exception as exc:  # a broker's _submit_order may re-raise after order.set_error (lumibot contract)
                 self._strategy.log_warning(f"[earnings_drift] buy {symbol} refused by the broker: {exc}")
                 return {"error": str(exc)}
