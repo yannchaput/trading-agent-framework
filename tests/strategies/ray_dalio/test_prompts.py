@@ -4,6 +4,7 @@ from trading_agent_framework.strategies.ray_dalio.prompts import (
     ANALYSTS,
     CONTEXT,
     DISAGREEMENT,
+    LEVERAGE_RULE,
     ORDER_READINESS_RULE,
     SIZING_RULE,
     SYSTEM_PROMPTS,
@@ -16,7 +17,9 @@ from trading_agent_framework.strategies.ray_dalio.prompts import (
 def _context_strings() -> list[str]:
     values: list[str] = []
     for value in CONTEXT.values():
-        if isinstance(value, list):
+        if isinstance(value, dict):
+            values.extend(f"{key} {text}" for key, text in value.items())
+        elif isinstance(value, list):
             values.extend(str(item) for item in value)
         elif isinstance(value, str):
             values.append(value)
@@ -24,7 +27,27 @@ def _context_strings() -> list[str]:
 
 
 def test_universe_is_lumibots_54_symbols_with_shv():
-    assert len(UNIVERSE) == 54 == len(set(UNIVERSE)) and UNIVERSE[-1] == "SHV"
+    assert len(UNIVERSE) == 54 and list(UNIVERSE)[-1] == "SHV"
+
+
+def test_every_symbol_has_a_description_and_the_agents_get_them():
+    assert all(isinstance(text, str) and text.strip() for text in UNIVERSE.values())
+    assert CONTEXT["universe"] == UNIVERSE
+
+
+def test_the_funds_the_agents_misread_are_described_right():
+    expected = {"TMF": "+3x", "TWM": "-2x", "UGL": "+2x", "GLL": "-2x", "SSO": "+2x", "UPRO": "+3x", "TQQQ": "+3x", "SHV": "1x"}
+    for symbol, leverage in expected.items():
+        assert UNIVERSE[symbol].startswith(leverage), symbol
+
+
+def test_every_inverse_fund_says_so():
+    for symbol, text in UNIVERSE.items():
+        assert text.startswith("-") == ("(inverse)" in text), symbol
+
+
+def test_the_leverage_rule_points_at_the_descriptions():
+    assert "never from memory" in LEVERAGE_RULE
 
 
 def test_every_agent_has_a_system_and_a_task_prompt():
