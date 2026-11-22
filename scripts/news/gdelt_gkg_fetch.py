@@ -43,6 +43,7 @@ csv.field_size_limit(10**9)
 
 
 def log(msg: str) -> None:
+    """Print a timestamped line, flushed so a long run can be followed in a pipe."""
     print(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}", flush=True)
 
 
@@ -94,6 +95,7 @@ def fetch(stamp: str) -> tuple[str, int, list[dict]] | tuple[str, None, None]:
 
 
 def fetch_day(day: date, pool: ThreadPoolExecutor) -> tuple[pd.DataFrame, dict]:
+    """Fetch the 96 files of one UTC day; return the kept articles and the per-file stats."""
     stamps = [f"{day:%Y%m%d}{h:02d}{m:02d}00" for h in range(24) for m in range(0, 60, 15)]
     rows, stats = [], {}
     for stamp, total, kept in pool.map(fetch, stamps):
@@ -104,6 +106,7 @@ def fetch_day(day: date, pool: ThreadPoolExecutor) -> tuple[pd.DataFrame, dict]:
 
 
 def main() -> None:
+    """Walk the days from newest to oldest, writing one parquet per missing day."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--start", type=date.fromisoformat, default=FIRST_DAY)
     parser.add_argument("--end", type=date.fromisoformat, default=date.today() - timedelta(days=1))
