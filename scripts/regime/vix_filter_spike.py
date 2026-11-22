@@ -5,6 +5,7 @@ Design (rules fixed before running): docs/superpowers/specs/2026-11-22-vix-false
 Run (jumpmodels is not a project dependency; the sibling spike modules import it):
   uv run --with jumpmodels python scripts/regime/vix_filter_spike.py check   # self-check
   uv run --with jumpmodels python scripts/regime/vix_filter_spike.py dev     # 2016 -> 2024: run, read
+  uv run --with jumpmodels python scripts/regime/vix_filter_spike.py test    # 2008 -> 2015, ONCE, chosen variant only
 
 A daily verdict before the open of session t, from closes up to t-1.
 """
@@ -38,6 +39,7 @@ evaluate = _exit.evaluate
 # Variants (design doc, fixed before running)
 RATIO_A, SPY_DROP, SPY_HIGH_N, CREDIT_N, BREADTH_N, BREADTH_MAX = 1.0, 0.98, 20, 20, 50, 4
 SECTORS = ["XLB", "XLE", "XLF", "XLI", "XLK", "XLP", "XLU", "XLV", "XLY"]
+TEST_GUARD = REPO / "cache" / "regime" / "vix_filter_test.done"
 MIXES = (0.0, 0.5)  # SPY weight while defensive: 100% SHV, 50/50
 
 
@@ -77,8 +79,11 @@ def entry_stats(name: str, state: pd.Series, spy: pd.Series, fall_list: list, ye
     return med, fpy, buf.getvalue().count("MISSED")
 
 
-def report(mode: str) -> dict:
-    """Print the money table per variant and mix, the entry statistics and the pass bar; return the results."""
+def report(mode: str, only: set[str] | None = None) -> dict:
+    """Print the money table per variant and mix, the entry statistics and the pass bar; return the results.
+
+    `only` limits the variants run (the test window shows VIX alone and the chosen variant, nothing else).
+    """
     m, px = market()
     x = extra()
     start, end = _exit.WINDOWS[mode]
@@ -92,6 +97,8 @@ def report(mode: str) -> dict:
     print(f"\n{'variant':30s} {'mix':>8s} {'total':>8s} {'CAGR':>6s} {'max DD':>7s} {'Sharpe':>6s} {'sw/yr':>6s} {'false/yr':>8s} {'med DD at switch':>16s} {'missed':>6s}")
     res = {}
     for name, trig in triggers(m, x).items():
+        if only is not None and name not in only:
+            continue
         state = run_switch(None, trig.loc[days], calm)
         med, fpy, missed = entry_stats(name, state, m.close, fl, years)
         sw = int((state != state.shift(1)).iloc[1:].sum()) / years
@@ -140,12 +147,23 @@ def check() -> None:
 
 
 def main() -> None:
-    """Entry point: `check` or `dev` (see the module docstring)."""
+    """Entry point: `check`, `dev` or `test` (see the module docstring)."""
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if mode == "check":
         return check()
     if mode == "dev":
         report(mode)
+        return
+    if mode == "test":
+        if TEST_GUARD.exists():
+            sys.exit(f"The 2008-2015 test was already run ({TEST_GUARD} exists); see the spec. Not re-run.")
+        chosen = report("dev")["chosen"]
+        if chosen is None:
+            sys.exit("No variant passed dev: the test window stays unused.")
+        print("\n" + "=" * 100 + f"\nTEST (one shot): {chosen} against VIX alone\n")
+        TEST_GUARD.parent.mkdir(parents=True, exist_ok=True)
+        TEST_GUARD.write_text(f"{chosen}\n")
+        report("test", only={"VIX alone", chosen})
         return
     sys.exit(f"unknown mode {mode!r}")
 

@@ -1,6 +1,6 @@
 # Spike: filters to cut VIX alone's false alarms
 
-Date: 2026-11-22. Status: **design, not run**. Type: research spike (one throwaway script, no production code).
+Date: 2026-11-22. Status: **dev PASS for (b) SPY confirmation; 2008-2015 test pending**. Type: research spike (one throwaway script, no production code).
 Branch: `research/vix-exit-rule`.
 
 ## Intent
@@ -53,3 +53,27 @@ Row t uses closes up to t-1. `T` = VIX alone's trigger (`entry_trigger` in `vix_
 ## Left to the builder
 
 - Output layout.
+
+## Dev results (2026-11-22): (b) passes, (a), (c), (d) fail
+
+`uv run --with jumpmodels python scripts/regime/vix_filter_spike.py dev`: 2016-01-04 to 2024-12-31, 2,264 sessions, 10
+SPY falls >= 8%. VIX alone reproduces +118.8% (100% SHV) and +180.4% (50/50).
+
+| Variant | Mix | Total | CAGR | Max DD | Sharpe | Switches/yr | False/yr | Median DD at switch | Missed |
+|---|---|---|---|---|---|---|---|---|---|
+| VIX alone | 100% SHV | +118.8% | +9.1% | -14.2% | 1.04 | 11.1 | 4.2 | -1.6% | 0 |
+| VIX alone | 50/50 | +180.4% | +12.1% | -17.9% | 1.04 | 11.1 | 4.2 | -1.6% | 0 |
+| a. ratio threshold 1.0 | 100% SHV | +95.1% | +7.7% | -14.2% | 0.86 | 10.2 | 3.8 | -1.7% | 0 |
+| a. ratio threshold 1.0 | 50/50 | +164.5% | +11.4% | -17.9% | 0.97 | 10.2 | 3.8 | -1.7% | 0 |
+| **b. SPY 2% under 20-day high** | 100% SHV | **+138.7%** | +10.2% | -14.2% | 1.11 | 8.2 | 2.8 | -3.6% | 0 |
+| **b. SPY 2% under 20-day high** | 50/50 | **+192.6%** | +12.7% | -17.9% | 1.07 | 8.2 | 2.8 | -3.6% | 0 |
+| c. credit HYG/IEF weak | 100% SHV | +76.3% | +6.5% | -19.3% | 0.71 | 8.7 | 3.3 | -4.3% | 1 |
+| c. credit HYG/IEF weak | 50/50 | +151.3% | +10.8% | -20.2% | 0.91 | 8.7 | 3.3 | -4.3% | 1 |
+| d. sector breadth <= 4 of 9 | 100% SHV | +65.4% | +5.8% | -19.0% | 0.61 | 7.3 | 2.8 | -6.6% | 2 |
+| d. sector breadth <= 4 of 9 | 50/50 | +143.0% | +10.4% | -19.5% | 0.86 | 7.3 | 2.8 | -6.6% | 2 |
+
+- **(b) passes** at both mixes with the same max DD as VIX alone and a higher Sharpe: false alarms 4.2 -> 2.8 a year,
+  at the price of a later switch (median -3.6% from the high against -1.6%, outside the original "first 3%" goal).
+- (a) cuts few false alarms (3.8 a year) and loses return; (c) and (d) switch late (-4.3%, -6.6%) and miss 1-2 falls.
+- Chosen for the one-shot test: (b). `test` runs only VIX alone and (b) on 2008-2015 and writes
+  `cache/regime/vix_filter_test.done` so it cannot run twice.
