@@ -48,6 +48,7 @@
 
 ### Dashboard
 
+* Plot the SPY line plot on a side by side view.
 * ~~Add a column for the broker~~
 * ~~REplace VIX, ADX etc with a "regime" indicator: 1 =bullish, neutral =0, bearish = -1~~
 * ~~Add a column with slippage and fees in dashboard~~
@@ -72,6 +73,20 @@ Details: `docs/Market regim early detection work list.md`. Check the box once a 
 * [x] Leveraged ETF switch (UPRO/TQQQ): vol-scaled and 200-day PASS, graded regime FAIL
 * [x] Current SPY/VIX regime: too late to gate leverage
 
+#### News fetch
+
+* Update the news_search tool: all news earlier than April 2026 are fetched from GEDLT cache. After it's Alpaca.
+* Add a warning in the logs where no news are returned
+
+#### Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries)
+
+The idea is to use a LLM or a ML model on the market crisis news to detect if sentiment dropped during those periods
+* Use daily on a 2Y window
+* Use intraday on the current period
+* Use a tranformer sentiment analysis model from HF rather than Qwen.
+* [x] Spike "news + VIX" (news drift and CUSUM, both orderings): NO. News is calm before falls and coincident with VIX; its shift at a fall start is +0.1 to +0.5 sd, too small to detect within a week. Median switch 5 sessions / -4% after the high (VIX alone does the same). Holdout 2025-2026 kept untouched. Spec: `docs/superpowers/specs/2026-11-22-news-vix-early-regime-spike-design.md`
+* [ ] (Low priority after the NO above) Follow-up, pre-2020 titles (2015-2019 have no titles in GDELT): rebuild pseudo-titles from URL slugs (78% of 2017 URLs have a 5+ word slug). Validate first on 2020-2024: FinBERT score of slug vs title, and the `dev` alerts from slugs only must match the title run. Needs a slug variant of the ticker filter ("NASDAQ OLLI" without parentheses). If valid, 2015-2019 (5 falls) becomes a second untouched window.
+
 ### Cross sectional momentum
 
 * ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
@@ -94,10 +109,6 @@ Details: `docs/Market regim early detection work list.md`. Check the box once a 
 ### Citadel Pod Sector
 
 * ~~Run the fist baseline (on 1 month)~~
-
-### Insider
-
-* Replace the fixed 10 stocks with the 100 first stocks of the cross momentum universe. As this universe won't be rabalanced, criteria is to decide.
 
 ### Ray Dalio
 
