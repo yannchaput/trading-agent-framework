@@ -274,8 +274,13 @@ class Rebalancer:
         sold: dict[str, float] = {}  # this run's sells per symbol, apart from the earlier runs' `outgoing`
 
         def sellable(symbol: str) -> float:
-            """What is held and not already being sold, by earlier runs or by this one."""
-            return max(0.0, held.get(symbol, 0.0) - outgoing.get(symbol, 0.0) - sold.get(symbol, 0.0))
+            """What is held and not already being sold, by earlier runs or by this one.
+
+            Rounded to 9 decimals (the most a broker quantity carries: Alpaca's limit) to drop the float leftover of
+            the subtraction: 15.806819 - 11.860567 is 3.946252000000001 in floats, a sell the broker refuses as more
+            than the 3.946252 available.
+            """
+            return max(0.0, round(held.get(symbol, 0.0) - outgoing.get(symbol, 0.0) - sold.get(symbol, 0.0), 9))
 
         def value_of(symbol: str) -> float:
             """The position's value counting open orders: held, plus buys in flight, minus sells in flight and sold by this run."""

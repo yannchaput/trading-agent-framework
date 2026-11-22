@@ -554,6 +554,17 @@ def test_a_sell_never_exceeds_what_is_held_and_not_already_being_sold(tmp_path: 
     assert placed[0] == PlacedOrder("A", "sell", 40.0)
 
 
+def test_selling_what_is_left_after_a_pending_sell_sends_the_exact_remainder(tmp_path: Path) -> None:
+    # ray_dalio 2026-11-22 backtest: in floats 15.806819 - 11.860567 = 3.946252000000001, and the backtest broker
+    # refused that sell as more than the 3.946252 available, so the buys it was funding were skipped
+    _, broker, rebalancer = _book(tmp_path, positions={"A": 15.806819}, prices={"A": 100, "SHV": 100}, cash=5000)
+    broker.tracker.track_unprocessed(Order(strategy_name="bill_ackman", asset=Asset("A"), side=OrderSide.SELL, quantity=Decimal("11.860567")))
+
+    rebalancer.rebalance(target_portfolio({}, cash_buffer=0.02), forced_exits=["A"])
+
+    assert broker.submitted[0].quantity == Decimal("15.806819") - Decimal("11.860567")
+
+
 # --- sizing counts the sells, never a stale buying power ------------------------------------------------
 
 
