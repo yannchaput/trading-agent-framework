@@ -62,7 +62,7 @@ Goal: detect a regime shift at the very start (one day or less) to change the da
 Details: `docs/Market regim early detection work list.md`. Check the box once a paper is tested.
 
 * [ ] Shu, Yu & Mulvey (2024), Statistical Jump Model: [arXiv 2402.05272](https://arxiv.org/abs/2402.05272)
-* [ ] Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries): [arXiv 2605.30363](https://arxiv.org/abs/2605.30363)
+* [x] Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries): [arXiv 2605.30363](https://arxiv.org/abs/2605.30363)
 * [ ] Boukardagha (2026), Wasserstein HMM, strictly causal: [arXiv 2603.04441](https://arxiv.org/abs/2603.04441)
 * [ ] Theory: quickest detection in latent factor models (2026): [arXiv 2610.20366](https://arxiv.org/pdf/2610.20366)
 * [ ] Theory: Li et al. (2025), Sparse Jump Model + MPC: [MDPI](https://www.mdpi.com/2227-7390/13/17/2837)
@@ -102,6 +102,7 @@ Details: `docs/Market regim early detection work list.md`. Check the box once a 
 ### Ray Dalio
 
 * Set guardrails if they are missing
+* Add traling stop orders to have a daily cap loss. Make sure the stop order is gain is counted in buying power.
 * Optimize and fix bugs of the strategy
 
 ### LLM benchmark
