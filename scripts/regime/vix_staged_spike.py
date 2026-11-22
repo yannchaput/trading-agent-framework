@@ -84,6 +84,84 @@ def portfolio_exposure(e: pd.Series, px: pd.DataFrame) -> pd.Series:
     return r
 
 
+A_SHARES = (0.0, 0.25, 0.5, 0.75, 1.0)  # share of the defensive stretch spent out of SPY: 0 = buy and hold, 1 = VIX alone
+
+
+def exposures(m: pd.DataFrame, days: list[date]) -> dict[str, pd.Series]:
+    """SPY exposure per session for the A line (fixed blends of VIX alone), B (thirds) and C (half until confirmed)."""
+    trigger, spy_prev = entry_trigger(m).loc[days], m.close.shift(1).loc[days]
+    calm = ((m.vix / m.vix3m).shift(1) < _exit.RATIO_EXIT).loc[days]
+    signals = exit_signals(m)
+    e1, e3 = signals["E1 price reclaim"].loc[days], signals["E3 volatility compression"].loc[days]
+    high60 = m.close.rolling(60).max().shift(1).loc[days]
+    defensive = run_switch(None, trigger, calm).astype(float)
+    out = {f"A {int(w * 100)}% out": 1 - w * defensive for w in A_SHARES}
+    out["B thirds"] = run_staged(trigger, calm, spy_prev, e1, e3)
+    out["C half until confirmed"] = run_staged(trigger, calm, spy_prev, e1, e3, high60)
+    return out
+
+
+def a_line(points: list[tuple[float, float]], mdd: float, vix: tuple[float, float]) -> float | None:
+    """Total return of the A line at a max drawdown: straight line between the A points sorted by max drawdown.
+
+    Better than VIX alone's drawdown (`vix` = its (max DD, total)): VIX alone's total. Worse than buy and hold's
+    (the deepest point): None, a fail.
+    """
+    xs, ys = zip(*sorted(points), strict=True)
+    if mdd < xs[0]:
+        return None
+    return vix[1] if mdd >= vix[0] else float(np.interp(mdd, xs, ys))
+
+
+def leak_split(e: pd.Series, px: pd.DataFrame, fall_list: list) -> dict[str, float]:
+    """Log return lost against SHV while not fully in SPY, weighted by (1 - e): false switches / falls / after a trough."""
+    days = list(e.index)
+    pos = {d: i for i, d in enumerate(days)}
+    spy, shv = px.Open_SPY.loc[days], px.Open_SHV.loc[days]
+    lost = (np.log(spy.shift(-1) / spy) - np.log(shv.shift(-1) / shv)).fillna(0) * (1 - e)
+    label = pd.Series("false", index=days)
+    for hi, lo, _ in fall_list:
+        label[days[max(0, pos[hi] - 20) : pos[lo] + 1]] = "fall"
+        i = pos[lo] + 1
+        while i < len(days) and e.iloc[i] < 1:
+            label[days[i]] = "after trough"
+            i += 1
+    return {k: float(v) for k, v in lost.groupby(label).sum().items()}
+
+
+def report(mode: str) -> dict[str, dict]:
+    """Print the money table, the leak split and the pass bar of the A line, B and C; return the per-variant metrics."""
+    m, px = market()
+    start, end = _exit.WINDOWS[mode]
+    days = [d for d in m.index if start <= d <= end and d in px.index]
+    years = (days[-1] - days[0]).days / 365.25
+    fl = [f for f in falls(m.close) if days[0] <= f[0] and f[1] <= days[-1]]
+    print(f"{mode}: {days[0]} -> {days[-1]}, {len(days)} sessions, {len(fl)} SPY falls >= 8% fully inside")
+    res = {}
+    for name, e in exposures(m, days).items():
+        res[name] = {**metrics(portfolio_exposure(e, px.loc[days]), years), "avg_e": e.mean(), "turnover": e.diff().abs().sum() / years, "leak": leak_split(e, px.loc[days], fl)}
+    print(f"\n{'variant':24s} {'total':>8s} {'CAGR':>6s} {'max DD':>7s} {'Sharpe':>6s} {'avg SPY':>7s} {'turnover/yr':>11s}   lost log return: false / fall / after trough")
+    for name, r in res.items():
+        leak = " / ".join(f"{r['leak'].get(k, 0.0):+.2f}" for k in ("false", "fall", "after trough"))
+        print(f"{name:24s} {r['total']:+8.1%} {r['cagr']:+6.1%} {r['mdd']:+7.1%} {r['sharpe']:6.2f} {r['avg_e']:7.0%} {r['turnover']:11.1f}   {leak}")
+    a_names = [n for n in res if n.startswith("A ")]
+    points = [(res[n]["mdd"], res[n]["total"]) for n in a_names]
+    vix = (res["A 100% out"]["mdd"], res["A 100% out"]["total"])
+    print("\n=== pass bar: total above the A line at the variant's max DD, and above VIX alone (A 100% out)")
+    passing = {}
+    for name in ("B thirds", "C half until confirmed"):
+        line = a_line(points, res[name]["mdd"], vix)
+        ok = line is not None and res[name]["total"] > line and res[name]["total"] > vix[1]
+        shown = "n/a (worse than buy and hold)" if line is None else f"{line:+.1%}"
+        print(f"  {name}: total {res[name]['total']:+.1%}, max DD {res[name]['mdd']:+.1%}, A line {shown} -> {'PASS' if ok else 'FAIL'}")
+        if ok:
+            passing[name] = res[name]["total"]
+    chosen = max(passing, key=passing.get, default=None)
+    print(f"chosen: {chosen or 'none -> verdict NO, the test window stays unused'}")
+    res["chosen"] = chosen
+    return res
+
+
 def check() -> None:
     """Assert the state machines and the exposure portfolio on synthetic series (sessions are numbered s1..s12)."""
     idx = [date(2020, 1, 1) + timedelta(days=i) for i in range(12)]
@@ -128,6 +206,11 @@ def check() -> None:
     assert np.allclose(portfolio_exposure(1.0 - defensive.astype(float), px), portfolio(defensive, px), atol=1e-12)
     flat = pd.DataFrame({c: [100.0] * 12 for c in px.columns}, index=idx)
     assert abs(portfolio_exposure(ser([1.0, 0.5] + [0.5] * 10), flat).iloc[1] + 0.0005) < 1e-12
+    # 7. A line: interpolated between the points, VIX alone's total when better than its drawdown, None when worse than buy and hold
+    pts = [(-0.337, 2.409), (-0.261, 2.112), (-0.179, 1.804), (-0.150, 1.493), (-0.142, 1.188)]
+    vix = (-0.142, 1.188)
+    assert abs(a_line(pts, -0.189, vix) - 1.8416) < 1e-3
+    assert a_line(pts, -0.179, vix) == 1.804 and a_line(pts, -0.10, vix) == 1.188 and a_line(pts, -0.40, vix) is None
     print("self-check OK")
 
 
@@ -136,6 +219,9 @@ def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if mode == "check":
         return check()
+    if mode == "dev":
+        report(mode)
+        return
     sys.exit(f"unknown mode {mode!r}")
 
 
