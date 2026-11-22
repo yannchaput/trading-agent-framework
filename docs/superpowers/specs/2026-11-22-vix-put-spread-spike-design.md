@@ -1,6 +1,6 @@
 # Spike: bear put spreads as insurance while VIX alone is defensive
 
-Date: 2026-11-22. Status: **design, not run**. Type: research spike (one throwaway script, no production code).
+Date: 2026-11-22. Status: **closed, NO on dev** (every spread variant lowers return; the 2008-2015 test window is unused). Type: research spike (one throwaway script, no production code).
 Branch: `research/vix-exit-rule`.
 
 ## Intent
@@ -70,9 +70,44 @@ Decisions are made before the open of session t from closes up to t-1 and execut
 
 ## Constraints
 
-- Code: `scripts/regime/vix_put_spread_spike.py`, modes `check`, `dev` (and `test` only if a variant passes); it
+- Code: `scripts/regime/vix_put_spread_spike.py`, modes `check` and `dev` (`test` not built: no variant passed); it
   imports from `vix_staged_spike.py`. No new dependency. Run with `uv run --with jumpmodels`.
 
 ## Left to the builder
 
 - Output layout; how the ledger is coded.
+
+## Results and verdict (2026-11-22): NO, the spreads cost more than they pay
+
+`uv run --with jumpmodels python scripts/regime/vix_put_spread_spike.py dev`: 2016-01-04 to 2024-12-31, 2,264 sessions,
+10 SPY falls >= 8%, defensive 40% of sessions. The no-spread rows reproduce the earlier spikes (+240.9%, +211.2%,
++180.4%).
+
+| Defensive mix | Budget | Total | CAGR | Max DD | Sharpe | Spreads/yr | Premium/yr | Spread P&L in falls / outside | Total at 0.8 x VIX |
+|---|---|---|---|---|---|---|---|---|---|
+| 100% SPY | 0 | +240.9% | +14.6% | -33.7% | 0.86 | - | - | - | - |
+| 100% SPY | 0.5% | +224.3% | +14.0% | -32.2% | 0.86 | 7.1 | 2.6% | +$5,791 / -$16,363 | +221.9% |
+| 100% SPY | 1% | +202.3% | +13.1% | -30.5% | 0.85 | 7.1 | 6.3% | +$13,395 / -$38,018 | +206.1% |
+| 100% SPY | 2% | +160.3% | +11.2% | -27.2% | 0.81 | 7.1 | 13.2% | +$24,146 / -$72,958 | +166.2% |
+| 75% SPY + 25% SHV | 0 | +211.2% | +13.5% | -26.1% | 0.94 | - | - | - | - |
+| 75% SPY + 25% SHV | 0.5% | +197.0% | +12.9% | -24.3% | 0.95 | 7.1 | 2.6% | +$5,791 / -$14,887 | +195.1% |
+| 75% SPY + 25% SHV | 1% | +176.4% | +12.0% | -22.4% | 0.94 | 7.1 | 6.1% | +$12,720 / -$34,788 | +174.2% |
+| 75% SPY + 25% SHV | 2% | +139.8% | +10.2% | -19.2% | 0.87 | 7.1 | 13.2% | +$24,024 / -$68,271 | +137.1% |
+| 50% SPY + 50% SHV | 0 | +180.4% | +12.1% | -17.9% | 1.04 | - | - | - | - |
+| 50% SPY + 50% SHV | 0.5% | +167.8% | +11.6% | -16.8% | 1.05 | 7.1 | 2.7% | +$6,577 / -$14,609 | +165.1% |
+| 50% SPY + 50% SHV | 1% | +146.6% | +10.6% | -15.8% | 1.01 | 7.1 | 6.0% | +$10,645 / -$32,394 | +148.1% |
+| 50% SPY + 50% SHV | 2% | +110.8% | +8.6% | -15.5% | 0.86 | 7.1 | 13.1% | +$20,433 / -$64,388 | +115.3% |
+
+All nine spread variants fail the bar (total above the same mix without spreads); chosen: none.
+
+- **The spreads lose money overall.** Spreads opened inside a fall window make money (+$5.8k to +$24k), but those
+  opened outside one (false switches, the long defensive stretch after a trough, rolls) lose 2.5 to 3 times as much
+  (-$15k to -$73k). About 7 spreads a year (switches plus monthly rolls) cost 2.6% to 13% of equity a year in premium.
+- **They do cut drawdown, at a steep price**: 100% SPY with 2% spreads has max DD -27.2% against -33.7%, for 80 points
+  less return. A 75% SPY + 25% SHV mix without spreads does better on both (+211.2%, -26.1%).
+- **Cheaper volatility (0.8 x VIX) does not rescue it**: totals move by -3 to +6 points; the budget then buys more
+  contracts, which lose more outside the falls.
+- The structure was not varied (strikes, expiry, the target, rolls); the old research found wider and closer to the
+  money "less bad but never positive". Same cause as the call-spread record: with VIX alone, most premium is spent
+  while no fall is under way.
+- 2008-2015 and 2025-2026 were not used.
