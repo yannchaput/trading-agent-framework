@@ -56,6 +56,22 @@
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
+### Market regime
+
+Goal: detect a regime shift at the very start (one day or less) to change the daily strategy.
+Details: `docs/Market regim early detection work list.md`. Check the box once a paper is tested.
+
+* [ ] Shu, Yu & Mulvey (2024), Statistical Jump Model: [arXiv 2402.05272](https://arxiv.org/abs/2402.05272)
+* [ ] Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries): [arXiv 2605.30363](https://arxiv.org/abs/2605.30363)
+* [ ] Boukardagha (2026), Wasserstein HMM, strictly causal: [arXiv 2603.04441](https://arxiv.org/abs/2603.04441)
+* [ ] Theory: quickest detection in latent factor models (2026): [arXiv 2610.20366](https://arxiv.org/pdf/2610.20366)
+* [ ] Theory: Li et al. (2025), Sparse Jump Model + MPC: [MDPI](https://www.mdpi.com/2227-7390/13/17/2837)
+* [ ] Confirm the 3 high-numbered arXiv IDs (2605.30363, 2610.20366, 2610.27751) resolve
+* [x] HHMM (arXiv 2007.14874): NO, misses 11/14 falls, needs look-ahead
+* [x] MS-TVTP weekly exit: NO, exits ~6 weeks after the trough
+* [x] Leveraged ETF switch (UPRO/TQQQ): vol-scaled and 200-day PASS, graded regime FAIL
+* [x] Current SPY/VIX regime: too late to gate leverage
+
 ### Cross sectional momentum
 
 * ~~Add a market regime filter to cross sectional momentum strategy.if bearish -> defensive else cross momentum.~~
