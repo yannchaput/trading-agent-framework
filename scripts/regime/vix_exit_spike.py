@@ -5,7 +5,7 @@ Design (rules fixed before running): docs/superpowers/specs/2026-11-22-vix-exit-
 Run (jumpmodels is not a project dependency; the sibling spike module imports it):
   uv run --with jumpmodels python scripts/regime/vix_exit_spike.py check   # self-check of the state machine
   uv run --with jumpmodels python scripts/regime/vix_exit_spike.py dev     # 2016 -> 2024: run, read
-  uv run --with jumpmodels python scripts/regime/vix_exit_spike.py test    # 2008 -> 2015, once, chosen variant only
+  (test, 2008 -> 2015: not built; no variant passed dev)
 
 A daily verdict before the open of session t, from closes up to t-1.
 """

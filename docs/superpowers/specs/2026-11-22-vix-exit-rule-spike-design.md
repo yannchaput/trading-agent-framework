@@ -7,7 +7,7 @@ Branch: `research/vix-exit-rule`.
 
 VIX alone (VIX/VIX3M >= 0.95 or VIXY +10% over 5 sessions) switches defensive fast: on time on all three 2025-2026
 holdout falls (-2.0% to -2.6%). It loses money on the way back: on dev 2016-2024 it returned to SPY a median of about
-28 sessions after the trough (7 to 62), with SPY already +5% to +43% off the low and about half the fall recovered,
+28 sessions after the trough (7 to 62; the dev run below gives 32 over 9 falls), with SPY already +5% to +43% off the low and about half the fall recovered,
 because its exit waits for VIX/VIX3M < 0.90, and the VIX level stays high until the rebound is well under way
 (user's observation). This spike keeps the VIX entry and tests fast price / volatility exits.
 
@@ -86,9 +86,8 @@ The re-arm rule exists because a price exit while VIX/VIX3M is still >= 0.95 wou
 
 ## Constraints
 
-- Code: `scripts/regime/vix_exit_spike.py`, modes `check` and `dev` (`test` was not built: no variant passed dev); it reuses `open_close`, `portfolio`, `stats`
-  from `vix_jump_spike.py` and `falls`, `evaluate` from `leaders_crack_spike.py`. `test` refuses to run twice: it writes
-  `cache/regime/vix_exit_test.done` and exits if the file exists (my call). Yahoo daily data from 2007-06. No new dependency.
+- Code: `scripts/regime/vix_exit_spike.py`, modes `check` and `dev` (`test` was not built: no variant passed dev); it reuses `portfolio`
+  from `vix_jump_spike.py` (`market` and `metrics` are its own: `open_close` starts in 2015, the bar needs numbers) and `falls`, `evaluate` from `leaders_crack_spike.py`. A `test` mode with a one-shot guard was planned but not built (no variant passed dev). Yahoo daily data from 2007-06. No new dependency.
 
 ## Left to the builder
 
@@ -108,17 +107,17 @@ falls >= 8%. The VIX-alone row reproduces the jump-model spike exactly (+118.8%,
 | E4 DMI | +107.7% | +8.5% | -15.8% | 0.81 | 0.54 | 18.2 | 27% | FAIL |
 | SPY buy and hold | +240.9% | +14.6% | -33.7% | 0.86 | 0.43 | - | - | - |
 
-| Variant | Median sessions trough -> back to SPY | False switches/yr | Price exits | Whipsaws |
+| Variant | Median sessions trough -> back to SPY (falls counted) | False switches/yr | Price exits | Whipsaws |
 |---|---|---|---|---|
 | VIX alone | 32 (7 to 62; 9 falls) | 4.2 | - | - |
-| E1 | 5 (3 to 10) | 6.5 | 75 | 26 |
-| E2 | 5 (2 to 7) | 5.4 | 42 | 21 |
-| E3 | 6 (2 to 12) | 6.7 | 58 | 24 |
-| E4 | 12 (6 to 23) | 6.7 | 69 | 32 |
+| E1 | 5 (3 to 10; 8 falls) | 6.5 | 75 | 26 |
+| E2 | 5 (2 to 7; 7 falls) | 5.4 | 42 | 21 |
+| E3 | 6 (2 to 12; 9 falls) | 6.7 | 58 | 24 |
+| E4 | 12 (6 to 23; 9 falls) | 6.7 | 69 | 32 |
 
 - **The exits do what they were built for**: back in SPY a median of 5-6 sessions after the trough (E4, the DMI
   reference, 12) against 32 for VIX alone. The entry is untouched (median -1.6% at the switch, same as before).
-- **It does not pay.** Faster returns come with 14-18 switches a year (VIX alone 11) and 4 in 10 price exits are
+- **It does not pay.** Faster returns come with 16-18.5 switches a year (VIX alone 11) and 4 in 10 price exits are
   followed within 20 sessions by a new switch at a lower SPY close (whipsaws); false switches rise from 4.2 to 5.4-6.7
   a year. E1 and E3 beat VIX alone on total return (+139% and +150% against +119%) but lose on Sharpe (0.83, 0.92 against
   1.04) and on drawdown (-23.8%, -21.3% against -14.2%); all four fail the bar, E1 and E3 on two of three counts.
@@ -126,3 +125,5 @@ falls >= 8%. The VIX-alone row reproduces the jump-model spike exactly (+118.8%,
 - Not tested: other parameters (reclaim length, rebound size), combining an exit with a confirmation, or a longer
   re-entry that scales back in. The rules were fixed before the run and not changed after it.
 - The 2008-2015 test window and the 2025-2026 holdout were not used.
+
+The falls not counted in the table (E1 and E2: 2022-08; E2: 2020-02) are falls the variant had already exited before the trough, i.e. exits that were too early.
