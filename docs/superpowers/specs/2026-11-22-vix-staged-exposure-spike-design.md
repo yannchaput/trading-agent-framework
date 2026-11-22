@@ -112,12 +112,16 @@ return saved.) The A line at max DD -18.9% is +184.0%: B (+144.1%) and C (+159.1
 both FAIL; chosen: none.
 
 - **Staging does not beat holding a fixed share.** B and C shrink the after-trough leak (0.80 -> 0.50) but give back
-  protection in the falls (1.02 saved -> 0.75) and barely touch the false-switch leak (0.56 -> 0.47-0.43). The net is
+  protection in the falls (1.02 saved -> 0.75) and only cut the false-switch leak by 16-23% (0.56 -> 0.47-0.43). The net is
   worse than simply being 50% out.
 - **The A line is the useful finding.** A fixed 50% in SPY while VIX alone is defensive gives +180.4% total (CAGR 12.1%,
   max DD -17.9%, Sharpe 1.04, the same Sharpe as VIX alone) against +118.8% for the full switch, i.e. 62 more points of
   return for 3.7 points more drawdown; 25% out gives +211.2% at -26.1%. Not a result of this spike's rules (it was the
   reference), and a blend is chosen on dev, with no out-of-sample check yet.
+- Caveats (final review, dev only, not new verdicts): the NO holds at every switch cost, but at the same average
+  exposure C loses to the blend only at 10 bp (+159.1% vs +163.1%) and wins at 2 bp (+182.5% vs +176.8%); most of C's
+  gap to A 50% is switching cost (turnover 12.0 vs 5.6 a year). B and C's max DD (-18.9%) comes from 2022; their COVID
+  drawdown is about -8%, against -17.9% for A 50%, so the single max-DD axis penalises them.
 - C is better than B (+159.1% against +144.1%): confirmation helps a little, but not enough.
 - Not tested: other tranche sizes or signals, a different floor, or the A line on 2008-2015. The rules were fixed before
   the run and not changed after it. 2008-2015 and 2025-2026 were not used.
