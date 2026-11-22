@@ -1,6 +1,6 @@
 # Spike: staged exposure after a VIX switch -- cut the return cost of being defensive
 
-Date: 2026-11-22. Status: **design, not run**. Type: research spike (one throwaway script, no production code).
+Date: 2026-11-22. Status: **closed, NO on dev** (B and C fail the A line; the 2008-2015 test window is unused). Type: research spike (one throwaway script, no production code).
 Branch: `research/vix-exit-rule`.
 
 ## Intent
@@ -81,7 +81,7 @@ is exactly `portfolio()` of `vix_jump_spike.py` (10 bp per full switch). Weight 
 
 ## Constraints
 
-- Code: `scripts/regime/vix_staged_spike.py`, modes `check` (asserts on synthetic series), `dev`, `test`; it imports
+- Code: `scripts/regime/vix_staged_spike.py`, modes `check` (asserts on synthetic series) and `dev` (`test` was not built: neither B nor C passed dev); it imports
   `market`, `entry_trigger`, `exit_signals`, `metrics`, `run_switch`, `falls` from `vix_exit_spike.py`. No new
   dependency. Run with `uv run --with jumpmodels`.
 - `check` asserts the state machines on synthetic series and that the new portfolio function equals `portfolio()` at
@@ -90,3 +90,34 @@ is exactly `portfolio()` of `vix_jump_spike.py` (10 bp per full switch). Weight 
 ## Left to the builder
 
 - Output layout; how the state machine is coded.
+
+## Results and verdict (2026-11-22): NO, B and C fail the A line
+
+`uv run --with jumpmodels python scripts/regime/vix_staged_spike.py dev`: 2016-01-04 to 2024-12-31, 2,264 sessions, 10
+SPY falls >= 8%. `A 0% out` reproduces buy and hold (+240.9%) and `A 100% out` reproduces VIX alone (+118.8%, Sharpe
+1.04, max DD -14.2%).
+
+| Variant | Total | CAGR | Max DD | Sharpe | Avg SPY | Turnover/yr | Lost log return: false / fall / after trough |
+|---|---|---|---|---|---|---|---|
+| A 0% out (buy and hold) | +240.9% | +14.6% | -33.7% | 0.86 | 100% | 0 | 0 / 0 / 0 |
+| A 25% out | +211.2% | +13.5% | -26.1% | 0.94 | 90% | 2.8 | +0.14 / -0.25 / +0.20 |
+| A 50% out | +180.4% | +12.1% | -17.9% | 1.04 | 80% | 5.6 | +0.28 / -0.51 / +0.40 |
+| A 75% out | +149.3% | +10.7% | -15.0% | 1.12 | 70% | 8.3 | +0.42 / -0.76 / +0.60 |
+| A 100% out (VIX alone) | +118.8% | +9.1% | -14.2% | 1.04 | 60% | 11.1 | +0.56 / -1.02 / +0.80 |
+| B thirds | +144.1% | +10.4% | -18.9% | 0.99 | 73% | 13.5 | +0.47 / -0.75 / +0.50 |
+| C half until confirmed | +159.1% | +11.2% | -18.9% | 1.04 | 75% | 12.0 | +0.43 / -0.75 / +0.50 |
+
+(Lost log return = return given up against SHV while not fully in SPY; in the "fall" column a negative number is
+return saved.) The A line at max DD -18.9% is +184.0%: B (+144.1%) and C (+159.1%) both fall 25-40 points below it, so
+both FAIL; chosen: none.
+
+- **Staging does not beat holding a fixed share.** B and C shrink the after-trough leak (0.80 -> 0.50) but give back
+  protection in the falls (1.02 saved -> 0.75) and barely touch the false-switch leak (0.56 -> 0.47-0.43). The net is
+  worse than simply being 50% out.
+- **The A line is the useful finding.** A fixed 50% in SPY while VIX alone is defensive gives +180.4% total (CAGR 12.1%,
+  max DD -17.9%, Sharpe 1.04, the same Sharpe as VIX alone) against +118.8% for the full switch, i.e. 62 more points of
+  return for 3.7 points more drawdown; 25% out gives +211.2% at -26.1%. Not a result of this spike's rules (it was the
+  reference), and a blend is chosen on dev, with no out-of-sample check yet.
+- C is better than B (+159.1% against +144.1%): confirmation helps a little, but not enough.
+- Not tested: other tranche sizes or signals, a different floor, or the A line on 2008-2015. The rules were fixed before
+  the run and not changed after it. 2008-2015 and 2025-2026 were not used.
