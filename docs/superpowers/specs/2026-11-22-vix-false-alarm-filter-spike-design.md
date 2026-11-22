@@ -1,6 +1,6 @@
 # Spike: filters to cut VIX alone's false alarms
 
-Date: 2026-11-22. Status: **dev PASS for (b) SPY confirmation; 2008-2015 test pending**. Type: research spike (one throwaway script, no production code).
+Date: 2026-11-22. Status: **closed, NO**: (b) passed dev but failed the one-shot 2008-2015 test (run 2026-11-23; window spent). Type: research spike (one throwaway script, no production code).
 Branch: `research/vix-exit-rule`.
 
 ## Intent
@@ -77,3 +77,25 @@ SPY falls >= 8%. VIX alone reproduces +118.8% (100% SHV) and +180.4% (50/50).
 - (a) cuts few false alarms (3.8 a year) and loses return; (c) and (d) switch late (-4.3%, -6.6%) and miss 1-2 falls.
 - Chosen for the one-shot test: (b). `test` runs only VIX alone and (b) on 2008-2015 and writes
   `cache/regime/vix_filter_test.done` so it cannot run twice.
+
+## Test (run once, 2026-11-23): (b) FAILS out of sample
+
+`uv run --with jumpmodels python scripts/regime/vix_filter_spike.py test`: 2008-01-02 to 2015-12-31, 2,015 sessions, 14
+SPY falls >= 8%; VIXY missing before 2011, so both entries ran on the ratio alone until then. SPY buy and hold +64.7%,
+max DD -51.9%.
+
+| Variant | Mix | Total | CAGR | Max DD | Sharpe | Switches/yr | False/yr | Median DD at switch | Missed |
+|---|---|---|---|---|---|---|---|---|---|
+| VIX alone | 100% SHV | +31.3% | +3.5% | -12.9% | 0.44 | 8.9 | 3.4 | 0.0% | 0 |
+| VIX alone | 50/50 | +53.0% | +5.5% | -30.0% | 0.47 | 8.9 | 3.4 | 0.0% | 0 |
+| b. SPY 2% under 20-day high | 100% SHV | +23.6% | +2.7% | -14.1% | 0.34 | 8.1 | 3.0 | 0.0% | 0 |
+| b. SPY 2% under 20-day high | 50/50 | +48.4% | +5.1% | -30.0% | 0.44 | 8.1 | 3.0 | 0.0% | 0 |
+
+- **(b) fails the bar** at both mixes (+23.6% vs +31.3%, +48.4% vs +53.0%). Out of sample it removes few false alarms
+  (3.4 -> 3.0 a year) and its later switch costs more than they did: the dev gain did not carry over.
+- (The script's last line, "the test window stays unused", is generic report text: the window is spent; guard file
+  `cache/regime/vix_filter_test.done` written.)
+- Side result on VIX alone itself, first time out of sample on 2008-2015: it kept max DD at -12.9% (100% SHV) against
+  -51.9% for buy and hold, through 2008, but made +31.3% against +64.7%; the 50/50 mix +53.0% at -30.0%. Median
+  drawdown at the switch 0.0%: in this window VIX was often already stressed at the highs (2008-2011), so most falls
+  found it defensive.
