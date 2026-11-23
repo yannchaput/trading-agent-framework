@@ -118,6 +118,10 @@ def test_risk_review_kinds_and_symbols():
     assert check({"objections": [], "summary": ""}, _state()) is not None
 
 
+def test_stress_is_an_objection_kind():
+    assert _soft(validate_risk(PARAMS))(_obj(kind="stress"), _state()) is None
+
+
 def test_weights_caps():
     state = _full_state()
     assert check_weights({"XLK": 0.26}, state, PARAMS) is not None
