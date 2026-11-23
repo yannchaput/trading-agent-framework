@@ -55,6 +55,8 @@ PODS: tuple[Pod, ...] = (
 
 ALL_SYMBOLS: tuple[str, ...] = tuple(symbol for pod in PODS for symbol in pod.sleeve)
 
+DEFENSIVE_ETFS: tuple[str, ...] = ("XLP", "XLV", "XLU")  # the sleeves that fall least in a stressed market
+
 _POD_OF = {symbol: pod for pod in PODS for symbol in pod.sleeve}
 
 
