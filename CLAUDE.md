@@ -14,7 +14,6 @@ uv run agent <strategy_name> <live|paper|backtesting>  # run a strategy (see `St
 uv run dashboard [--benchmark-dir PATH]   # Streamlit dashboard: Live and Paper tabs (P&L per day from the strategy's Alpaca account), Backtesting tab (logs/ and memory/ run history) and Models tab (vLLM benchmark results)
 uv run batch-universe                     # rebuild the stock universe file (`strategies/common/batch_us_stock_universe.py`)
 uv run batch-universe --history --start YYYY-MM [--end YYYY-MM]  # build or extend the point-in-time universe history (one top-1,200 list per month) that cross_momentum and bull_bear backtests trade; a backtest does this itself as a pre-step
-uv run bear-spread-research [--start YYYY-MM-DD --end YYYY-MM-DD --equity 1200 --vol-scale 1 --skew 0.8 --half-spread 0.05 --out DIR]  # replay SPY $5-wide bear put spreads opened on the bearish regime over 2016-2026 with Black-Scholes prices from SPY and VIX; prints trades, SPY falls and a GO / NO-GO verdict (downloads Yahoo SPY, ^VIX, ^VIX3M; read-only, no broker)
 uv run bull-bear-scores <run_dir> [<run_dir>...]  # score bull_bear's bull/bear/judge calls and the judge's strengths against forward returns, runs side by side (fetches Yahoo opens; read-only)
 uv run regime scorecard [--start 2016-01-04 --end 2026-10-05]  # score the SPY/VIX market regime against SPY swing falls (downloads Yahoo SPY, ^VIX, ^VIX3M; read-only)
 uv run regime recompute [--logs-root logs] [--dry-run]  # rewrite the Regime line of existing backtest runs' indicators.parquet from Yahoo SPY/VIX (backs up the original once)
@@ -60,7 +59,7 @@ Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under t
 - `memory/CLAUDE.md` -- `MemoryStore` and the memory tools.
 - `fundamentals/CLAUDE.md` -- SEC EDGAR client.
 - `dashboard/CLAUDE.md` -- the Streamlit app.
-- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `insider_trades`, `news_builtin`, `ray_dalio`, `sector_pods`, `vwap_pullback`; `bear_put_spread` is research only, not a registered strategy).
+- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `insider_trades`, `news_builtin`, `ray_dalio`, `sector_pods`, `vwap_pullback`).
 
 ## Key patterns / gotchas
 
