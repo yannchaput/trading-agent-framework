@@ -64,12 +64,13 @@ already project dependencies.
 ```python
 def check() -> None:
     # 1. no look-ahead: changing day k's closes never changes day k's verdict
-    closes = synthetic_closes(300)           # random walk, vix/vix3m near 1, a stressed stretch at 150-160
+    closes = synthetic_closes(300)  # random walk, vix/vix3m near 1, a stressed stretch at 150-160
     base = fall_days(closes)
     for k in range(200, 300, 9):
-        moved = closes.copy(); moved.iloc[k] *= [3.0, 1.0, 2.0]
+        moved = closes.copy()
+        moved.iloc[k] *= [3.0, 1.0, 2.0]
         assert fall_days(moved).iloc[k] == base.iloc[k]
-    assert base.iloc[151:160].any()           # the stressed stretch is seen the day after
+    assert base.iloc[151:160].any()  # the stressed stretch is seen the day after
     # 2. no stop: open 100 -> close 90, cost 3 bps each side
     bars = frame([(100, 101, 99, 100), (100, 100, 90, 90)])
     mult, exit_ = day_return(bars, None)
