@@ -101,6 +101,9 @@ def parse_insufficient_buying_power(error: Exception) -> float | None:
 def in_market_fall(vix: Sequence[float], vix3m: Sequence[float], vixy: Sequence[float]) -> bool:
     """Whether the market is in a fall (defensive posture) at the next open, by the "VIX alone" rule.
 
+    This indicator does not provide the direction of trading within the day: only the trend on an extended time window.
+    It can not be used for intraday trading.
+
     The rule is the one tested in the 2026-11 research. A fall **starts** on a session whose close shows market
     stress: VIX / VIX3M at or above 0.95, or VIXY up 10% or more over 5 sessions (its close against the close 5
     sessions earlier). It **ends** after 3 consecutive calm sessions (VIX / VIX3M below 0.90); the session that started
