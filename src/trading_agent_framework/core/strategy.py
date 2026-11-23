@@ -8,6 +8,7 @@ facade over the broker, so strategy code reads like lumibot strategy code.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
 from decimal import ROUND_DOWN, Decimal
@@ -23,7 +24,7 @@ from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
-from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, classify_regime
+from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, RegimeReading, classify_regime
 from trading_agent_framework.core.regime_data import RegimeSource, YahooRegimeData
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -47,7 +48,7 @@ from trading_agent_framework.utils.errors import (
     OrderValidationError,
     RegimeDataError,
 )
-from trading_agent_framework.utils.helpers import BUY_BUFFER
+from trading_agent_framework.utils.helpers import BUY_BUFFER, in_market_fall
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -170,6 +171,11 @@ class Strategy:
         self.run_id: str | None = None
         # Latest market regime; None until `_refresh_regime` could compute one (the executor calls it every session).
         self.regime: int | None = None
+        # The full reading behind `regime` (score, SPY/VIX levels), set together with it. Information only.
+        self.regime_reading: RegimeReading | None = None
+        # Early-warning "market fall" flag (`in_market_fall`: VIX/VIX3M or a VIXY jump), set together with `regime`;
+        # None until the first refresh with enough history. Information only: nothing trades on it.
+        self.market_fall: bool | None = None
         self._regime_history_warned = False
         # Where the regime's SPY/VIX/VIX3M closes come from; no network until the first refresh. Assignable in tests.
         self.regime_source: RegimeSource = YahooRegimeData()
@@ -374,7 +380,8 @@ class Strategy:
 
         Reads the closes strictly before today's session date, so a mid-session start sees the same data as the
         morning refresh. Information only: a log line, and an `add_line` point in backtests. Any failure keeps the
-        previous value, because a regime estimate must never cost a session.
+        previous value, because a regime estimate must never cost a session. It also sets `regime_reading` and
+        `market_fall` (the `in_market_fall` rule on the same slice) together with `regime`.
 
         `reading` is a `RegimeReading` from `classify_regime`, the state machine's output on the last close. Its
         `score` (0 to 4) counts the stress conditions met (VIX inverted, VIX spike, SPY below its SMA, SPY well
@@ -395,6 +402,9 @@ class Strategy:
                 self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily closes of SPY/VIX/VIX3M before {session}")
             return
         self.regime = reading.regime
+        self.regime_reading = reading
+        vixy = series.vixy or (math.nan,) * len(series)
+        self.market_fall = in_market_fall(series.vix, series.vix3m, vixy)
         episode = f", episode low {reading.episode_low:.2f}" if reading.episode_low is not None else ""
         self.log_info(
             f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): score {reading.score}/4, "
@@ -403,6 +413,9 @@ class Strategy:
             f"VIX {reading.vix:.2f} vs VIX3M {reading.vix3m:.2f}, "
             f"VIX {reading.vix / reading.vix_median:.2f}x its {params.vix_median_window}-day median{episode}"
         )
+        vixy_change = vixy[-1] / vixy[-6] - 1 if len(vixy) > 5 else math.nan
+        vixy_text = "" if math.isnan(vixy_change) else f", VIXY {vixy_change:+.1%} over 5 sessions"
+        self.log_info(f"Market fall warning {'ON' if self.market_fall else 'OFF'} (VIX/VIX3M {reading.vix / reading.vix3m:.2f}{vixy_text})")
         self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
     def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:

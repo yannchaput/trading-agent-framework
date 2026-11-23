@@ -14,7 +14,7 @@ from trading_agent_framework.utils.errors import RegimeDataError
 ROWS = 503
 
 
-def _series(spy: list[float], vix: float = 15.0, vix3m: float = 18.0, rows: int = ROWS) -> RegimeSeries:
+def _series(spy: list[float], vix: float = 15.0, vix3m: float = 18.0, rows: int = ROWS, vixy: list[float] | None = None) -> RegimeSeries:
     """`rows` sessions ending 2026-09-11 (the Friday before the clock's date), weekdays only."""
     sessions: list[date] = []
     day = date(2026, 9, 11)
@@ -24,12 +24,15 @@ def _series(spy: list[float], vix: float = 15.0, vix3m: float = 18.0, rows: int 
         day -= timedelta(days=1)
     sessions.reverse()
     closes = spy[-rows:]
-    return RegimeSeries(tuple(sessions), tuple(closes), tuple([vix] * rows), tuple([vix3m] * rows))
+    return RegimeSeries(tuple(sessions), tuple(closes), tuple([vix] * rows), tuple([vix3m] * rows), tuple(vixy or ()))
 
 
 BULL = _series([100 * 1.001**i for i in range(ROWS)])
 # A fall from the 52w high with an inverted term structure: SPY below its SMA50 and off its high, VIX above VIX3M.
 BEAR = _series([100 * 1.001**i for i in range(300)] + [100 * 1.001**300 * 0.995 ** (i + 1) for i in range(ROWS - 300)], vix=30.0, vix3m=25.0)
+
+
+CALM_SPY = [100 * 1.001**i for i in range(ROWS)]
 
 
 def _strategy(series: RegimeSeries | None = None, cls: type[Strategy] = Strategy, clock_at=None) -> tuple[Strategy, FakeRegimeSource, FakeBroker, list[tuple]]:
@@ -112,3 +115,60 @@ def test_outside_backtesting_the_regime_is_set_and_nothing_is_charted() -> None:
     strategy.regime_source = FakeRegimeSource(BULL)
     strategy._refresh_regime()  # the real add_line: a no-op outside backtesting
     assert strategy.regime == 1
+
+
+def test_a_refresh_sets_the_reading_and_the_market_fall_flag() -> None:
+    strategy, _, _, _ = _strategy(BEAR)
+    strategy._refresh_regime()
+    assert strategy.market_fall is True
+    assert strategy.regime_reading is not None and strategy.regime_reading.regime == strategy.regime
+
+
+def test_a_calm_market_has_no_fall() -> None:  # BULL has no VIXY column: the ratio leg only
+    strategy, _, _, _ = _strategy(BULL)
+    strategy._refresh_regime()
+    assert strategy.market_fall is False
+
+
+def test_a_vixy_jump_alone_turns_the_flag_on() -> None:
+    vixy = [20.0] * (ROWS - 1) + [22.5]  # +12.5% over 5 sessions, ratio calm
+    strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=vixy))
+    strategy._refresh_regime()
+    assert strategy.market_fall is True
+
+
+def test_a_missing_vixy_column_is_all_nan_for_the_rule() -> None:
+    strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=[float("nan")] * ROWS))
+    strategy._refresh_regime()
+    assert strategy.market_fall is False
+
+
+def test_the_market_fall_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, _, _ = _strategy(BEAR)
+    with caplog.at_level(logging.INFO):
+        strategy._refresh_regime()
+    assert "Market fall warning ON" in caplog.text
+    assert "VIXY" not in caplog.text.split("Market fall warning")[1]  # no VIXY data: that part is omitted
+
+
+def test_the_vixy_change_is_logged(caplog: pytest.LogCaptureFixture) -> None:
+    vixy = [20.0] * (ROWS - 1) + [22.5]
+    strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=vixy))
+    with caplog.at_level(logging.INFO):
+        strategy._refresh_regime()
+    assert "VIXY +12.5% over 5 sessions" in caplog.text
+
+
+def test_a_data_failure_keeps_the_previous_flag_and_reading() -> None:
+    strategy, source, _, _ = _strategy(BEAR)
+    strategy._refresh_regime()
+    first_reading = strategy.regime_reading
+    source.error = RegimeDataError("x")
+    strategy._refresh_regime()
+    assert strategy.market_fall is True and strategy.regime_reading is first_reading
+
+
+def test_too_little_history_leaves_the_flag_unknown() -> None:
+    strategy, _, _, _ = _strategy(_series([100.0] * 100, rows=100))
+    strategy._refresh_regime()
+    assert strategy.market_fall is None and strategy.regime_reading is None
