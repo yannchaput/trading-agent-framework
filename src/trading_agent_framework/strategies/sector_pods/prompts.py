@@ -12,6 +12,12 @@ POD_TASK = "Rate every ETF of your sleeve for the coming week, then submit your 
 RISK_TASK = "Review the pods' views against the portfolio and submit your objections."
 PM_TASK = "Set next week's target weights and submit them."
 
+# context-field line shared by the risk manager and the PM (the pods never see `stress`)
+STRESS_FIELD = (
+    "- `stress`: `early_warning` (a fast VIX-based alarm: it fires near the start of a fall, and also falsely about 4 times a year),\n"
+    "  `regime_score` (0-4 conditions behind `regime`), `conditions`, and `defensive_etfs`. Null when unavailable."
+)
+
 
 def pod_system(pod: Pod, params: SectorPodsParams) -> str:
     """System prompt of one sector pod.
@@ -62,6 +68,7 @@ Challenge the pods' views before the portfolio manager sizes anything.
 Context fields:
 - `date`: today. `regime`: market stress label: bullish, neutral, bearish or unknown.
 - `holdings`: current weight of each ETF.
+{STRESS_FIELD}
 - `facts`: prices and indicators per pod.
 - `pods`: each pod's scores and sector view.
 - `previous`: your last review, if any.
@@ -71,9 +78,11 @@ Look for:
 - macro contradictions: two pods assuming opposite things about rates, oil, the dollar or growth.
 - drawdown: strong scores on ETFs that are falling or well below their 200-day average (`vs_200d_avg_pct`).
 - reversal: strong scores right after a sharp run-up, or weak scores right after a sharp fall.
+- stress: when `stress.early_warning` is true, strong scores on cyclical or high-volatility ETFs (`volatility_20d_pct`); suggest the
+  `defensive_etfs` instead. Weigh the alarm with `regime_score` and `conditions`.
 
 Call `{RISK_SUBMIT}` once with:
-- `objections`: a list; each has `symbols` (the ETFs concerned), `kind` (crowding, macro, drawdown, reversal or other), `severity` (low or high),
+- `objections`: a list; each has `symbols` (the ETFs concerned), `kind` (crowding, macro, drawdown, reversal, stress or other), `severity` (low or high),
   `reason` (one line, {params.reason_max_chars} characters at most).
 - `summary`: your overall read in a few sentences ({params.summary_max_chars} characters at most).
 An empty list of objections is fine when you find none. Keep `high` for objections that should change the book.
@@ -95,6 +104,7 @@ def pm_system(params: SectorPodsParams) -> str:
 Context fields:
 - `date`: today. `regime`: market stress label: bullish, neutral, bearish or unknown.
 - `holdings`: current weight of each ETF. `previous`: your last target weights.
+{STRESS_FIELD}
 - `unresearched`: ETFs in `holdings` that nobody researched this week, with their current weight.
 - `facts`: prices and indicators per pod.
 - `outcome`: how last week's book did. `portfolio_1w_pct`: return on the whole portfolio (SHV and cash count as 0).
@@ -104,7 +114,7 @@ Context fields:
 
 Steps:
 1. Call `search_memory` first for lessons relevant to this week's situation: at most {params.pm_memory_budget} `search_memory` calls.
-2. Read `pods`, `risk`, `outcome`, `previous`, `holdings`, `unresearched` and `regime`.
+2. Read `pods`, `risk`, `outcome`, `previous`, `holdings`, `unresearched`, `regime` and `stress`.
 3. Pick the weights. Your weights set the mix, not the size: the book is always invested, so the weights you submit are scaled up in
    proportion to {total} before they are traded. Give each ETF a weight relative to the others. Higher scores get more, but stay spread over several sectors.
 4. Call `remember_lesson` at most once, and only if last week's `outcome` taught something specific. Skip it otherwise.
@@ -116,6 +126,8 @@ Steps:
 Rules:
 - At most {etf} in one ETF, {pod} in one pod's sleeve, and {total} in total: the weights you submit must stay within these caps, and so does the scaled book.
   {params.parking_symbol} only holds what the caps leave over, so do not list {params.parking_symbol}.
+- When `stress.early_warning` is true, tilt toward `defensive_etfs`, up to the caps, but keep other ETFs: the book stays fully invested.
+  The alarm is early and also false about 4 times a year, so weigh it with `regime_score` and `conditions`.
 - An ETF you leave out is sold.
 - An ETF whose pod gave no view, or that has no `facts`, can only be kept at up to its current weight or cut; it is never scaled up.
 """

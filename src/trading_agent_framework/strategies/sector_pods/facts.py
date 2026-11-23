@@ -6,8 +6,9 @@ from collections.abc import Mapping, Sequence
 from statistics import fmean
 from typing import Any
 
+from trading_agent_framework.core.regime import RegimeReading
 from trading_agent_framework.strategies.common.scoring import annualized_volatility, compute_return_from_prices
-from trading_agent_framework.strategies.sector_pods.pods import PODS
+from trading_agent_framework.strategies.sector_pods.pods import DEFENSIVE_ETFS, PODS
 
 MIN_BARS = 201  # a 200-day average plus the day before it
 
@@ -111,4 +112,33 @@ def outcome(
         "portfolio_1w_pct": None if portfolio is None else round(portfolio, 1),
         "spy_1w_pct": spy_1w_pct,
         "pods": pod_scores,
+    }
+
+
+def stress_view(reading: RegimeReading | None, market_fall: bool | None) -> dict[str, Any] | None:
+    """The market-stress picture the risk manager and the portfolio manager read.
+
+    The condition names use the default regime parameters (50-day average, 5% off the high), the only ones sector_pods
+    runs with.
+
+    Args:
+        reading: The strategy's full regime reading, None until there is enough history.
+        market_fall: The "VIX alone" early warning, None when `reading` is None.
+
+    Returns:
+        None without a reading; otherwise the early warning, the regime score (0 to 4), the four conditions and the
+        defensive ETFs.
+    """
+    if reading is None:
+        return None
+    return {
+        "early_warning": market_fall,
+        "regime_score": reading.score,
+        "conditions": {
+            "vix_above_vix3m": reading.inverted,
+            "vix_spike": reading.vix_spike,
+            "spy_below_sma50": reading.below_sma,
+            "spy_5pct_off_high": reading.off_high,
+        },
+        "defensive_etfs": list(DEFENSIVE_ETFS),
     }

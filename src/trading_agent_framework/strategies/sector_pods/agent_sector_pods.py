@@ -32,6 +32,7 @@ from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
+from trading_agent_framework.strategies.sector_pods.facts import stress_view
 from trading_agent_framework.strategies.sector_pods.graph import Execute, GraphParts, LoadPrevious, MarketFacts, build_graph, pm_reads, pod_reads, risk_reads
 from trading_agent_framework.strategies.sector_pods.handoff import (
     PM_SUBMIT,
@@ -186,7 +187,14 @@ class SectorPodsStrategy(Strategy):
         rebalancer = Rebalancer(self, params)
         return GraphParts(
             load_previous=LoadPrevious(store),
-            market_facts=MarketFacts(self._daily_bars(), regime=lambda: self.regime, holdings=rebalancer.current_weights, today=self._market_date, on_warning=self._warn),
+            market_facts=MarketFacts(
+                self._daily_bars(),
+                regime=lambda: self.regime,
+                stress=lambda: stress_view(self.regime_reading, self.market_fall),
+                holdings=rebalancer.current_weights,
+                today=self._market_date,
+                on_warning=self._warn,
+            ),
             pods=pods,
             risk_manager=risk,
             portfolio_manager=pm,

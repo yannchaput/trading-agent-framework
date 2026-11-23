@@ -160,6 +160,9 @@ class Harness:
         return [order.asset.symbol for order in self.broker.submitted]
 
 
+STRESS = {"early_warning": True, "regime_score": 2}
+
+
 def _harness(
     tmp_path: Path,
     *,
@@ -168,6 +171,7 @@ def _harness(
     barrier: threading.Barrier | None = None,
     pm: Script | None = None,
     scripts: dict[str, Script] | None = None,
+    stress: Callable[[], dict[str, Any] | None] = lambda: STRESS,
 ) -> Harness:
     """Value 10,000; every ETF costs 50, SHV 100; `held` maps a symbol to shares."""
     params = SectorPodsParams()
@@ -218,7 +222,7 @@ def _harness(
     infos: list[str] = []
     parts = GraphParts(
         load_previous=LoadPrevious(store),
-        market_facts=MarketFacts(bars, regime=lambda: 1, holdings=rebalancer.current_weights, today=lambda: date(2026, 11, 10), on_warning=warnings.append),
+        market_facts=MarketFacts(bars, regime=lambda: 1, stress=stress, holdings=rebalancer.current_weights, today=lambda: date(2026, 11, 10), on_warning=warnings.append),
         pods=pods,
         risk_manager=make("risk_manager", no_objections, validate_risk(params), risk_submit_tool, RISK_SUBMIT, risk_reads, lambda v: {"risk": UNAVAILABLE if v is None else v}),
         portfolio_manager=make(
@@ -499,3 +503,38 @@ def test_unavailable_views_are_not_fed_back_and_a_bad_saved_book_warns(tmp_path:
     assert h.agents["risk_manager"].contexts[0]["previous"] is None
     assert h.agents["portfolio_manager"].contexts[0]["outcome"] == {}
     assert any("unreadable" in w for w in h.warnings)
+
+
+def test_market_facts_puts_stress_in_the_state(tmp_path: Path) -> None:
+    final = _harness(tmp_path).run()
+
+    assert final["stress"] == STRESS
+
+
+def test_risk_and_pm_see_stress_but_pods_do_not(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+
+    h.run()
+
+    assert h.agents["risk_manager"].contexts[0]["stress"] == STRESS
+    assert h.agents["portfolio_manager"].contexts[0]["stress"] == STRESS
+    assert all("stress" not in h.agents[pod.key].contexts[0] for pod in PODS)
+
+
+def test_the_review_log_records_stress(tmp_path: Path) -> None:
+    h = _harness(tmp_path)
+
+    h.run()
+
+    (line,) = h.log_lines()
+    assert line["stress"] == STRESS and line["regime"] == "bullish"
+
+
+def test_a_review_without_stress_records_null_and_completes(tmp_path: Path) -> None:
+    h = _harness(tmp_path, stress=lambda: None)
+
+    final = h.run()
+
+    assert final["abandoned"] is None
+    (line,) = h.log_lines()
+    assert line["stress"] is None

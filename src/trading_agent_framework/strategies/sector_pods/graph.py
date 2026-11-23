@@ -34,6 +34,7 @@ class PodsState(TypedDict, total=False):
 
     date: str
     regime: str  # bullish / neutral / bearish / unknown
+    stress: dict[str, Any] | None  # `facts.stress_view`; None without enough history
     holdings: dict[str, float]
     previous: dict[str, Any]
     facts: dict[str, dict[str, dict[str, float]]]  # pod key -> symbol -> row
@@ -87,12 +88,12 @@ def pod_reads(key: str) -> Callable[[Mapping[str, Any]], dict[str, Any]]:
 
 def risk_reads(state: Mapping[str, Any]) -> dict[str, Any]:
     """Slots the risk manager sees: every pod's facts and view, plus its own last review."""
-    return {key: state.get(key) for key in ("date", "regime", "holdings", "facts", "pods")} | {"previous": _previous(state, "risk")}
+    return {key: state.get(key) for key in ("date", "regime", "stress", "holdings", "facts", "pods")} | {"previous": _previous(state, "risk")}
 
 
 def pm_reads(state: Mapping[str, Any]) -> dict[str, Any]:
     """Slots the portfolio manager sees: everything, plus the held ETFs nobody researched and last week's outcome."""
-    keys = ("date", "regime", "holdings", "facts", "outcome", "pods", "risk")
+    keys = ("date", "regime", "stress", "holdings", "facts", "outcome", "pods", "risk")
     return {key: state.get(key) for key in keys} | {"unresearched": unresearched(state), "previous": _previous(state, "pm")}
 
 
@@ -127,16 +128,24 @@ class LoadPrevious:
 
 
 class MarketFacts:
-    """Node: today's date, regime label, holdings, per-ETF facts and the score of last week's views."""
+    """Node: today's date, regime label, holdings, per-ETF facts, the score of last week's views and the market `stress` (for the risk manager and PM)."""
 
     def __init__(
-        self, bars: DailyBars, *, regime: Callable[[], int | None], holdings: Callable[[], dict[str, float]], today: Callable[[], date], on_warning: Callable[[str], None] | None = None
+        self,
+        bars: DailyBars,
+        *,
+        regime: Callable[[], int | None],
+        stress: Callable[[], dict[str, Any] | None],
+        holdings: Callable[[], dict[str, float]],
+        today: Callable[[], date],
+        on_warning: Callable[[str], None] | None = None,
     ) -> None:
         """Create the node.
 
         Args:
             bars: Daily bars source.
             regime: The strategy's regime (1, 0, -1 or None).
+            stress: The strategy's stress view (`facts.stress_view`), None without a reading.
             holdings: Current weight of each held ETF.
             today: The session date (never the wall clock).
             on_warning: Told when last week's saved book cannot be read (no outcome is then given).
@@ -144,13 +153,14 @@ class MarketFacts:
         self._warn = on_warning or (lambda _message: None)
         self._bars = bars
         self._regime = regime
+        self._stress = stress
         self._holdings = holdings
         self._today = today
 
     def __call__(self, state: PodsState) -> dict[str, Any]:
         """Load the bars; abandon the week (`data: ...`) when they are unusable or no ETF has enough history."""
         holdings = self._holdings()
-        base: dict[str, Any] = {"date": self._today().isoformat(), "regime": _REGIME_LABELS[self._regime()], "holdings": holdings}
+        base: dict[str, Any] = {"date": self._today().isoformat(), "regime": _REGIME_LABELS[self._regime()], "stress": self._stress(), "holdings": holdings}
         try:
             series = self._bars.load((*ALL_SYMBOLS, _SPY), list(holdings))
         except DataUnavailable as exc:
@@ -214,7 +224,7 @@ class Execute:
         else:
             week = replace(saved, abandoned_streak=saved.abandoned_streak + 1)
         self._store.save(week)
-        record = {key: state.get(key) for key in ("date", "regime", "holdings", "facts", "outcome", "pods", "risk", "pm")}
+        record = {key: state.get(key) for key in ("date", "regime", "stress", "holdings", "facts", "outcome", "pods", "risk", "pm")}
         self._log.append({**record, "book": book, "orders": orders, "errors": state.get("errors", []), "abandoned": reason, "abandoned_streak": week.abandoned_streak})
         return {"orders": orders, "abandoned": reason}
 

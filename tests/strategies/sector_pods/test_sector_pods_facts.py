@@ -1,7 +1,8 @@
 """Tests for the sleeve table and market facts of sector_pods."""
 
-from trading_agent_framework.strategies.sector_pods.facts import etf_facts, outcome, week_return_pct
-from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, pod_of
+from trading_agent_framework.core.regime import RegimeReading
+from trading_agent_framework.strategies.sector_pods.facts import etf_facts, outcome, stress_view, week_return_pct
+from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, DEFENSIVE_ETFS, pod_of
 
 
 def _score(symbol, score):
@@ -77,3 +78,29 @@ def test_outcome_unavailable_pods_score_none_and_unknown_symbols_are_ignored():
     assert result["positions_1w_pct"] == {"XLK": 2.0}
     assert len(result["pods"]) == 5
     assert all(v["positive_minus_negative_1w_pct"] is None for v in result["pods"].values())
+
+
+def _reading(*, score: int, inverted: bool, vix_spike: bool, below_sma: bool, off_high: bool) -> RegimeReading:
+    return RegimeReading(
+        regime=0, score=score, spy=100.0, sma=100.0, high=100.0, vix=20.0, vix3m=20.0, vix_median=20.0,
+        inverted=inverted, vix_spike=vix_spike, below_sma=below_sma, off_high=off_high, episode_low=None, blocked=False,
+    )  # fmt: skip
+
+
+def test_defensive_etfs_are_in_the_universe():
+    assert set(DEFENSIVE_ETFS) == {"XLP", "XLV", "XLU"} <= set(ALL_SYMBOLS)
+
+
+def test_stress_view_from_a_reading():
+    view = stress_view(_reading(score=2, inverted=True, vix_spike=False, below_sma=True, off_high=False), True)
+
+    assert view == {
+        "early_warning": True,
+        "regime_score": 2,
+        "conditions": {"vix_above_vix3m": True, "vix_spike": False, "spy_below_sma50": True, "spy_5pct_off_high": False},
+        "defensive_etfs": ["XLP", "XLV", "XLU"],
+    }
+
+
+def test_stress_view_is_none_without_a_reading():
+    assert stress_view(None, None) is None
