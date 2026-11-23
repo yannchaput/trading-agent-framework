@@ -21,11 +21,12 @@
 * ~~Add a gloabl factory/builder for strategy in main.py~~
 * ~~Handle difference of reasoning token budget payload attribute between vllm and llama.cpp~~
 
-## BUGS
+## BUGS & Refactoring
 
 * ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Update tools comments with parameters + check if tool annotation is recommended
+* Leverage Langchain native middleware like "Tool error " or "Tool call" limit
 
 ## Skills
 
