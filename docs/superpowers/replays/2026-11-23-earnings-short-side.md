@@ -35,9 +35,28 @@ drifts up with the market.
 
 ## Verdict: NO (sign gate)
 
-Every cell fails the gate at the put spread's cost, and every cell also fails at the 10 bps short-stock cost, so
-the drop is not a short signal even for a plain short seller. The account replay, the held-out window (2024 onward)
-and the real option prices were not run: the held-out window stays unused.
+Every cell fails the gate at the put spread's cost, and every cell also fails at the 10 bps rows, which are still
+capped at a 10% gain. The account replay, the held-out window (2024 onward) and the real option prices were not run:
+the held-out window stays unused.
+
+## Reviewer's read-only measurement (information only, taken after the bar was fixed)
+
+The final reviewer recomputed the dev means at 0 bps on the same events. They do not change the verdict.
+
+| Cell | Uncapped short | Capped short | Market-adjusted (SPY minus stock) |
+|---|---|---|---|
+| D5% H5 | -0.12% | -0.29% | +0.07% |
+| D5% H10 | +0.12% | -0.40% | +0.44% |
+| D5% H20 | -0.41% | -1.55% | +0.28% |
+| D8% H5 | -0.12% | -0.35% | +0.11% |
+| D8% H10 | +0.21% | -0.43% | +0.53% |
+| D8% H20 | -0.46% | -1.75% | +0.37% |
+
+- The gross edge of a plain short is about zero; uncapped at 10 bps per side D8% H10 is about break-even (+0.01%).
+- The 10% cap takes 0.2 to 1.3 points. The spread's round trip (about 1.6% of the stock's price) then decides the
+  result: no cell comes close to covering it.
+- After a bad reaction the stocks do lag SPY by about 0.4-0.5% over 10 sessions: a small post-earnings drift exists
+  market-adjusted. A market-neutral (beta-hedged) short is a different bet that this spike did not test.
 
 ## Known gaps
 
@@ -47,6 +66,9 @@ and the real option prices were not run: the held-out window stays unused.
 - The ticker -> CIK map is today's, so renamed or delisted tickers may lose their events (4 of 1,987 symbols had no
   CIK; a renamed company's old ticker may map to another company).
 - The gain cap at 10% (the spread's short leg) removes crash gains from the gate, which makes it harder than a plain
-  short; the 10 bps rows are capped too. The uncapped mean was not computed.
+  short (see the reviewer's table above for the uncapped means).
+- Two item 2.02 filings of one company on one reaction day (an original and an amendment) are not merged: 18 of 3,389
+  (D5%) and 10 of 1,908 (D8%) gate trades are doubled. The account replay skips them ("already held"). It cannot
+  flip the sign.
 - Step 2 (option prices) was not run. A data probe showed Alpaca does serve expired put contracts and their daily
   bars (AAPL, MSFT, NVDA, February-March 2024), so a later spike on single stocks could use it.
