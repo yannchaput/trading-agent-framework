@@ -223,11 +223,12 @@ class InsiderRecorder(SubmitRecorder):
         self.report = None
         self._arm(REPORT, {"orders": orders})
 
-    def submit(self, stage: str, raw: Any) -> dict[str, Any]:
+    def submit(self, stage: str, *args: Any) -> dict[str, Any]:
         """What a submit tool returns: `{"status": "recorded"}` or `{"error": ...}` (recorded in `last_error`).
 
         `raw` is `{"summary", "overrides"}` for the note, the weights list for the target, the orders list for the report.
         """
+        (raw,) = args
         if stage == TARGET and self.target is not None:
             return self._fail("target already recorded for this run")
         if self._stage != stage:

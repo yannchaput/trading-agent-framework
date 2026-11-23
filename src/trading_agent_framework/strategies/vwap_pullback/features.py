@@ -131,8 +131,8 @@ def intraday_contexts(
     rows = np.arange(len(df))
     grouped = pd.DataFrame({"high": df["high"].to_numpy(), "low": df["low"].to_numpy(), "volume": df["volume"].to_numpy(), "row": rows}).groupby(bucket_of_row, sort=True)
     per_bucket = grouped.agg(high=("high", "max"), low=("low", "min"), volume=("volume", "sum"), first=("row", "first"), last=("row", "last"))
-    buckets = per_bucket.index.to_numpy()
-    first, last = per_bucket["first"].to_numpy(), per_bucket["last"].to_numpy()  # row positions: exact even where a price is NaN
+    buckets = np.asarray(per_bucket.index)
+    first, last = np.asarray(per_bucket["first"]), np.asarray(per_bucket["last"])  # row positions: exact even where a price is NaN
     # Completeness gate (plan deviation 7). Stop at the first bucket that is still forming, or that closed
     # less than a minute ago without its last minute bar: live data may simply not have arrived yet.
     # Later buckets are necessarily not complete either, hence the cut at the first failure.
@@ -142,9 +142,9 @@ def intraday_contexts(
     unfinished = (close_offsets > elapsed) | (~has_last_minute & (elapsed - close_offsets < _MINUTE))
     complete = int(unfinished.argmax()) if unfinished.any() else len(buckets)
     buckets, first, last = buckets[:complete], first[:complete], last[:complete]
-    highs = per_bucket["high"].to_numpy()[:complete].astype(float)
-    lows = per_bucket["low"].to_numpy()[:complete].astype(float)
-    volumes = per_bucket["volume"].to_numpy()[:complete].astype(float)
+    highs = np.asarray(per_bucket["high"])[:complete].astype(float)
+    lows = np.asarray(per_bucket["low"])[:complete].astype(float)
+    volumes = np.asarray(per_bucket["volume"])[:complete].astype(float)
     opens = df["open"].to_numpy()[first].astype(float)
     closes = df["close"].to_numpy()[last].astype(float)
     # Session-level measures are read at the bucket's LAST row, i.e. as of the bar's close.
