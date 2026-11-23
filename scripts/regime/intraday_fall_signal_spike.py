@@ -176,6 +176,9 @@ FADE_MINUTES = 30  # a trade can fade only this long after its fill, over a wind
 DAILY_LOSS = -0.02  # closed P&L of the day, as a share of the day's opening equity, that ends the day's entries
 MAX_STOPS = 2  # stopped trades in a day that end the day's entries
 COST = 0.0003  # 3 bps per side on the ETF
+SHV_COST = 0.0001  # 1 bp per side on SHV
+START = _fall.START  # the fake account, 5,000
+MAX_DAY_TRADES, CAP_WINDOW = 3, 5  # day-trade cap: at most 3 trades in any 5 consecutive sessions
 
 
 def entry_signal(obs: dict, first: bool, cell: dict) -> bool:
@@ -255,6 +258,94 @@ def simulate_session(etf: pd.DataFrame, obs_by_t: dict[pd.Timestamp, dict], cell
     return trades
 
 
+def run_account(sessions: list[date], mk: dict, cell: dict | None, cap: bool, overnight: str) -> pd.DataFrame:
+    """The fake account over `sessions`: the cell's intraday trades, SHV or cash overnight. `cell=None` never trades.
+
+    Overnight, "shv" = SHV bought at each close and sold at the next open (Yahoo prices, 1 bp each side). With `cap`, the
+    day-trade rule: at most 3 trades in any 5 sessions (executed ones; every trade opens and closes the same day).
+    Rows (one per session, equity at the close): equity, trades, wins, ret_sum, stops, fades, closes, cap_skips
+    (trades the cap blocked: an approximation, re-run uncapped), limit_days (1 when the day's entries ended on the loss
+    limit or on two stops).
+    """
+    equity, out, past_trades = START, [], []
+    for i, d in enumerate(sessions):
+        if overnight == "shv" and i > 0:
+            prev = sessions[i - 1]
+            equity *= mk["yahoo"].shv_open[d] / mk["yahoo"].shv_close[prev] * (1 - SHV_COST) / (1 + SHV_COST)
+        trades, cap_skips = [], 0
+        etf = mk["minute"][cell["etf"]].get(d) if cell else None
+        atr, obs = (mk["atr"].get((cell["etf"], d)), mk["obs"].get(d)) if cell else (None, None)
+        if etf is not None and atr and obs:
+            cap_left = max(0, MAX_DAY_TRADES - sum(past_trades[-(CAP_WINDOW - 1) :])) if cap else 99
+            trades = simulate_session(etf, obs, cell, atr, cap_left, is_early_close(d))
+            if cap and len(trades) == cap_left:
+                cap_skips = len(simulate_session(etf, obs, cell, atr, 99, is_early_close(d))) - len(trades)
+        day_mult = float(np.prod([t_["mult"] for t_ in trades])) if trades else 1.0
+        equity *= day_mult
+        past_trades.append(len(trades))
+        how = [t_["how"] for t_ in trades]
+        out.append(
+            {
+                "equity": equity,
+                "trades": len(trades),
+                "wins": sum(t_["mult"] > 1 for t_ in trades),
+                "ret_sum": sum(t_["mult"] - 1 for t_ in trades),
+                "stops": how.count("stop"),
+                "fades": how.count("fade"),
+                "closes": how.count("close"),
+                "cap_skips": cap_skips,
+                "limit_days": int(how.count("stop") >= MAX_STOPS or day_mult - 1 <= DAILY_LOSS),
+            }
+        )
+    return pd.DataFrame(out, index=sessions)
+
+
+def summary(rows: pd.DataFrame) -> dict:
+    """Total, CAGR, calendar-year returns, max drawdown and the trade counts of one account run."""
+    total, max_dd = _fall.curve_stats(rows.equity)
+    years_equity = rows.equity.groupby([d.year for d in rows.index]).last()
+    years = (years_equity / years_equity.shift(1, fill_value=START) - 1).to_dict()
+    span = (rows.index[-1] - rows.index[0]).days + 1
+    n = int(rows.trades.sum())
+    return {
+        "total": total,
+        "cagr": (1 + total) ** (365.25 / span) - 1,
+        "years": years,
+        "max_dd": max_dd,
+        "trades": n,
+        "win_rate": float(rows.wins.sum() / n) if n else 0.0,
+        "mean_trade": float(rows.ret_sum.sum() / n) if n else 0.0,
+        "stops": int(rows.stops.sum()),
+        "fades": int(rows.fades.sum()),
+        "closes": int(rows.closes.sum()),
+        "cap_skips": int(rows.cap_skips.sum()),
+        "limit_days": int(rows.limit_days.sum()),
+    }
+
+
+def signal_gate(sessions: list[date], mk: dict, setting: dict) -> float:
+    """Mean return of the -1 x SPY trade (2 - exit / entry, costs in) from each session's FIRST entry signal to the forced exit.
+
+    No stop, no fade, no day limits, no cap: one trade per session at most. 0.0 when no session has a signal.
+    """
+    cell = {**setting, "etf": "SPY", "k": 0}
+    returns = []
+    for d in sessions:
+        spy, obs = mk["minute"]["SPY"].get(d), mk["obs"].get(d)
+        if spy is None or not obs:
+            continue
+        first_time = min(obs)
+        signal = next((t_ for t_ in sorted(obs) if entry_signal(obs[t_], t_ == first_time, cell)), None)
+        if signal is None or signal not in spy.index:
+            continue
+        forced_at = time(12, 55) if is_early_close(d) else time(15, 55)
+        exits = spy[spy.index.time >= forced_at]
+        entry = float(spy.open[signal])
+        exit_ = float(exits.open.iloc[0]) if len(exits) else float(spy.close.iloc[-1])
+        returns.append((2 - exit_ / entry) * (1 - COST) / (1 + COST) - 1)
+    return float(np.mean(returns)) if returns else 0.0
+
+
 def close_to(value: float, expected: float) -> bool:
     """Float compare at 1e-9."""
     return abs(value - expected) < 1e-9
@@ -276,6 +367,27 @@ def flat_etf(d: date) -> pd.DataFrame:
     """A session of 1-minute bars flat at 100 (09:30-15:59), for the simulation checks."""
     idx = pd.date_range(f"{d} 09:30", f"{d} 15:59", freq="min", tz=NY)
     return pd.DataFrame({"open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0}, index=idx)
+
+
+def synthetic_market(n: int) -> dict:
+    """N weekday sessions: every symbol flat at 100 (SPY ends at 99), the signal on at every decision time, SHV 100 -> 100.01."""
+    days = []
+    d = date(2024, 3, 4)
+    while len(days) < n:
+        if d.weekday() < 5:
+            days.append(d)
+        d += timedelta(days=1)
+    obs = {"vixy_day": 0.04, "vixy_hour": 0.03, "vixy_vs_d1avg": 0.01, "vixy_trend": True, "rvol": 2.0, "spy_day": -0.006, "spy_hour": -0.001, "vixy_30": 0.01, "spy_30": -0.001}
+    minute = {sym: {d: flat_etf(d) for d in days} for sym in ("SPY", "VIXY", "SDS", "SPXU")}
+    for d in days:
+        minute["SPY"][d].loc[pd.Timestamp(f"{d} 15:55", tz=NY), "open"] = 99.0
+    return {
+        "sessions": days,
+        "minute": minute,
+        "obs": {d: {t_: obs for t_ in decision_times(d, False)} for d in days},
+        "atr": {(etf, d): 1.0 for etf in ("SDS", "SPXU") for d in days},
+        "yahoo": pd.DataFrame({"shv_open": 100.01, "shv_close": 100.0}, index=days),
+    }
 
 
 def five_days_before(d: date) -> list[date]:
@@ -389,6 +501,36 @@ def check() -> None:
     stopped.loc[pd.Timestamp("2024-03-04 09:50", tz=NY), ["open", "high", "low", "close"]] = 99.0
     trades = simulate_session(stopped, all_on, cell, 0.2, 5, False)
     assert trades[0]["how"] == "stop" and trades[1]["entry"] == pd.Timestamp("2024-03-04 10:00", tz=NY)
+    # 18. the account: a signal every session, flat prices -> one position held to the close per session
+    mk = synthetic_market(8)
+    sessions = mk["sessions"]
+    capped = run_account(sessions, mk, cell, True, "cash")
+    assert list(capped.trades) == [1, 1, 1, 0, 0, 1, 1, 1]  # at most 3 trades in any 5 sessions
+    assert capped.cap_skips.sum() > 0
+    assert list(run_account(sessions, mk, cell, False, "cash").trades) == [1] * 8
+    # 19. no cell = no trades; SHV overnight earns open(d+1)/close(d) less 1 bp each side, cash earns nothing
+    none = run_account(sessions, mk, None, True, "shv")
+    night = 100.01 / 100.0 * (1 - 1e-4) / (1 + 1e-4)
+    assert none.trades.sum() == 0 and abs(none.equity.iloc[-1] - START * night**7) < 1e-6
+    assert none.equity.iloc[0] == START and run_account(sessions, mk, None, True, "cash").equity.iloc[-1] == START
+    # 20. summary: totals, years, the exit-cause counts
+    s_ = summary(capped)
+    assert s_["trades"] == 6 and s_["closes"] == 6 and s_["stops"] == 0 and abs(s_["total"] - (capped.equity.iloc[-1] / START - 1)) < 1e-12
+    # 21. signal gate: SPY falls 1% from the first signal to the forced exit -> the -1 x SPY trade makes 1% less 6 bps
+    assert close_to(signal_gate(sessions, mk, {"v_day": 0.03, "v_hour": 0.02, "rvol": None}), (2 - 0.99) * (1 - COST) / (1 + COST) - 1)
+    assert signal_gate(sessions, mk, {"v_day": 0.5, "v_hour": 0.5, "rvol": None}) == 0.0  # no signal: nothing to average
+    # 22. the gate keeps the 09:40-only rule: the D-1 move counts at the first decision (hour trigger off), and a D-1 move seen later does not
+    assert close_to(signal_gate(sessions, mk, {"v_day": 0.03, "v_hour": 0.5, "rvol": None}), (2 - 0.99) * (1 - COST) / (1 + COST) - 1)
+    late_only = {
+        **mk,
+        "obs": {d: {t_: (obs | {"vixy_day": 0.0, "vixy_hour": 0.0} if t_ == decision_times(d, False)[0] else obs | {"vixy_hour": 0.0}) for t_ in decision_times(d, False)} for d in sessions},
+    }
+    assert signal_gate(sessions, late_only, {"v_day": 0.03, "v_hour": 0.5, "rvol": None}) == 0.0
+    # 23. a -3% stop day is a limit day with a single trade
+    hit = synthetic_market(3)
+    hit["minute"]["SPXU"][hit["sessions"][0]].loc[pd.Timestamp(f"{hit['sessions'][0]} 09:50", tz=NY), "low"] = 96.0
+    rows = run_account(hit["sessions"], hit, cell, False, "cash")
+    assert rows.limit_days.iloc[0] == 1 and rows.trades.iloc[0] == 1 and rows.stops.iloc[0] == 1 and rows.limit_days.iloc[1] == 0
     print("self-check OK")
 
 
