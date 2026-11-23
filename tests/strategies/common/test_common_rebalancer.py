@@ -177,8 +177,8 @@ def test_a_refused_buy_whose_most_that_fits_is_under_the_minimum_trade_is_not_re
 
 
 def test_the_buy_that_spends_the_last_of_the_money_is_retried_when_its_price_ticks_up(tmp_path: Path) -> None:
-    """Live, B ticks a cent between the review's price read and the check: it is bought at the most that fits, not dropped."""
-    broker = TickingBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman", ticks={"B": Decimal("100.01")})
+    """Live, B ticks up 5% (more than the 2% buffer absorbs) between the review's price read and the check: it is bought at the most that fits, not dropped."""
+    broker = TickingBroker(FakeClock(et(2026, 9, 14, 10)), strategy_name="bill_ackman", ticks={"B": Decimal(105)})
     broker.last_prices = {"A": Decimal(100), "B": Decimal(100), "SHV": Decimal(100)}
     broker.account = AccountBalances(cash=Decimal(10_000), portfolio_value=Decimal(10_000), buying_power=Decimal(1_000_000))
     strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
@@ -186,9 +186,9 @@ def test_the_buy_that_spends_the_last_of_the_money_is_retried_when_its_price_tic
 
     placed = rebalancer.rebalance(target_portfolio({"A": 0.49, "B": 0.49}, cash_buffer=0.02))
 
-    # B: 49 x 100.01 is over the 4,900 left; 4,900 / 100.01 = 48.9951 shares fit
-    assert placed == [PlacedOrder("A", "buy", 49.0), PlacedOrder("B", "buy", 48.9951)]
-    assert _orders(broker) == [("A", "buy", 49.0), ("B", "buy", 48.9951)]
+    # B: 49 x 105 is over the 5,100 of cash left; 4,900 (less the buffer) / 105 = 46.666666 shares fit
+    assert placed == [PlacedOrder("A", "buy", 49.0), PlacedOrder("B", "buy", 46.666666)]
+    assert _orders(broker) == [("A", "buy", 49.0), ("B", "buy", 46.666666)]
     assert rebalancer.refused == 0
 
 
@@ -248,22 +248,22 @@ def test_submit_buy_sends_a_buy_that_fits_unchanged(tmp_path: Path) -> None:
 
 
 def test_submit_buy_resends_a_refused_buy_once_at_the_most_that_fits(tmp_path: Path) -> None:
-    strategy, broker = _strategy_at(tmp_path, "100", "100.5")
+    strategy, broker = _strategy_at(tmp_path, "100", "105")
     price = float(strategy.get_last_price("AAA") or 0)  # the caller's sizing read; the quote then ticks up
 
     order, sent = submit_buy(strategy, "AAA", 98.0, price, min_trade=50.0)
 
-    assert sent == Decimal("97.512437")  # 9,800 / 100.50, floored to 6 decimals
-    assert order.quantity == Decimal("97.512437") and [o.quantity for o in broker.submitted] == [Decimal("97.512437")]
+    assert sent == Decimal("93.333333")  # 9,800 / 105, floored to 6 decimals
+    assert order.quantity == Decimal("93.333333") and [o.quantity for o in broker.submitted] == [Decimal("93.333333")]
 
 
 def test_submit_buy_keeps_the_callers_whole_shares(tmp_path: Path) -> None:
-    strategy, broker = _strategy_at(tmp_path, "100", "100.5")
+    strategy, broker = _strategy_at(tmp_path, "100", "105")
     strategy.get_last_price("AAA")
 
     _, sent = submit_buy(strategy, "AAA", 98.0, 100.0, decimals=0)
 
-    assert sent == Decimal(97) and [o.quantity for o in broker.submitted] == [Decimal(97)]
+    assert sent == Decimal(93) and [o.quantity for o in broker.submitted] == [Decimal(93)]
 
 
 def test_submit_buy_sends_nothing_when_the_most_that_fits_is_under_the_minimum_trade(tmp_path: Path) -> None:

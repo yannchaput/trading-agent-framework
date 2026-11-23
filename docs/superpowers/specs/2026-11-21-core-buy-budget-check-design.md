@@ -91,7 +91,9 @@ spendable = min(buying_power, cash + unfilled open sells - unfilled open buys) -
 - Sells and notional orders pass as today. `submit_orders` goes straight to `broker.submit_orders` today: it becomes
   `[self.submit_order(o) for o in orders]` so a batch is checked too (each buy sees the ones before it as open orders).
   `close_position` / `sell_all` are sells: unchanged.
-- Fees are not estimated: the 2% buffer covers them and fill drift.
+- Fees are not estimated: the 2% buffer covers them and fill drift. **Amended 2026-11-23:** the check refuses only above `spendable + 2% x book` (the real
+  money). Sizing keeps the 2% back; the check did too, so a last buy sized to exactly `spendable_cash()` was refused on any 1-cent tick of an open order
+  (bull_bear paper, SHV: $0.066 short), and the buffer absorbed nothing.
 
 ### Callers
 

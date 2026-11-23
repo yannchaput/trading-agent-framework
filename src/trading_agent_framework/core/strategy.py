@@ -588,15 +588,17 @@ class Strategy:
         return order.limit_price or order.stop_limit_price or self.get_last_price(order.asset)
 
     def _check_buy_budget(self, order: Order) -> None:
-        """Raise `InsufficientFundsError` when a buy with a quantity costs more than `spendable_cash()`."""
+        """Raise `InsufficientFundsError` when a buy with a quantity costs more than the real money (`spendable_cash()` plus the buffer)."""
         if order.side is not OrderSide.BUY or order.quantity is None:
             return
         price = self._order_price(order)
         if price is None:
             return
         cost = order.quantity * price
-        spendable = self.spendable_cash()
-        if cost <= spendable:
+        account = self.broker.get_account()
+        spendable = self.spendable_cash(account)
+        # Sizing keeps the buffer back, the check does not: the buffer absorbs price drift between sizing and sending.
+        if cost <= spendable + BUY_BUFFER * account.portfolio_value:
             return
         max_quantity = (spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN) if spendable > 0 else Decimal(0)
         raise InsufficientFundsError(

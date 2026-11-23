@@ -79,11 +79,11 @@ def test_a_buy_over_spendable_raises_with_the_max_quantity() -> None:
     broker = _broker()
     strategy = Strategy(broker)
     with pytest.raises(InsufficientFundsError) as err:
-        strategy.submit_order(strategy.create_order("AAA", 100, "buy"))  # $10,000 > $9,500
-    assert err.value.max_quantity == Decimal(95)
+        strategy.submit_order(strategy.create_order("AAA", 101, "buy"))  # $10,100 > the $10,000 of cash
+    assert err.value.max_quantity == Decimal(95)  # the retry lands back inside the buffer
     assert err.value.spendable == Decimal(9500)
     assert isinstance(err.value, OrderValidationError)
-    assert "buy 100 AAA needs ~$10,000.00, spendable is $9,500.00" in str(err.value)
+    assert "buy 101 AAA needs ~$10,100.00, spendable is $9,500.00" in str(err.value)
     assert "at most 95 shares" in str(err.value)
     assert broker.submitted == []
 
@@ -92,6 +92,14 @@ def test_a_buy_at_spendable_passes() -> None:
     broker = _broker()
     strategy = Strategy(broker)
     strategy.submit_order(strategy.create_order("AAA", 95, "buy"))
+    assert len(broker.submitted) == 1
+
+
+def test_a_buy_into_the_buffer_passes() -> None:
+    # The 2% buffer absorbs price drift between sizing and sending: only the cash itself is a hard limit.
+    broker = _broker()
+    strategy = Strategy(broker)
+    strategy.submit_order(strategy.create_order("AAA", 100, "buy"))  # $10,000: over spendable $9,500, within cash $10,000
     assert len(broker.submitted) == 1
 
 
@@ -115,7 +123,7 @@ def test_a_fully_invested_book_gives_max_quantity_zero() -> None:
     strategy = Strategy(broker)
     broker.account = AccountBalances(cash=Decimal(100), portfolio_value=Decimal(25000), buying_power=Decimal(100))
     with pytest.raises(InsufficientFundsError) as err:
-        strategy.submit_order(strategy.create_order("AAA", 1, "buy"))
+        strategy.submit_order(strategy.create_order("AAA", 2, "buy"))  # $200 > the $100 of cash
     assert err.value.max_quantity == Decimal(0)
     assert err.value.spendable == Decimal(-400)
 
