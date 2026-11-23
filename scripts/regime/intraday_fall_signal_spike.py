@@ -13,7 +13,7 @@ of the bar stamped t.
 
 import importlib.util
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -171,6 +171,90 @@ def observe(spy: pd.DataFrame, vixy: pd.DataFrame, ctx: dict, t: pd.Timestamp) -
     }
 
 
+S_CONF = 0.005  # SPY at least this far under D-1's close
+FADE_MINUTES = 30  # a trade can fade only this long after its fill, over a window of this length
+DAILY_LOSS = -0.02  # closed P&L of the day, as a share of the day's opening equity, that ends the day's entries
+MAX_STOPS = 2  # stopped trades in a day that end the day's entries
+COST = 0.0003  # 3 bps per side on the ETF
+
+
+def entry_signal(obs: dict, first: bool, cell: dict) -> bool:
+    """The spec's four entry conditions. `first` = the 09:40 decision, the only one where VIXY's D-1 move counts."""
+    fast = obs["vixy_day"] >= cell["v_day"] if first else obs["vixy_hour"] >= cell["v_hour"]
+    context = obs["vixy_vs_d1avg"] > 0 and obs["vixy_trend"]
+    volume = cell["rvol"] is None or obs["rvol"] >= cell["rvol"]
+    movement = obs["spy_day"] <= -S_CONF and obs["spy_hour"] < 0
+    return bool(fast and context and volume and movement)
+
+
+def decide(obs: dict, first: bool, in_position: bool, minutes_held: float, limits_hit: bool, cap_ok: bool, cell: dict) -> str:
+    """The one decision function: "enter", "exit" (the signal fades: VIXY down and SPY up over 30 minutes) or "none"."""
+    if in_position:
+        faded = minutes_held >= FADE_MINUTES and obs["vixy_30"] < 0 and obs["spy_30"] > 0
+        return "exit" if faded else "none"
+    return "enter" if not limits_hit and cap_ok and entry_signal(obs, first, cell) else "none"
+
+
+def atr10(prev_etf: list[pd.DataFrame]) -> float:
+    """Mean true range of the ETF's 10-minute bars over the given previous sessions (the stop's volatility unit)."""
+    ranges = []
+    for day in prev_etf:
+        bars = day.resample("10min").agg({"high": "max", "low": "min", "close": "last"}).dropna()
+        prev_close = bars.close.shift(1).fillna(bars.close)
+        ranges.append(pd.concat([bars.high - bars.low, (bars.high - prev_close).abs(), (bars.low - prev_close).abs()], axis=1).max(axis=1))
+    return float(pd.concat(ranges).mean())
+
+
+def simulate_session(etf: pd.DataFrame, obs_by_t: dict[pd.Timestamp, dict], cell: dict, atr: float, cap_left: int, early: bool) -> list[dict]:
+    """One session's trades on the ETF's minute bars: [{"entry", "exit", "mult", "how"}], costs in `mult`.
+
+    Per minute bar, in order: forced exit at its open (15:55, 12:55 early); a stop gap (open at or under the level) fills at
+    the open; a decision stamped at this bar's time fills at its open (a fade exit, or an entry unless a position just
+    closed on this bar); then the resting stop, from the highest high of EARLIER bars, fills at its level when the low
+    reaches it. The stop is K x `atr` below the highest price since entry (seeded with the fill).
+    """
+    forced_at = time(12, 55) if early else time(15, 55)
+    first_time = min(obs_by_t) if obs_by_t else None
+    trades: list[dict] = []
+    position: dict | None = None
+    stops, day_mult = 0, 1.0
+
+    def close_out(m: pd.Timestamp, price: float, how: str) -> None:
+        nonlocal position, stops, day_mult
+        mult = price * (1 - COST) / (position["entry_px"] * (1 + COST))
+        trades.append({"entry": position["entry"], "exit": m, "mult": mult, "how": how})
+        day_mult *= mult
+        stops += how == "stop"
+        position = None
+
+    for m, bar in zip(etf.index, etf.itertuples(), strict=True):
+        exited_now = False
+        if position is not None and m.time() >= forced_at:
+            close_out(m, bar.open, "close")
+            exited_now = True
+        if position is not None and bar.open <= position["peak"] - cell["k"] * atr:
+            close_out(m, bar.open, "stop")
+            exited_now = True
+        if m in obs_by_t and not exited_now:
+            obs = obs_by_t[m]
+            limits_hit = stops >= MAX_STOPS or day_mult - 1 <= DAILY_LOSS
+            held = (m - position["entry"]).total_seconds() / 60 if position else 0.0
+            action = decide(obs, m == first_time, position is not None, held, limits_hit, len(trades) < cap_left, cell)
+            if action == "exit":
+                close_out(m, bar.open, "fade")
+            elif action == "enter":
+                position = {"entry": m, "entry_px": bar.open, "peak": bar.open}
+        if position is not None:
+            level = position["peak"] - cell["k"] * atr
+            if bar.low <= level:
+                close_out(m, level, "stop")
+            else:
+                position["peak"] = max(position["peak"], bar.high)
+    if position is not None:
+        close_out(etf.index[-1], float(etf.close.iloc[-1]), "close")
+    return trades
+
+
 def close_to(value: float, expected: float) -> bool:
     """Float compare at 1e-9."""
     return abs(value - expected) < 1e-9
@@ -186,6 +270,12 @@ def synth_day(d: date, drift: float = 0.0) -> pd.DataFrame:
         {"open": open_, "high": np.maximum(open_, close) * 1.0005, "low": np.minimum(open_, close) * 0.9995, "close": close, "volume": rng.integers(100, 1000, len(idx)).astype(float)},
         index=idx,
     )
+
+
+def flat_etf(d: date) -> pd.DataFrame:
+    """A session of 1-minute bars flat at 100 (09:30-15:59), for the simulation checks."""
+    idx = pd.date_range(f"{d} 09:30", f"{d} 15:59", freq="min", tz=NY)
+    return pd.DataFrame({"open": 100.0, "high": 100.0, "low": 100.0, "close": 100.0, "volume": 1.0}, index=idx)
 
 
 def five_days_before(d: date) -> list[date]:
@@ -233,6 +323,72 @@ def check() -> None:
     t_late = pd.Timestamp("2024-03-04 13:10", tz=NY)
     expected = vixy.volume[vixy.index < t_late].sum() / np.mean([p["vixy"].volume[p["vixy"].index.time < t_late.time()].sum() for p in prev[1:]])
     assert close_to(observe(spy, vixy, ctx_short, t_late)["rvol"], expected)
+    # 8. atr10: 10-minute bars with a constant range of 1 give an ATR of 1
+    block = pd.DataFrame({"open": 100.5, "high": 101.0, "low": 100.0, "close": 100.5, "volume": 1.0}, index=pd.date_range("2024-03-01 09:30", "2024-03-01 15:59", freq="min", tz=NY))
+    assert close_to(atr10([block, block]), 1.0)
+    cell = {"v_day": 0.03, "v_hour": 0.02, "rvol": None, "etf": "SPXU", "k": 3}
+    obs = {"vixy_day": 0.04, "vixy_hour": 0.0, "vixy_vs_d1avg": 0.01, "vixy_trend": True, "rvol": 1.0, "spy_day": -0.006, "spy_hour": -0.001, "vixy_30": 0.01, "spy_30": -0.001}
+    # 9. the D-1 close trigger counts only at 09:40; later the hour trigger is needed
+    assert entry_signal(obs, True, cell) and not entry_signal(obs, False, cell)
+    assert entry_signal(obs | {"vixy_hour": 0.025}, False, cell)
+    # 10. every confirmation is required; volume only when the cell has it
+    for key, value in (("vixy_vs_d1avg", -0.01), ("vixy_trend", False), ("spy_day", -0.004), ("spy_hour", 0.001)):
+        assert not entry_signal(obs | {key: value}, True, cell), key
+    assert not entry_signal(obs, True, cell | {"rvol": 1.5}) and entry_signal(obs | {"rvol": 1.6}, True, cell | {"rvol": 1.5})
+    # 11. fade only after 30 minutes held, and only when VIXY is down AND SPY up
+    fading = obs | {"vixy_30": -0.01, "spy_30": 0.002}
+    assert decide(fading, False, True, 30, False, True, cell) == "exit"
+    assert decide(fading, False, True, 20, False, True, cell) == "none"
+    assert decide(obs | {"vixy_30": -0.01}, False, True, 40, False, True, cell) == "none"
+    # 12. limits and cap block entries
+    assert decide(obs, True, False, 0, True, True, cell) == "none" and decide(obs, True, False, 0, False, False, cell) == "none"
+    assert decide(obs, True, False, 0, False, True, cell) == "enter"
+    # 13. simulate_session: entry at the 09:40 bar's open; a bar opening under the stop fills at its open
+    on = obs | {"vixy_hour": 0.03}
+    day_ = date(2024, 3, 4)
+    all_on = {t_: on for t_ in decision_times(day_, False)}
+    first_only = {decision_times(day_, False)[0]: on}
+    etf = flat_etf(day_)
+    gap = etf.copy()
+    gap.loc[pd.Timestamp("2024-03-04 10:15", tz=NY), ["open", "high", "low", "close"]] = 95.0
+    trades = simulate_session(gap, first_only, cell, 1.0, 3, False)
+    assert len(trades) == 1 and trades[0]["how"] == "stop" and trades[0]["exit"] == pd.Timestamp("2024-03-04 10:15", tz=NY)
+    assert close_to(trades[0]["mult"], 0.95 * (1 - COST) / (1 + COST)) and trades[0]["entry"] == pd.Timestamp("2024-03-04 09:40", tz=NY)
+    # a bar trading down to the stop (level 97) fills at the level, not at its low
+    dip = etf.copy()
+    dip.loc[pd.Timestamp("2024-03-04 10:30", tz=NY), "low"] = 96.0
+    trades = simulate_session(dip, first_only, cell, 1.0, 3, False)
+    assert trades[0]["how"] == "stop" and close_to(trades[0]["mult"], 0.97 * (1 - COST) / (1 + COST))
+    # 14. forced exit at the open of the 15:55 bar; 12:55 on an early close
+    late = etf.copy()
+    late.loc[pd.Timestamp("2024-03-04 15:55", tz=NY), "open"] = 101.0
+    trades = simulate_session(late, first_only, cell, 1.0, 3, False)
+    assert trades[0]["how"] == "close" and trades[0]["exit"] == pd.Timestamp("2024-03-04 15:55", tz=NY) and close_to(trades[0]["mult"], 1.01 * (1 - COST) / (1 + COST))
+    early_day = date(2024, 11, 29)
+    early_etf = flat_etf(early_day).between_time("09:30", "12:59")
+    early_etf.loc[pd.Timestamp("2024-11-29 12:55", tz=NY), "open"] = 102.0
+    trades = simulate_session(early_etf, {decision_times(early_day, True)[0]: on}, cell, 1.0, 3, True)
+    assert trades[0]["exit"] == pd.Timestamp("2024-11-29 12:55", tz=NY) and close_to(trades[0]["mult"], 1.02 * (1 - COST) / (1 + COST))
+    # 15. two stops end the day's entries; a stop worse than -2% does too; the cap limits trades
+    two = etf.copy()
+    for stamp in ("2024-03-04 09:50", "2024-03-04 10:10"):
+        two.loc[pd.Timestamp(stamp, tz=NY), "low"] = 99.3  # atr 0.2 x k 3 -> stop at 99.4, a 0.6% loss
+    assert len(simulate_session(two, all_on, cell, 0.2, 5, False)) == 2
+    assert len(simulate_session(two, all_on, cell, 0.2, 1, False)) == 1
+    deep = etf.copy()
+    deep.loc[pd.Timestamp("2024-03-04 09:50", tz=NY), "low"] = 96.0  # atr 1 x k 3 -> stop at 97, a -3% trade
+    assert len(simulate_session(deep, all_on, cell, 1.0, 5, False)) == 1
+    # 16. the stop trails: price runs to 110, then a dip to 106 hits the raised level 110 - 3 = 107 (the entry level 97 would not)
+    run = etf.copy()
+    run.loc[run.index >= pd.Timestamp("2024-03-04 10:00", tz=NY), ["open", "high", "low", "close"]] = 110.0
+    run.loc[pd.Timestamp("2024-03-04 10:30", tz=NY), "low"] = 106.0
+    trades = simulate_session(run, first_only, cell, 1.0, 3, False)
+    assert trades[0]["how"] == "stop" and close_to(trades[0]["mult"], 1.07 * (1 - COST) / (1 + COST))
+    # 17. no re-entry on the bar a stop fired: stopped at the 09:50 open (99.0, level 99.4), the next entry is 10:00
+    stopped = etf.copy()
+    stopped.loc[pd.Timestamp("2024-03-04 09:50", tz=NY), ["open", "high", "low", "close"]] = 99.0
+    trades = simulate_session(stopped, all_on, cell, 0.2, 5, False)
+    assert trades[0]["how"] == "stop" and trades[1]["entry"] == pd.Timestamp("2024-03-04 10:00", tz=NY)
     print("self-check OK")
 
 
