@@ -200,8 +200,8 @@ def test_baseline_buys_every_candidate_best_first_up_to_the_free_slots(tmp_path:
 
 
 def test_a_baseline_buy_sized_at_a_stale_reaction_close_is_retried_at_the_most_that_fits(tmp_path: Path) -> None:
-    # Sized at the reaction close of 99: 98000 / 99 = 989 shares, but the last price is 100, so 980 whole shares fit
-    rig = DeskRig(tmp_path, params=DriftParams(agent_enabled=False, max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
+    # Sized at the reaction close of 95: 98000 / 95 = 1031 shares, but the last price is 100 (past the 2% buffer), so 980 whole shares fit
+    rig = DeskRig(tmp_path, params=DriftParams(agent_enabled=False, max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=95.0)])
     assert rig.desk.baseline_entries() == ["AAA"]
     order = rig.strategy.get_order(rig.state.trades["AAA"].entry_order_id)
     assert order is not None and order.quantity == D(980)
@@ -210,10 +210,10 @@ def test_a_baseline_buy_sized_at_a_stale_reaction_close_is_retried_at_the_most_t
 
 
 def test_the_buy_tool_says_when_the_retry_bought_fewer_shares_than_requested(tmp_path: Path) -> None:
-    # max_quantity at the reaction close of 99 is 989; at the last price of 100 only 980 fit
-    rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=99.0)])
-    result = rig.desk.buy("AAA", 989, 8.0, "beat and raise")
-    assert (result["quantity"], result["requested"]) == (980.0, 989)
+    # max_quantity at the reaction close of 95 is 1031; at the last price of 100 only 980 fit
+    rig = DeskRig(tmp_path, params=DriftParams(max_positions=1), candidates=[make_candidate("AAA", day=RIG_DATES[0], close=95.0)])
+    result = rig.desk.buy("AAA", 1031, 8.0, "beat and raise")
+    assert (result["quantity"], result["requested"]) == (980.0, 1031)
 
 
 def test_the_buy_tool_has_no_requested_field_when_the_quantity_was_sent_as_asked(tmp_path: Path) -> None:
