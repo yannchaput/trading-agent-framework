@@ -10,6 +10,7 @@ Run:
 
 import contextlib
 import io
+import os
 import pickle
 import subprocess
 import sys
@@ -19,13 +20,16 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
+from dotenv import dotenv_values
 
 from trading_agent_framework.backtesting.data.yahoo import parse_yahoo_frame
+from trading_agent_framework.fundamentals.edgar_client import default_client
 from trading_agent_framework.fundamentals.sec import older_pages
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory
 from trading_agent_framework.strategies.earnings_drift.events import earnings_events, reaction_date
 from trading_agent_framework.strategies.earnings_drift.reaction import ReactionFeatures, reaction_features
 from trading_agent_framework.utils.errors import FundamentalsNotFoundError
+from trading_agent_framework.utils.helpers import in_market_fall
 
 
 def _main_checkout() -> Path:
@@ -48,6 +52,9 @@ WINDOWS = {"dev": (date(2016, 1, 4), date(2023, 12, 29)), "test": (date(2024, 1,
 GRID = [(d, h) for d in (0.05, 0.08) for h in (5, 10, 20)]
 CELLS = {f"D{d:.0%} H{h}": (d, h) for d, h in GRID}
 ET = ZoneInfo("America/New_York")
+MAX_LOSING_YEARS = 2
+MIN_TRADES = 30
+ENV_FILE = MAIN / "env" / ".env.bull_bear.paper"  # borrowed for its read-only keys and SEC_EDGAR_USER_AGENT
 
 
 def bars_from_raw(raw: pd.DataFrame) -> pd.DataFrame:
@@ -175,6 +182,207 @@ def find_events(sessions: list[date], universe: UniverseHistory, bars: dict[str,
     return events
 
 
+def price_book(events: list[dict], bars: dict[str, pd.DataFrame]) -> dict[str, tuple[dict[date, tuple[float, float]], list[date]]]:
+    """Per symbol of `events`: its total-return (open, close) by session date, and its bar dates in order."""
+    book = {}
+    for event in events:
+        symbol = event["symbol"]
+        if symbol not in book:
+            frame = bars[symbol]
+            book[symbol] = (dict(zip(frame["day"], zip(frame["tr_open"], frame["tr_close"], strict=True), strict=True)), list(frame["day"]))
+    return book
+
+
+def exit_of(event: dict, book: dict, sessions: list[date], hold: int) -> tuple[float, date, float] | None:
+    """(entry total-return open, exit bar date, exit total-return close) of an event's trade; None without an entry bar."""
+    prices, days = book[event["symbol"]]
+    entry = prices.get(event["entry_day"])
+    if entry is None:
+        return None
+    exit_date = days[exit_index(days, sessions, event["entry_day"], hold)]
+    return entry[0], exit_date, prices[exit_date][1]
+
+
+def qualifying(events: list[dict], sessions: list[date], drop: float) -> list[dict]:
+    """The events that qualify at `drop` and enter inside the window `sessions`."""
+    window = set(sessions)
+    return [e for e in events if e["entry_day"] in window and qualifies(e["features"], e["traded_close"], drop)]
+
+
+def gate_trades(events: list[dict], bars: dict[str, pd.DataFrame], sessions: list[date], drop: float, hold: int, cost: float, falls: set[date]) -> pd.DataFrame:
+    """The signal gate: one capped -1x trade per qualifying event (no slot limit, equal weight), after `cost`."""
+    chosen = qualifying(events, sessions, drop)
+    book = price_book(chosen, bars)
+    rows = []
+    for event in chosen:
+        leg = exit_of(event, book, sessions, hold)
+        if leg is not None:
+            entry_day = event["entry_day"]
+            rows.append({"entry_day": entry_day, "exit_day": leg[1], "ret": trade_value(leg[2] / leg[0], cost) - 1, "year": entry_day.year, "in_fall": entry_day in falls})
+    return pd.DataFrame(rows, columns=["entry_day", "exit_day", "ret", "year", "in_fall"])
+
+
+def marked(position: dict, cost: float) -> float:
+    """A position's value now: its stake after the entry cost, the exit cost not yet paid."""
+    return position["alloc"] * trade_value(position["ratio"], cost) / (1 - cost)
+
+
+def replay_stocks(events: list[dict], bars: dict[str, pd.DataFrame], sessions: list[date], drop: float, hold: int, cost: float, falls: set[date], slots: int = SLOTS) -> tuple[pd.Series, pd.DataFrame]:
+    """The step-1 account: daily equity (at each close) and the trades, with the skip counts in `trades.attrs["skipped"]`.
+
+    Per session: positions mark at the open, new entries (the largest drop first, ties by symbol) take free slots at
+    20% of the equity at that open (capped by the cash), exits due are paid at the close, the close marks the rest.
+    """
+    chosen = qualifying(events, sessions, drop)
+    book = price_book(chosen, bars)
+    by_entry: dict[date, list[dict]] = {}
+    for event in chosen:
+        by_entry.setdefault(event["entry_day"], []).append(event)
+    skipped = {"slots full": 0, "already held": 0, "no entry bar": 0}
+    cash, held, trades, equity = START, [], [], []
+    for day in sessions:
+        for position in held:
+            price = book[position["symbol"]][0].get(day)
+            position["ratio"] = price[0] / position["entry"] if price else position["ratio"]
+        open_equity = cash + sum(marked(p, cost) for p in held)
+        for event in sorted(by_entry.get(day, []), key=lambda e: (e["abnormal"], e["symbol"])):
+            leg = exit_of(event, book, sessions, hold)
+            if len(held) >= slots:
+                skipped["slots full"] += 1
+            elif any(p["cik"] == event["cik"] for p in held):
+                skipped["already held"] += 1
+            elif leg is None:
+                skipped["no entry bar"] += 1
+            else:
+                alloc = min(FRACTION * open_equity, cash)
+                cash -= alloc
+                exit_session = sessions[min(bisect_left(sessions, leg[1]), len(sessions) - 1)]
+                held.append({"symbol": event["symbol"], "cik": event["cik"], "alloc": alloc, "entry": leg[0], "ratio": 1.0, "exit_px": leg[2], "exit_session": exit_session, "entry_day": day})
+        for position in [p for p in held if p["exit_session"] == day]:
+            value = position["alloc"] * trade_value(position["exit_px"] / position["entry"], cost)
+            cash += value
+            trades.append({"symbol": position["symbol"], "entry_day": position["entry_day"], "exit_day": day, "ret": value / position["alloc"] - 1, "in_fall": position["entry_day"] in falls})
+            held.remove(position)
+        for position in held:
+            price = book[position["symbol"]][0].get(day)
+            position["ratio"] = price[1] / position["entry"] if price else position["ratio"]
+        equity.append(cash + sum(marked(p, cost) for p in held))
+    frame = pd.DataFrame(trades, columns=["symbol", "entry_day", "exit_day", "ret", "in_fall"])
+    frame.attrs["skipped"] = skipped
+    return pd.Series(equity, index=sessions), frame
+
+
+def summary(equity: pd.Series, trades: pd.DataFrame) -> dict:
+    """Total, CAGR, calendar-year returns, max drawdown (negative) and the trade statistics of one replay."""
+    curve = pd.concat([pd.Series([START]), equity.reset_index(drop=True)], ignore_index=True)
+    total = float(curve.iloc[-1] / START - 1)
+    year_end = equity.groupby([d.year for d in equity.index]).last()
+    span = (equity.index[-1] - equity.index[0]).days + 1
+    return {
+        "total": total,
+        "cagr": (1 + total) ** (365.25 / span) - 1,
+        "years": (year_end / year_end.shift(1, fill_value=START) - 1).to_dict(),
+        "max_dd": float((curve / curve.cummax() - 1).min()),
+        "trades": len(trades),
+        "win_rate": float((trades.ret > 0).mean()) if len(trades) else 0.0,
+        "mean_trade": float(trades.ret.mean()) if len(trades) else 0.0,
+        "skipped": trades.attrs.get("skipped", {}),
+    }
+
+
+def passes(s: dict, shv_total: float) -> bool:
+    """The bar's account test: beats SHV buy and hold, at most 2 losing calendar years, at least 30 trades."""
+    return s["total"] > shv_total and sum(y < 0 for y in s["years"].values()) <= MAX_LOSING_YEARS and s["trades"] >= MIN_TRADES
+
+
+def choose(results: dict[str, dict], passed: set[str]) -> str | None:
+    """The passing cell with the most passing neighbours (one grid value apart), then the higher total, then the smaller drawdown."""
+
+    def neighbours(name: str) -> int:
+        d, h = CELLS[name]
+        return sum(other != name and (CELLS[other][0] == d) != (CELLS[other][1] == h) for other in passed)
+
+    return min(passed, key=lambda n: (-neighbours(n), -results[n]["total"], -results[n]["max_dd"]), default=None)
+
+
+def fall_days(closes: pd.DataFrame) -> pd.Series:
+    """Whether `in_market_fall` is true before each session's open: row d is decided from rows before d (row 0 is False)."""
+    vix, vix3m, vixy = closes.vix.tolist(), closes.vix3m.tolist(), closes.vixy.tolist()
+    return pd.Series([False] + [in_market_fall(vix[:i], vix3m[:i], vixy[:i]) for i in range(1, len(closes))], index=closes.index)
+
+
+def falls_before_open(sessions: list[date]) -> set[date]:
+    """The sessions whose open follows an `in_market_fall` close (Yahoo ^VIX, ^VIX3M and VIXY from 2008)."""
+    import yfinance as yf
+
+    raw = yf.download(["^VIX", "^VIX3M", "VIXY"], start="2008-01-02", progress=False, auto_adjust=True)["Close"]
+    raw = raw.rename(columns={"^VIX": "vix", "^VIX3M": "vix3m", "VIXY": "vixy"}).dropna(subset=["vix", "vix3m"])
+    raw.index = raw.index.date
+    flags = fall_days(raw[["vix", "vix3m", "vixy"]])
+    return {d for d in sessions if flags.get(d, False)}
+
+
+def buy_and_hold(symbol: str, start: date, end: date) -> float:
+    """Total return of `symbol` (Yahoo, dividends included) from the first close on or after `start` to the last on or before `end`."""
+    import yfinance as yf
+
+    close = yf.download(symbol, start=start.isoformat(), end=(end + timedelta(days=1)).isoformat(), progress=False, auto_adjust=True)["Close"].squeeze()
+    return float(close.iloc[-1] / close.iloc[0] - 1)
+
+
+def row(s: dict) -> str:
+    """One report row for a summary."""
+    return f"{s['total']:+8.1%} cagr {s['cagr']:+6.1%} dd {s['max_dd']:6.1%} trades {s['trades']:4d} win {s['win_rate']:4.0%} mean {s['mean_trade']:+.2%} skipped {s['skipped']}"
+
+
+def window_inputs(window: str) -> tuple[list[date], dict[str, pd.DataFrame], list[dict]]:
+    """The window's SPY sessions, the daily bars of its universe and its earnings events (SEC walk cached)."""
+    start, end = WINDOWS[window]
+    os.environ.setdefault("SEC_EDGAR_USER_AGENT", dotenv_values(ENV_FILE)["SEC_EDGAR_USER_AGENT"] or "")
+    spy = load_bars("SPY")
+    assert spy is not None
+    sessions = [d for d in spy["day"] if start <= d <= end]
+    universe = UniverseHistory.load(MAIN / "data" / "universe" / "us_stock_universe_history.json")
+    assert universe is not None
+    bars = {symbol: frame for symbol in universe.union(sessions[0], sessions[-1]) if (frame := load_bars(symbol)) is not None}
+    bars["SPY"] = spy
+    events = find_events(sessions, universe, bars, default_client(MAIN), CACHE / f"events_{start}_{end}.pkl")
+    return sessions, bars, events
+
+
+def report_dev() -> str | None:
+    """Run the dev window, print every table and return the chosen cell (None: NO)."""
+    start, end = WINDOWS["dev"]
+    sessions, bars, events = window_inputs("dev")
+    falls = falls_before_open(sessions)
+    shv, spy = buy_and_hold("SHV", start, end), buy_and_hold("SPY", start, end)
+    print(f"dev {sessions[0]} -> {sessions[-1]}, {len(sessions)} sessions, {len(falls)} fall sessions, {len(events)} events")
+    print(f"reference: SHV {shv:+.1%}  SPY {spy:+.1%}")
+    results, passed, kept = {}, set(), {}
+    for name, (drop, hold) in CELLS.items():
+        gate = gate_trades(events, bars, sessions, drop, hold, COST, falls)
+        info = gate_trades(events, bars, sessions, drop, hold, INFO_COST, falls)
+        print(f"\n{name}: gate {len(gate)} trades, mean {gate.ret.mean():+.2%} at 80 bps ({info.ret.mean():+.2%} at 10 bps, info)")
+        print("  gate mean by year:", {y: f"{m:+.1%} (n={n})" for y, (m, n) in gate.groupby("year").ret.agg(["mean", "count"]).iterrows()})
+        if not gate.ret.mean() > 0:
+            print("  OUT: the gate's mean trade is not positive")
+            continue
+        equity, trades = replay_stocks(events, bars, sessions, drop, hold, COST, falls)
+        results[name], kept[name] = summary(equity, trades), trades
+        print(f"  account 80 bps: {row(results[name])}")
+        print(f"  years: { {y: f'{r:+.1%}' for y, r in results[name]['years'].items()} }")
+        print(f"  account 10 bps (info): {row(summary(*replay_stocks(events, bars, sessions, drop, hold, INFO_COST, falls)))}")
+        if passes(results[name], shv):
+            passed.add(name)
+    chosen = choose(results, passed)
+    if chosen is None:
+        print("\nNO: " + ("every cell fails the gate" if not results else "no cell passes the bar"))
+        return None
+    by_fall = kept[chosen].groupby("in_fall").ret.agg(["count", "mean", "sum"])
+    print(f"\nchosen: {chosen} ({len(passed)} cells pass)\nentered while in_market_fall (True) vs not (False):\n{by_fall}")
+    return chosen
+
+
 def raw_frame(dates: list[date], closes: list[float], volumes: list[float] | None = None, splits: dict[int, float] | None = None, adj_factor: float = 1.0) -> pd.DataFrame:
     """A Yahoo-shaped raw frame (`Open High Low Close Adj Close Volume Dividends Stock Splits`, naive date index)."""
     n = len(dates)
@@ -279,14 +487,66 @@ def check() -> None:
         events = find_events(sess, universe, book, client)
     assert [(e["symbol"], e["reaction_day"], e["entry_day"]) for e in events] == [("AAA", date(2023, 2, 14), date(2023, 2, 15))], events
     assert "no cik 1" in out.getvalue(), out.getvalue()
+    # 8. replay_stocks: largest drop first, 20% sizing at the entry open, "slots full", a held CIK skips its sibling
+    days = [d.date() for d in pd.bdate_range("2024-01-02", periods=12)]
+    fall = [100.0, 100.0, 95.0, 90.0] + [90.0] * 8
+    flat = [100.0] * 12
+    world = {name: bars_from_raw(raw_frame(days, closes)) for name, closes in (("A", fall), ("A2", flat), ("B", flat), ("X", fall), ("Y", flat), ("Z", flat), ("W", flat[:9] + [100.0, 95.0, 90.0]))}
+
+    def ev(symbol: str, entry_day: date, abnormal: float, cik: str) -> dict:
+        return {
+            "symbol": symbol,
+            "cik": cik,
+            "accession": f"acc-{symbol}",
+            "reaction_day": entry_day,
+            "entry_day": entry_day,
+            "abnormal": abnormal,
+            "features": features(abnormal_pct=abnormal),
+            "traded_close": 20.0,
+        }
+
+    equity, trades = replay_stocks([ev("B", days[1], -0.06, "2"), ev("A", days[1], -0.09, "1")], world, days, 0.05, 3, 0.0, set(), slots=1)
+    assert trades.attrs["skipped"]["slots full"] == 1 and list(trades.symbol) == ["A"]
+    assert abs(equity.iloc[1] - 5000) < 1e-9 and abs(equity.iloc[2] - 5050) < 1e-9 and abs(equity.iloc[-1] - 5100) < 1e-9
+    assert abs(trades.ret.iloc[0] - 0.10) < 1e-9
+    _, trades = replay_stocks([ev("A", days[1], -0.09, "1"), ev("A2", days[1], -0.07, "1")], world, days, 0.05, 3, 0.0, set(), slots=2)
+    assert trades.attrs["skipped"]["already held"] == 1 and list(trades.symbol) == ["A"]
+    # 9. a slot freed at an exit close is usable at the next open, not in the same session
+    _, trades = replay_stocks([ev("X", days[1], -0.09, "1"), ev("Y", days[3], -0.08, "2"), ev("Z", days[4], -0.07, "3")], world, days, 0.05, 3, 0.0, set(), slots=1)
+    assert trades.attrs["skipped"]["slots full"] == 1 and list(trades.symbol) == ["X", "Z"]
+    # 10. a position still open at the window's last session is closed at that close
+    equity, trades = replay_stocks([ev("W", days[9], -0.09, "4")], world, days, 0.05, 5, 0.0, set())
+    assert trades.exit_day.iloc[0] == days[-1] and abs(equity.iloc[-1] - 5100) < 1e-9
+    # 11. summary: calendar-year returns and max drawdown
+    curve = pd.Series([5200.0, 5500.0, 5300.0, 4950.0], index=[date(2023, 6, 1), date(2023, 12, 29), date(2024, 6, 3), date(2024, 12, 31)])
+    s = summary(curve, pd.DataFrame({"ret": [0.1, -0.1]}))
+    assert abs(s["years"][2023] - 0.10) < 1e-9 and abs(s["years"][2024] + 0.10) < 1e-9
+    assert abs(s["max_dd"] + 0.10) < 1e-9 and abs(s["total"] + 0.01) < 1e-9 and s["trades"] == 2 and s["win_rate"] == 0.5
+    # 12. passes: beats SHV, at most 2 losing years, at least 30 trades
+    good = {"total": 0.10, "years": {2016: 0.1, 2017: -0.1, 2018: -0.1}, "trades": 30}
+    assert passes(good, 0.09) and not passes(good, 0.12) and not passes({**good, "trades": 29}, 0.09)
+    assert not passes({**good, "years": {2016: -0.1, 2017: -0.1, 2018: -0.1}}, 0.09)
+    # 13. choose: most passing neighbours, then the higher total, then the smaller drawdown
+    stats = {name: {"total": 0.1, "max_dd": -0.2} for name in CELLS}
+    assert choose(stats, {"D5% H5", "D5% H10", "D8% H10"}) == "D5% H10"
+    stats["D8% H5"] = {"total": 0.2, "max_dd": -0.2}
+    assert choose(stats, {"D5% H5", "D8% H5"}) == "D8% H5" and choose(stats, set()) is None
+    # 14. gate_trades: one capped -1x trade per qualifying event, after costs
+    both = {"P1": bars_from_raw(raw_frame(days, [100.0, 100.0, 95.0] + [95.0] * 9)), "P2": bars_from_raw(raw_frame(days, [100.0, 100.0, 102.0] + [102.0] * 9))}
+    gate = gate_trades([ev("P1", days[1], -0.09, "1"), ev("P2", days[1], -0.09, "2")], both, days, 0.05, 2, 0.008, {days[1]})
+    hand = (trade_value(0.95, 0.008) - 1 + trade_value(1.02, 0.008) - 1) / 2
+    assert abs(gate.ret.mean() - hand) < 1e-12 and set(gate.year) == {2024} and gate.in_fall.all()
     print("self-check OK")
 
 
 def main() -> None:
-    """Entry point: `check` (see the module docstring)."""
+    """Entry point: `check` or `dev` (see the module docstring)."""
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if mode == "check":
         return check()
+    if mode == "dev":
+        report_dev()
+        return
     sys.exit(f"unknown mode {mode!r}")
 
 
