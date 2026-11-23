@@ -1,6 +1,7 @@
-"""SPY, VIX and VIX3M daily closes from Yahoo, aligned on SPY's sessions, for the market regime.
+"""SPY, VIX, VIX3M and VIXY daily closes from Yahoo, aligned on SPY's sessions, for the market regime.
 
-One batched download feeds all three series. The download date is never a cutoff: Yahoo may return a bar dated
+One batched download feeds all four series. VIXY is optional: when it is missing or unreadable its column is `nan`
+and the regime is computed as before. The download date is never a cutoff: Yahoo may return a bar dated
 today (partial while the session is open), and only `RegimeSeries.before` decides which rows a caller sees, always
 those dated strictly before the session being decided.
 """
@@ -19,7 +20,8 @@ from trading_agent_framework.utils.errors import RegimeDataError
 if TYPE_CHECKING:
     import pandas as pd
 
-SYMBOLS = ("SPY", "^VIX", "^VIX3M")
+REQUIRED = ("SPY", "^VIX", "^VIX3M")
+SYMBOLS = (*REQUIRED, "VIXY")
 _CALENDAR_DAYS_PER_BAR = 1.5  # sessions to calendar days, with slack for holidays
 _CALENDAR_SLACK = 10
 
@@ -47,12 +49,14 @@ class RegimeSeries:
         spy: SPY adjusted closes.
         vix: VIX closes; `nan` where a gap exceeded the forward-fill limit.
         vix3m: VIX3M closes; `nan` where a gap exceeded the forward-fill limit.
+        vixy: VIXY adjusted closes, `nan` where missing; empty when there is no VIXY data at all.
     """
 
     sessions: tuple[date, ...]
     spy: tuple[float, ...]
     vix: tuple[float, ...]
     vix3m: tuple[float, ...]
+    vixy: tuple[float, ...] = ()
 
     def __len__(self) -> int:
         """Number of sessions."""
@@ -73,7 +77,7 @@ class RegimeSeries:
         """
         end = sum(1 for d in self.sessions if d < session)
         start = max(0, end - length)
-        out = RegimeSeries(self.sessions[start:end], self.spy[start:end], self.vix[start:end], self.vix3m[start:end])
+        out = RegimeSeries(self.sessions[start:end], self.spy[start:end], self.vix[start:end], self.vix3m[start:end], self.vixy[start:end])
         for name, full, values in (("spy", self.spy, out.spy), ("vix", self.vix, out.vix), ("vix3m", self.vix3m, out.vix3m)):
             if not any(math.isnan(v) for v in values):
                 continue
@@ -138,6 +142,7 @@ class YahooRegimeData:
             tuple(full.spy[i] for i in keep),
             tuple(full.vix[i] for i in keep),
             tuple(full.vix3m[i] for i in keep),
+            tuple(full.vixy[i] for i in keep) if full.vixy else (),
         )
 
     def closes_before(self, session: date, length: int) -> RegimeSeries:
@@ -166,18 +171,24 @@ class YahooRegimeData:
         if raw is None or raw.empty:
             raise RegimeDataError(f"Yahoo returned no data for {', '.join(SYMBOLS)}")
 
-        closes = {symbol: self._closes(raw, symbol) for symbol in SYMBOLS}
+        closes = {symbol: self._closes(raw, symbol) for symbol in REQUIRED}
         spy = closes["SPY"]
         for symbol, values in closes.items():
             if values.empty:  # a partial download must not be cached: the next session retries
                 raise RegimeDataError(f"Yahoo returned no {symbol} closes")
         vix = closes["^VIX"].reindex(spy.index).ffill(limit=self._max_fill)
         vix3m = closes["^VIX3M"].reindex(spy.index).ffill(limit=self._max_fill)
+        try:
+            vixy_closes = self._closes(raw, "VIXY")
+        except RegimeDataError:  # optional: a missing VIXY must not cost the regime
+            vixy_closes = spy.iloc[:0]
+        vixy = vixy_closes.reindex(spy.index).ffill(limit=self._max_fill)
         return RegimeSeries(
             tuple(spy.index),
             tuple(float(v) for v in spy),
             tuple(float(v) for v in vix),
             tuple(float(v) for v in vix3m),
+            tuple(float(v) for v in vixy),
         )
 
     @staticmethod

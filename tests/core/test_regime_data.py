@@ -1,4 +1,4 @@
-"""Tests for the Yahoo SPY/VIX/VIX3M series (no network: a fake download)."""
+"""Tests for the Yahoo SPY/VIX/VIX3M/VIXY series (no network: a fake download)."""
 
 from datetime import date, timedelta
 from typing import Any
@@ -41,8 +41,15 @@ def _frame(days: list[date], base: float, volume: float) -> pd.DataFrame:
 class FakeDownload:
     """Records calls and returns a group_by="ticker" frame; `drop` removes dates of a symbol."""
 
-    def __init__(self, days: list[date], drop: dict[str, list[date]] | None = None, absent: tuple[str, ...] = ()) -> None:
+    def __init__(
+        self,
+        days: list[date],
+        drop: dict[str, list[date]] | None = None,
+        absent: tuple[str, ...] = (),
+        vixy_frame: pd.DataFrame | None = None,
+    ) -> None:
         self.days = days
+        self.vixy_frame = vixy_frame
         self.drop = drop or {}
         self.absent = absent
         self.calls: list[tuple[list[str], dict[str, Any]]] = []
@@ -50,10 +57,10 @@ class FakeDownload:
     def __call__(self, symbols: list[str], **kwargs: Any) -> pd.DataFrame:
         self.calls.append((list(symbols), kwargs))
         parts = {}
-        for symbol, base, volume in (("SPY", 100.0, 1e6), ("^VIX", 15.0, 0.0), ("^VIX3M", 17.0, 0.0)):
+        for symbol, base, volume in (("SPY", 100.0, 1e6), ("^VIX", 15.0, 0.0), ("^VIX3M", 17.0, 0.0), ("VIXY", 20.0, 1e6)):
             if symbol in self.absent:
                 continue
-            frame = _frame(self.days, base, volume)
+            frame = self.vixy_frame if symbol == "VIXY" and self.vixy_frame is not None else _frame(self.days, base, volume)
             gone = pd.DatetimeIndex([pd.Timestamp(d) for d in self.drop.get(symbol, [])])
             parts[symbol] = frame.drop(index=gone)
         return pd.concat(parts, axis=1)
@@ -63,12 +70,12 @@ def _source(fake: Any, today: date = date(2025, 12, 31)) -> YahooRegimeData:
     return YahooRegimeData(download=fake, today=lambda: today)
 
 
-def test_one_batched_download_of_the_three_symbols() -> None:
+def test_one_batched_download_of_the_four_symbols() -> None:
     fake = FakeDownload(_weekdays(30))
     _source(fake).series(FIRST)
     assert len(fake.calls) == 1
     symbols, kwargs = fake.calls[0]
-    assert symbols == ["SPY", "^VIX", "^VIX3M"] == list(SYMBOLS)
+    assert symbols == ["SPY", "^VIX", "^VIX3M", "VIXY"] == list(SYMBOLS)
     assert kwargs["auto_adjust"] is False
     assert kwargs["actions"] is True
     assert kwargs["group_by"] == "ticker"
@@ -169,3 +176,35 @@ def test_a_series_starting_after_the_window_reports_missing_history_not_a_gap() 
     with pytest.raises(RegimeDataError, match="not enough aligned history"):
         series.before(days[-1], 29)
     assert len(series.before(days[-1], 20)) == 20
+
+
+def test_vixy_is_aligned_on_spy_sessions() -> None:
+    series = _source(FakeDownload(_weekdays(10))).series(FIRST)
+    assert series.vixy == tuple(20.0 + i for i in range(10))
+
+
+def test_a_missing_vixy_is_nan_not_an_error() -> None:
+    series = _source(FakeDownload(_weekdays(10), absent=("VIXY",))).series(FIRST)
+    assert len(series.vixy) == 10 and all(v != v for v in series.vixy)
+    assert series.spy == tuple(99.5 + i for i in range(10))  # the regime's inputs are untouched
+
+
+def test_before_slices_vixy_and_ignores_its_nan() -> None:
+    days = _weekdays(30)
+    series = _source(FakeDownload(days, drop={"VIXY": days[:20]})).series(FIRST)  # VIXY starts late
+    out = series.before(days[-1], 25)
+    assert len(out.vixy) == 25 and out.vixy[-1] == series.vixy[-2]
+
+
+def test_a_series_without_vixy_keeps_an_empty_column() -> None:
+    old = RegimeSeries((date(2026, 1, 2),), (100.0,), (15.0,), (17.0,))
+    assert old.vixy == () and old.before(date(2026, 1, 5), 1).vixy == ()
+
+
+def test_vixy_reads_adjusted_closes_so_a_reverse_split_is_no_jump() -> None:
+    days = _weekdays(10)
+    frame = _frame(days, 20.0, 1e6)
+    frame["Adj Close"] = frame["Close"]  # smooth
+    frame["Close"] = [c * 4 if i >= 5 else c for i, c in enumerate(frame["Close"])]  # 1:4 reverse split
+    series = _source(FakeDownload(days, vixy_frame=frame)).series(FIRST)
+    assert max(b / a for a, b in zip(series.vixy, series.vixy[1:], strict=False)) < 1.1
