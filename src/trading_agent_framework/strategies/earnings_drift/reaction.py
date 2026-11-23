@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -69,10 +70,9 @@ def bar_dates(frame: pd.DataFrame) -> list[date]:
 
 def rows_through(frame: pd.DataFrame, day: date) -> pd.DataFrame:
     """The rows on or before `day`, indexed by date (a duplicated date keeps its last row)."""
-    dated = frame.copy()
-    dated.index = pd.Index(bar_dates(frame))
-    dated = dated[~dated.index.duplicated(keep="last")]
-    return dated[[stamp <= day for stamp in dated.index]]
+    dated = frame.set_axis(pd.Index(bar_dates(frame)))
+    dated = dated.loc[~dated.index.duplicated(keep="last")]
+    return dated.loc[[stamp <= day for stamp in dated.index]]
 
 
 def _runup(closes: pd.Series, sessions: int) -> float | None:
@@ -118,6 +118,7 @@ def reaction_features(stock: pd.DataFrame, benchmark: pd.DataFrame, day: date, *
     if prev_close <= 0 or mean_volume <= 0 or bench_prev <= 0:
         return None
     return_pct = close / prev_close - 1
+    closes = cast("pd.Series", rows["close"])
     return ReactionFeatures(
         gap_pct=open_ / prev_close - 1,
         return_pct=return_pct,
@@ -126,8 +127,8 @@ def reaction_features(stock: pd.DataFrame, benchmark: pd.DataFrame, day: date, *
         close_location=(close - low) / (high - low) if high > low else 0.5,
         rel_volume=volume / mean_volume,
         dollar_volume_20d=dollar_volume,
-        runup_20d_pct=_runup(rows["close"], 20),
-        runup_60d_pct=_runup(rows["close"], 60),
+        runup_20d_pct=_runup(closes, 20),
+        runup_60d_pct=_runup(closes, 60),
         atr14_pct=_atr_pct(rows),
         close=close,
         reaction_low=low,

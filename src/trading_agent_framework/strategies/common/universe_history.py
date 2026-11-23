@@ -15,7 +15,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -207,7 +207,7 @@ def monthly_lists(
         if frame.empty:
             continue
         frame = frame.sort_index()
-        dates = frame.index.tz_localize(None).values.astype("datetime64[D]")
+        dates = cast("pd.DatetimeIndex", frame.index).tz_localize(None).values.astype("datetime64[D]")
         closes = frame["traded_close"].to_numpy(dtype=float)
         dollars = closes * frame["traded_volume"].to_numpy(dtype=float)
         prepared[symbol] = (dates, closes, dollars)

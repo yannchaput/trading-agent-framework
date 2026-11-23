@@ -14,7 +14,7 @@ import logging
 import threading
 import time
 from collections.abc import Callable, Mapping
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +57,7 @@ def _default_connect(url: str) -> StreamSocket:
 
     from trading_agent_framework.brokers.tastytrade.client import USER_AGENT
 
-    return connect(url, user_agent_header=USER_AGENT, open_timeout=CONNECT_TIMEOUT)  # ty: ignore[invalid-return-type]
+    return cast("StreamSocket", connect(url, user_agent_header=USER_AGENT, open_timeout=CONNECT_TIMEOUT))
 
 
 class TastytradeAccountStream:
@@ -240,7 +240,7 @@ class TastytradeAccountStream:
     def _parse(raw: object) -> dict[str, Any]:
         """Decode a raw message to a dict; non-JSON payloads become an empty dict."""
         try:
-            message = json.loads(raw)  # ty: ignore[invalid-argument-type]
+            message = json.loads(cast("str | bytes", raw))
         except TypeError, ValueError:
             logger.warning("unreadable account-streamer message: %r", str(raw)[:200])
             return {}

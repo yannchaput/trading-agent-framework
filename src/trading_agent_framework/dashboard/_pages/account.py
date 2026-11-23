@@ -147,6 +147,7 @@ def page_account(mode: str) -> None:
         return
 
     days, realized = pnl.days, pnl.realized_total
+    start = end = date.min  # replaced by the sidebar window whenever there are days; only read then
     if pnl.days:
         start, end = _select_window(mode, pnl.days)
         days = days_between(pnl.days, start, end)

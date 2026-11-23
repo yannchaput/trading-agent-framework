@@ -723,7 +723,7 @@ def rolling_sharpe_chart(
     )
 
 
-def _figure_with_regime_row(indicators: dict[str, list[dict[str, Any]]] | None) -> tuple[go.Figure, dict[str, Any] | None, dict[str, int]]:
+def _figure_with_regime_row(indicators: dict[str, list[dict[str, Any]]] | None) -> tuple[go.Figure, dict[str, Any] | None, dict[str, Any]]:
     """An empty figure, the regime series to draw (naive times) and the row/col kwargs that address the curves' pane.
 
     With a regime the figure has two rows (curves above, regime below, shared x axis) and the kwargs are
