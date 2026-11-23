@@ -1,5 +1,6 @@
 """Tests for the Yahoo SPY/VIX/VIX3M/VIXY series (no network: a fake download)."""
 
+import logging
 from datetime import date, timedelta
 from typing import Any
 
@@ -187,6 +188,24 @@ def test_a_missing_vixy_is_nan_not_an_error() -> None:
     series = _source(FakeDownload(_weekdays(10), absent=("VIXY",))).series(FIRST)
     assert len(series.vixy) == 10 and all(v != v for v in series.vixy)
     assert series.spy == tuple(99.5 + i for i in range(10))  # the regime's inputs are untouched
+
+
+def test_a_vixy_frame_with_no_usable_closes_is_nan_and_warns(caplog: pytest.LogCaptureFixture) -> None:
+    days = _weekdays(10)
+    frame = _frame(days, 20.0, 1e6)
+    frame[["Close", "Adj Close"]] = float("nan")
+    with caplog.at_level(logging.WARNING):
+        series = _source(FakeDownload(days, vixy_frame=frame)).series(FIRST)
+    assert len(series.vixy) == 10 and all(v != v for v in series.vixy)
+    assert series.spy == tuple(99.5 + i for i in range(10))
+    assert series.vix == tuple(15.0 + i for i in range(10)) and series.vix3m == tuple(17.0 + i for i in range(10))
+    assert "VIX/VIX3M ratio alone" in caplog.text
+
+
+def test_a_missing_vixy_warns_once(caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level(logging.WARNING):
+        _source(FakeDownload(_weekdays(10), absent=("VIXY",))).series(FIRST)
+    assert caplog.text.count("VIX/VIX3M ratio alone") == 1
 
 
 def test_before_slices_vixy_and_ignores_its_nan() -> None:

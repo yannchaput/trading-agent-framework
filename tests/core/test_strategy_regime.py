@@ -174,11 +174,29 @@ def test_too_little_history_leaves_the_flag_unknown() -> None:
     assert strategy.market_fall is None and strategy.regime_reading is None
 
 
-def test_a_zero_vixy_close_is_a_warning_and_keeps_every_previous_value(caplog: pytest.LogCaptureFixture) -> None:
+def test_a_zero_vixy_close_counts_as_missing_and_the_regime_still_refreshes(caplog: pytest.LogCaptureFixture) -> None:
+    strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=[20.0] * (ROWS - 1) + [0.0]))
+    with caplog.at_level(logging.WARNING):
+        strategy._refresh_regime()
+    assert strategy.regime is not None and strategy.regime_reading is not None
+    assert strategy.market_fall is False
+    assert "Market regime not refreshed" not in caplog.text
+
+
+def test_a_zero_vixy_close_next_to_a_real_jump_does_not_raise() -> None:
+    vixy = [20.0] * (ROWS - 1) + [22.5]
+    vixy[10] = 0.0
+    strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=vixy))
+    strategy._refresh_regime()
+    assert strategy.market_fall is True
+
+
+@pytest.mark.parametrize("vix, vix3m", [(0.0, 18.0), (15.0, 0.0)])
+def test_a_zero_vix_or_vix3m_close_is_a_warning_and_keeps_the_previous_values(vix: float, vix3m: float, caplog: pytest.LogCaptureFixture) -> None:
     strategy, source, _, _ = _strategy(BEAR)
     strategy._refresh_regime()
     before = (strategy.regime, strategy.regime_reading, strategy.market_fall)
-    source.series = _series(CALM_SPY, vixy=[20.0] * (ROWS - 1) + [0.0])
+    source.series = _series(CALM_SPY, vix=vix, vix3m=vix3m)
     with caplog.at_level(logging.WARNING):
         strategy._refresh_regime()
     assert (strategy.regime, strategy.regime_reading, strategy.market_fall) == before

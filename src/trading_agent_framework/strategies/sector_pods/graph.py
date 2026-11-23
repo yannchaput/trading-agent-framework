@@ -128,7 +128,7 @@ class LoadPrevious:
 
 
 class MarketFacts:
-    """Node: today's date, regime label, holdings, per-ETF facts and the score of last week's views."""
+    """Node: today's date, regime label, holdings, per-ETF facts, the score of last week's views and the market `stress` (for the risk manager and PM)."""
 
     def __init__(
         self,

@@ -8,6 +8,7 @@ those dated strictly before the session being decided.
 
 from __future__ import annotations
 
+import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -24,6 +25,8 @@ REQUIRED = ("SPY", "^VIX", "^VIX3M")
 SYMBOLS = (*REQUIRED, "VIXY")
 _CALENDAR_DAYS_PER_BAR = 1.5  # sessions to calendar days, with slack for holidays
 _CALENDAR_SLACK = 10
+
+logger = logging.getLogger(__name__)
 
 DownloadFn = Callable[..., "pd.DataFrame"]
 
@@ -182,6 +185,8 @@ class YahooRegimeData:
             vixy_closes = self._closes(raw, "VIXY")
         except RegimeDataError:  # optional: a missing VIXY must not cost the regime
             vixy_closes = spy.iloc[:0]
+        if vixy_closes.empty:
+            logger.warning("VIXY is unreadable or has no usable closes: the early warning runs on the VIX/VIX3M ratio alone")
         vixy = vixy_closes.reindex(spy.index).ffill(limit=self._max_fill)
         return RegimeSeries(
             tuple(spy.index),

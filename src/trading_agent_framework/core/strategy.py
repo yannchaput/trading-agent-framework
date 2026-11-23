@@ -177,7 +177,7 @@ class Strategy:
         # None until the first refresh with enough history. Information only: nothing trades on it.
         self.market_fall: bool | None = None
         self._regime_history_warned = False
-        # Where the regime's SPY/VIX/VIX3M closes come from; no network until the first refresh. Assignable in tests.
+        # Where the regime's SPY/VIX/VIX3M/VIXY closes come from; no network until the first refresh. Assignable in tests.
         self.regime_source: RegimeSource = YahooRegimeData()
         self.executor = StrategyExecutor(self)
 
@@ -376,7 +376,7 @@ class Strategy:
         )
 
     def _refresh_regime(self) -> None:
-        """Estimate the market regime from Yahoo's SPY, VIX and VIX3M closes; the executor calls this once per session.
+        """Estimate the market regime and the market-fall early warning from Yahoo's SPY, VIX, VIX3M and VIXY closes; once per session.
 
         Reads the closes strictly before today's session date, so a mid-session start sees the same data as the
         morning refresh. Information only: a log line, and an `add_line` point in backtests. Any failure keeps the
@@ -393,7 +393,8 @@ class Strategy:
         try:
             series = self.regime_source.closes_before(session, params.min_bars)
             reading = classify_regime(series.spy, series.vix, series.vix3m, params)
-            vixy = series.vixy or (math.nan,) * len(series)
+            # VIXY is optional: a non-positive close counts as missing and must not stop the regime (VIX and VIX3M stay strict)
+            vixy = tuple(v if v > 0 else math.nan for v in series.vixy) if series.vixy else (math.nan,) * len(series)
             market_fall = in_market_fall(series.vix, series.vix3m, vixy) if reading else None
         except (RegimeDataError, ValueError) as exc:
             self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")

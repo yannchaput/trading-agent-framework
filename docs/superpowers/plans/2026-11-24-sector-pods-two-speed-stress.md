@@ -50,14 +50,17 @@ def test_one_batched_download_of_the_four_symbols() -> None:  # replaces ..._thr
     ...
     assert symbols == ["SPY", "^VIX", "^VIX3M", "VIXY"] == list(SYMBOLS)
 
+
 def test_vixy_is_aligned_on_spy_sessions() -> None:
     series = _source(FakeDownload(_weekdays(10))).series(FIRST)
     assert series.vixy == tuple(20.0 + i for i in range(10))
+
 
 def test_a_missing_vixy_is_nan_not_an_error() -> None:
     series = _source(FakeDownload(_weekdays(10), absent=("VIXY",))).series(FIRST)
     assert len(series.vixy) == 10 and all(v != v for v in series.vixy)
     assert series.spy == tuple(99.5 + i for i in range(10))  # the regime's inputs are untouched
+
 
 def test_before_slices_vixy_and_ignores_its_nan() -> None:
     days = _weekdays(30)
@@ -65,9 +68,11 @@ def test_before_slices_vixy_and_ignores_its_nan() -> None:
     out = series.before(days[-1], 25)
     assert len(out.vixy) == 25 and out.vixy[-1] == series.vixy[-2]
 
+
 def test_a_series_without_vixy_keeps_an_empty_column() -> None:
     old = RegimeSeries((date(2026, 1, 2),), (100.0,), (15.0,), (17.0,))
     assert old.vixy == () and old.before(date(2026, 1, 5), 1).vixy == ()
+
 
 def test_vixy_reads_adjusted_closes_so_a_reverse_split_is_no_jump() -> None:
     # raw Close x4 from day 5 (1:4 reverse split), Adj Close smooth
@@ -181,18 +186,24 @@ git commit -m "feat(core): strategy.market_fall early warning and the full regim
 def test_defensive_etfs_are_in_the_universe():
     assert set(DEFENSIVE_ETFS) == {"XLP", "XLV", "XLU"} <= set(ALL_SYMBOLS)
 
+
 def test_stress_view_from_a_reading():
     view = stress_view(reading(score=2, inverted=True, vix_spike=False, below_sma=True, off_high=False), True)
-    assert view == {"early_warning": True, "regime_score": 2,
-                    "conditions": {"vix_above_vix3m": True, "vix_spike": False, "spy_below_sma50": True, "spy_5pct_off_high": False},
-                    "defensive_etfs": ["XLP", "XLV", "XLU"]}
+    assert view == {
+        "early_warning": True,
+        "regime_score": 2,
+        "conditions": {"vix_above_vix3m": True, "vix_spike": False, "spy_below_sma50": True, "spy_5pct_off_high": False},
+        "defensive_etfs": ["XLP", "XLV", "XLU"],
+    }
+
 
 def test_stress_view_is_none_without_a_reading():
     assert stress_view(None, None) is None
 
-def test_market_facts_puts_stress_in_the_state(): ...           # state["stress"] == the callable's dict
-def test_risk_and_pm_see_stress_but_pods_do_not(): ...          # "stress" in risk_reads(s) and pm_reads(s); not in pod_reads(k)(s)
-def test_the_review_log_records_stress(): ...                   # reviews.jsonl record has "stress"
+
+def test_market_facts_puts_stress_in_the_state(): ...  # state["stress"] == the callable's dict
+def test_risk_and_pm_see_stress_but_pods_do_not(): ...  # "stress" in risk_reads(s) and pm_reads(s); not in pod_reads(k)(s)
+def test_the_review_log_records_stress(): ...  # reviews.jsonl record has "stress"
 def test_a_review_without_stress_records_null_and_completes(): ...  # stress=lambda: None: week completes, record["stress"] is None
 ```
 
@@ -237,15 +248,19 @@ git commit -m "feat(sector_pods): stress field (early warning + regime score) fo
 - [ ] **Step 1: Write the failing tests**
 
 ```python
-def test_stress_is_an_objection_kind(): ...              # a risk review with kind "stress" passes validation
+def test_stress_is_an_objection_kind(): ...  # a risk review with kind "stress" passes validation
 def test_risk_prompt_explains_stress_and_its_kind():
     text = risk_system(SectorPodsParams())
     assert "`stress`" in text and "early_warning" in text and "defensive_etfs" in text
     assert "crowding, macro, drawdown, reversal, stress or other" in text
+
+
 def test_pm_prompt_tilts_to_defensives_and_stays_invested():
     text = pm_system(SectorPodsParams())
     assert "early_warning" in text and "defensive_etfs" in text and "keep other ETFs" in text
-def test_pod_prompts_do_not_mention_stress(): ...        # "early_warning" not in any pod_system(...)
+
+
+def test_pod_prompts_do_not_mention_stress(): ...  # "early_warning" not in any pod_system(...)
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
