@@ -200,12 +200,7 @@ def decide(obs: dict, first: bool, in_position: bool, minutes_held: float, limit
 
 def atr10(prev_etf: list[pd.DataFrame]) -> float:
     """Mean true range of the ETF's 10-minute bars over the given previous sessions (the stop's volatility unit)."""
-    ranges = []
-    for day in prev_etf:
-        bars = day.resample("10min").agg({"high": "max", "low": "min", "close": "last"}).dropna()
-        prev_close = bars.close.shift(1).fillna(bars.close)
-        ranges.append(pd.concat([bars.high - bars.low, (bars.high - prev_close).abs(), (bars.low - prev_close).abs()], axis=1).max(axis=1))
-    return float(pd.concat(ranges).mean())
+    return float(pd.concat([day_true_ranges(day) for day in prev_etf]).mean())
 
 
 def simulate_session(etf: pd.DataFrame, obs_by_t: dict[pd.Timestamp, dict], cell: dict, atr: float, cap_left: int, early: bool) -> list[dict]:
@@ -293,6 +288,7 @@ def run_account(sessions: list[date], mk: dict, cell: dict | None, cap: bool, ov
                 "stops": how.count("stop"),
                 "fades": how.count("fade"),
                 "closes": how.count("close"),
+                "hours": [t_["entry"].hour for t_ in trades],
                 "cap_skips": cap_skips,
                 "limit_days": int(how.count("stop") >= MAX_STOPS or day_mult - 1 <= DAILY_LOSS),
             }
@@ -344,6 +340,148 @@ def signal_gate(sessions: list[date], mk: dict, setting: dict) -> float:
         exit_ = float(exits.open.iloc[0]) if len(exits) else float(spy.close.iloc[-1])
         returns.append((2 - exit_ / entry) * (1 - COST) / (1 + COST) - 1)
     return float(np.mean(returns)) if returns else 0.0
+
+
+STRENGTHS = {"loose": (0.03, 0.02), "strict": (0.05, 0.03)}  # (V_DAY, V_HOUR)
+VOLUMES = {"novol": None, "vol": 1.5}
+ETFS = ("SDS", "SPXU")
+KS = (3, 5)
+GRID = {
+    f"{strength}/{volume}/{etf}/k{k}": {"strength": strength, "volume": volume, "v_day": v_day, "v_hour": v_hour, "rvol": rvol, "etf": etf, "k": k}
+    for strength, (v_day, v_hour) in STRENGTHS.items()
+    for volume, rvol in VOLUMES.items()
+    for etf in ETFS
+    for k in KS
+}
+MIN_TRADES, MAX_LOSING_YEARS = 30, 2
+WINDOWS = {"dev": (date(2016, 1, 4), date(2024, 6, 28)), "test": (date(2024, 7, 1), date.today() - timedelta(days=1))}
+
+
+def neighbours(name: str) -> list[str]:
+    """The grid cells that differ from `name` in exactly one dimension."""
+    cell = GRID[name]
+    keys = ("strength", "volume", "etf", "k")
+    return [n for n, c in GRID.items() if sum(c[k] != cell[k] for k in keys) == 1]
+
+
+def choose(passing: dict[str, dict]) -> str | None:
+    """The passing cell with the most passing neighbours, then the higher total, then the smaller drawdown."""
+    if not passing:
+        return None
+    return max(passing, key=lambda n: (sum(m in passing for m in neighbours(n)), passing[n]["total"], passing[n]["max_dd"]))
+
+
+def day_true_ranges(day: pd.DataFrame) -> pd.Series:
+    """True range of each 10-minute bar of one session (the first block uses its own high - low)."""
+    bars = day.resample("10min").agg({"high": "max", "low": "min", "close": "last"}).dropna()
+    prev_close = bars.close.shift(1).fillna(bars.close)
+    return pd.concat([bars.high - bars.low, (bars.high - prev_close).abs(), (bars.low - prev_close).abs()], axis=1).max(axis=1)
+
+
+def load(start: date, end: date) -> dict:
+    """Everything a run needs for [start, end]: sessions, minute frames by symbol and day, signal values, ATRs, Yahoo daily.
+
+    Minute bars are read from 20 days before `start` so that D-1..D-5 exist on the first sessions; a session with fewer
+    than 5 earlier sessions, a missing VIXY or SPY frame or no SMA50 gets no observations (so no entries).
+    """
+    warm = start - timedelta(days=20)
+    minute = {sym: _fall.by_day(minute_bars(sym, warm, end)) for sym in ("SPY", "VIXY", "SDS", "SPXU")}
+    all_days = sorted(minute["SPY"])
+    sessions = [d for d in all_days if start <= d <= end]
+    yahoo = daily_yahoo()
+    obs, atr = {}, {}
+    true_ranges = {etf: {d: day_true_ranges(f) for d, f in minute[etf].items()} for etf in ETFS}
+    for d in sessions:
+        i = all_days.index(d)
+        prev_days = all_days[max(0, i - 5) : i][::-1]
+        for etf in ETFS:
+            if len(prev_days) == 5 and all(p in true_ranges[etf] for p in prev_days):
+                atr[(etf, d)] = float(pd.concat([true_ranges[etf][p] for p in prev_days]).mean())
+        sma50 = yahoo.vixy_sma50.get(d, float("nan"))
+        if len(prev_days) < 5 or d not in minute["VIXY"] or np.isnan(sma50) or any(p not in minute["VIXY"] for p in prev_days):
+            continue
+        ctx = day_context([{"spy": minute["SPY"][p], "vixy": minute["VIXY"][p]} for p in prev_days], float(sma50))
+        if ctx is None:
+            continue
+        per_t = {}
+        for t in decision_times(d, is_early_close(d)):
+            try:
+                per_t[t] = observe(minute["SPY"][d], minute["VIXY"][d], ctx, t)
+            except IndexError:  # no VIXY or SPY bar early enough for the window: no decision at t
+                continue
+        obs[d] = per_t
+    return {"sessions": sessions, "minute": minute, "obs": obs, "atr": atr, "yahoo": yahoo}
+
+
+def line(s: dict) -> str:
+    """One report row for a summary."""
+    return (
+        f"{s['total']:+8.1%} cagr {s['cagr']:+6.1%} dd {s['max_dd']:6.1%} trades {s['trades']:4d} win {s['win_rate']:4.0%} mean {s['mean_trade']:+.2%} "
+        f"stop/fade/close {s['stops']}/{s['fades']}/{s['closes']} cap-blocked {s['cap_skips']} limit-days {s['limit_days']}"
+    )
+
+
+def years_text(s: dict) -> str:
+    """Calendar-year returns on one line."""
+    return " ".join(f"{y}:{r:+.1%}" for y, r in s["years"].items())
+
+
+def report(window: str, only: str | None = None) -> str | None:
+    """Run a window and print it; return the chosen cell (dev) or the cell when it is a GO (test), else None.
+
+    `only` = the chosen cell's name for the held-out window: only that cell runs and the GO / NO-GO is printed.
+    """
+    start, end = WINDOWS[window]
+    mk = load(start, end)
+    sessions = mk["sessions"]
+    print(f"{window}: {sessions[0]} -> {sessions[-1]}, {len(sessions)} sessions, {len(mk['obs'])} with signal values")
+    spy_close = pd.Series({d: float(mk["minute"]["SPY"][d].close.iloc[-1]) for d in sessions})
+    spy_curve = spy_close / spy_close.iloc[0] * START
+    spy_total, spy_dd = _fall.curve_stats(spy_curve)
+    shv_only = summary(run_account(sessions, mk, None, True, "shv"))
+    print(f"SPY buy and hold: {spy_total:+.1%} dd {spy_dd:.1%}\nSHV only (no trades, SHV overnight): {shv_only['total']:+.1%} dd {shv_only['max_dd']:.1%}")
+
+    if only is not None:
+        cell = GRID[only]
+        rows = run_account(sessions, mk, cell, True, "shv")
+        s = summary(rows)
+        print(f"{only} with the day-trade cap: {line(s)}\n  years: {years_text(s)}")
+        print(f"{only} without the cap:        {line(summary(run_account(sessions, mk, cell, False, 'shv')))}")
+        print(f"{only} cash overnight:         {line(summary(run_account(sessions, mk, cell, True, 'cash')))}")
+        hedge, hedge_dd = _fall.curve_stats((spy_curve.reset_index(drop=True) + rows.equity.reset_index(drop=True)) / 2)
+        print(f"hedge, half SPY + half {only}: {hedge:+.1%} dd {hedge_dd:.1%}")
+        go = s["total"] > 0 and s["total"] > shv_only["total"]
+        print(f"{'GO' if go else 'NO-GO'}: total {s['total']:+.1%} against SHV only {shv_only['total']:+.1%} on the held-out window")
+        return only if go else None
+
+    gates = {}
+    for strength, (v_day, v_hour) in STRENGTHS.items():
+        for volume, rvol in VOLUMES.items():
+            gates[(strength, volume)] = signal_gate(sessions, mk, {"v_day": v_day, "v_hour": v_hour, "rvol": rvol})
+            print(f"signal gate {strength}/{volume}: -1 x SPY first signal to the forced exit, mean {gates[(strength, volume)]:+.3%} ({'passes' if gates[(strength, volume)] > 0 else 'FAILS'})")
+    if not any(g > 0 for g in gates.values()):
+        print("NO: every signal setting fails the gate, nothing else is judged")
+        return None
+    passing = {}
+    for name, cell in GRID.items():
+        if gates[(cell["strength"], cell["volume"])] <= 0:
+            print(f"{name:22s} out: its signal setting failed the gate")
+            continue
+        rows = run_account(sessions, mk, cell, True, "shv")
+        s = summary(rows)
+        print(f"{name:22s} cap      {line(s)}\n{'':22s} no cap   {line(summary(run_account(sessions, mk, cell, False, 'shv')))}")
+        print(f"{'':22s} cash     {line(summary(run_account(sessions, mk, cell, True, 'cash')))}\n{'':22s} years    {years_text(s)}")
+        hours = pd.Series([h for hs in rows.hours for h in hs]).value_counts().sort_index()
+        print(f"{'':22s} entries by hour {dict(hours)}")
+        losing = sum(r < 0 for r in s["years"].values())
+        if s["total"] > shv_only["total"] and losing <= MAX_LOSING_YEARS and s["trades"] >= MIN_TRADES:
+            passing[name] = s
+    chosen = choose(passing)
+    if chosen is None:
+        print("NO: no cell passed the bar")
+        return None
+    print(f"passing: {sorted(passing)}\nchosen: {chosen} ({passing[chosen]['total']:+.1%})")
+    return chosen
 
 
 def close_to(value: float, expected: float) -> bool:
@@ -531,6 +669,19 @@ def check() -> None:
     hit["minute"]["SPXU"][hit["sessions"][0]].loc[pd.Timestamp(f"{hit['sessions'][0]} 09:50", tz=NY), "low"] = 96.0
     rows = run_account(hit["sessions"], hit, cell, False, "cash")
     assert rows.limit_days.iloc[0] == 1 and rows.trades.iloc[0] == 1 and rows.stops.iloc[0] == 1 and rows.limit_days.iloc[1] == 0
+    # 24. the grid: 16 cells, each with exactly 4 neighbours (one dimension changed)
+    assert len(GRID) == 16 and all(len(neighbours(n)) == 4 for n in GRID)
+    a = "loose/novol/SDS/k3"
+    near = ["strict/novol/SDS/k3", "loose/vol/SDS/k3", "loose/novol/SPXU/k3"]
+    far = "strict/vol/SPXU/k5"
+    assert set(neighbours(a)) >= set(near) and far not in neighbours(a)
+    # 25. choose: most passing neighbours first, then total, then the smaller drawdown; nothing passing -> None
+    low = {"total": 0.1, "max_dd": -0.2}
+    passing = {a: low, **{n: low for n in near}, far: {"total": 9.0, "max_dd": -0.1}}
+    assert choose(passing) == a
+    assert choose({a: {"total": 0.1, "max_dd": -0.2}, far: {"total": 0.3, "max_dd": -0.5}}) == far
+    assert choose({a: {"total": 0.3, "max_dd": -0.5}, far: {"total": 0.3, "max_dd": -0.2}}) == far
+    assert choose({}) is None
     print("self-check OK")
 
 
@@ -539,6 +690,20 @@ def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else "check"
     if mode == "check":
         return check()
+    if mode == "dev":
+        report("dev")
+        return
+    if mode == "test":
+        if TEST_GUARD.exists():
+            sys.exit(f"The held-out window was already run ({TEST_GUARD} exists); see the spec. Not re-run.")
+        chosen = report("dev")
+        if chosen is None:
+            sys.exit("No cell passed dev: the held-out window stays unused.")
+        print("\n" + "=" * 100 + f"\nHELD-OUT (one shot): {chosen}\n")
+        TEST_GUARD.parent.mkdir(parents=True, exist_ok=True)
+        TEST_GUARD.write_text(f"{chosen}\n")
+        report("test", only=chosen)
+        return
     sys.exit(f"unknown mode {mode!r}")
 
 
