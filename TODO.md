@@ -141,6 +141,19 @@ La suite :
 	2.	Je vous propose ensuite de fusionner. Il faudra alors redémarrer les deux stratégies pour charger le nouveau code, avant mardi.
 ```
 
+### Bearish regime
+
+Goal: a second account that makes money on its own and, ideally, most when the market falls (bull_bear loses in falls).
+Details and sources: `docs/papers/bearish search papers.md`. Check the box once a strategy is tested.
+
+* [ ] Time-series momentum / trend following ("crisis alpha"): Hurst, Ooi & Pedersen, *A Century of Evidence on Trend-Following Investing* (67 markets, 1880-2016, positive in 8 of the 10 largest crises); Man/Oxford 1960-2015 (positive skew, more so for faster lookbacks). Code: pysystemtrade (pst-group), PyTrendFollow. Caveat: weak for about 4 years after a crisis starts.
+* [ ] Faber's 10-month SMA / GTAA: at each month end hold an asset class above its 10-month SMA, else cash. Test several rebalance dates (timing luck). Code: Concretum's Python implementation.
+* [ ] Dual Momentum (Antonacci): relative momentum picks the strongest asset, absolute momentum moves to bonds when the trend is negative. Lags the S&P 500 since 2009, ahead of it from 2008. Variant: Quantpedia 2007-2026 on commodity ETFs (DBA, DBB, DBE, DBP).
+* [ ] Keller's canary strategies (DAA, BAA, HAA): a canary universe (VWO, BND) with 13612W momentum triggers crash protection; BAA in SSRN 4166845. Code: HAApy, QuantConnect threads (results drop when trading the next open instead of the month-end close).
+* [ ] Defensive equity factors (quality, low volatility): smaller drawdowns in COVID and the GFC, but low volatility can still lose 60% of the market's fall (Man Group): a dampener, not a hedge.
+* [ ] Dynamic momentum (Daniel & Moskowitz, NBER w20439): forecast momentum's mean and variance to avoid the bear-market rebound crash (about doubles alpha and Sharpe). Simpler HSE variant: turn contrarian for 3 months after a crash.
+* Toolkits: R `AssetAllocation` (Ivy, Robust Asset Allocation, Dual Momentum, Adaptive Asset Allocation); Python `bt`, `backtesting.py`, Ilya Kipnis's PythonBacktesting.
+
 ---
 
 ## Archives
