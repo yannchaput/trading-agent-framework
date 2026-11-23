@@ -393,6 +393,8 @@ class Strategy:
         try:
             series = self.regime_source.closes_before(session, params.min_bars)
             reading = classify_regime(series.spy, series.vix, series.vix3m, params)
+            vixy = series.vixy or (math.nan,) * len(series)
+            market_fall = in_market_fall(series.vix, series.vix3m, vixy) if reading else None
         except (RegimeDataError, ValueError) as exc:
             self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")
             return
@@ -403,8 +405,7 @@ class Strategy:
             return
         self.regime = reading.regime
         self.regime_reading = reading
-        vixy = series.vixy or (math.nan,) * len(series)
-        self.market_fall = in_market_fall(series.vix, series.vix3m, vixy)
+        self.market_fall = market_fall
         episode = f", episode low {reading.episode_low:.2f}" if reading.episode_low is not None else ""
         self.log_info(
             f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): score {reading.score}/4, "
