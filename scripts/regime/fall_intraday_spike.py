@@ -60,8 +60,24 @@ def minute_bars(symbol: str, start: date, end: date) -> pd.DataFrame:
         if year < date.today().year:
             df.to_parquet(path)
         frames.append(df)
-    out = pd.concat(frames)
+    out = trim_early_closes(pd.concat(frames))
     return out[(out.index.date >= start) & (out.index.date <= end)]
+
+
+def is_early_close(d: date) -> bool:
+    """NYSE 13:00 closes: the day after Thanksgiving, Dec 24 and Jul 3 when they fall Monday to Thursday.
+
+    shortcut: the standing rule only; a one-off closure or early close (none in 2016-2026) is not known.
+    """
+    after_thanksgiving = d.month == 11 and d.weekday() == 4 and 23 <= d.day <= 29
+    return after_thanksgiving or (d.weekday() < 4 and (d.month, d.day) in ((12, 24), (7, 3)))
+
+
+def trim_early_closes(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the after-hours bars Alpaca's SIP feed carries after 13:00 on early-close sessions."""
+    early = np.array([is_early_close(d) for d in df.index.date], dtype=bool)
+    after = df.index.time >= pd.Timestamp("13:00").time()
+    return df[~(early & after)]
 
 
 def _download_year(symbol: str, year: int) -> pd.DataFrame:
@@ -91,7 +107,7 @@ def _download_year(symbol: str, year: int) -> pd.DataFrame:
 
 
 def regular_session(df: pd.DataFrame) -> pd.DataFrame:
-    """Keep the 09:30-15:59 New York bars of a UTC-indexed frame (early-close days simply end sooner)."""
+    """Keep the 09:30-15:59 New York bars of a UTC-indexed frame (early closes are trimmed later, by `trim_early_closes`)."""
     df = df.copy()
     df.index = df.index.tz_convert(NY)
     return df.between_time("09:30", "15:59")
@@ -331,6 +347,11 @@ def check() -> None:
     s = summary(replay({d1: up, d2: down}, [d1, d2], {d1, d2}, None, 1.0))
     assert abs(s["years"][2023] - (m1 - 1)) < 1e-9 and abs(s["years"][2024] - (m2 - 1)) < 1e-9
     assert abs(s["max_dd"] - (m2 - 1)) < 1e-9 and s["win_rate"] == 0.5 and s["closes"] == 2 and s["stops"] == 0
+    # 11. early closes (day after Thanksgiving, Dec 24 and Jul 3 on a weekday Mon-Thu) end at 13:00; other days stay whole
+    for day, early in (("2024-11-29", True), ("2024-12-24", True), ("2024-07-03", True), ("2024-12-23", False), ("2020-07-03", False), ("2021-12-24", False)):
+        idx = pd.date_range(f"{day} 09:30", f"{day} 15:59", freq="min", tz=NY)
+        kept = trim_early_closes(pd.DataFrame(1.0, index=idx, columns=["open", "high", "low", "close"]))
+        assert (str(kept.index[-1].time()) == "12:59:00") == early, day
     print("self-check OK")
 
 

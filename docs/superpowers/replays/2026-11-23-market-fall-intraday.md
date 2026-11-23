@@ -10,8 +10,8 @@ On days when `in_market_fall` is true (decided from closes up to the day before)
 
 2,264 sessions, 898 fall days (40%). SPY buy and hold +236.8% (max drawdown -33.8%).
 
-- **Sign gate FAILS:** -1 x SPY held open to close on fall days makes **-0.066% a day after costs**. Nothing else was judged and **the held-out window (2025-2026) was not run and stays unused**.
-- Why, in plain numbers (descriptive, SPY open to close, no costs): fall days mean **+0.007%**, median +0.064%, up 54.2% of the time; non-fall days mean +0.031%, up 54.8%. The 6 bps round trip is the whole loss.
+- **Sign gate FAILS:** -1 x SPY held open to close on fall days makes **-0.067% a day after costs**. Nothing else was judged and **the held-out window (2025-2026) was not run and stays unused**.
+- Why, in plain numbers (descriptive, SPY open to close, no costs): fall days mean **+0.0075%**, median +0.066%, up 54.3% of the time; non-fall days mean +0.032%, up 54.8%. The 6 bps round trip is the whole loss.
 - The signal marks **volatile** days, not **down** days: fall days move twice as much (standard deviation 1.11% against 0.57%) with the same small upward drift. A short has no direction to ride. By year the fall-day mean was negative only in 2018 (-0.17%) and about zero in 2022-2024.
 - SH has no Alpaca minute bars before 2016-06-27; its earlier fall days would have been counted as missing (not reached).
 
@@ -23,3 +23,7 @@ Same lesson as the bear call spread record: the structure (here, the instrument 
 
 - The overnight leg (close to next open) on fall days: gaps are where fall moves and rebounds happen, and open-to-close excludes them. Cheap to measure, but a bet held overnight is a different strategy (and the earlier tests of holding inverse funds through falls were NO).
 - Fall *onset* days only (the first 1-3 sessions of a fall) instead of every fall day: 40% of sessions are signalled and the signal stays on a median 32 sessions after the trough, so most signalled days are not onsets. This splits the sample, so it must be declared as exploration on dev.
+
+## Review
+
+A fresh whole-branch review (2026-11-23) found no look-ahead, sign or cost error in the sign-gate path and cross-checked the maths: `inverse_of` + `day_return` equals -(SPY open-to-close) - 6 bps to 4 decimals, and the short loses even at zero cost. It found one real fidelity bug, early-close days (13:00) exiting on after-hours prints; fixed with `trim_early_closes` (self-check 11) and dev re-run: the gate moved from -0.066% to -0.067%, same verdict. Deferred minors: an empty fall set makes the gate `nan` (reads as FAILS but then goes on to judge the cells); sessions missing from Yahoo count as "not a fall" silently; the chosen cell's trades CSV is not written (never reached on a NO); the `test` guard file lives in the git-ignored cache.
