@@ -151,6 +151,17 @@ def test_the_market_fall_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     assert "VIXY" not in caplog.text.split("Market fall warning")[1]  # no VIXY data: that part is omitted
 
 
+def test_the_market_fall_on_is_a_warning_and_off_is_info(caplog: pytest.LogCaptureFixture) -> None:
+    levels: dict[str, int] = {}
+    for name, series in (("ON", BEAR), ("OFF", BULL)):
+        caplog.clear()
+        strategy, _, _, _ = _strategy(series)
+        with caplog.at_level(logging.INFO):
+            strategy._refresh_regime()
+        levels[name] = next(r.levelno for r in caplog.records if f"Market fall warning {name}" in r.getMessage())
+    assert levels == {"ON": logging.WARNING, "OFF": logging.INFO}
+
+
 def test_the_vixy_change_is_logged(caplog: pytest.LogCaptureFixture) -> None:
     vixy = [20.0] * (ROWS - 1) + [22.5]
     strategy, _, _, _ = _strategy(_series(CALM_SPY, vixy=vixy))

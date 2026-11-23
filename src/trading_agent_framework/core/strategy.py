@@ -417,7 +417,9 @@ class Strategy:
         )
         vixy_change = vixy[-1] / vixy[-6] - 1 if len(vixy) > 5 else math.nan
         vixy_text = "" if math.isnan(vixy_change) else f", VIXY {vixy_change:+.1%} over 5 sessions"
-        self.log_info(f"Market fall warning {'ON' if self.market_fall else 'OFF'} (VIX/VIX3M {reading.vix / reading.vix3m:.2f}{vixy_text})")
+        message = f"Market fall warning {'ON' if self.market_fall else 'OFF'} (VIX/VIX3M {reading.vix / reading.vix3m:.2f}{vixy_text})"
+        # ON is a warning so a run's log shows when the strategy is in defensive mode
+        (self.log_warning if self.market_fall else self.log_info)(message)
         self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
     def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
