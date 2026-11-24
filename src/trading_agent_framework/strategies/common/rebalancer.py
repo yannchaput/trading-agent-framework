@@ -108,8 +108,8 @@ class UncertainRetryError(BrokerUncertainError):
 def submit_buy(strategy: Strategy, symbol: str, quantity: float | Decimal, price: float, *, min_trade: float = 0.0, decimals: int = 6) -> tuple[Order, Decimal]:
     """Submit a day market buy; one the framework refuses for money is sent once more at the most that fits.
 
-    A caller sizes its last buy to exactly `spendable_cash()` at a price read earlier; live, any uptick since then
-    makes `Strategy.submit_order` refuse it (`InsufficientFundsError`). The retry sends `exc.max_quantity` floored
+    A caller sizes its last buy to exactly `spendable_cash()` at a price read earlier; live, a price move past the 2%
+    buffer since then makes `Strategy.submit_order` refuse it (`InsufficientFundsError`; a smaller one is absorbed). The retry sends `exc.max_quantity` floored
     to `decimals` (6: fractional shares, 0: whole shares), unless that is nothing or worth less than `min_trade` at
     the caller's `price`. The first attempt sends `quantity` as given. Shared by the Rebalancer, cross_momentum and
     earnings_drift.

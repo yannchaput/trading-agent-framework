@@ -26,7 +26,7 @@ class OrderValidationError(BrokerError, ValueError):
 
 
 class InsufficientFundsError(OrderValidationError):
-    """A buy costs more than `Strategy.spendable_cash()`; `max_quantity` is the most that fits."""
+    """A buy costs more than the real money (`Strategy.spendable_cash()` plus the 2% buffer); `max_quantity` is the most that fits inside the buffer."""
 
     def __init__(self, message: str, *, spendable: Decimal, max_quantity: Decimal) -> None:
         """Keep the spendable cash (may be negative) and the largest quantity that fits (0 when none)."""

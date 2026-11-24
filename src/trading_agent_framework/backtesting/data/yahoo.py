@@ -228,7 +228,7 @@ def _trim_to_window(frame: pd.DataFrame, end: datetime) -> pd.DataFrame:
     """Drop rows whose session date is after `end`'s date (inclusive end, by DATE -- the backtesting rule), so a download that ran through today shows nothing past the requested window."""
     if frame.empty:
         return frame
-    return cast("pd.DataFrame", frame[frame.index.date <= end.date()])
+    return cast("pd.DataFrame", frame[[ts.date() <= end.date() for ts in frame.index]])
 
 
 def yfinance_download() -> DownloadFn:
@@ -313,7 +313,7 @@ def parse_yahoo_frame(raw: pd.DataFrame) -> pd.DataFrame:
         df = df[[*_OHLCV, *TRADED_COLUMNS]]
     else:
         df = df[list(_OHLCV)]
-    df = df.astype("float64").dropna(subset=list(_OHLCV))
+    df = cast("pd.DataFrame", df.astype("float64")).dropna(subset=list(_OHLCV))
     close_index = [datetime.combine(ts.date(), SESSION_CLOSE, tzinfo=MARKET_TZ) for ts in df.index]
     df.index = pd.DatetimeIndex(close_index, name="timestamp")
     return df.sort_index()
@@ -331,7 +331,7 @@ def _later_split_factor(splits: pd.Series | None, index: pd.Index) -> pd.Series:
     if splits is None:
         return pd.Series(1.0, index=index)
     ratios = splits.astype("float64").fillna(0.0).replace(0.0, 1.0)
-    later = ratios[::-1].cumprod()[::-1].shift(-1)
+    later = ratios.iloc[::-1].cumprod().iloc[::-1].shift(-1)
     return later.fillna(1.0)
 
 

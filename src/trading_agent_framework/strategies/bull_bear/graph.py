@@ -1,11 +1,25 @@
-"""One review: data → candidates → researcher (one run per stock) → bull → bear → judge → book → sizing → rebalance.
+"""One weekly review as a LangGraph graph: rank → fact_sheets → research → bull_case → bear_case → judge → execute.
 
-The judge puts every candidate in or out; code validates (through the `HandoffRecorder`), builds the book from the
-stocks put in (rank order), sizes it, remembers (`StateStore`) and calls the `Rebalancer`. A debater stage that
-never yields a valid submission abandons the review: no order at all, forced exits included. One stock's failed
-research only gives it the note "research unavailable". Free text from an agent is logged and otherwise ignored.
-See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md and
-docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
+Code ranks the universe and builds the candidates (`rank`), reads every candidate's fact sheet (`fact_sheets`), runs
+the researcher once per stock (`research`), the bull and then the bear on the same evidence (`bull_case`,
+`bear_case`) and the judge (`judge`), who puts every candidate in or out. Code validates every submission (through the
+`HandoffRecorder`), builds the book from the stocks put in (rank order), sizes it, calls the `Rebalancer`, remembers
+(`StateStore`) and appends one line to `reviews.jsonl` (`execute`). No agent has an order tool.
+
+A stage that never yields a valid submission, unusable data, no candidate or a broker failure abandons the review: the
+node raises `StageAbandoned` (or a `BrokerError`/`BacktestError` comes up from the broker), it passes straight through
+`graph.invoke`, and `run` stores the streak and appends the abandoned line. No order goes out before `execute`, forced
+exits included. One stock's failed research only gives it the note "research unavailable". Free text from an agent is
+logged and otherwise ignored.
+
+The graph state carries what flows from one step to the next. What an abandonment needs after a node raised is kept on
+the review instead (`_record`, `_stage`, `_pending`): a failed `invoke` returns no state. The graph runs with a plain
+`invoke` (no streaming, no `step_timeout`, no subgraphs), so every node, `execute` and its orders included, runs on the
+strategy thread.
+
+See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md,
+docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md and
+docs/superpowers/specs/2026-11-24-bull-bear-langgraph-design.md.
 """
 
 from __future__ import annotations
@@ -16,11 +30,11 @@ from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, TypedDict
 
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.strategies.bull_bear.book import build_book
-from trading_agent_framework.strategies.bull_bear.debate_set import build_debate_set
+from trading_agent_framework.strategies.bull_bear.debate_set import DebateSet, build_debate_set
 from trading_agent_framework.strategies.bull_bear.fact_sheet import fact_sheet_row
 from trading_agent_framework.strategies.bull_bear.fundamentals import unavailable_fundamentals
 from trading_agent_framework.strategies.bull_bear.handoff import BearCase, BullCase, HandoffRecorder, Note, Verdicts
@@ -31,13 +45,13 @@ from trading_agent_framework.strategies.bull_bear.state import BullBearState, St
 from trading_agent_framework.strategies.common.cooldowns import advance_cooldowns
 from trading_agent_framework.strategies.common.daily_bars import DailyBars, DataUnavailable
 from trading_agent_framework.strategies.common.pipeline import AgentLike as CommonAgentLike
-from trading_agent_framework.strategies.common.pipeline import ReviewPipeline, RunOutcome, StageAbandoned
+from trading_agent_framework.strategies.common.pipeline import RunOutcome, StageAbandoned
 from trading_agent_framework.strategies.common.portfolio import target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.scoring import MomentumRow, RankedRow, rank, score_stock
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import AgentError, AgentLoopError
+from trading_agent_framework.utils.errors import AgentError, AgentLoopError, BacktestError, BrokerError
 
 if TYPE_CHECKING:
     from trading_agent_framework.core.strategy import Strategy
@@ -61,7 +75,7 @@ class AgentLike(CommonAgentLike, Protocol):
 
 
 class AgentLookup(Protocol):
-    """What the pipeline needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
+    """What the review needs from the agents: one by name (`AgentManager`, or a plain dict in tests)."""
 
     def __getitem__(self, name: str, /) -> AgentLike:
         """The agent registered under `name`."""
@@ -80,11 +94,25 @@ class _Pending:
     sold: list[str]  # the held stocks the judge put out
 
 
-class BullBearPipeline(ReviewPipeline[BullBearState]):
-    """Bull/bear pipeline: debate the candidates, let the judge rank them and execute the resulting portfolio."""
+class ReviewState(TypedDict):
+    """What one review hands from node to node; `now` and `saved` are the input, each other slot has one writer.
 
-    LOG_PREFIX: ClassVar[str] = "[bull_bear] "
-    _agents: AgentLookup  # the narrower lookup: its agents also take `max_steps`
+    Slot names differ from node names (LangGraph refuses a node named like a state key): `bull_case` writes `bull`.
+    """
+
+    now: datetime  # the review time, market timezone
+    saved: BullBearState  # the state loaded at the start of the review
+    debate: DebateSet  # rank: the candidates and the forced exits
+    sheets: dict[str, dict[str, Any]]  # fact_sheets: symbol -> fact sheet row
+    notes: dict[str, str]  # research: symbol -> note (UNAVAILABLE_NOTE where its run failed)
+    bull: dict[str, BullCase]  # bull_case
+    bear: dict[str, BearCase]  # bear_case
+    verdicts: Verdicts  # judge
+    previous: dict[str, dict[str, str]]  # judge: symbol -> the judge's previous verdict entry, for the stocks it judged before
+
+
+class BullBearReview:
+    """The weekly review: a straight-line LangGraph graph, compiled once, run by `run`."""
 
     def __init__(
         self,
@@ -102,9 +130,13 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         fundamentals_of: Callable[[str, datetime], Mapping[str, Any]],
         momentum: Mapping[str, Any],
     ) -> None:
-        """Wire the pipeline to the strategy, parameters, agents and handoff recorder."""
-        super().__init__(strategy=strategy, agents=agents, recorder=recorder, state=state, log=log)
+        """Wire the review to the strategy, parameters, agents, handoff recorder, state, log and data sources, and compile the graph."""
+        self._strategy = strategy
         self._params = params
+        self._agents = agents
+        self._recorder = recorder
+        self._state = state
+        self._log = log
         self._rebalancer = rebalancer
         self._universe_on = universe_on  # the stocks to rank on a market date: a constant list in paper/live, the month's list in a backtest
         self._bars = bars
@@ -113,8 +145,33 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         self._momentum = momentum  # cross_momentum's CONFIG: the score weights, the skip and the filters
         # max_volatility gates new entries only: holdings are scored with a copy that lifts it (CONFIG itself is never changed)
         self._holding_momentum = {**momentum, "max_volatility": math.inf}
+        # What an abandonment needs once a node has raised; reset by `run` at the start of every review.
+        self._record: dict[str, Any] = {}  # the reviews.jsonl line being filled in
         self._stage = "setup"  # "setup" until the rebalancer starts, then "execution": what a broker failure is attributed to
         self._pending: _Pending | None = None  # set once the judge has decided, just before the stage becomes "execution"
+        self._graph = self._build_graph()
+
+    def _build_graph(self) -> Any:
+        """Compile START -> rank -> fact_sheets -> research -> bull_case -> bear_case -> judge -> execute -> END."""
+        from langgraph.graph import END, START, StateGraph
+
+        graph = StateGraph(ReviewState)
+        steps = [
+            ("rank", self._rank_node),
+            ("fact_sheets", self._fact_sheets_node),
+            ("research", self._research_node),
+            ("bull_case", self._bull_node),
+            ("bear_case", self._bear_node),
+            ("judge", self._judge_node),
+            ("execute", self._execute_node),
+        ]
+        previous = START
+        for name, node in steps:
+            graph.add_node(name, node)
+            graph.add_edge(previous, name)
+            previous = name
+        graph.add_edge(previous, END)
+        return graph.compile()
 
     def _now(self) -> datetime:
         """Current time in the market timezone."""
@@ -134,14 +191,29 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
 
     # --- one review --------------------------------------------------------------------------------
 
-    def _run(self, now: datetime, state: BullBearState, record: dict[str, Any]) -> RunOutcome:
-        """Run one pass: review the candidates, then execute."""
-        self._review(now, record, state)
-        return RunOutcome(completed=True, abandoned_streak=0)
+    def run(self) -> RunOutcome:
+        """Run one review through the graph; on an abandonment, store the streak and append the abandoned line.
 
-    def _executing(self) -> bool:
-        """Whether the run has reached the execution stage."""
-        return self._stage == "execution"
+        An exception that is not an abandonment (a `ConfigurationError` from an agent) propagates with the state untouched.
+        """
+        state = self._state.load()
+        now = self._now()
+        self._record = {"date": now.date().isoformat(), "run_id": self._strategy.run_id, "abandoned": False}
+        self._stage, self._pending = "setup", None
+        try:
+            self._graph.invoke({"now": now, "saved": state})
+            return RunOutcome(completed=True, abandoned_streak=0)
+        except StageAbandoned as exc:
+            stage, error = exc.stage, exc
+        except (BrokerError, BacktestError) as exc:
+            # A broker or data failure anywhere in the review: orders may be out once the rebalancer started.
+            stage, error = ("execution" if self._stage == "execution" else "broker"), exc
+        streak = state.abandoned_streak + 1
+        self._strategy.log_error(f"[bull_bear] review abandoned at the {stage} stage (streak {streak}): {error}")
+        saved, extra = self._on_abandoned(state, streak, stage)
+        self._state.save(saved)
+        self._log.append({**self._record, "abandoned": True, "stage": stage, "error": str(error), "abandoned_streak": streak, **extra})
+        return RunOutcome(completed=False, abandoned_streak=streak)
 
     def _on_abandoned(self, state: BullBearState, streak: int, stage: str) -> tuple[BullBearState, dict[str, Any]]:
         """Build the state and record for a run abandoned after repeated failures."""
@@ -160,51 +232,117 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
             saved = replace(state, abandoned_streak=streak)
         return saved, extra
 
-    def _review(self, now: datetime, record: dict[str, Any], state: BullBearState) -> None:
-        """Run the notes, bull, bear and judge stages for the candidates."""
+    # --- the nodes ---------------------------------------------------------------------------------
+
+    def _rank_node(self, state: ReviewState) -> dict[str, Any]:
+        """Rank the universe and build the debate set: the candidates, and the holdings code sells without asking the agents."""
         params, strategy = self._params, self._strategy
-        # Reset at the start of every review, here and not in `_begin` (the base `run` leaves it the no-op default): pyright keeps
-        # the `None` it narrowed `self._pending` to across the `_review` call, which a reset in `run` would not survive.
-        self._stage = "setup"
-        self._pending = None
-        today = now.date().isoformat()
-        moment = now.isoformat()
-
-        # 1. Data and ranking.
         holdings = self._rebalancer.holdings()
-        ranked = self._rank(now, holdings)
-
-        # 2. The debate set, and the holdings code sells without asking the agents.
-        debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state.cooldowns)
-        symbols = debate.symbols
-        record.update(
+        ranked = self._rank(state["now"], holdings)
+        debate = build_debate_set(ranked, holdings, candidate_count=params.candidate_count, retention_rank=params.retention_rank, excluded=state["saved"].cooldowns)
+        self._record.update(
             ranked=len(ranked),
             debate_set=[{"symbol": stock.symbol, "rank": stock.rank, "held": stock.held} for stock in debate.stocks],
             forced_exits=[asdict(exit) for exit in debate.forced_exits],
-            cooldowns_active=dict(state.cooldowns),
+            cooldowns_active=dict(state["saved"].cooldowns),
         )
         strategy.log_info(
             f"[bull_bear] {len(ranked)} stocks ranked; debate: {', '.join(f'{s.symbol} (#{s.rank}{", held" if s.held else ""})' for s in debate.stocks)}; "
             f"forced exits: {', '.join(f'{e.symbol} ({e.reason})' for e in debate.forced_exits) or 'none'}"
         )
-        if not symbols:
+        if not debate.symbols:
             raise StageAbandoned("data", "no stock to debate")
+        return {"debate": debate}
 
-        # 3. Fact sheet.
-        as_of = strategy.clock.now()
-        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), fundamentals=self._fundamentals(stock.symbol, as_of)) for stock in debate.stocks}
+    def _fact_sheets_node(self, state: ReviewState) -> dict[str, Any]:
+        """One fact sheet per candidate, its SEC fields read as of the strategy clock."""
+        as_of = self._strategy.clock.now()
+        sheets = {stock.symbol: fact_sheet_row(stock, sector=self._sector_of(stock.symbol), fundamentals=self._fundamentals(stock.symbol, as_of)) for stock in state["debate"].stocks}
+        return {"sheets": sheets}
 
-        # 4. Researcher: one short run per stock, so one failure costs one note, not the review.
-        notes = self._research_notes(symbols, sheets, moment, record)
+    def _research_node(self, state: ReviewState) -> dict[str, Any]:
+        """The researcher: one short run per stock, so one failure costs one note (`UNAVAILABLE_NOTE`), not the review."""
+        params, strategy = self._params, self._strategy
+        symbols, sheets, moment = state["debate"].symbols, state["sheets"], state["now"].isoformat()
+        notes: dict[str, str] = {}
+        for symbol in symbols:
+            self._recorder.expect_note(symbol)
+            try:
+                self._run_stage(
+                    "researcher",
+                    "submit_note",
+                    researcher_task(symbol, params.note_max_chars),
+                    {"current_datetime": moment, "fact_sheet": sheets[symbol]},
+                    tool_budget=params.research_tool_budget,
+                )
+            except StageAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
+                strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
+                notes[symbol] = UNAVAILABLE_NOTE
+                continue
+            note: Note = self._recorder.submission
+            notes[symbol] = note.note
+        failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
+        self._record["notes"] = {"written": len(symbols) - len(failed), "failed": failed}
+        return {"notes": notes}
 
-        # 5-6. Bull, then bear, then the judge.
-        bull, bear, verdicts, previous = self._debate_and_judge(symbols, sheets, notes, state, moment, record)
+    def _evidence(self, state: ReviewState) -> list[dict[str, Any]]:
+        """What the bull and the bear both read: each candidate's fact sheet and note, in rank order."""
+        return [{"fact_sheet": state["sheets"][symbol], "note": state["notes"][symbol]} for symbol in state["debate"].symbols]
 
-        # 7. The book: every stock the judge put in, in rank order.
+    def _bull_node(self, state: ReviewState) -> dict[str, Any]:
+        """The bull's case for every candidate; it never sees the bear's."""
+        symbols, limit = state["debate"].symbols, self._params.argument_max_chars
+        self._recorder.expect_bull(symbols)
+        self._run_stage("bull", "submit_bull_case", bull_task(limit), {"current_datetime": state["now"].isoformat(), "stocks": self._evidence(state), "constraints": {"argument_max_chars": limit}})
+        return {"bull": {case.symbol: case for case in self._recorder.submission}}
+
+    def _bear_node(self, state: ReviewState) -> dict[str, Any]:
+        """The bear's case against every candidate, from the same evidence; then both sides are logged stock by stock."""
+        symbols, limit, bull = state["debate"].symbols, self._params.argument_max_chars, state["bull"]
+        self._recorder.expect_bear(symbols)
+        self._run_stage("bear", "submit_bear_case", bear_task(limit), {"current_datetime": state["now"].isoformat(), "stocks": self._evidence(state), "constraints": {"argument_max_chars": limit}})
+        bear: dict[str, BearCase] = {case.symbol: case for case in self._recorder.submission}
+        self._record.update(bull_conviction=dict(Counter(case.conviction for case in bull.values())), bear_risk=dict(Counter(case.risk for case in bear.values())))
+        for symbol in symbols:
+            self._strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
+        return {"bear": bear}
+
+    def _judge_node(self, state: ReviewState) -> dict[str, Any]:
+        """The judge: in or out on every candidate, on merit (no agent is told which stocks are held), from its own previous verdict on a stock when it gave one."""
+        params, symbols, saved = self._params, state["debate"].symbols, state["saved"]
+        sheets, notes, bull, bear = state["sheets"], state["notes"], state["bull"], state["bear"]
+        previous = {symbol: saved.verdicts[symbol] for symbol in symbols if symbol in saved.verdicts}
+        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
+        context = {
+            "current_datetime": state["now"].isoformat(),
+            "stocks": [
+                {
+                    "fact_sheet": sheets[symbol],
+                    "note": notes[symbol],
+                    "bull": {"conviction": bull[symbol].conviction, "argument": bull[symbol].argument},
+                    "bear": {"risk": bear[symbol].risk, "concern": bear[symbol].concern, "argument": bear[symbol].argument},
+                    **({"previous_verdict": previous[symbol]} if symbol in previous else {}),
+                }
+                for symbol in symbols
+            ],
+            "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
+        }
+        self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
+        verdicts: Verdicts = self._recorder.submission
+        outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
+        ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
+        self._strategy.log_info(f"[judge] in: {ins or 'none'}; out: {outs or 'none'}")
+        return {"verdicts": verdicts, "previous": previous}
+
+    def _execute_node(self, state: ReviewState) -> dict[str, Any]:
+        """Build the book, size it, rebalance, then remember the review and append its line to `reviews.jsonl`."""
+        params, strategy, debate, verdicts, previous, saved = self._params, self._strategy, state["debate"], state["verdicts"], state["previous"], state["saved"]
+        today = state["now"].date().isoformat()
+        # The book: every stock the judge put in, in rank order.
         book = build_book(debate, verdicts.chosen)
         strategy.log_info(f"[bull_bear] book: {', '.join(book) or 'empty, everything parked'}")
 
-        # 8. Sizing and execution: every stock in the book gets the same weight (no volatility, no strength); the rest is parked.
+        # Sizing: every stock in the book gets the same weight (no volatility, no strength); the rest is parked.
         target_weights = equal_weights(book, weight=params.stock_weight)
         target = target_portfolio(target_weights, cash_buffer=params.cash_buffer)
         # A held stock the judge put out starts a cooldown: it stays out of the candidates for the next reviews.
@@ -214,7 +352,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         decided = {verdict.symbol: {"verdict": verdict.verdict, "reason": verdict.reason, "date": today, "strength": verdict.strength} for verdict in verdicts.verdicts}
         self._pending = _Pending(decided=decided, sold=sold)
         # The decision goes into the record before the first order: an abandonment during execution still says why.
-        record.update(
+        self._record.update(
             verdicts=[{**asdict(verdict), "previous_verdict": previous.get(verdict.symbol, {}).get("verdict")} for verdict in verdicts.verdicts],
             verdict_counts=dict(Counter(verdict.verdict for verdict in verdicts.verdicts)),
             strength_counts=dict(Counter(verdict.strength for verdict in verdicts.verdicts if verdict.strength)),
@@ -228,17 +366,20 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         self._stage = "execution"
         orders = self._rebalancer.rebalance(target, [forced.symbol for forced in debate.forced_exits])
 
-        # 9. Remember and log.
-        cooldowns = advance_cooldowns(state.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
-        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**state.verdicts, **decided}, cooldowns=cooldowns))
+        # Remember and log.
+        cooldowns = advance_cooldowns(saved.cooldowns, started=sold, length=params.reentry_cooldown_reviews)
+        self._state.save(BullBearState(last_completed_review=today, abandoned_streak=0, verdicts={**saved.verdicts, **decided}, cooldowns=cooldowns))
         self._log.append(
             {
-                **record,
-                "bull": [asdict(case) for case in bull.values()],
-                "bear": [asdict(case) for case in bear.values()],
+                **self._record,
+                "bull": [asdict(case) for case in state["bull"].values()],
+                "bear": [asdict(case) for case in state["bear"].values()],
                 "orders": [asdict(order) for order in orders],
             }
         )
+        return {}
+
+    # --- helpers -----------------------------------------------------------------------------------
 
     def _rank(self, now: datetime, holdings: Sequence[str]) -> list[RankedRow]:
         """Score the universe (the bars come from `self._bars`) and rank it; a holding keeps every filter but max_volatility."""
@@ -266,74 +407,6 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
                 rows.append(row)
         return rank(rows)
 
-    def _research_notes(self, symbols: Sequence[str], sheets: Mapping[str, Any], moment: str, record: dict[str, Any]) -> dict[str, str]:
-        """The researcher stage: one note per stock (`UNAVAILABLE_NOTE` where its run failed); `notes` goes into the record."""
-        params, strategy = self._params, self._strategy
-        notes: dict[str, str] = {}
-        for symbol in symbols:
-            self._recorder.expect_note(symbol)
-            try:
-                self._run_stage(
-                    "researcher",
-                    "submit_note",
-                    researcher_task(symbol, params.note_max_chars),
-                    {"current_datetime": moment, "fact_sheet": sheets[symbol]},
-                    tool_budget=params.research_tool_budget,
-                )
-            except StageAbandoned as exc:  # a looping run too: it costs this stock its note, like any other researcher failure
-                strategy.log_warning(f"[researcher] no note for {symbol}: {exc}")
-                notes[symbol] = UNAVAILABLE_NOTE
-                continue
-            note: Note = self._recorder.submission
-            notes[symbol] = note.note
-        failed = [symbol for symbol in symbols if notes[symbol] == UNAVAILABLE_NOTE]
-        record["notes"] = {"written": len(symbols) - len(failed), "failed": failed}
-        return notes
-
-    def _debate_and_judge(
-        self, symbols: Sequence[str], sheets: Mapping[str, Any], notes: Mapping[str, str], state: BullBearState, moment: str, record: dict[str, Any]
-    ) -> tuple[dict[str, BullCase], dict[str, BearCase], Verdicts, dict[str, dict[str, str]]]:
-        """The bull and the bear (same evidence, neither sees the other's case), then the judge: (bull, bear, verdicts, previous verdicts)."""
-        params, strategy = self._params, self._strategy
-        evidence = [{"fact_sheet": sheets[symbol], "note": notes[symbol]} for symbol in symbols]
-        limits = {"argument_max_chars": params.argument_max_chars}
-        self._recorder.expect_bull(symbols)
-        self._run_stage("bull", "submit_bull_case", bull_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
-        bull: dict[str, BullCase] = {case.symbol: case for case in self._recorder.submission}
-        self._recorder.expect_bear(symbols)
-        self._run_stage("bear", "submit_bear_case", bear_task(params.argument_max_chars), {"current_datetime": moment, "stocks": evidence, "constraints": limits})
-        bear: dict[str, BearCase] = {case.symbol: case for case in self._recorder.submission}
-        record.update(bull_conviction=dict(Counter(case.conviction for case in bull.values())), bear_risk=dict(Counter(case.risk for case in bear.values())))
-        for symbol in symbols:
-            strategy.log_info(f"[debate]   {symbol}: bull {bull[symbol].conviction} ({bull[symbol].argument}); bear {bear[symbol].risk}/{bear[symbol].concern} ({bear[symbol].argument})")
-
-        # 6. Judge: in or out on every candidate, on merit (no agent is told which stocks are held), starting from its own previous verdict on a stock when it gave one.
-        previous = {symbol: state.verdicts[symbol] for symbol in symbols if symbol in state.verdicts}
-        self._recorder.expect_verdicts(symbols, max_in=params.max_book_size, previous={symbol: entry["verdict"] for symbol, entry in previous.items()})
-
-        context = {
-            "current_datetime": moment,
-            "stocks": [
-                {
-                    "fact_sheet": sheets[symbol],
-                    "note": notes[symbol],
-                    "bull": {"conviction": bull[symbol].conviction, "argument": bull[symbol].argument},
-                    "bear": {"risk": bear[symbol].risk, "concern": bear[symbol].concern, "argument": bear[symbol].argument},
-                    **({"previous_verdict": previous[symbol]} if symbol in previous else {}),
-                }
-                for symbol in symbols
-            ],
-            "constraints": {"max_in": params.max_book_size, "reason_max_chars": params.reason_max_chars},
-        }
-        self._run_stage("judge", "submit_verdicts", judge_task(params.reason_max_chars), context)
-        verdicts: Verdicts = self._recorder.submission
-        outs = ", ".join(f"{verdict.symbol} ({verdict.reason})" for verdict in verdicts.verdicts if verdict.verdict == "out")
-        ins = ", ".join(f"{verdict.symbol} ({verdict.strength})" for verdict in verdicts.verdicts if verdict.verdict == "in")
-        strategy.log_info(f"[judge] in: {ins or 'none'}; out: {outs or 'none'}")
-        return bull, bear, verdicts, previous
-
-    # --- helpers -----------------------------------------------------------------------------------
-
     def _run_stage(
         self,
         agent_name: str,
@@ -350,7 +423,7 @@ class BullBearPipeline(ReviewPipeline[BullBearState]):
         `AgentLoopError` is not retried: it raises `AgentLooped` at once.
 
         Args:
-            agent_name: key into `self._agents` (`"bull"`, `"bear"` or `"judge"`).
+            agent_name: key into `self._agents` (`"researcher"`, `"bull"`, `"bear"` or `"judge"`).
             tool: the submit tool the agent must call, e.g. `"submit_verdicts"`.
             task: the first-attempt prompt; the retry prompt is built from it.
             context: the template variables passed to the agent run.

@@ -76,3 +76,20 @@ def test_pm_prompt_keeps_remember_lesson_out_of_the_search_budget():
     text = pm_system(PARAMS)
     assert f"at most {PARAMS.pm_memory_budget} `search_memory` calls" in text
     assert "`remember_lesson` at most once" in text
+
+
+def test_risk_prompt_explains_stress_and_its_kind():
+    text = risk_system(PARAMS)
+    assert "`stress`" in text and "early_warning" in text and "defensive_etfs" in text
+    assert "crowding, macro, drawdown, reversal, stress or other" in text
+
+
+def test_pm_prompt_tilts_to_defensives_and_stays_invested():
+    text = pm_system(PARAMS)
+    assert "early_warning" in text and "defensive_etfs" in text and "keep other ETFs" in text
+    assert "the book stays fully invested" in text
+    assert "`outcome`, `previous`, `holdings`, `unresearched`, `regime` and `stress`" in text
+
+
+def test_pod_prompts_do_not_mention_stress():
+    assert not any("early_warning" in pod_system(pod, PARAMS) or "stress`" in pod_system(pod, PARAMS) for pod in PODS)

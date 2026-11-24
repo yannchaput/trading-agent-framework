@@ -33,10 +33,10 @@ class _TimeoutAdapter(HTTPAdapter):
         super().__init__(**kwargs)
         self.timeout = timeout
 
-    def send(self, request: Any, **kwargs: Any) -> Any:
+    def send(self, request: Any, *args: Any, **kwargs: Any) -> Any:
         if kwargs.get("timeout") is None:
             kwargs["timeout"] = self.timeout
-        return super().send(request, **kwargs)
+        return super().send(request, *args, **kwargs)
 
 
 def _with_timeout[T](client: T) -> T:

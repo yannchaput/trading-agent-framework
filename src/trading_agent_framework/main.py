@@ -1,7 +1,7 @@
-"""Command-line entry point: `agent <strategy> <live|paper|backtesting>`."""
+"""Command-line entry point: `agent [--window WINDOW] <strategy> <live|paper|backtesting>`."""
 
+import argparse
 import logging
-import sys
 
 from rich import box
 from rich.console import Console
@@ -10,6 +10,7 @@ from rich.text import Text
 
 import trading_agent_framework as tr
 from trading_agent_framework.backtesting.placeholder import PlaceholderBroker
+from trading_agent_framework.backtesting.time_window import PredefinedWindow
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.factory import build_broker
 from trading_agent_framework.config import find_project_root, load_strategy_env
@@ -29,17 +30,21 @@ def _refuse_tastytrade_sandbox() -> None:
         )
 
 
-def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strategies) -> None:
+def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strategies, window: PredefinedWindow | None = None) -> None:
     """Load and run the selected strategy.
 
     Args:
         console (Console): the standard output
         trading_mode (TradingMode): the trading mode.
         strategy (Strategies): the strategy to run
+        window (PredefinedWindow | None): backtest window replacing the strategy's default; only valid in backtesting mode.
 
     Returns:
         None
     """
+    if window is not None and trading_mode is not TradingMode.BACKTESTING:
+        console.print(f"--window only applies in backtesting mode, not {trading_mode.value}", style="bold red")
+        raise SystemExit(1)
     strategy_name = strategy.value
     console.print(f"Running strategy: [bold cyan2]{strategy_name}[/bold cyan2] in [bold dark_red]{trading_mode.value}[/bold dark_red] mode")
 
@@ -55,7 +60,7 @@ def _run_strategy(console: Console, trading_mode: TradingMode, strategy: Strateg
         except (ConfigurationError, BrokerError) as exc:
             console.print(str(exc), style="bold red")
             raise SystemExit(1) from exc
-    built = build_strategy(strategy, broker, trading_mode)
+    built = build_strategy(strategy, broker, trading_mode, window)
     if built is None:
         return
 
@@ -98,11 +103,17 @@ def main() -> None:
         for mode in TradingMode:
             console.print(f"  - {mode.value}", style="magenta")
 
-    # Check if the strategy is provided as a command-line argument
-    if len(sys.argv) < 3:
+    parser = argparse.ArgumentParser(prog="agent")
+    parser.add_argument("strategy", nargs="?")
+    parser.add_argument("trading_mode", nargs="?")
+    parser.add_argument("--window", choices=[window.value for window in PredefinedWindow], help="backtest window replacing the strategy's default (backtesting only)")
+    args = parser.parse_intermixed_args()
+
+    # Check if the strategy and the trading mode are provided as command-line arguments
+    if args.strategy is None or args.trading_mode is None:
         # The "[" need to be escaped in the console to avoid being interpreted as optional arguments by the shell
         # The closing bracket does not need to be escaped because it is not interpreted as an optional argument by the shell.
-        console.print("Usage: python main.py \\[strategy_name] \\[trading_mode]", style="bold red")
+        console.print("Usage: agent \\[--window window] \\[strategy_name] \\[trading_mode]", style="bold red")
         console.print("Available strategies:", style="bold white")
         print_available_strategies()
         console.print("Available trading modes:", style="bold magenta")
@@ -111,15 +122,15 @@ def main() -> None:
 
     # Check if the provided strategy name is valid
     try:
-        strategy = Strategies(sys.argv[1])
+        strategy = Strategies(args.strategy)
     except ValueError:
-        console.print(f"Invalid strategy name: {sys.argv[1]}", style="bold red")
+        console.print(f"Invalid strategy name: {args.strategy}", style="bold red")
         console.print("Available strategies:", style="bold yellow")
         print_available_strategies()
         raise SystemExit(1) from None
 
     # check if the provided trading mode is valid
-    trading_mode = sys.argv[2]
+    trading_mode = args.trading_mode
     if trading_mode not in [mode.value for mode in TradingMode]:
         console.print(f"Invalid trading mode: {trading_mode}", style="bold red")
         console.print("Available trading modes:", style="bold yellow")
@@ -128,7 +139,7 @@ def main() -> None:
 
     # Get the trading mode from the command-line argument and convert it to the TradingMode enum
     enum_mode = TradingMode(trading_mode)
-    _run_strategy(console, enum_mode, strategy)
+    _run_strategy(console, enum_mode, strategy, PredefinedWindow(args.window) if args.window else None)
 
 
 if __name__ == "__main__":

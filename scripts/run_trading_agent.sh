@@ -10,14 +10,17 @@ echo "Script directory: $SCRIPT_DIR"
 echo "Project directory: $PROJECT_DIR"
 echo "Wheel path: $WHEEL"
 
-if [ $# -ne 2 ]; then
+if [ $# -lt 2 ]; then
     echo "illegal number of parameters"
-    echo "Usage: <command> [strategy_name] [backtest|paper|live]"
+    echo "Usage: <command> [strategy_name] [backtest|paper|live] [extra_args...]"
     exit 1
 
 fi
 STRATEGY="${1:-macro_risk}"
 MODE_INPUT="${2:-backtest}"
+shift 2                    # drop the first two arguments
+EXTRA_ARGS=()
+EXTRA_ARGS=("$@")
 
 case "$MODE_INPUT" in
     backtest|backtesting)   
@@ -49,10 +52,14 @@ echo "We are in the project directory: $(pwd)"
 uv pip install -q --upgrade "$WHEEL"
 
 echo "Running $STRATEGY in $MODE mode from wheel..."
+EXTRA_QUOTED=""
+if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
+    printf -v EXTRA_QUOTED ' %q' "${EXTRA_ARGS[@]}"
+fi
 # Run under a pseudo-terminal (`script`) so ANSI colors (rich + Lumibot's
 # termcolor-based log_message) are preserved; a pipe via `tee` would make both
 # libraries strip them. We send the typescript to /dev/null and pipe script's
 # stdout through tee instead, so the log file stays free of script's own
 # "Script started/done" header/footer. `-e` + `pipefail` propagate the child's
 # exit code.
-script -qefc "uv run python -m trading_agent_framework.main \"$STRATEGY\" \"$MODE\"" /dev/null | tee "$OUTPUT_FILE"
+script -qefc "uv run python -m trading_agent_framework.main \"$STRATEGY\" \"$MODE\"$EXTRA_QUOTED" /dev/null | tee "$OUTPUT_FILE"

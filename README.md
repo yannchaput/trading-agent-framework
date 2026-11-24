@@ -10,7 +10,7 @@ A trading agent harness managing runtime, the broker layer, agent layer, memory 
 | Upgrade dependencies | `uv lock --upgrade` then `uv sync` to install them in .venv. |
 | Upgrade uv | `uv self update` |
 | To package and distribute | `uv build` |
-| Run a strategy | `uv run agent <strategy_name> <trading_mode>` or `uv run poe <script_name>` where script name is defined in `pyproject.tom` |
+| Run a strategy | `uv run agent <strategy_name> <trading_mode>` (backtesting only: `--window <PredefinedWindow value>`, e.g. `uv run agent --window 2y_latest bull_bear backtesting`, replaces the strategy's default window) or `uv run poe <script_name>` where script name is defined in `pyproject.tom` |
 | Run the dashboard | `uv run dashboard` or `uv run poe dashboard` |
 | Run a batch | `uv run batch-universe` or `uv run poe batch-universe` |
 | Run the ruff linter | `uv run ruff check` |

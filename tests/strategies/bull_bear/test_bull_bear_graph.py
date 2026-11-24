@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -20,9 +21,9 @@ from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.enums import PositionSide
 from trading_agent_framework.entities.position import Position
+from trading_agent_framework.strategies.bull_bear.graph import BullBearReview
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
-from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import UNAVAILABLE_NOTE
 from trading_agent_framework.strategies.bull_bear.state import BullBearState, StateStore
 from trading_agent_framework.strategies.common.daily_bars import DailySeries, DataUnavailable
@@ -119,7 +120,7 @@ def does_nothing(tools: dict[str, Callable[..., dict[str, Any]]], ctx: Any) -> N
 
 @dataclass
 class Harness:
-    pipeline: BullBearPipeline
+    review: BullBearReview
     broker: FakeBroker
     bars: FakeBars
     agents: dict[str, FakeAgent]
@@ -130,7 +131,7 @@ class Harness:
 
     def run(self) -> RunOutcome:
         self.broker.submitted.clear()
-        outcome = self.pipeline.run()
+        outcome = self.review.run()
         self.orders = [(order.asset.symbol, order.side.value, float(order.quantity or 0)) for order in self.broker.submitted]
         return outcome
 
@@ -167,7 +168,7 @@ def _harness(
     bars = FakeBars(series if series is not None else _default_series())
     rebalancer = Rebalancer(strategy, params)
     log_path = tmp_path / "logs" / "reviews.jsonl"
-    pipeline = BullBearPipeline(
+    review = BullBearReview(
         strategy=strategy,
         params=params,
         agents=agents,
@@ -181,7 +182,7 @@ def _harness(
         fundamentals_of=fundamentals_of or (lambda symbol, as_of: {}),
         momentum=CONFIG,
     )
-    return Harness(pipeline, broker, bars, agents, rebalancer, store, log_path)
+    return Harness(review, broker, bars, agents, rebalancer, store, log_path)
 
 
 def assert_no_agent_is_told_what_is_held(h: Harness) -> None:
@@ -789,10 +790,10 @@ def test_an_abandonment_before_the_execution_stage_stores_nothing_but_the_streak
 def test_a_completed_review_resets_the_streak_and_marks_the_day_done(tmp_path: Path) -> None:
     h = _harness(tmp_path, state=BullBearState(abandoned_streak=2))
 
-    assert not h.pipeline.completed_today()
+    assert not h.review.completed_today()
     h.run()
 
-    assert h.store.load().abandoned_streak == 0 and h.pipeline.completed_today()
+    assert h.store.load().abandoned_streak == 0 and h.review.completed_today()
 
 
 def test_an_abandoned_review_leaves_the_day_open_so_a_restart_reviews_again(tmp_path: Path) -> None:
@@ -800,7 +801,7 @@ def test_an_abandoned_review_leaves_the_day_open_so_a_restart_reviews_again(tmp_
     h.agents["judge"].overrides = [does_nothing, does_nothing]
 
     assert not h.run().completed
-    assert not h.pipeline.completed_today()
+    assert not h.review.completed_today()
 
     assert h.run() == RunOutcome(completed=True, abandoned_streak=0)
     assert len(h.agents["judge"].calls) == 3
@@ -912,10 +913,10 @@ def test_a_forced_retry_that_fails_too_logs_the_retry_and_no_success(tmp_path: P
 def test_a_hand_edited_review_date_never_stops_a_review(tmp_path: Path) -> None:
     h = _harness(tmp_path, state=BullBearState(last_completed_review="next tuesday-ish"))
 
-    assert not h.pipeline.completed_today()
+    assert not h.review.completed_today()
     outcome = h.run()
 
-    assert outcome.completed and h.pipeline.completed_today()
+    assert outcome.completed and h.review.completed_today()
     assert h.store.load().last_completed_review == "2026-10-06"
 
 
@@ -1417,3 +1418,46 @@ def test_a_researcher_run_ending_after_its_length_refusals_gets_the_forced_retry
     seen = _notes_seen_by_the_bull(h)["S00"]
     assert len(seen) <= 800 and seen.startswith("xxx")
     assert h.log_lines()[0]["notes"] == {"written": 15, "failed": []}
+
+
+# --- the review graph ---------------------------------------------------------------------------------------------
+
+
+def test_the_review_graph_is_a_straight_line(tmp_path: Path) -> None:
+    graph = _harness(tmp_path).review._graph.get_graph()
+    steps = ["__start__", "rank", "fact_sheets", "research", "bull_case", "bear_case", "judge", "execute", "__end__"]
+    assert sorted((edge.source, edge.target) for edge in graph.edges) == sorted(zip(steps, steps[1:], strict=False))
+
+
+def test_a_review_after_an_execution_abandonment_starts_clean(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path)
+
+    def half_way(target: Any, forced_exits: Any = ()) -> list[PlacedOrder]:
+        h.rebalancer.placed = [PlacedOrder("S00", "buy", 10.0)]
+        raise BrokerError("connection reset")
+
+    def broken() -> list[str]:
+        raise BrokerError("positions unavailable")
+
+    monkeypatch.setattr(h.rebalancer, "rebalance", half_way)
+    h.run()
+    monkeypatch.undo()
+    monkeypatch.setattr(h.rebalancer, "holdings", broken)
+    h.run()
+    first, second = h.log_lines()
+    assert first["stage"] == "execution"
+    # A stale `_stage` would call this "execution"; a stale record would carry the first review's verdicts and orders.
+    assert second["stage"] == "broker" and "verdicts" not in second and "orders" not in second
+
+
+def test_the_orders_are_placed_on_the_calling_thread(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    h = _harness(tmp_path)
+    rebalance, threads = h.rebalancer.rebalance, []
+
+    def spy(target: Any, forced_exits: Any = ()) -> list[PlacedOrder]:
+        threads.append(threading.get_ident())
+        return rebalance(target, forced_exits)
+
+    monkeypatch.setattr(h.rebalancer, "rebalance", spy)
+    assert h.run().completed
+    assert threads == [threading.get_ident()]

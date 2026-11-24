@@ -952,7 +952,7 @@ class CrossMomentumStrategy(Strategy):
 
     def _backtest_preload_assets(self, stocks: Sequence[str] | None = None, benchmark: str | None = None) -> list[Asset]:
         """The stocks (default `vars.universe`), the sleeve symbols and the benchmark, each once: what a backtest loads up front."""
-        symbols = list(dict.fromkeys([*(self.vars.universe if stocks is None else stocks), *sleeve_symbols(self.parameters["parking"]), *([benchmark] if benchmark else [])]))
+        symbols: list[str] = list(dict.fromkeys([*(self.vars.universe if stocks is None else stocks), *sleeve_symbols(self.parameters["parking"]), *([benchmark] if benchmark else [])]))
         return [Asset(symbol=symbol) for symbol in symbols]
 
     def run_backtesting(self, **overrides: Any):

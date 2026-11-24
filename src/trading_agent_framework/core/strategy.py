@@ -8,6 +8,7 @@ facade over the broker, so strategy code reads like lumibot strategy code.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime, time, timedelta
 from decimal import ROUND_DOWN, Decimal
@@ -23,7 +24,7 @@ from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode, find_project_root
 from trading_agent_framework.core.executor import StrategyExecutor
 from trading_agent_framework.core.indicators import Indicators
-from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, classify_regime
+from trading_agent_framework.core.regime import REGIME_LABELS, REGIME_LINE, RegimeParameters, RegimeReading, classify_regime
 from trading_agent_framework.core.regime_data import RegimeSource, YahooRegimeData
 from trading_agent_framework.entities.asset import Asset
 from trading_agent_framework.entities.bars import Bars
@@ -47,7 +48,7 @@ from trading_agent_framework.utils.errors import (
     OrderValidationError,
     RegimeDataError,
 )
-from trading_agent_framework.utils.helpers import BUY_BUFFER
+from trading_agent_framework.utils.helpers import BUY_BUFFER, in_market_fall
 from trading_agent_framework.utils.log import ColorLogger, setup_strategy_logging
 
 if TYPE_CHECKING:
@@ -170,8 +171,13 @@ class Strategy:
         self.run_id: str | None = None
         # Latest market regime; None until `_refresh_regime` could compute one (the executor calls it every session).
         self.regime: int | None = None
+        # The full reading behind `regime` (score, SPY/VIX levels), set together with it. Information only.
+        self.regime_reading: RegimeReading | None = None
+        # Early-warning "market fall" flag (`in_market_fall`: VIX/VIX3M or a VIXY jump), set together with `regime`;
+        # None until the first refresh with enough history. Information only: nothing trades on it.
+        self.market_fall: bool | None = None
         self._regime_history_warned = False
-        # Where the regime's SPY/VIX/VIX3M closes come from; no network until the first refresh. Assignable in tests.
+        # Where the regime's SPY/VIX/VIX3M/VIXY closes come from; no network until the first refresh. Assignable in tests.
         self.regime_source: RegimeSource = YahooRegimeData()
         self.executor = StrategyExecutor(self)
 
@@ -370,11 +376,12 @@ class Strategy:
         )
 
     def _refresh_regime(self) -> None:
-        """Estimate the market regime from Yahoo's SPY, VIX and VIX3M closes; the executor calls this once per session.
+        """Estimate the market regime and the market-fall early warning from Yahoo's SPY, VIX, VIX3M and VIXY closes; once per session.
 
         Reads the closes strictly before today's session date, so a mid-session start sees the same data as the
         morning refresh. Information only: a log line, and an `add_line` point in backtests. Any failure keeps the
-        previous value, because a regime estimate must never cost a session.
+        previous value, because a regime estimate must never cost a session. It also sets `regime_reading` and
+        `market_fall` (the `in_market_fall` rule on the same slice) together with `regime`.
 
         `reading` is a `RegimeReading` from `classify_regime`, the state machine's output on the last close. Its
         `score` (0 to 4) counts the stress conditions met (VIX inverted, VIX spike, SPY below its SMA, SPY well
@@ -386,6 +393,9 @@ class Strategy:
         try:
             series = self.regime_source.closes_before(session, params.min_bars)
             reading = classify_regime(series.spy, series.vix, series.vix3m, params)
+            # VIXY is optional: a non-positive close counts as missing and must not stop the regime (VIX and VIX3M stay strict)
+            vixy = tuple(v if v > 0 else math.nan for v in series.vixy) if series.vixy else (math.nan,) * len(series)
+            market_fall = in_market_fall(series.vix, series.vix3m, vixy) if reading else None
         except (RegimeDataError, ValueError) as exc:
             self.log_warning(f"Market regime not refreshed (still {self.regime}): {exc}")
             return
@@ -394,7 +404,10 @@ class Strategy:
                 self._regime_history_warned = True
                 self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily closes of SPY/VIX/VIX3M before {session}")
             return
+        # Regular market regime detection : to log and display in the dashboard
         self.regime = reading.regime
+        self.regime_reading = reading
+        self.market_fall = market_fall
         episode = f", episode low {reading.episode_low:.2f}" if reading.episode_low is not None else ""
         self.log_info(
             f"Market regime {reading.regime:+d} ({REGIME_LABELS[reading.regime]}): score {reading.score}/4, "
@@ -403,6 +416,12 @@ class Strategy:
             f"VIX {reading.vix:.2f} vs VIX3M {reading.vix3m:.2f}, "
             f"VIX {reading.vix / reading.vix_median:.2f}x its {params.vix_median_window}-day median{episode}"
         )
+        # Fall detection: VIX/VIX3M inverted or VIXY jumped up (VIXY is optional, so a missing close does not stop the regime)
+        vixy_change = vixy[-1] / vixy[-6] - 1 if len(vixy) > 5 else math.nan
+        vixy_text = "" if math.isnan(vixy_change) else f", VIXY {vixy_change:+.1%} over 5 sessions"
+        message = f"Market fall warning {'ON' if self.market_fall else 'OFF'} (VIX/VIX3M {reading.vix / reading.vix3m:.2f}{vixy_text})"
+        # ON is a warning so a run's log shows when the strategy is in defensive mode
+        (self.log_warning if self.market_fall else self.log_info)(message)
         self.add_line(REGIME_LINE, reading.regime, color="#d1d4dc", plot_name=REGIME_LINE)
 
     def wait_for_order_execution(self, order: Order, timeout: float | None = None) -> bool:
@@ -588,15 +607,17 @@ class Strategy:
         return order.limit_price or order.stop_limit_price or self.get_last_price(order.asset)
 
     def _check_buy_budget(self, order: Order) -> None:
-        """Raise `InsufficientFundsError` when a buy with a quantity costs more than `spendable_cash()`."""
+        """Raise `InsufficientFundsError` when a buy with a quantity costs more than the real money (`spendable_cash()` plus the buffer)."""
         if order.side is not OrderSide.BUY or order.quantity is None:
             return
         price = self._order_price(order)
         if price is None:
             return
         cost = order.quantity * price
-        spendable = self.spendable_cash()
-        if cost <= spendable:
+        account = self.broker.get_account()
+        spendable = self.spendable_cash(account)
+        # Sizing keeps the buffer back, the check does not: the buffer absorbs price drift between sizing and sending.
+        if cost <= spendable + BUY_BUFFER * account.portfolio_value:
             return
         max_quantity = (spendable / price).quantize(Decimal("0.000001"), rounding=ROUND_DOWN) if spendable > 0 else Decimal(0)
         raise InsufficientFundsError(
@@ -752,8 +773,9 @@ class Strategy:
                 `DAILY_WARMUP_FLOOR` (283). For any other timestep it is NOT raised (that would
                 widen every minute download); instead the benchmark's daily frame alone is
                 preloaded over that window. (The market regime reads Yahoo on its own and needs neither.)
-            news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
-                Alpaca provider built lazily from `AlpacaCredentials.for_news()` (`ALPACA_NEWS_*`); the tool's own
+            news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to the
+                GDELT cache before 2026-04-29 and an Alpaca provider (built lazily from `ALPACA_NEWS_*`) from then on
+                (`backtesting/news.py`); the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
             agent_telemetry: record every LLM call (tokens, latency, tool calls) -- per-agent totals go to
                 `settings.json["agents"]` and each call to `memory/<strategy>/backtesting/llm_stats.sqlite`,

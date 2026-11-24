@@ -173,7 +173,7 @@ def fetch_benchmark_closes(source: BenchmarkBars, first_day: date, today: date) 
     bars = source.bars([BENCHMARK_SYMBOL], today).get(BENCHMARK_SYMBOL)
     if bars is None:
         return {}
-    closes = {market_day(stamp): float(close) for stamp, close in bars.df["close"].items()}
+    closes = {market_day(cast(datetime, stamp)): float(cast(float, close)) for stamp, close in bars.df["close"].items()}
     return {day: close for day, close in closes.items() if day >= first_day - timedelta(days=_BASE_DAYS)}
 
 

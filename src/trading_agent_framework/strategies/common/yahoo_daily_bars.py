@@ -112,7 +112,7 @@ def fetch_usable_batch(
     min_coverage: float,
     retry_delays: Sequence[float],
     sleep: Callable[[float], None],
-    on_retry: Callable[[str, float], None],
+    on_retry: Callable[[str, float], object],
 ) -> dict[str, Bars]:
     """One batched download of `universe` plus `extras`, fetched again after each delay while it is unusable.
 

@@ -11,10 +11,10 @@ trading modes: `live`, `paper`, `backtesting`.
 ```bash
 uv sync                                   # install/update dependencies
 uv run agent <strategy_name> <live|paper|backtesting>  # run a strategy (see `Strategies` in `utils/strategy_factory.py`)
+uv run agent --window 2y_latest <strategy_name> backtesting  # backtest on a `PredefinedWindow` value instead of the strategy's default window (backtesting only)
 uv run dashboard [--benchmark-dir PATH]   # Streamlit dashboard: Live and Paper tabs (P&L per day from the strategy's Alpaca account), Backtesting tab (logs/ and memory/ run history) and Models tab (vLLM benchmark results)
 uv run batch-universe                     # rebuild the stock universe file (`strategies/common/batch_us_stock_universe.py`)
 uv run batch-universe --history --start YYYY-MM [--end YYYY-MM]  # build or extend the point-in-time universe history (one top-1,200 list per month) that cross_momentum and bull_bear backtests trade; a backtest does this itself as a pre-step
-uv run bear-spread-research [--start YYYY-MM-DD --end YYYY-MM-DD --equity 1200 --vol-scale 1 --skew 0.8 --half-spread 0.05 --out DIR]  # replay SPY $5-wide bear put spreads opened on the bearish regime over 2016-2026 with Black-Scholes prices from SPY and VIX; prints trades, SPY falls and a GO / NO-GO verdict (downloads Yahoo SPY, ^VIX, ^VIX3M; read-only, no broker)
 uv run bull-bear-scores <run_dir> [<run_dir>...]  # score bull_bear's bull/bear/judge calls and the judge's strengths against forward returns, runs side by side (fetches Yahoo opens; read-only)
 uv run regime scorecard [--start 2016-01-04 --end 2026-10-05]  # score the SPY/VIX market regime against SPY swing falls (downloads Yahoo SPY, ^VIX, ^VIX3M; read-only)
 uv run regime recompute [--logs-root logs] [--dry-run]  # rewrite the Regime line of existing backtest runs' indicators.parquet from Yahoo SPY/VIX (backs up the original once)
@@ -60,7 +60,7 @@ Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under t
 - `memory/CLAUDE.md` -- `MemoryStore` and the memory tools.
 - `fundamentals/CLAUDE.md` -- SEC EDGAR client.
 - `dashboard/CLAUDE.md` -- the Streamlit app.
-- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `insider_trades`, `news_builtin`, `ray_dalio`, `sector_pods`, `vwap_pullback`; `bear_put_spread` is research only, not a registered strategy).
+- `strategies/CLAUDE.md` -- the strategy index; `strategies/common/` shared code; one `CLAUDE.md` per strategy (`bill_ackman`, `bull_bear`, `congress_trades`, `cross_momentum`, `earnings_drift`, `insider_trades`, `news_builtin`, `ray_dalio`, `sector_pods`, `vwap_pullback`).
 
 ## Key patterns / gotchas
 
@@ -76,7 +76,7 @@ Detail for each area lives in a nested `CLAUDE.md`, loaded when you work under t
 - Env file resolution and naming conventions (`env/.env.{strategy}.{mode}`) are documented in `README.md` -- read that before adding new env-dependent config rather than re-deriving it here.
 - **No data tool may use wall-clock time.** A backtest's no-look-ahead guarantee (`backtesting/data/base.py`) holds only as far as the chokepoint it controls -- `BacktestDataSource.bars()`. Any other source of "now" inside a data-fetching tool (news, SEC fundamentals, a future screener) must take its cutoff from `strategy.clock.now()`, exactly as `MemoryStore` already takes `now=self.clock.now`, or it silently leaks future information into a backtest.
 - **Credential groups never fall back.** `ALPACA_API_*` (Alpaca trading), `ALPACA_DATA_*` (market data and calendar for every broker, and `AlpacaBacktestData`), `ALPACA_NEWS_*` (the news tool), `TASTYTRADE_*` (Tastytrade trading). `ALPACA_IS_PAPER` is rejected (renamed `BROKER_API_IS_PAPER`).
-- **Every strategy gets a market regime by default, and nothing trades on it.** The executor refreshes it once per session (`strategy.regime`: 1 bullish / 0 neutral / -1 bearish, `None` without enough history), from Yahoo's SPY, VIX and VIX3M closes in every mode (a 4-condition stress score, no look-ahead). Using it to size or gate a strategy is a new design decision. Details and the warmup floor: `core/CLAUDE.md`.
+- **Every strategy gets a market regime by default, and nothing trades on it.** The executor refreshes it once per session (`strategy.regime`: 1 bullish / 0 neutral / -1 bearish, `None` without enough history), from Yahoo's SPY, VIX and VIX3M closes in every mode (a 4-condition stress score, no look-ahead), plus a fast early warning, `strategy.market_fall`. Using it to size or gate a strategy is a new design decision. Details and the warmup floor: `core/CLAUDE.md`.
 - **Every buy passes one budget check in `Strategy.submit_order`**, sized by `Strategy.spendable_cash()` (min of buying power and cash after open orders, less a fixed 2% `BUY_BUFFER` of the book); over it raises `InsufficientFundsError` with `max_quantity`. Strategies size with `spendable_cash()`, never their own cash formula. Details: `core/CLAUDE.md`.
 - **Research agent tools (news/macro/fundamentals) gate on `strategy.clock.now()`**, the same rule as the data tools above, never the price-bar chokepoint. Details: `agents/CLAUDE.md`.
 

@@ -2,13 +2,13 @@
 
 ## General
 
-* Fix pyright errors (consume tokens)
-* Add a parameter start/stop to the CLI for the backtest
-* Update claude.md so that simplify skill is always run before commit as pony-tail. Check if a hook would be possible. Add documentation by default
+* Add a parameter start/stop date and time window to the CLI for the backtest
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
 * Set up a mlflow server for agent evaluation
+* ~~Fix pyright errors (consume tokens)~~
+* ~~Update claude.md so that simplify skill is always run before commit as pony-tail. Check if a hook would be possible. Add documentation by default~~
 * ~~create a PR template~~
 * ~~ Migrate projects to the 2nd hard drive (with the models)~~
 * ~~Enable IBKR broker~~
@@ -21,11 +21,12 @@
 * ~~Add a gloabl factory/builder for strategy in main.py~~
 * ~~Handle difference of reasoning token budget payload attribute between vllm and llama.cpp~~
 
-## BUGS
+## BUGS & Refactoring
 
 * ~~Review `uv check` errors and fix or silent them~~
 * ~~Replace every instance variable `self.` with `self.vars` to avoid namespace collisions~~
 * Update tools comments with parameters + check if tool annotation is recommended
+* Leverage Langchain native middleware like "Tool error " or "Tool call" limit
 
 ## Skills
 
@@ -57,35 +58,11 @@
 * Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
-### Market regime
-
-Goal: detect a regime shift at the very start (one day or less) to change the daily strategy.
-Details: `docs/Market regim early detection work list.md`. Check the box once a paper is tested.
-
-* [X] Shu, Yu & Mulvey (2024), Statistical Jump Model: [arXiv 2402.05272](https://arxiv.org/abs/2402.05272)
-* [x] Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries): [arXiv 2605.30363](https://arxiv.org/abs/2605.30363)
-* [x] Boukardagha (2026), Wasserstein HMM, strictly causal: [arXiv 2603.04441](https://arxiv.org/abs/2603.04441)
-* [x] Theory: quickest detection in latent factor models (2026): [arXiv 2610.20366](https://arxiv.org/pdf/2610.20366)
-* [x] Theory: Li et al. (2025), Sparse Jump Model + MPC: [MDPI](https://www.mdpi.com/2227-7390/13/17/2837)
-* [x] Confirm the 3 high-numbered arXiv IDs (2605.30363, 2610.20366, 2610.27751) resolve
-* [x] HHMM (arXiv 2007.14874): NO, misses 11/14 falls, needs look-ahead
-* [x] MS-TVTP weekly exit: NO, exits ~6 weeks after the trough
-* [x] Leveraged ETF switch (UPRO/TQQQ): vol-scaled and 200-day PASS, graded regime FAIL
-* [x] Current SPY/VIX regime: too late to gate leverage
-
 #### News fetch
 
 * Update the news_search tool: all news earlier than April 2026 are fetched from GEDLT cache. After it's Alpaca.
 * Add a warning in the logs where no news are returned
 
-#### Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries)
-
-The idea is to use a LLM or a ML model on the market crisis news to detect if sentiment dropped during those periods
-* Use daily on a 2Y window
-* Use intraday on the current period
-* Use a tranformer sentiment analysis model from HF rather than Qwen.
-* [x] Spike "news + VIX" (news drift and CUSUM, both orderings): NO. News is calm before falls and coincident with VIX; its shift at a fall start is +0.1 to +0.5 sd, too small to detect within a week. Median switch 5 sessions / -4% after the high (VIX alone does the same). Holdout 2025-2026 kept untouched. Spec: `docs/superpowers/specs/2026-11-22-news-vix-early-regime-spike-design.md`
-* [ ] (Low priority after the NO above) Follow-up, pre-2020 titles (2015-2019 have no titles in GDELT): rebuild pseudo-titles from URL slugs (78% of 2017 URLs have a 5+ word slug). Validate first on 2020-2024: FinBERT score of slug vs title, and the `dev` alerts from slugs only must match the title run. Needs a slug variant of the ticker filter ("NASDAQ OLLI" without parentheses). If valid, 2015-2019 (5 falls) becomes a second untouched window.
 
 ### Cross sectional momentum
 
@@ -108,6 +85,8 @@ The idea is to use a LLM or a ML model on the market crisis news to detect if se
 
 ### Citadel Pod Sector
 
+* Simplify Langgraph code (cf Ray Dalio)
+* Log the AgentRunResult
 * ~~Run the fist baseline (on 1 month)~~
 
 ### Ray Dalio
@@ -164,6 +143,19 @@ La suite :
 	2.	Je vous propose ensuite de fusionner. Il faudra alors redémarrer les deux stratégies pour charger le nouveau code, avant mardi.
 ```
 
+### Bearish regime
+
+Goal: a second account that makes money on its own and, ideally, most when the market falls (bull_bear loses in falls).
+Details and sources: `docs/papers/bearish search papers.md`. Check the box once a strategy is tested.
+
+* [ ] Time-series momentum / trend following ("crisis alpha"): Hurst, Ooi & Pedersen, *A Century of Evidence on Trend-Following Investing* (67 markets, 1880-2016, positive in 8 of the 10 largest crises); Man/Oxford 1960-2015 (positive skew, more so for faster lookbacks). Code: pysystemtrade (pst-group), PyTrendFollow. Caveat: weak for about 4 years after a crisis starts.
+* [ ] Faber's 10-month SMA / GTAA: at each month end hold an asset class above its 10-month SMA, else cash. Test several rebalance dates (timing luck). Code: Concretum's Python implementation.
+* [ ] Dual Momentum (Antonacci): relative momentum picks the strongest asset, absolute momentum moves to bonds when the trend is negative. Lags the S&P 500 since 2009, ahead of it from 2008. Variant: Quantpedia 2007-2026 on commodity ETFs (DBA, DBB, DBE, DBP).
+* [ ] Keller's canary strategies (DAA, BAA, HAA): a canary universe (VWO, BND) with 13612W momentum triggers crash protection; BAA in SSRN 4166845. Code: HAApy, QuantConnect threads (results drop when trading the next open instead of the month-end close).
+* [ ] Defensive equity factors (quality, low volatility): smaller drawdowns in COVID and the GFC, but low volatility can still lose 60% of the market's fall (Man Group): a dampener, not a hedge.
+* [ ] Dynamic momentum (Daniel & Moskowitz, NBER w20439): forecast momentum's mean and variance to avoid the bear-market rebound crash (about doubles alpha and Sharpe). Simpler HSE variant: turn contrarian for 3 months after a crash.
+* Toolkits: R `AssetAllocation` (Ivy, Robust Asset Allocation, Dual Momentum, Adaptive Asset Allocation); Python `bt`, `backtesting.py`, Ilya Kipnis's PythonBacktesting.
+
 ---
 
 ## Archives
@@ -202,3 +194,28 @@ La suite :
 * ~~Add a log in executor to log the execution hour : usefull for intraday.~~
 * ~~Log the system prompt in 'initialize' method~~
 * ~~Fix prompt to avoid chineese character with GLM models~~
+
+### Market regime
+
+Goal: detect a regime shift at the very start (one day or less) to change the daily strategy.
+Details: `docs/Market regim early detection work list.md`. Check the box once a paper is tested.
+
+* [X] Shu, Yu & Mulvey (2024), Statistical Jump Model: [arXiv 2402.05272](https://arxiv.org/abs/2402.05272)
+* [x] Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries): [arXiv 2605.30363](https://arxiv.org/abs/2605.30363)
+* [x] Boukardagha (2026), Wasserstein HMM, strictly causal: [arXiv 2603.04441](https://arxiv.org/abs/2603.04441)
+* [x] Theory: quickest detection in latent factor models (2026): [arXiv 2610.20366](https://arxiv.org/pdf/2610.20366)
+* [x] Theory: Li et al. (2025), Sparse Jump Model + MPC: [MDPI](https://www.mdpi.com/2227-7390/13/17/2837)
+* [x] Confirm the 3 high-numbered arXiv IDs (2605.30363, 2610.20366, 2610.27751) resolve
+* [x] HHMM (arXiv 2007.14874): NO, misses 11/14 falls, needs look-ahead
+* [x] MS-TVTP weekly exit: NO, exits ~6 weeks after the trough
+* [x] Leveraged ETF switch (UPRO/TQQQ): vol-scaled and 200-day PASS, graded regime FAIL
+* [x] Current SPY/VIX regime: too late to gate leverage
+
+#### Yi et al. (2026), LLM proposals validated by VAR/PCMCI (lag +0.9 day, Treasuries)
+
+The idea is to use a LLM or a ML model on the market crisis news to detect if sentiment dropped during those periods
+* Use daily on a 2Y window
+* Use intraday on the current period
+* Use a tranformer sentiment analysis model from HF rather than Qwen.
+* [x] Spike "news + VIX" (news drift and CUSUM, both orderings): NO. News is calm before falls and coincident with VIX; its shift at a fall start is +0.1 to +0.5 sd, too small to detect within a week. Median switch 5 sessions / -4% after the high (VIX alone does the same). Holdout 2025-2026 kept untouched. Spec: `docs/superpowers/specs/2026-11-22-news-vix-early-regime-spike-design.md`
+* [ ] (Low priority after the NO above) Follow-up, pre-2020 titles (2015-2019 have no titles in GDELT): rebuild pseudo-titles from URL slugs (78% of 2017 URLs have a 5+ word slug). Validate first on 2020-2024: FinBERT score of slug vs title, and the `dev` alerts from slugs only must match the title run. Needs a slug variant of the ticker filter ("NASDAQ OLLI" without parentheses). If valid, 2015-2019 (5 falls) becomes a second untouched window.

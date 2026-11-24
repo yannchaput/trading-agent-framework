@@ -1,7 +1,7 @@
 """A module to create a strategy instance from a strategy name and parameters."""
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from enum import StrEnum, auto
 from typing import Any
 
@@ -22,7 +22,7 @@ from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
 from trading_agent_framework.strategies.sector_pods import SectorPodsStrategy
 from trading_agent_framework.strategies.vwap_pullback import VwapPullbackStrategy
 
-StrategyBuilder = Callable[[Broker, TradingMode], Strategy | None]
+StrategyBuilder = Callable[[Broker, TradingMode, Mapping[str, Any]], Strategy | None]
 
 logger = logging.getLogger(__name__)
 
@@ -59,57 +59,57 @@ def _build_with_universe(strategy_class: Callable[..., Strategy], broker: Broker
     return strategy_class(broker=broker, mode=mode, universe=universe, **kwargs)
 
 
-def _build_cross_momentum(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_cross_momentum(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the cross-momentum strategy over the point-in-time universe."""
-    return _build_with_universe(CrossMomentumStrategy, broker, mode, point_in_time=True)
+    return _build_with_universe(CrossMomentumStrategy, broker, mode, point_in_time=True, parameters=parameters)
 
 
-def _build_news_binary(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_news_binary(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the news-binary strategy."""
-    return NewsBinaryStrategy(broker=broker, mode=mode)
+    return NewsBinaryStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
-def _build_vwap_pullback(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_vwap_pullback(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the VWAP-pullback strategy over the universe."""
-    return _build_with_universe(VwapPullbackStrategy, broker, mode)
+    return _build_with_universe(VwapPullbackStrategy, broker, mode, parameters=parameters)
 
 
-def _build_bill_ackman(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_bill_ackman(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the Bill Ackman strategy over the universe."""
-    return _build_with_universe(BillAckmanStrategy, broker, mode)
+    return _build_with_universe(BillAckmanStrategy, broker, mode, parameters=parameters)
 
 
-def _build_bull_bear(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_bull_bear(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the bull/bear strategy over the point-in-time universe."""
-    return _build_with_universe(BullBearStrategy, broker, mode, point_in_time=True)
+    return _build_with_universe(BullBearStrategy, broker, mode, point_in_time=True, parameters=parameters)
 
 
-def _build_ray_dalio(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_ray_dalio(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the ray_dalio strategy (a fixed leveraged-ETF universe: no universe file)."""
-    return RayDalioStrategy(broker=broker, mode=mode)
+    return RayDalioStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
-def _build_sector_pods(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_sector_pods(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the sector-pods strategy (a fixed ETF universe: no universe file)."""
-    return SectorPodsStrategy(broker=broker, mode=mode)
+    return SectorPodsStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
-def _build_congress_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_congress_trades(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the congress-trades strategy."""
-    return CongressTradesStrategy(broker=broker, mode=mode)
+    return CongressTradesStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
-def _build_insider_trades(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_insider_trades(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the insider-trades strategy."""
-    return InsiderTradesStrategy(broker=broker, mode=mode)
+    return InsiderTradesStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
-def _build_earnings_drift(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_earnings_drift(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the earnings-drift strategy over the universe."""
-    return _build_with_universe(EarningsDriftStrategy, broker, mode)
+    return _build_with_universe(EarningsDriftStrategy, broker, mode, parameters=parameters)
 
 
-def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strategy | None:
+def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """The code-only baseline over 5 years: every gated candidate, the default trail, no LLM."""
     start, end = backtest_window(PredefinedWindow.YEAR)
     return _build_with_universe(
@@ -117,7 +117,7 @@ def _build_earnings_drift_baseline(broker: Broker, mode: TradingMode) -> Strateg
         broker,
         mode,
         settings=DriftParams(agent_enabled=False),
-        parameters={"backtesting_start": start, "backtesting_end": end},
+        parameters={"backtesting_start": start, "backtesting_end": end, **parameters},
     )
 
 
@@ -137,15 +137,19 @@ _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
 }
 
 
-def build_strategy(strategy: Strategies, broker: Broker, mode: TradingMode) -> Strategy | None:
+def build_strategy(strategy: Strategies, broker: Broker, mode: TradingMode, window: PredefinedWindow | None = None) -> Strategy | None:
     """Build a strategy instance from a strategy name, Broker and trading mode.
 
     Args:
         strategy (Strategies): The strategy name.
         broker (Broker): The broker instance.
         mode (TradingMode): The trading mode.
+        window (PredefinedWindow | None): Backtest window replacing the strategy's own default; None keeps the default.
 
     Returns:
         Strategy | None: The strategy instance, or None if it needs a universe file that does not exist.
     """
-    return _STRATEGY_BUILDERS[strategy](broker, mode)
+    parameters: dict[str, Any] = {}
+    if window is not None:
+        parameters["backtesting_start"], parameters["backtesting_end"] = backtest_window(window)
+    return _STRATEGY_BUILDERS[strategy](broker, mode, parameters)

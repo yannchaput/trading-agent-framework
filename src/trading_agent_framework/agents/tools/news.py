@@ -14,6 +14,8 @@ MIN_LIMIT = 1
 MAX_LIMIT = 50
 MAX_CONTENT_LIMIT = 5  # full articles are large: cap how many one call may return
 _DEFAULT_LOOKBACK_DAYS = 7
+# GDELT, the backtest source before 2026-04-29, has titles only: say so once the model asked for the text, or it keeps digging.
+TITLES_ONLY_NOTE = "Titles only: no summary or article text exists for these dates. include_content or a narrower window will not add any."
 
 
 def _parse_bound(text: str, now: datetime, *, last_instant: bool) -> datetime:
@@ -76,6 +78,9 @@ def news_tools(strategy: "Strategy") -> list[Callable[..., dict[str, Any]]]:  # 
             articles = provider.get_news(symbol_list, start=start_dt, end=end_dt, limit=clamped_limit, include_content=include_content)
         except BrokerError as exc:
             return {"error": str(exc)}
-        return {"count": len(articles), "articles": articles}
+        result: dict[str, Any] = {"count": len(articles), "articles": articles}
+        if include_content and articles and not any(article.get("summary") or article.get("content") for article in articles):
+            result["note"] = TITLES_ONLY_NOTE
+        return result
 
     return [search_news]

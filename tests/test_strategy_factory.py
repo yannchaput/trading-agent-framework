@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.bill_ackman import BillAckmanStrategy
 from trading_agent_framework.strategies.bull_bear import BullBearStrategy
@@ -196,3 +197,27 @@ def test_the_other_universe_strategies_still_need_the_file_in_a_backtest(monkeyp
     _set_universe(monkeypatch, [])
 
     assert build_strategy(name, _broker(name), TradingMode.BACKTESTING) is None
+
+
+# --- a window overrides the one a strategy defaults to ---------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", list(Strategies))
+def test_a_window_replaces_every_strategys_default_window(monkeypatch: pytest.MonkeyPatch, name: Strategies) -> None:
+    _set_universe(monkeypatch, ["AAA"])
+    start, end = backtest_window(PredefinedWindow.MONTH)
+
+    strategy = build_strategy(name, _broker(name), TradingMode.BACKTESTING, PredefinedWindow.MONTH)
+
+    assert strategy is not None
+    assert (strategy.parameters["backtesting_start"], strategy.parameters["backtesting_end"]) == (start, end)
+
+
+def test_without_a_window_a_strategy_keeps_its_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_universe(monkeypatch, ["AAA"])
+    start, end = backtest_window(PredefinedWindow.BI_YEAR_LATEST)
+
+    strategy = build_strategy(Strategies.RAY_DALIO, _broker(Strategies.RAY_DALIO), TradingMode.BACKTESTING)
+
+    assert strategy is not None
+    assert (strategy.parameters["backtesting_start"], strategy.parameters["backtesting_end"]) == (start, end)

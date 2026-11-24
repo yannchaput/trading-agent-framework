@@ -69,7 +69,7 @@ def test_submit_order_over_the_budget_returns_an_error_naming_the_max_quantity()
     strategy, broker = _strategy()
     broker.last_prices["SPY"] = Decimal(100)
 
-    result = _tools(strategy)["submit_order"]("SPY", 96, "buy")  # spendable is 9500
+    result = _tools(strategy)["submit_order"]("SPY", 101, "buy")  # $10,100 is over the 10,000 of cash (spendable is 9500)
 
     assert "at most 95 shares" in result["error"]
     assert broker.submitted == []
