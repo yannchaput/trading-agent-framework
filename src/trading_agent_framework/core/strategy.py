@@ -404,6 +404,7 @@ class Strategy:
                 self._regime_history_warned = True
                 self.log_warning(f"Market regime unavailable: fewer than {params.min_bars} daily closes of SPY/VIX/VIX3M before {session}")
             return
+        # Regular market regime detection : to log and display in the dashboard
         self.regime = reading.regime
         self.regime_reading = reading
         self.market_fall = market_fall
@@ -415,6 +416,7 @@ class Strategy:
             f"VIX {reading.vix:.2f} vs VIX3M {reading.vix3m:.2f}, "
             f"VIX {reading.vix / reading.vix_median:.2f}x its {params.vix_median_window}-day median{episode}"
         )
+        # Fall detection: VIX/VIX3M inverted or VIXY jumped up (VIXY is optional, so a missing close does not stop the regime)
         vixy_change = vixy[-1] / vixy[-6] - 1 if len(vixy) > 5 else math.nan
         vixy_text = "" if math.isnan(vixy_change) else f", VIXY {vixy_change:+.1%} over 5 sessions"
         message = f"Market fall warning {'ON' if self.market_fall else 'OFF'} (VIX/VIX3M {reading.vix / reading.vix3m:.2f}{vixy_text})"

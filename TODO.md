@@ -86,6 +86,7 @@
 ### Citadel Pod Sector
 
 * Simplify Langgraph code (cf Ray Dalio)
+* Log the AgentRunResult
 * ~~Run the fist baseline (on 1 month)~~
 
 ### Ray Dalio
