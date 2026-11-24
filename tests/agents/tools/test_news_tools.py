@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from tests.fakes import FakeBroker, FakeClock, FakeNewsClient, FakeTradingClient, et, make_alpaca_news_article
 
-from trading_agent_framework.agents.tools.news import MAX_CONTENT_LIMIT, news_tools
+from trading_agent_framework.agents.tools.news import MAX_CONTENT_LIMIT, TITLES_ONLY_NOTE, news_tools
 from trading_agent_framework.brokers.alpaca.broker import AlpacaBroker
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.memory.tools import agent_call_context
@@ -31,7 +31,15 @@ class _StubProvider:
 
     def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
         self.calls.append({"symbols": list(symbols), "start": start, "end": end, "limit": limit, "include_content": include_content})
-        return [{"id": 1, "headline": "Stub headline"}]
+        return [{"id": 1, "headline": "Stub headline", "summary": "Stub summary"}]
+
+
+class _ArticlesProvider:
+    def __init__(self, articles: list[dict[str, object]]) -> None:
+        self.articles = articles
+
+    def get_news(self, symbols=(), *, start=None, end, limit=10, include_content=False):
+        return self.articles
 
 
 def _provider_strategy(provider: object = None, *, lookup_error: BrokerError | None = None) -> Strategy:
@@ -63,7 +71,7 @@ def test_search_news_works_with_any_broker_that_provides_news() -> None:
 
     result = tool(symbols="SPY")
 
-    assert result == {"count": 1, "articles": [{"id": 1, "headline": "Stub headline"}]}
+    assert result == {"count": 1, "articles": [{"id": 1, "headline": "Stub headline", "summary": "Stub summary"}]}
     assert provider.calls[0]["symbols"] == ["SPY"]
     assert provider.calls[0]["end"] == _now()
 
@@ -233,3 +241,28 @@ def test_outside_an_agent_run_every_search_queries_the_provider() -> None:
     tool(symbols="SPY")
 
     assert len(provider.calls) == 2
+
+
+def test_search_news_notes_titles_only_results() -> None:
+    articles = [{"id": "u1", "headline": "A", "summary": ""}, {"id": "u2", "headline": "B", "summary": None}]
+
+    result = _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
+
+    assert result["note"] == TITLES_ONLY_NOTE
+    assert result["count"] == 2
+
+
+def test_search_news_adds_no_note_when_any_article_has_text() -> None:
+    articles = [{"id": "u1", "headline": "A", "summary": ""}, {"id": "b2", "headline": "B", "summary": "Text."}]
+
+    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX")
+
+
+def test_search_news_counts_content_as_text() -> None:
+    articles = [{"id": "b1", "headline": "A", "summary": "", "content": "<p>Body</p>"}]
+
+    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
+
+
+def test_search_news_adds_no_note_without_articles() -> None:
+    assert _tool(_provider_strategy(_ArticlesProvider([])))(symbols="VKTX") == {"count": 0, "articles": []}
