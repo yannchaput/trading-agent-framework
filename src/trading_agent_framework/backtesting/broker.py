@@ -35,7 +35,7 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.entities.quote import Quote
 from trading_agent_framework.utils.clock import MarketClock
-from trading_agent_framework.utils.errors import BacktestDataError, BacktestError, BrokerError, ConfigurationError, OrderValidationError
+from trading_agent_framework.utils.errors import BacktestDataError, BacktestError, BrokerError, OrderValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -218,17 +218,18 @@ class BacktestBroker(Broker):
         return list(self._positions.values())
 
     def news_provider(self) -> NewsProvider | None:
-        """The injected news source, else an Alpaca provider built from the `ALPACA_NEWS_*` credentials on first use."""
+        """The injected news source, else GDELT's cached news before 2026-04-29 and Alpaca's from then on.
+
+        Alpaca's provider is built from the `ALPACA_NEWS_*` credentials only when a window first reaches that date,
+        so a backtest that stays before it needs no news credentials (missing ones then surface as `BrokerError`).
+        """
         if self._news_source is None:
-            # Deferred: importing this module must not pull in `alpaca`, and a backtest that never
-            # calls the news tool needs no Alpaca credentials for news.
-            from trading_agent_framework.brokers.alpaca.news import AlpacaNewsProvider
+            # Deferred: importing this module must not pull in `alpaca` or pandas.
+            from trading_agent_framework.backtesting.news import CutoffNewsProvider, GdeltNewsProvider
+            from trading_agent_framework.brokers.alpaca.news import lazy_news_provider
             from trading_agent_framework.config.env import AlpacaCredentials
 
-            try:
-                self._news_source = AlpacaNewsProvider.from_credentials(AlpacaCredentials.for_news())
-            except ConfigurationError as exc:
-                raise BrokerError(f"no news source available for backtesting: {exc}") from exc
+            self._news_source = CutoffNewsProvider(GdeltNewsProvider(), lazy_news_provider(AlpacaCredentials.for_news))
         return self._news_source
 
     @_tripwire(write=False)

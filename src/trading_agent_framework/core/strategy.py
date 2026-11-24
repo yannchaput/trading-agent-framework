@@ -771,8 +771,9 @@ class Strategy:
                 `DAILY_WARMUP_FLOOR` (283). For any other timestep it is NOT raised (that would
                 widen every minute download); instead the benchmark's daily frame alone is
                 preloaded over that window. (The market regime reads Yahoo on its own and needs neither.)
-            news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to an
-                Alpaca provider built lazily from `AlpacaCredentials.for_news()` (`ALPACA_NEWS_*`); the tool's own
+            news_source: where the news tool gets historical news (a `NewsProvider`). Defaults to the
+                GDELT cache before 2026-04-29 and an Alpaca provider (built lazily from `ALPACA_NEWS_*`) from then on
+                (`backtesting/news.py`); the tool's own
                 `strategy.clock.now()` cutoff still applies, so no future article leaks.
             agent_telemetry: record every LLM call (tokens, latency, tool calls) -- per-agent totals go to
                 `settings.json["agents"]` and each call to `memory/<strategy>/backtesting/llm_stats.sqlite`,
