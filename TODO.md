@@ -85,6 +85,7 @@
 
 ### Citadel Pod Sector
 
+* Simplify Langgraph code (cf Ray Dalio)
 * ~~Run the fist baseline (on 1 month)~~
 
 ### Ray Dalio
