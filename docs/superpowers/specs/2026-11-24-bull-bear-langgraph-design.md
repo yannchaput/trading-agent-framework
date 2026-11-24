@@ -1,6 +1,6 @@
 # bull_bear as a LangGraph graph
 
-Date: 2026-11-24. Branch `refactor/bull-bear-langgraph`. Status: design.
+Date: 2026-11-24. Branch `refactor/bull-bear-langgraph`. Status: approved 2026-11-24.
 
 ## Intent
 
@@ -17,7 +17,7 @@ to bottom: the graph shows the review's steps, each step is one method.
 - **Same behaviour, exactly.** For the same agent answers and the same data, the review places the same orders, saves
   the same state file, appends the same `reviews.jsonl` line (same keys, same values, same key order) and writes the
   same log messages, on a completed review and on every kind of abandoned review. The 5Y and COVID results stay valid.
-- Plain, documented code: no `Protocol`, no `ClassVar`, no generics, no decorators. Every module, class and method has
+- Plain, documented code: no new `Protocol` (the two existing ones stay, see Agents), no `ClassVar`, no generics, no decorators. Every module, class and method has
   a docstring (Google style, the repo's convention) saying what it does and anything non-obvious.
 
 ## Non-goals
@@ -54,7 +54,7 @@ to bottom: the graph shows the review's steps, each step is one method.
 
 ### Files
 
-- New `strategies/bull_bear/graph.py`: `ReviewState`, `BullBearReview`, `AgentLooped`, and the two log helpers
+- New `strategies/bull_bear/graph.py`: `ReviewState`, `BullBearReview`, `AgentLooped`, `AgentLike`, `AgentLookup`, and the two log helpers
   `_stop_detail` and `_submission_lines` moved unchanged.
 - Delete `strategies/bull_bear/pipeline.py` (`git mv` to `graph.py`, then rewrite, so history follows).
 - `agent_bull_bear.py`: builds `BullBearReview` instead of `BullBearPipeline`; the attribute `self.pipeline` becomes
@@ -100,8 +100,9 @@ Two kinds of data, kept apart on purpose:
 
 ### Agents
 
-`agents` is typed `Any`: an `AgentManager` in the strategy, a plain dict of fakes in the tests. Today's `AgentLike` /
-`AgentLookup` protocols go (no `Protocol`, as asked).
+bull_bear's two protocols move to `graph.py` unchanged (the user's call: cleaner than `Any`): `AgentLike` (the
+shared `common/pipeline.AgentLike` plus `max_steps`) and `AgentLookup` (an agent by name: an `AgentManager` in the
+strategy, a plain dict of fakes in the tests). They are the only exception to "no `Protocol`".
 
 ### Nodes
 
