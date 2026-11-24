@@ -43,7 +43,7 @@ class _NoBars:
         raise AssertionError("not called in these tests")
 
 
-class _FakePipeline:
+class _FakeReview:
     def __init__(self, outcomes: list[RunOutcome], *, completed: bool = False) -> None:
         self.outcomes = list(outcomes)
         self.completed = completed
@@ -84,8 +84,8 @@ def test_without_an_injected_source_the_strategy_reads_sec(tmp_path: Path) -> No
 
     strategy.initialize()
 
-    assert strategy.pipeline is not None
-    assert isinstance(strategy.pipeline._fundamentals_of, SecFundamentals)
+    assert strategy.review is not None
+    assert isinstance(strategy.review._fundamentals_of, SecFundamentals)
 
 
 def test_it_is_registered_as_bull_bear() -> None:
@@ -178,7 +178,7 @@ def test_a_judge_budget_of_none_means_no_budget_not_the_shared_one(tmp_path: Pat
 
 
 def test_no_agent_gets_a_middleware_that_corrects_a_run_in_place(tmp_path: Path) -> None:
-    # A run stopped at the output cap, or whose submission was rejected, ends and the pipeline starts a FRESH run with a
+    # A run stopped at the output cap, or whose submission was rejected, ends and the review starts a FRESH run with a
     # corrective prompt, the submit tool forced and thinking on: an in-run correction (thinking off, tool forced) did not work.
     strategy, agents = _strategy(tmp_path)
 
@@ -266,13 +266,13 @@ def test_a_news_source_that_cannot_be_built_refuses_to_start_with_the_reason(tmp
 def test_a_completed_review_of_another_day_does_not_block_todays(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
     strategy.initialize()
-    assert strategy.pipeline is not None
+    assert strategy.review is not None
     store = StateStore(tmp_path / "data" / f"bull_bear_state_{TradingMode.PAPER.value}.json")
     store.save(BullBearState(last_completed_review="2026-10-06"))
 
-    assert strategy.pipeline.completed_today()  # TUESDAY is 2026-10-06
+    assert strategy.review.completed_today()  # TUESDAY is 2026-10-06
     store.save(BullBearState(last_completed_review="2026-09-29"))
-    assert not strategy.pipeline.completed_today()
+    assert not strategy.review.completed_today()
 
 
 def test_an_iteration_before_initialize_raises_instead_of_asserting(tmp_path: Path) -> None:
@@ -284,28 +284,28 @@ def test_an_iteration_before_initialize_raises_instead_of_asserting(tmp_path: Pa
 
 def test_the_review_runs_on_tuesdays_only(tmp_path: Path) -> None:
     monday, _ = _strategy(tmp_path, now=MONDAY)
-    monday.pipeline = _FakePipeline([RunOutcome(True, 0)])  # type: ignore[assignment]
+    monday.review = _FakeReview([RunOutcome(True, 0)])  # type: ignore[assignment]
     tuesday, _ = _strategy(tmp_path, now=TUESDAY)
-    tuesday.pipeline = _FakePipeline([RunOutcome(True, 0)])  # type: ignore[assignment]
+    tuesday.review = _FakeReview([RunOutcome(True, 0)])  # type: ignore[assignment]
 
     monday.on_trading_iteration()
     tuesday.on_trading_iteration()
 
-    assert (monday.pipeline.runs, tuesday.pipeline.runs) == (0, 1)  # type: ignore[union-attr]
+    assert (monday.review.runs, tuesday.review.runs) == (0, 1)  # type: ignore[union-attr]
 
 
 def test_a_review_already_completed_today_is_not_run_again(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
-    strategy.pipeline = _FakePipeline([], completed=True)  # type: ignore[assignment]
+    strategy.review = _FakeReview([], completed=True)  # type: ignore[assignment]
 
     strategy.on_trading_iteration()
 
-    assert strategy.pipeline.runs == 0  # type: ignore[union-attr]
+    assert strategy.review.runs == 0  # type: ignore[union-attr]
 
 
 def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
-    strategy.pipeline = _FakePipeline([RunOutcome(False, 3)])  # type: ignore[assignment]
+    strategy.review = _FakeReview([RunOutcome(False, 3)])  # type: ignore[assignment]
 
     with pytest.raises(FatalStrategyError, match="3 reviews abandoned in a row"):
         strategy.on_trading_iteration()
@@ -313,7 +313,7 @@ def test_a_backtest_aborts_after_three_abandoned_reviews_in_a_row(tmp_path: Path
 
 def test_paper_never_aborts_on_abandoned_reviews(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
-    strategy.pipeline = _FakePipeline([RunOutcome(False, 5)])  # type: ignore[assignment]
+    strategy.review = _FakeReview([RunOutcome(False, 5)])  # type: ignore[assignment]
 
     strategy.on_trading_iteration()  # logs and carries on
 
@@ -381,7 +381,7 @@ def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expect
     strategy.initialize()
     researcher = next(created for created in agents.created if created["name"] == "researcher")
     search = next(tool for tool in researcher["tools"] if tool.__name__ == "search_news")
-    recorder = strategy.pipeline._recorder  # type: ignore[union-attr]
+    recorder = strategy.review._recorder  # type: ignore[union-attr]
     recorder.expect_note("GGAL")
 
     result = search(symbols="Grupo Galicia")
@@ -393,7 +393,7 @@ def test_every_count_tool_stops_counting_after_two_counts_in_an_armed_stage(tmp_
     # the 2026-11-16 backtest: 6 of 12 researchers re-counted an over-long note until the step limit, never submitting
     strategy, agents = _strategy(tmp_path)
     strategy.initialize()
-    recorder = strategy.pipeline._recorder
+    recorder = strategy.review._recorder
     for created in agents.created:
         recorder.expect_note("AAPL")  # arming resets the stage's gate, and with it the counts
         count = next(tool for tool in created["tools"] if tool.__name__ == "count_characters")

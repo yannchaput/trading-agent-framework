@@ -1,7 +1,7 @@
 """bull_bear backtests trade the point-in-time universe history, never today's universe file.
 
 `run_backtesting` first makes sure the history covers the window (a failure stops the run before it starts), records
-it in `parameters` (so `settings.json` shows it) and preloads the union of the window's lists; the pipeline then asks
+it in `parameters` (so `settings.json` shows it) and preloads the union of the window's lists; the review then asks
 for the list of each review's date.
 """
 
@@ -57,7 +57,7 @@ def _strategy(mode: TradingMode, now: datetime | None = None, **kwargs: Any) -> 
     return BullBearStrategy(FakeBroker(FakeClock(now or et(2024, 2, 1, 7), []), "bull_bear"), mode=mode, **kwargs)
 
 
-# --- the pipeline reads the list of the review's month --------------------------------------------------------
+# --- the review reads the list of the review's month --------------------------------------------------------
 
 
 @pytest.mark.parametrize(("review_date", "expected"), [(date(2024, 2, 13), ["A", "B"]), (date(2024, 3, 12), ["B", "C"])])  # SHV is parking, never a stock
@@ -83,7 +83,7 @@ def test_paper_and_live_rank_the_universe_they_were_built_with(mode: TradingMode
     assert strategy._universe_on(date(2026, 10, 6)) == ["AAA", "BBB"] == strategy._universe_on(date(2027, 1, 5))
 
 
-def test_the_pipeline_is_wired_to_the_per_date_list(tmp_path: Path) -> None:
+def test_the_review_is_wired_to_the_per_date_list(tmp_path: Path) -> None:
     strategy = _strategy(TradingMode.BACKTESTING, project_root=tmp_path, sector_of=lambda symbol: "Technology", fundamentals_of=lambda symbol, as_of: {})
     strategy.broker.news = FakeNewsProvider()
     strategy._agents = cast(AgentManager, _FakeAgents())
@@ -91,8 +91,8 @@ def test_the_pipeline_is_wired_to_the_per_date_list(tmp_path: Path) -> None:
 
     strategy.initialize()
 
-    assert strategy.pipeline is not None
-    assert strategy.pipeline._universe_on(date(2024, 3, 12)) == ["B", "C"]
+    assert strategy.review is not None
+    assert strategy.review._universe_on(date(2024, 3, 12)) == ["B", "C"]
 
 
 # --- construction -----------------------------------------------------------------------------------------------

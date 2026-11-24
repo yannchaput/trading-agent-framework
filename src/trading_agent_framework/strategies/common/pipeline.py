@@ -1,9 +1,10 @@
-"""The skeleton the four agent pipelines share: one run, and what happens when it is abandoned.
+"""The skeleton the agent pipelines share: one run, and what happens when it is abandoned.
 
-A pipeline (`AckmanPipeline`, `BullBearPipeline`, `CongressPipeline`, `InsiderPipeline`) runs its stages through agents; a stage that
+A pipeline (`AckmanPipeline`, `CongressPipeline`, `InsiderPipeline`) runs its stages through agents; a stage that
 never yields a valid submission, a data failure or a broker failure abandons the run. `ReviewPipeline.run` is the template: it loads
 the state, builds the record, calls the body (`_run`) and, on an abandonment, bumps the streak, logs one error line, saves the state
 the subclass chose and appends the abandoned record. Each pipeline keeps its own `_run_stage`, `retry_prompt` and body.
+bull_bear is not one: see `bull_bear/graph.py`.
 """
 
 from __future__ import annotations
