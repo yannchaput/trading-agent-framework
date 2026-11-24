@@ -314,7 +314,7 @@ class _Replay:
             )
 
     def stage(self, name: str, tool: str, task: str, context: dict[str, Any], tool_budget: int | None = None) -> dict[str, Any]:
-        """`BullBearPipeline._run_stage`: one run, then one fresh run with the submit tool forced; a loop fails at once."""
+        """`BullBearReview._run_stage`: one run, then one fresh run with the submit tool forced; a loop fails at once."""
         from trading_agent_framework.utils.errors import AgentError, AgentLoopError
 
         agent = self.manager[name]
