@@ -14,7 +14,7 @@
 
 - Note text, verbatim: `Titles only: no summary or article text exists for these dates. include_content or a narrower window will not add any.`
 - Result key: `"note"`.
-- Note only when at least one article is returned and none has a non-empty `summary` or `content`.
+- Note only when `include_content=True`, at least one article is returned and none has a non-empty `summary` or `content`.
 - No change to the tool budget, the prompts, the tool docstring or `GdeltNewsProvider`.
 
 ## Review Focus

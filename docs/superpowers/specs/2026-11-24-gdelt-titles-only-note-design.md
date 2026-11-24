@@ -16,7 +16,7 @@ the window until the 7-call budget refuses it (5.4% of researcher runs on the 11
 - C. Researcher prompt: static, bull_bear only.
 
 ## Design
-In `agents/tools/news.py` `_search`: when at least one article is returned and none has a non-empty `summary` or
+In `agents/tools/news.py` `_search`: when `include_content=True`, at least one article is returned and none has a non-empty `summary` or
 `content`, add to the result:
 `"note": "Titles only: no summary or article text exists for these dates. include_content or a narrower window will not add any."`
 Empty results and results with any text are unchanged. Tests in `tests/agents/tools/test_news_tools.py`
@@ -24,3 +24,5 @@ Empty results and results with any text are unchanged. Tests in `tests/agents/to
 
 ## Judging
 It changes what the agent sees: compare 2-3 bull_bear 2Y runs per arm on the same window (noise floor ~50 log points).
+
+Ruling (final review): the note needs `include_content=True`. Without it Alpaca never returns `content`, and 1.9% of Benzinga-era results (30/1,609, run 11-15) had empty summaries, so a note there would be false.

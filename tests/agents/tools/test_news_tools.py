@@ -255,7 +255,7 @@ def test_search_news_notes_titles_only_results() -> None:
 def test_search_news_adds_no_note_when_any_article_has_text() -> None:
     articles = [{"id": "u1", "headline": "A", "summary": ""}, {"id": "b2", "headline": "B", "summary": "Text."}]
 
-    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX")
+    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
 
 
 def test_search_news_counts_content_as_text() -> None:
@@ -266,3 +266,9 @@ def test_search_news_counts_content_as_text() -> None:
 
 def test_search_news_adds_no_note_without_articles() -> None:
     assert _tool(_provider_strategy(_ArticlesProvider([])))(symbols="VKTX") == {"count": 0, "articles": []}
+
+
+def test_search_news_adds_no_note_when_content_was_not_requested() -> None:
+    articles = [{"id": "b1", "headline": "A", "summary": ""}]
+
+    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX")
