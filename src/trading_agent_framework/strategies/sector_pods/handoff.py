@@ -16,7 +16,7 @@ POD_SUBMIT = "submit_pod_view"
 RISK_SUBMIT = "submit_risk_review"
 PM_SUBMIT = "submit_target_weights"
 
-OBJECTION_KINDS = ("crowding", "macro", "drawdown", "reversal", "other")
+OBJECTION_KINDS = ("crowding", "macro", "drawdown", "reversal", "stress", "other")
 SEVERITIES = ("low", "high")
 SCORE_RANGE = (-2, 2)
 UNAVAILABLE: dict[str, Any] = {"unavailable": True}  # what `AgentNode.write(None)` stores for a pod

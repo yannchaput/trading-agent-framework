@@ -132,7 +132,7 @@ def run_backtest(
     `fees` (default `None`) is the `TradingFeeFactory` charged on every fill; `None` charges nothing. `Strategy.run_backtesting`
     resolves it from `BROKER` when omitted, so only direct callers of `run_backtest` see the no-fee default.
 
-    `news_source` is handed to the `BacktestBroker` (default: an Alpaca provider built lazily from the env credentials).
+    `news_source` is handed to the `BacktestBroker` (default: the GDELT cache before 2026-04-29, Alpaca from then on; see `backtesting/news.py`).
 
     `agent_telemetry` (default `True`) records every LLM call the strategy's agents make: per-agent totals go
     to `settings.json["agents"]` (only when an agent actually ran) and each call to `llm_stats.sqlite`
