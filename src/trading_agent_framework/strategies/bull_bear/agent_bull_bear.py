@@ -2,7 +2,7 @@
 
 Port of lumibot's "Bull vs Bear AI Stock Trading Bot", hardened for a local model: code ranks the universe with
 cross_momentum's own score and filters, builds the fact sheets, builds the book from the stocks the judge puts in,
-sizes it with equal weights and places every order (`BullBearPipeline`, `Rebalancer`). No agent has an order tool.
+sizes it with equal weights and places every order (`BullBearReview`, a LangGraph graph, and `Rebalancer`). No agent has an order tool.
 One review a week, on Tuesday at 12:00 ET, as cross_momentum. See docs/superpowers/specs/2026-10-09-bull-bear-strategy-design.md
 and docs/superpowers/specs/2026-10-11-bull-bear-debate-realignment-design.md.
 """
@@ -27,10 +27,10 @@ from trading_agent_framework.entities.order import Order
 from trading_agent_framework.entities.position import Position
 from trading_agent_framework.fundamentals.edgar_client import default_client
 from trading_agent_framework.strategies.bull_bear.fundamentals import SecFundamentals
+from trading_agent_framework.strategies.bull_bear.graph import BullBearReview
 from trading_agent_framework.strategies.bull_bear.handoff import HandoffRecorder, submit_tools
 from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.bull_bear.pinned_news import pin_search_news
-from trading_agent_framework.strategies.bull_bear.pipeline import BullBearPipeline
 from trading_agent_framework.strategies.bull_bear.prompts import BEAR_SYSTEM, BULL_SYSTEM, JUDGE_SYSTEM, researcher_system
 from trading_agent_framework.strategies.bull_bear.state import StateStore
 from trading_agent_framework.strategies.common.batch_us_stock_universe import ensure_universe_history
@@ -59,7 +59,7 @@ def _size(quantity: Decimal | None) -> str:
 
 
 class BullBearStrategy(Strategy):
-    """One review a week (see `BullBearPipeline`); every other session's iteration returns at once."""
+    """One review a week (see `BullBearReview`); every other session's iteration returns at once."""
 
     sleeptime = "1D"
 
@@ -124,12 +124,12 @@ class BullBearStrategy(Strategy):
         self._bars_source = bars_source
         self._sector_of = sector_of  # injected in tests; yfinance's sectors otherwise
         self._fundamentals_of = fundamentals_of  # injected in tests; the SEC otherwise
-        self.pipeline: BullBearPipeline | None = None
+        self.review: BullBearReview | None = None
 
     # --- lifecycle ------------------------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Build the four agents and the pipeline (once per run)."""
+        """Build the four agents and the review graph (once per run)."""
         state_store = StateStore(self.state_file("bull_bear"), fresh=self.is_backtesting)  # one run's streak and date must not leak into the next; paper and live state is never wiped
         try:
             news = self.settings.research_news
@@ -144,7 +144,7 @@ class BullBearStrategy(Strategy):
 
             # A thinking budget and an output cap per model call: one of each for the researcher, bull and bear, and the judge has its own (`judge_*`).
             # The budget cuts the reasoning so the model still submits; the cap (budget + 8,192) is the backstop.
-            # A run it stops, or whose submission is rejected, is not corrected in place: it ends and the pipeline's forced retry is a fresh run (corrective prompt, submit tool forced, thinking on).
+            # A run it stops, or whose submission is rejected, is not corrected in place: it ends and the review's forced retry is a fresh run (corrective prompt, submit tool forced, thinking on).
             cap = self.settings.max_output_tokens  # the researcher, bull and bear
             budget = self.settings.thinking_token_budget
 
@@ -197,7 +197,7 @@ class BullBearStrategy(Strategy):
         except ConfigurationError as exc:
             # The strategy refuses to start rather than fail every week (SEC_EDGAR_USER_AGENT missing, no LLM model).
             raise FatalStrategyError(str(exc)) from exc
-        self.pipeline = BullBearPipeline(
+        self.review = BullBearReview(
             strategy=self,
             params=self.settings,
             agents=self.agents,
@@ -217,18 +217,18 @@ class BullBearStrategy(Strategy):
 
     def on_trading_iteration(self) -> None:
         """The weekly review. A backtest aborts when too many reviews in a row were abandoned (a dead LLM or data source)."""
-        if self.pipeline is None:
-            raise FatalStrategyError("BullBearStrategy.on_trading_iteration ran before initialize() built the review pipeline")
+        if self.review is None:
+            raise FatalStrategyError("BullBearStrategy.on_trading_iteration ran before initialize() built the review")
         today = self._market_date()
         rebalance_day = calendar.day_name[self.settings.rebalance_weekday]
         self.log_info(f"Today is a {today.strftime('%A')} and the rebalance day is {rebalance_day}")
         if today.weekday() != self.settings.rebalance_weekday:
             self.log_warning("Not a rebalance day — skipping.")
             return
-        if self.pipeline.completed_today():
+        if self.review.completed_today():
             self.log_info(f"[bull_bear] the review of {today} already completed: not run again")
             return
-        outcome = self.pipeline.run()
+        outcome = self.review.run()
         if not outcome.completed and self.is_backtesting and outcome.abandoned_streak >= self.settings.max_consecutive_abandoned:
             raise FatalStrategyError(f"{outcome.abandoned_streak} reviews abandoned in a row, aborting the backtest (see the log for the stage and the error)")
 
@@ -273,7 +273,7 @@ class BullBearStrategy(Strategy):
         """The stocks a review on `day` ranks: the history's list for its month in a backtest, `universe` otherwise.
 
         A holding that dropped out of the list is not ranked and is sold by the existing rule. A month the history lacks
-        ends the run: the pipeline would otherwise let the error through to a tick the executor rides out, dropping the
+        ends the run: the review would otherwise let the error through to a tick the executor rides out, dropping the
         week's review without a trace in the results.
         """
         if self._history is None:
