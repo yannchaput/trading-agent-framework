@@ -346,7 +346,7 @@ class AgentManager:
         one to finish with), else its exempt tools.
         """
         from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
-        from langchain_core.messages import ToolMessage
+        from langchain_core.messages import AIMessage, ToolMessage
 
         exempt = budget.exempt
         finish = tuple(final_tools) or exempt
@@ -359,13 +359,50 @@ class AgentManager:
                 """Start with a zero limit; `AgentHandle.run` sets the real limit for each run."""
                 super().__init__(run_limit=0)  # the base class wants a limit; `AgentHandle.run` sets the real one per run
                 self.run_limit = None
+                self._labels: dict[str, str] = {}  # tool call id -> its "<tool> call k of N", set in `after_model`, used when the call has run
 
             def _matches_tool_filter(self, tool_call: Any) -> bool:
                 """Whether the tool call counts against the budget."""
                 return tool_call["name"] in counted
 
+            def _number_calls(self, state: Any) -> None:
+                """Give each counted call of the model's turn that the budget allows its number, in request order.
+
+                Runs in `after_model`, on the one graph thread and before any of the turn's tools starts, so parallel
+                calls get consecutive numbers whichever finishes first. Counts like the base class: the run's earlier
+                counted calls (refused ones included) come first, and a call past the limit gets no number.
+                """
+                last = next((message for message in reversed(state["messages"]) if isinstance(message, AIMessage)), None)
+                count = state.get("run_tool_call_count", {}).get("__all__", 0)
+                for call in last.tool_calls if last else ():
+                    if not self._matches_tool_filter(call):
+                        continue
+                    count += 1
+                    if count > self.run_limit:
+                        break
+                    if call["id"] is not None:  # a call without an id still counts, but its answer cannot be matched to a label
+                        self._labels[call["id"]] = f"{call['name']} call {count} of {self.run_limit}"
+
+            def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+                """Run the tool call; a numbered call's answer, when it is a JSON object, gets `instructions.tool_call` first."""
+                result = handler(request)
+                label = self._labels.pop(request.tool_call["id"], None)
+                if label is None or not isinstance(result, ToolMessage) or not isinstance(result.content, str):
+                    return result
+                try:
+                    answer = json.loads(result.content)
+                except ValueError:
+                    return result
+                instructions = answer.get("instructions", {}) if isinstance(answer, dict) else None
+                if not isinstance(instructions, dict):
+                    return result
+                labelled = {"instructions": {"tool_call": label, **instructions}, **{key: value for key, value in answer.items() if key != "instructions"}}
+                return result.model_copy(update={"content": json.dumps(labelled, ensure_ascii=False)})
+
             def after_model(self, state: Any, runtime: Any) -> Any:
                 """Apply the budget after each model turn."""
+                if budget.label_calls and self.run_limit is not None:
+                    self._number_calls(state)
                 update = super().after_model(state, runtime)
                 # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs).
                 # If it did call a tool, but the run limit was reached, the code below replace the base's generic refusal with one that names the agent's own tools and the ones it must finish with.
