@@ -21,6 +21,7 @@ class ScriptedAgent:
         self.recorder = recorder
         self.scripts = scripts
         self.runs: list[dict[str, Any]] = []
+        self.output = ""  # the text a run reports, as the model's visible closing line would
 
     def run(
         self,
@@ -34,7 +35,7 @@ class ScriptedAgent:
     ) -> AgentRunResult:
         self.runs.append({"task": task_prompt, "context": context, "force_tool": force_tool})
         self.scripts.pop(0)(self.recorder, context, force_tool)
-        return AgentRunResult(output="", tool_calls=[])
+        return AgentRunResult(output=self.output, tool_calls=[])
 
 
 def _submits(payload: dict[str, Any]) -> Script:
@@ -105,6 +106,23 @@ def test_node_writes_the_submission() -> None:
     assert node({"in": 7}) == {"out": {"v": 1}}
     assert len(agent.runs) == 1
     assert agent.runs[0]["context"] == {"seen": 7}
+
+
+def test_node_logs_what_the_agent_submitted_not_its_closing_line(caplog: pytest.LogCaptureFixture) -> None:
+    node, agent = _node([_submits({"v": 1})])
+    agent.output = "All texts are within limits. Submitting now"
+    with caplog.at_level("INFO"):
+        node({"in": 7})
+    assert "[n] submitted: {'v': 1}" in caplog.text
+    assert "All texts are within limits" not in caplog.text
+
+
+def test_node_logs_the_model_text_of_an_attempt_that_did_not_submit(caplog: pytest.LogCaptureFixture) -> None:
+    node, agent = _node([_nothing, _submits({"v": 2})])
+    agent.output = "I could not decide"
+    with caplog.at_level("INFO"):
+        node({"in": 1})
+    assert caplog.text.count("I could not decide") == 1  # the failed attempt only, not the one that submitted
 
 
 def test_node_retries_once_with_tool_forced(caplog: pytest.LogCaptureFixture) -> None:
