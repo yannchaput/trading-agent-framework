@@ -1,5 +1,6 @@
 import json
 import logging
+import sys
 import threading
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
@@ -57,11 +58,13 @@ def _series(index: int) -> DailySeries:
 class FakeBars:
     def __init__(self) -> None:
         self.error: DataUnavailable | None = None
+        self.short_history: set[str] = set()  # symbols with too few bars to get facts
 
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
         if self.error is not None:
             raise self.error
-        return {symbol: _series(index) for index, symbol in enumerate(universe)}
+        series = {symbol: _series(index) for index, symbol in enumerate(universe)}
+        return {symbol: DailySeries(closes=s.closes[:100], volumes=s.volumes[:100]) if symbol in self.short_history else s for symbol, s in series.items()}
 
 
 class RecordingBroker(FakeBroker):
@@ -171,7 +174,9 @@ READING = RegimeReading(
 STRESS = stress_view(READING, True)
 
 
-REVIEW_LINES = ("book filled", "week abandoned", "execute", "rebalance failed", "last week's book")  # what the review reports; the rebalancer logs its order lines through the same strategy
+def _logged_by_the_review() -> bool:
+    """Whether the `log_*` call being answered comes from the review's module, not from the rebalancer's."""
+    return sys._getframe(2).f_globals["__name__"] == SectorPodsReview.__module__
 
 
 class RecordingStrategy(Strategy):
@@ -184,17 +189,17 @@ class RecordingStrategy(Strategy):
         self.errors: list[str] = []
 
     def log_info(self, message: object) -> str:
-        if str(message).startswith(REVIEW_LINES):
+        if _logged_by_the_review():
             self.infos.append(str(message))
         return super().log_info(message)
 
     def log_warning(self, message: object) -> str:
-        if str(message).startswith(REVIEW_LINES):
+        if _logged_by_the_review():
             self.warnings.append(str(message))
         return super().log_warning(message)
 
     def log_error(self, message: object) -> str:
-        if str(message).startswith(REVIEW_LINES):
+        if _logged_by_the_review():
             self.errors.append(str(message))
         return super().log_error(message)
 
@@ -352,6 +357,17 @@ def test_failed_pod_keeps_or_trims_its_sleeve(tmp_path: Path) -> None:
     assert [e["node"] for e in final["errors"]] == ["financials_pod"]
     assert "error" in results[0] and results[1] == {"status": "recorded"}
     assert "XLF" not in h.symbols()
+
+
+def test_a_pod_whose_etfs_have_no_history_is_unavailable_and_the_week_goes_on(tmp_path: Path) -> None:
+    h = _harness(tmp_path, pm=weights({"XLV": 0.2}))  # XLK cannot be raised: its pod gave no view
+    h.bars.short_history = set(PODS[0].sleeve)
+
+    final = h.run()
+
+    assert final["abandoned"] is None and final["pods"]["tech_pod"] == UNAVAILABLE
+    assert not h.agents["tech_pod"].contexts and not final.get("errors")
+    assert h.agents["risk_manager"].contexts and h.agents["portfolio_manager"].contexts
 
 
 def test_pm_unavailable_abandons_without_orders(tmp_path: Path) -> None:

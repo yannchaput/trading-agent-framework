@@ -7,6 +7,7 @@ The nodes share one `PodsState`. `SectorPodsReview` holds the code nodes as meth
 import operator
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, replace
+from datetime import date
 from functools import partial
 from typing import Annotated, Any, TypedDict
 
@@ -47,6 +48,11 @@ class PodsState(TypedDict, total=False):
     errors: Annotated[list[dict[str, str]], operator.add]
     orders: list[dict[str, Any]]
     abandoned: str | None  # why the week was abandoned; None when completed
+
+
+def market_date(strategy: Strategy) -> date:
+    """The session date: the strategy clock's now in market time (never the wall clock)."""
+    return strategy.clock.now().astimezone(MARKET_TZ).date()
 
 
 def _real(view: Any) -> Any:
@@ -114,9 +120,9 @@ class SectorPodsReview:
         self._rebalancer = rebalancer
         self._bars = bars
         self._log = log
-        self.pods = pods
-        self.risk_manager = risk_manager
-        self.portfolio_manager = portfolio_manager
+        self._pods = pods
+        self._risk_manager = risk_manager
+        self._portfolio_manager = portfolio_manager
         self._graph = self._build_graph()
 
     def run(self) -> dict[str, Any]:
@@ -130,15 +136,15 @@ class SectorPodsReview:
         graph = StateGraph(PodsState)
         graph.add_node("load_previous", self._load_previous)
         graph.add_node("market_facts", self._market_facts)
-        for key in self.pods:
+        for key in self._pods:
             graph.add_node(key, partial(self._run_pod, key))
-        graph.add_node("risk_manager", partial(self._run_agent, self.risk_manager))
-        graph.add_node("portfolio_manager", partial(self._run_agent, self.portfolio_manager))
+        graph.add_node("risk_manager", partial(self._run_agent, self._risk_manager))
+        graph.add_node("portfolio_manager", partial(self._run_agent, self._portfolio_manager))
         graph.add_node("execute", self._execute)
         graph.add_edge(START, "load_previous")
         graph.add_edge("load_previous", "market_facts")
         graph.add_conditional_edges("market_facts", self._after_facts)
-        graph.add_edge(list(self.pods), "risk_manager")
+        graph.add_edge(list(self._pods), "risk_manager")
         graph.add_edge("risk_manager", "portfolio_manager")
         graph.add_edge("portfolio_manager", "execute")
         graph.add_edge("execute", END)
@@ -146,7 +152,7 @@ class SectorPodsReview:
 
     def _after_facts(self, state: PodsState) -> list[str]:
         """Where `market_facts` leads: the five pods, or straight to `execute` when the week is abandoned."""
-        return ["execute"] if state.get("abandoned") else list(self.pods)
+        return ["execute"] if state.get("abandoned") else list(self._pods)
 
     def _load_previous(self, state: PodsState) -> dict[str, Any]:
         """Put last completed week's views in the state."""
@@ -159,9 +165,8 @@ class SectorPodsReview:
         """
         strategy = self._strategy
         holdings = self._rebalancer.current_weights()
-        today = strategy.clock.now().astimezone(MARKET_TZ).date()
         base: dict[str, Any] = {
-            "date": today.isoformat(),
+            "date": market_date(strategy).isoformat(),
             "regime": "unknown" if strategy.regime is None else REGIME_LABELS[strategy.regime],
             "stress": stress_view(strategy.regime_reading, strategy.market_fall),
             "holdings": holdings,
@@ -196,7 +201,7 @@ class SectorPodsReview:
         """Run one pod; a pod with no ETF facts is not run and is recorded as unavailable."""
         if not state.get("facts", {}).get(key):
             return {"pods": {key: UNAVAILABLE}}
-        return self._run_agent(self.pods[key], state)
+        return self._run_agent(self._pods[key], state)
 
     def _execute(self, state: PodsState) -> dict[str, Any]:
         """Re-check the PM's book, fill it to the invested target, trade it, save the week and write the run-log record.

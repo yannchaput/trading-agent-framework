@@ -8,8 +8,8 @@ from __future__ import annotations
 import calendar
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
-from datetime import date
 from decimal import Decimal
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from trading_agent_framework.agents import ToolBudget
@@ -33,7 +33,7 @@ from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
-from trading_agent_framework.strategies.sector_pods.graph import SectorPodsReview, pm_reads, pod_reads, risk_reads
+from trading_agent_framework.strategies.sector_pods.graph import SectorPodsReview, market_date, pm_reads, pod_reads, risk_reads
 from trading_agent_framework.strategies.sector_pods.handoff import (
     PM_SUBMIT,
     POD_SUBMIT,
@@ -51,7 +51,6 @@ from trading_agent_framework.strategies.sector_pods.params import SectorPodsPara
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, PODS
 from trading_agent_framework.strategies.sector_pods.prompts import PM_TASK, POD_TASK, RISK_TASK, pm_system, pod_system, risk_system
 from trading_agent_framework.strategies.sector_pods.store import StateStore
-from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError, ConfigurationError, FatalStrategyError
 
 if TYPE_CHECKING:
@@ -219,7 +218,7 @@ class SectorPodsStrategy(Strategy):
         """The weekly review. A backtest aborts when too many reviews in a row were abandoned (a dead LLM or data source)."""
         if self._review is None or self._store is None:
             raise FatalStrategyError("SectorPodsStrategy.on_trading_iteration ran before initialize() built the review")
-        today = self._market_date()
+        today = market_date(self)
         self.log_info(f"Today is a {today.strftime('%A')} and the rebalance day is {calendar.day_name[self.settings.rebalance_weekday]}")
         if today.weekday() != self.settings.rebalance_weekday:
             self.log_info("Not a rebalance day — skipping.")
@@ -276,15 +275,13 @@ class SectorPodsStrategy(Strategy):
     def _warn(self, message: str) -> None:
         self.log_warning(message)
 
-    def _market_date(self) -> date:
-        return self.clock.now().astimezone(MARKET_TZ).date()
-
     def _daily_bars(self) -> DailyBars:
+        today = partial(market_date, self)
         if self._bars_source is None:
-            return GateBars(lambda symbol, length: self.get_historical_prices(symbol, length, "day"), today=self._market_date, warn=self._warn)
+            return GateBars(lambda symbol, length: self.get_historical_prices(symbol, length, "day"), today=today, warn=self._warn)
         return YahooBars(
             self._bars_source,
-            today=self._market_date,
+            today=today,
             sleep=self.sleep,
             warn=self._warn,
             retry_delays=self.settings.yahoo_retry_delays,

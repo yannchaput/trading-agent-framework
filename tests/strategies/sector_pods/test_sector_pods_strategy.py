@@ -125,7 +125,7 @@ def test_every_submit_tool_refuses_an_over_long_text_through_its_own_gate(tmp_pa
     strategy.initialize()
     assert strategy._store is not None
     review = strategy._build_review(strategy._store)  # a fresh set of agents, so each node's recorder can be armed here
-    for node in (*review.pods.values(), review.risk_manager, review.portfolio_manager):
+    for node in (*review._pods.values(), review._risk_manager, review._portfolio_manager):
         node.recorder.arm({})
 
     tools = {created["name"]: {tool.__name__: tool for tool in created["tools"]} for created in agents.created}  # the latest agent of a name wins
