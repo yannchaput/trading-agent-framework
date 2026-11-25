@@ -44,8 +44,8 @@ know its budget and where it stands in it.
    ```python
    @dataclass(frozen=True)
    class ToolBudget:
-       exempt: tuple[str, ...] = ()   # tools the budget never counts or refuses
-       label_calls: bool = False      # each counted answer says "<tool> call k of N"
+       exempt: tuple[str, ...] = ()  # tools the budget never counts or refuses
+       label_calls: bool = False  # each counted answer says "<tool> call k of N"
    ```
 
    `AgentManager.create(..., budget=ToolBudget(...))` replaces `exempt_tools`. With `label_calls=True`, each counted
