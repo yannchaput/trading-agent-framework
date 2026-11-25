@@ -7,7 +7,7 @@
 - `brokers/base.py` -- abstract `Broker` template method (`_conform_order` then `_submit_order`), plus `OrderTracker` wiring. Never imports `alpaca`.
 - `brokers/tracker.py` -- `OrderTracker`/`SafeList`: thread-safe order state machine (`unprocessed -> new -> (partially_filled ->)* filled`, or `-> canceled/error`). Used by stream and polling threads concurrently.
 - `brokers/factory.py` -- `build_broker()`: the paper/live broker named by `BROKER` (`alpaca` default, `ibkr`, `tastytrade`); broker classes are imported inside the builders.
-- `brokers/fees.py` -- **pure** `TradingFeeFactory`: the backtest fee model named by `BROKER` (per-order broker commission + shared SEC/FINRA TAF/CAT regulatory fees), different for buys and sells.
+- `brokers/fees.py` -- **pure** `TradingFeeFactory`: the backtest fee model named by `BROKER` (per-order broker charge, commission or clearing, + shared SEC/FINRA TAF/CAT regulatory fees), different for buys and sells.
 - `brokers/alpaca/orders.py` -- **pure** translation functions only (status/event maps, price conforming, request building, response parsing). No I/O, no state, no client instances. Together with `account.py`, the only modules allowed to import `alpaca.trading.requests` (`market_data.py` is the only one allowed to import `alpaca.data.requests`).
 - `brokers/alpaca/broker.py` -- `AlpacaBroker`: wires the real `TradingClient` and `StockHistoricalDataClient` I/O to the pure modules plus tracker bookkeeping. Contains no translation logic itself.
 - `brokers/alpaca/client.py` -- trivial factory functions for building Alpaca SDK clients from credentials, so tests can inject fakes instead; every REST client gets a `REQUEST_TIMEOUT_SECONDS` (30 s) request timeout here (the stream is not touched).

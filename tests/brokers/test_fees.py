@@ -14,11 +14,11 @@ ALPACA = TradingFeeFactory(BrokerKind.ALPACA)
 IBKR = TradingFeeFactory(BrokerKind.IBKR)
 
 
-def _buy(model: TradingFeeFactory, shares: int, value: int) -> TradeFees:
+def _buy(model: TradingFeeFactory, shares: int | str, value: int | str) -> TradeFees:
     return model.fees(buy_shares=D(shares), sell_shares=D(0), buy_value=D(value), sell_value=D(0))
 
 
-def _sell(model: TradingFeeFactory, shares: int, value: int) -> TradeFees:
+def _sell(model: TradingFeeFactory, shares: int | str, value: int | str) -> TradeFees:
     return model.fees(buy_shares=D(0), sell_shares=D(shares), buy_value=D(0), sell_value=D(value))
 
 
@@ -105,6 +105,23 @@ def test_a_broker_without_a_fee_schedule_is_a_configuration_error(monkeypatch: p
 TASTYTRADE = TradingFeeFactory(BrokerKind.TASTYTRADE)
 
 
-def test_tastytrade_charges_no_commission_only_regulatory_fees() -> None:
-    assert _buy(TASTYTRADE, 100, 65000) == TradeFees(buy=D("0.01"), sell=D(0))  # CAT only
-    assert _sell(TASTYTRADE, 100, 65000) == TradeFees(buy=D(0), sell=D("1.36"))  # SEC + TAF + CAT, as Alpaca
+def test_tastytrade_whole_shares_pay_per_share_clearing() -> None:
+    assert _buy(TASTYTRADE, 100, 65000) == TradeFees(buy=D("0.09"), sell=D(0))  # 0.08 + CAT 0.0003
+    assert _sell(TASTYTRADE, 100, 65000) == TradeFees(buy=D(0), sell=D("1.44"))  # 0.08 + SEC 1.339 + TAF 0.0195 + CAT
+
+
+def test_tastytrade_fractional_order_pays_flat_clearing_instead_of_per_share() -> None:
+    assert _buy(TASTYTRADE, "4.5", 450) == TradeFees(buy=D("0.11"), sell=D(0))  # 0.10 + CAT, rounded up
+    assert _sell(TASTYTRADE, "4.5", 450) == TradeFees(buy=D(0), sell=D("0.12"))  # 0.10 + SEC 0.00927 + TAF + CAT
+
+
+def test_tastytrade_tiny_fraction_still_pays_the_flat_fee() -> None:
+    assert _buy(TASTYTRADE, "0.00001", "0.01") == TradeFees(buy=D("0.11"), sell=D(0))
+
+
+def test_tastytrade_whole_quantity_with_trailing_zeros_is_not_fractional() -> None:
+    assert _buy(TASTYTRADE, "100.000", 65000) == TradeFees(buy=D("0.09"), sell=D(0))  # per share, not flat
+
+
+def test_tastytrade_per_share_clearing_scales_with_size() -> None:
+    assert _buy(TASTYTRADE, 10000, 500000) == TradeFees(buy=D("8.03"), sell=D(0))  # 8 + CAT 0.03

@@ -47,19 +47,24 @@ def _fees(model, side, shares, value):
         return model.fees(buy_shares=D(shares), sell_shares=zero, buy_value=D(value), sell_value=zero)
     return model.fees(buy_shares=zero, sell_shares=D(shares), buy_value=zero, sell_value=D(value))
 
+
 def test_tastytrade_whole_shares_pay_per_share_clearing() -> None:
-    assert _fees(TASTYTRADE, "buy", "100", "65000") == TradeFees(buy=D("0.09"), sell=D(0))   # 0.08 + CAT 0.0003
+    assert _fees(TASTYTRADE, "buy", "100", "65000") == TradeFees(buy=D("0.09"), sell=D(0))  # 0.08 + CAT 0.0003
     assert _fees(TASTYTRADE, "sell", "100", "65000") == TradeFees(buy=D(0), sell=D("1.44"))  # 0.08 + SEC 1.339 + TAF 0.0195 + CAT
 
+
 def test_tastytrade_fractional_order_pays_flat_clearing_instead_of_per_share() -> None:
-    assert _fees(TASTYTRADE, "buy", "4.5", "450") == TradeFees(buy=D("0.11"), sell=D(0))    # 0.10 + CAT, rounded up
-    assert _fees(TASTYTRADE, "sell", "4.5", "450") == TradeFees(buy=D(0), sell=D("0.12"))   # 0.10 + SEC 0.00927 + TAF + CAT
+    assert _fees(TASTYTRADE, "buy", "4.5", "450") == TradeFees(buy=D("0.11"), sell=D(0))  # 0.10 + CAT, rounded up
+    assert _fees(TASTYTRADE, "sell", "4.5", "450") == TradeFees(buy=D(0), sell=D("0.12"))  # 0.10 + SEC 0.00927 + TAF + CAT
+
 
 def test_tastytrade_tiny_fraction_still_pays_the_flat_fee() -> None:
     assert _fees(TASTYTRADE, "buy", "0.00001", "0.01") == TradeFees(buy=D("0.11"), sell=D(0))
 
+
 def test_tastytrade_whole_quantity_with_trailing_zeros_is_not_fractional() -> None:
     assert _fees(TASTYTRADE, "buy", "10.000", "1000") == TradeFees(buy=D("0.01"), sell=D(0))  # 0.008 + CAT
+
 
 def test_tastytrade_per_share_clearing_scales_with_size() -> None:
     assert _fees(TASTYTRADE, "buy", "10000", "500000") == TradeFees(buy=D("8.03"), sell=D(0))
