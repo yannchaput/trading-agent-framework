@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import calendar
 import dataclasses
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -33,14 +33,13 @@ from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
 from trading_agent_framework.strategies.common.sessions import parse_rebalance_time
 from trading_agent_framework.strategies.common.yahoo_daily_bars import BarsSource, YahooDailyBars
-from trading_agent_framework.strategies.sector_pods.facts import stress_view
-from trading_agent_framework.strategies.sector_pods.graph import Execute, GraphParts, LoadPrevious, MarketFacts, build_graph, pm_reads, pod_reads, risk_reads
+from trading_agent_framework.strategies.sector_pods.graph import SectorPodsReview, pm_reads, pod_reads, risk_reads
 from trading_agent_framework.strategies.sector_pods.handoff import (
     PM_SUBMIT,
     POD_SUBMIT,
     RISK_SUBMIT,
-    UNAVAILABLE,
     Validator,
+    or_unavailable,
     pm_submit_tool,
     pod_submit_tool,
     risk_submit_tool,
@@ -116,7 +115,7 @@ class SectorPodsStrategy(Strategy):
         self._bars_source = bars_source
         self._fred_client_factory = fred_client_factory
         self._store: StateStore | None = None
-        self._graph: Any = None
+        self._review: SectorPodsReview | None = None
 
     def initialize(self) -> None:
         """Build the seven agents and the weekly graph (once per run)."""
@@ -124,14 +123,24 @@ class SectorPodsStrategy(Strategy):
         self._store = StateStore(self.state_file("sector_pods"), log=self._log, fresh=self.is_backtesting)
         try:
             require_news_provider(self.broker, "the pods need")
-            parts = self._graph_parts(self._store)
+            self._review = self._build_review(self._store)
         except ConfigurationError as exc:
             raise FatalStrategyError(str(exc)) from exc
-        self._graph = build_graph(parts)
         self.log_info(f"SectorPodsStrategy initialized: {len(ALL_SYMBOLS)} ETFs in {len(PODS)} pods, review on weekday {self.settings.rebalance_weekday} at {self.iteration_start_time}")
 
     def _node(
-        self, name: str, system: str, tools: list[Callable[..., Any]], validator: Validator, submit: str, task: str, reads: Any, write: Any, budget: int | None, exempt: Sequence[str] = ()
+        self,
+        name: str,
+        *,
+        system: str,
+        tools: list[Callable[..., Any]],
+        validator: Validator,
+        submit: str,
+        task: str,
+        reads: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+        write: Callable[[Any], dict[str, Any]],
+        budget: int | None,
+        exempt: Sequence[str] = (),
     ) -> AgentNode:
         """Create one agent, which ends its run on its recorded `submit` tool, and the graph node that runs it.
 
@@ -152,60 +161,64 @@ class SectorPodsStrategy(Strategy):
         )
         return AgentNode(name=name, agent=agent, recorder=recorder, submit_tool=submit, task=task, reads=reads, write=write, tool_budget=budget, max_steps=params.max_agent_steps)
 
-    def _graph_parts(self, store: StateStore) -> GraphParts:
-        """Create the agents and wire them, with the code nodes, into the graph's parts."""
+    def _build_review(self, store: StateStore) -> SectorPodsReview:
+        """Create the agents and wire them into the weekly review."""
         params = self.settings
         pods = {
             pod.key: self._node(
                 pod.key,
-                pod_system(pod, params),
+                system=pod_system(pod, params),
                 # a new tool set per pod: they hold per-run memo state behind a lock, so sharing would serialize the parallel pods
-                [*news_tools(self), *only(macro_tools(self, fred_client_factory=self._fred_client_factory), {"get_fred_series"})],
-                validate_pod(pod, params),
-                POD_SUBMIT,
-                POD_TASK,
-                pod_reads(pod.key),
-                lambda view, key=pod.key: {"pods": {key: UNAVAILABLE if view is None else view}},
-                params.pod_tool_budget,
+                tools=[*news_tools(self), *only(macro_tools(self, fred_client_factory=self._fred_client_factory), {"get_fred_series"})],
+                validator=validate_pod(pod, params),
+                submit=POD_SUBMIT,
+                task=POD_TASK,
+                reads=pod_reads(pod.key),
+                write=lambda view, key=pod.key: {"pods": {key: or_unavailable(view)}},
+                budget=params.pod_tool_budget,
             )
             for pod in PODS
         }
-        risk = self._node("risk_manager", risk_system(params), [], validate_risk(params), RISK_SUBMIT, RISK_TASK, risk_reads, lambda view: {"risk": UNAVAILABLE if view is None else view}, None)
-        memory = only(memory_tools(self.memory), _PM_MEMORY_TOOLS)
+        risk = self._node(
+            "risk_manager",
+            system=risk_system(params),
+            tools=[],
+            validator=validate_risk(params),
+            submit=RISK_SUBMIT,
+            task=RISK_TASK,
+            reads=risk_reads,
+            write=lambda view: {"risk": or_unavailable(view)},
+            budget=None,
+        )
         pm = self._node(
             "portfolio_manager",
-            pm_system(params),
-            memory,
-            validate_pm(params),
-            PM_SUBMIT,
-            PM_TASK,
-            pm_reads,
-            lambda view: {"pm": UNAVAILABLE if view is None else view},
-            params.pm_memory_budget,
+            system=pm_system(params),
+            tools=only(memory_tools(self.memory), _PM_MEMORY_TOOLS),
+            validator=validate_pm(params),
+            submit=PM_SUBMIT,
+            task=PM_TASK,
+            reads=pm_reads,
+            write=lambda view: {"pm": or_unavailable(view)},
+            budget=params.pm_memory_budget,
             # outside the budget: three searches used to spend it, so no lesson was ever stored
             exempt=("remember_lesson",),
         )
-        rebalancer = Rebalancer(self, params)
-        return GraphParts(
-            load_previous=LoadPrevious(store),
-            market_facts=MarketFacts(
-                self._daily_bars(),
-                regime=lambda: self.regime,
-                stress=lambda: stress_view(self.regime_reading, self.market_fall),
-                holdings=rebalancer.current_weights,
-                today=self._market_date,
-                on_warning=self._warn,
-            ),
+        return SectorPodsReview(
+            strategy=self,
+            params=params,
+            store=store,
+            rebalancer=Rebalancer(self, params),
+            bars=self._daily_bars(),
+            log=RunLog(self.run_file("reviews.jsonl"), what="review log"),
             pods=pods,
             risk_manager=risk,
             portfolio_manager=pm,
-            execute=Execute(store, rebalancer, RunLog(self.run_file("reviews.jsonl"), what="review log"), params, on_info=self._info, on_warning=self._warn, on_error=self._error),
         )
 
     def on_trading_iteration(self) -> None:
         """The weekly review. A backtest aborts when too many reviews in a row were abandoned (a dead LLM or data source)."""
-        if self._graph is None or self._store is None:
-            raise FatalStrategyError("SectorPodsStrategy.on_trading_iteration ran before initialize() built the graph")
+        if self._review is None or self._store is None:
+            raise FatalStrategyError("SectorPodsStrategy.on_trading_iteration ran before initialize() built the review")
         today = self._market_date()
         self.log_info(f"Today is a {today.strftime('%A')} and the rebalance day is {calendar.day_name[self.settings.rebalance_weekday]}")
         if today.weekday() != self.settings.rebalance_weekday:
@@ -215,7 +228,7 @@ class SectorPodsStrategy(Strategy):
             self.log_info(f"[sector_pods] the week of {today} already completed: not run again")
             return
         try:
-            abandoned = self._graph.invoke({"date": today.isoformat()}).get("abandoned") is not None
+            abandoned = self._review.run().get("abandoned") is not None
             streak = self._store.load().abandoned_streak
         except (BrokerError, BacktestError) as exc:
             # Escaped the graph (holdings read, rebalance): an abandoned week, but last week's views stay.
@@ -260,14 +273,8 @@ class SectorPodsStrategy(Strategy):
         """
         self.log_info(f"order filled: {order.side.value} {_size(quantity)} of {_size(order.quantity)} {order.asset.symbol} @ ${price:.2f} (id {order.identifier})")
 
-    def _info(self, message: str) -> None:
-        self.log_info(message)
-
     def _warn(self, message: str) -> None:
         self.log_warning(message)
-
-    def _error(self, message: str) -> None:
-        self.log_error(message)
 
     def _market_date(self) -> date:
         return self.clock.now().astimezone(MARKET_TZ).date()

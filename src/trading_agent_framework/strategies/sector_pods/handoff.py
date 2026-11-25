@@ -3,7 +3,7 @@
 No `from __future__ import annotations` here: LangChain reads the tool signatures and the TypedDicts at runtime.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, TypedDict
 
 from trading_agent_framework.agents.submit import HandoffError, NodeRecorder
@@ -22,6 +22,12 @@ SCORE_RANGE = (-2, 2)
 UNAVAILABLE: dict[str, Any] = {"unavailable": True}  # what `AgentNode.write(None)` stores for a pod
 
 _TOLERANCE = 1e-9
+
+
+def or_unavailable(view: Any) -> Any:
+    """What an agent node writes to the state: its submission, or the unavailable marker when it gave none."""
+    return UNAVAILABLE if view is None else view
+
 
 Validator = Callable[[Any, Mapping[str, Any]], None]
 
@@ -157,6 +163,21 @@ def check_weights(weights: Mapping[str, float], state: Mapping[str, Any], params
     return None
 
 
+def _pod_totals(book: Mapping[str, float]) -> dict[str, float]:
+    """The total weight of `book` in each pod, by pod key."""
+    totals: dict[str, float] = {}
+    for symbol, weight in book.items():
+        key = pod_of(symbol).key
+        totals[key] = totals.get(key, 0.0) + weight
+    return totals
+
+
+def _scale(book: dict[str, float], symbols: Sequence[str], factor: float) -> None:
+    """Multiply the weight of each of `symbols` in `book` by `factor`, in place."""
+    for symbol in symbols:
+        book[symbol] *= factor
+
+
 def fill_book(weights: Mapping[str, float], state: Mapping[str, Any], params: SectorPodsParams) -> dict[str, float]:
     """The book to trade: the PM's weights scaled up to `1 - params.cash_buffer`, within the ETF and pod caps.
 
@@ -177,33 +198,23 @@ def fill_book(weights: Mapping[str, float], state: Mapping[str, Any], params: Se
     book = {symbol: weight for symbol, weight in weights.items() if weight > 0}
     free = [symbol for symbol in book if not _frozen(symbol, state)]
 
-    def pod_totals() -> dict[str, float]:
-        totals: dict[str, float] = {}
-        for symbol, weight in book.items():
-            totals[pod_of(symbol).key] = totals.get(pod_of(symbol).key, 0.0) + weight
-        return totals
-
-    def scale(symbols: list[str], factor: float) -> None:
-        for symbol in symbols:
-            book[symbol] *= factor
-
     for _ in range(len(free) + len(PODS) + 1):  # each round saturates an ETF or a pod, or ends the loop
-        totals = pod_totals()
+        totals = _pod_totals(book)
         room = target - sum(book.values())
-        open_ = [s for s in free if book[s] < params.max_etf_weight - _TOLERANCE and totals[pod_of(s).key] < params.max_pod_weight - _TOLERANCE]
-        if room <= _TOLERANCE or not open_:
+        below_caps = [s for s in free if book[s] < params.max_etf_weight - _TOLERANCE and totals[pod_of(s).key] < params.max_pod_weight - _TOLERANCE]
+        if room <= _TOLERANCE or not below_caps:
             break
-        scale(open_, 1 + room / sum(book[s] for s in open_))
-        for symbol in open_:
+        _scale(book, below_caps, 1 + room / sum(book[s] for s in below_caps))  # hand the room out in proportion
+        for symbol in below_caps:
             book[symbol] = min(book[symbol], params.max_etf_weight)
-        for key, total in pod_totals().items():
+        for key, total in _pod_totals(book).items():
             if total > params.max_pod_weight:
                 members = [s for s in free if pod_of(s).key == key]
                 held = sum(book[s] for s in members)
-                scale(members, max(held - (total - params.max_pod_weight), 0.0) / held)
+                _scale(book, members, max(held - (total - params.max_pod_weight), 0.0) / held)
     if (excess := sum(book.values()) - target) > 0 and free:  # float drift: never above the target
         held = sum(book[s] for s in free)
-        scale(free, max(held - excess, 0.0) / held)
+        _scale(book, free, max(held - excess, 0.0) / held)
     return book
 
 

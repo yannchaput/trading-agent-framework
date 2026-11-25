@@ -15,6 +15,7 @@ from trading_agent_framework.agents.manager import AgentManager
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.strategies.sector_pods import SectorPodsStrategy
 from trading_agent_framework.strategies.sector_pods.agent_sector_pods import _size
+from trading_agent_framework.strategies.sector_pods.graph import SectorPodsReview
 from trading_agent_framework.strategies.sector_pods.pods import PODS
 from trading_agent_framework.strategies.sector_pods.store import WeekState
 from trading_agent_framework.utils.errors import BrokerError, FatalStrategyError
@@ -32,15 +33,22 @@ class _FakeAgents:
         return object()
 
 
-class _FakeGraph:
+class _FakeReview:
     def __init__(self, result: dict[str, Any] | Exception) -> None:
         self.result, self.invocations = result, 0
 
-    def invoke(self, state: dict[str, Any]) -> dict[str, Any]:
+    def run(self) -> dict[str, Any]:
         self.invocations += 1
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
+
+
+def _install_review(strategy: SectorPodsStrategy, result: dict[str, Any] | Exception) -> _FakeReview:
+    """Replace the strategy's review with a fake that returns (or raises) `result`."""
+    review = _FakeReview(result)
+    strategy._review = cast(SectorPodsReview, review)
+    return review
 
 
 def _strategy(tmp_path: Path, now: datetime = TUESDAY, *, news: bool = True, mode: TradingMode = TradingMode.BACKTESTING) -> tuple[SectorPodsStrategy, _FakeAgents]:
@@ -55,7 +63,7 @@ def _strategy(tmp_path: Path, now: datetime = TUESDAY, *, news: bool = True, mod
 def test_skips_other_weekdays(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, WEDNESDAY)
     strategy.initialize()
-    graph = strategy._graph = _FakeGraph({"abandoned": None})
+    graph = _install_review(strategy, {"abandoned": None})
 
     strategy.on_trading_iteration()
 
@@ -65,7 +73,7 @@ def test_skips_other_weekdays(tmp_path: Path) -> None:
 def test_completed_week_not_run_again(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
     strategy.initialize()
-    graph = strategy._graph = _FakeGraph({"abandoned": None})
+    graph = _install_review(strategy, {"abandoned": None})
     assert strategy._store is not None
     strategy._store.save(WeekState(last_completed="2026-11-10"))
 
@@ -116,8 +124,8 @@ def test_every_submit_tool_refuses_an_over_long_text_through_its_own_gate(tmp_pa
 
     strategy.initialize()
     assert strategy._store is not None
-    parts = strategy._graph_parts(strategy._store)  # a fresh set of agents, so each node's recorder can be armed here
-    for node in (*parts.pods.values(), parts.risk_manager, parts.portfolio_manager):
+    review = strategy._build_review(strategy._store)  # a fresh set of agents, so each node's recorder can be armed here
+    for node in (*review.pods.values(), review.risk_manager, review.portfolio_manager):
         node.recorder.arm({})
 
     tools = {created["name"]: {tool.__name__: tool for tool in created["tools"]} for created in agents.created}  # the latest agent of a name wins
@@ -136,7 +144,7 @@ def test_an_error_escaping_the_graph_is_an_abandoned_week_that_keeps_the_previou
     strategy.initialize()
     assert strategy._store is not None
     strategy._store.save(WeekState(last_completed="2026-11-03", previous={"date": "2026-11-03"}))
-    graph = strategy._graph = _FakeGraph(BrokerError("holdings unavailable"))
+    graph = _install_review(strategy, BrokerError("holdings unavailable"))
 
     strategy.on_trading_iteration()
 
@@ -148,7 +156,7 @@ def test_an_error_escaping_the_graph_is_an_abandoned_week_that_keeps_the_previou
 def test_three_escaped_errors_in_a_row_abort_a_backtest(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
     strategy.initialize()
-    strategy._graph = _FakeGraph(BrokerError("down"))
+    _install_review(strategy, BrokerError("down"))
 
     strategy.on_trading_iteration()
     strategy.on_trading_iteration()
@@ -159,7 +167,7 @@ def test_three_escaped_errors_in_a_row_abort_a_backtest(tmp_path: Path) -> None:
 def test_three_escaped_errors_do_not_abort_a_paper_run(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path, mode=TradingMode.PAPER)
     strategy.initialize()
-    graph = strategy._graph = _FakeGraph(BrokerError("down"))
+    graph = _install_review(strategy, BrokerError("down"))
 
     for _ in range(4):
         strategy.on_trading_iteration()
