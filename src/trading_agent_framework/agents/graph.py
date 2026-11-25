@@ -77,8 +77,6 @@ class AgentNode:
         for attempt in range(2):
             try:
                 result = self._run(task, state, force_tool=force_tool)
-                if result.output:
-                    logger.log_info(f"[{self.name}] {result.output}")
             except AgentLoopError as exc:
                 reason = f"loop: {exc}"
                 break  # a loop is not retried
@@ -86,13 +84,16 @@ class AgentNode:
                 reason = f"agent failed: {exc}"
             else:
                 reason = "no valid submission"
+                if result.output and not self.recorder.submitted:  # the model's text is the only clue to why it did not submit
+                    logger.log_info(f"[{self.name}] {result.output}")
             if self.recorder.submitted:
-                return self.write(self.recorder.submission)
+                break
             if attempt == 0:
                 logger.log_warning(f"[{self.name}] no valid {self.submit_tool}: retrying with it forced")
                 task = f"{self.task}\n\nYour previous attempt ended without a valid {self.submit_tool} call. Call {self.submit_tool} now."
                 force_tool = self.submit_tool
         if self.recorder.submitted:
+            logger.log_info(f"[{self.name}] submitted: {self.recorder.submission}")
             return self.write(self.recorder.submission)
         logger.log_warning(f"[{self.name}] unavailable: {reason}")
         return {**self.write(None), "errors": [{"node": self.name, "error": reason}]}
