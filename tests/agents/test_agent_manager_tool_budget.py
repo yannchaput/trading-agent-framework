@@ -8,7 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage, ToolCall, ToolMessag
 from tests.fakes import FakeToolCallingChatModel
 
 from trading_agent_framework.agents.config import LLMCredentials
-from trading_agent_framework.agents.manager import AgentHandle, AgentManager, _tool_budget_message
+from trading_agent_framework.agents.manager import AgentHandle, AgentManager, ToolBudget, _tool_budget_message
 
 
 def _manager() -> AgentManager:
@@ -31,7 +31,7 @@ def _agent(seen: list[str], *messages: AIMessage, exempt_tools: list[str] | None
         return {"status": "recorded"}
 
     model = FakeToolCallingChatModel(messages=iter(list(messages)))
-    return _manager().create(name="seller", system_prompt="x", model=model, tools=[lookup, submit], exempt_tools=exempt_tools)
+    return _manager().create(name="seller", system_prompt="x", model=model, tools=[lookup, submit], budget=ToolBudget(exempt=tuple(exempt_tools or ())))
 
 
 def test_calls_past_the_budget_are_refused_and_never_run() -> None:
@@ -191,10 +191,14 @@ def test_the_refusal_names_the_final_tools_not_every_exempt_tool() -> None:
     model = FakeToolCallingChatModel(
         messages=iter([_calls(("lookup", {"symbol": "A"})), _calls(("lookup", {"symbol": "B"})), _calls(("statement", {"symbol": "A"})), _calls(("submit", {"answer": "x"}))])
     )
-    handle = _manager().create(name="r", system_prompt="x", model=model, tools=[lookup, statement, submit], exempt_tools=["submit", "statement"], final_tools=["submit"])
+    handle = _manager().create(name="r", system_prompt="x", model=model, tools=[lookup, statement, submit], budget=ToolBudget(exempt=("submit", "statement")), final_tools=["submit"])
 
     result = handle.run("go", tool_budget=1)
 
     refused = [call for call in result.tool_calls if call.name == "lookup"][1]
     assert json.loads(refused.result) == {"error": "tool budget of 1 calls spent; lookup was not run. Finish now: call submit."}  # statement is exempt but does not finish the run
     assert [call.result for call in result.tool_calls if call.name == "statement"] == ["A statement"]  # the exempt tool still ran past the budget
+
+
+def test_tool_budget_defaults_count_every_tool_and_label_nothing() -> None:
+    assert ToolBudget() == ToolBudget(exempt=(), label_calls=False)

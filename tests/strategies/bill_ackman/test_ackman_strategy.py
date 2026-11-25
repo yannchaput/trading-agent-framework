@@ -6,7 +6,7 @@ from typing import Any, cast
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.agents.manager import AgentManager
+from trading_agent_framework.agents.manager import AgentManager, ToolBudget
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core.strategy import Strategy
@@ -224,4 +224,4 @@ def test_only_the_short_seller_has_a_budget_exempt_tool_its_submit_tool(tmp_path
 
     strategy.initialize()
 
-    assert [created.get("exempt_tools") for created in agents.created] == [None, ["submit_verdicts"], None]
+    assert [created.get("budget") for created in agents.created] == [None, ToolBudget(exempt=("submit_verdicts",)), None]

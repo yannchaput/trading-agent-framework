@@ -7,7 +7,7 @@ into a strategy that doesn't create an agent.
 """
 
 from trading_agent_framework.agents.config import LLMCredentials
-from trading_agent_framework.agents.manager import AgentHandle, AgentManager
+from trading_agent_framework.agents.manager import AgentHandle, AgentManager, ToolBudget
 from trading_agent_framework.agents.results import AgentRunResult, ToolCallRecord
 from trading_agent_framework.utils import get_version
 
@@ -19,5 +19,6 @@ __all__ = [
     "AgentManager",
     "AgentRunResult",
     "LLMCredentials",
+    "ToolBudget",
     "ToolCallRecord",
 ]

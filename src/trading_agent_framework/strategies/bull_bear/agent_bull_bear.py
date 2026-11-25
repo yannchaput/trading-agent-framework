@@ -16,6 +16,7 @@ from decimal import Decimal
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
+from trading_agent_framework.agents import ToolBudget
 from trading_agent_framework.agents.tools import only
 from trading_agent_framework.agents.tools.text import text_tools
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
@@ -160,12 +161,7 @@ class BullBearStrategy(Strategy):
                 tools=[*research, *text_tools(lambda: recorder.gate), submit["submit_note"]],
                 temperature=temperature,
                 # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
-                exempt_tools=[
-                    "submit_note",
-                    "count_characters",
-                    "get_income_statement",
-                    "get_balance_sheet",
-                ],
+                budget=ToolBudget(exempt=("submit_note", "count_characters", "get_income_statement", "get_balance_sheet")),
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
                 compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
                 max_output_tokens=cap,
@@ -178,7 +174,7 @@ class BullBearStrategy(Strategy):
                     system_prompt=system_prompt,
                     tools=[*text_tools(lambda: recorder.gate), submit[tool]],
                     temperature=temperature,
-                    exempt_tools=[tool, "count_characters"],
+                    budget=ToolBudget(exempt=(tool, "count_characters")),
                     final_tools=[tool],
                     max_output_tokens=cap,
                     thinking_token_budget=budget,
@@ -189,7 +185,7 @@ class BullBearStrategy(Strategy):
                 system_prompt=JUDGE_SYSTEM,
                 tools=[*text_tools(lambda: recorder.gate), submit["submit_verdicts"]],
                 temperature=temperature,
-                exempt_tools=["submit_verdicts", "count_characters"],
+                budget=ToolBudget(exempt=("submit_verdicts", "count_characters")),
                 final_tools=["submit_verdicts"],
                 max_output_tokens=self.settings.judge_max_output_tokens,
                 thinking_token_budget=self.settings.judge_thinking_token_budget,

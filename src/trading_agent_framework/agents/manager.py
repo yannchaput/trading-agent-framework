@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +143,20 @@ def _warn_if_budget_reached(agent_name: str, budget: int, response: Any) -> None
         pass
 
 
+@dataclass(frozen=True)
+class ToolBudget:
+    """How an agent's per-run tool budget (`AgentHandle.run(tool_budget=N)`) treats its tools.
+
+    Attributes:
+        exempt: Tools the budget never counts or refuses, typically the one the agent must end with. Without a
+            per-run budget this changes nothing.
+        label_calls: Whether each counted call's answer says which call it was, as `"<tool> call k of N"`.
+    """
+
+    exempt: tuple[str, ...] = ()
+    label_calls: bool = False
+
+
 def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[str]) -> str:
     """The error a call past the budget gets instead of running; names only the caller's own tools."""
     spent = f"tool budget of {budget} calls spent; {blocked_tool} was not run."
@@ -183,7 +198,7 @@ class AgentHandle:
         run are left unforced.
 
         `tool_budget`, when given, caps this run's tool calls: past it, every tool but the agent's
-        `exempt_tools` (see `AgentManager.create`) returns an `{"error": ...}` without running, so the
+        the exempt tools (`ToolBudget`, see `AgentManager.create`) returns an `{"error": ...}` without running, so the
         model finishes with what it has instead of overflowing its context. Each run starts a fresh count.
 
         `max_steps`, when given, is LangGraph's `recursion_limit` for this run, which counts supersteps (rounds in which
@@ -318,8 +333,8 @@ class AgentManager:
 
         return force_tool_choice
 
-    def _tool_budget_middleware(self, tool_names: Sequence[str], exempt_tools: Sequence[str], final_tools: Sequence[str] = ()) -> Any:
-        """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
+    def _tool_budget_middleware(self, tool_names: Sequence[str], budget: ToolBudget, final_tools: Sequence[str] = ()) -> Any:
+        """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `budget.exempt`.
 
         `AgentHandle.run` sets `run_limit` for the run (`None` between runs: nothing is refused). The base class
         counts in `after_model`, on the one graph thread, and injects an error `ToolMessage` for each call past
@@ -333,7 +348,7 @@ class AgentManager:
         from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
         from langchain_core.messages import ToolMessage
 
-        exempt = tuple(exempt_tools)
+        exempt = budget.exempt
         finish = tuple(final_tools) or exempt
         counted = frozenset(tool_names) - frozenset(exempt)
 
@@ -519,7 +534,7 @@ class AgentManager:
         tools: Sequence[Callable[..., Any] | BaseTool] | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
-        exempt_tools: Sequence[str] | None = None,
+        budget: ToolBudget | None = None,
         final_tools: Sequence[str] | None = None,
         compact_history: bool = False,
         max_output_tokens: int | None = None,
@@ -539,8 +554,8 @@ class AgentManager:
         a pre-built `BaseChatModel` keeps its own sampling settings. The telemetry summary records the
         temperature the chat model actually has.
 
-        `exempt_tools` names the tools a per-run `tool_budget` (see `AgentHandle.run`) never refuses,
-        typically the tool the agent must end with; without a budget it changes nothing.
+        `budget` (default: every tool counted, no labels) says how a per-run `tool_budget` (see `AgentHandle.run`)
+        treats the agent's tools: which ones it never counts or refuses (see `ToolBudget`).
 
         `final_tools` names the tools whose successful call ends the run: the model is not asked for another
         turn (see `_final_tools_middleware`). For an agent whose job is to hand one result over, not for a
@@ -586,7 +601,7 @@ class AgentManager:
 
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
             tool_list = list(tools or [])
-            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or (), final_tools or ())
+            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], budget or ToolBudget(), final_tools or ())
             stack = [
                 self._tool_call_repair_middleware(glm_format=glm_format),
                 self._forced_tool_choice_middleware(),
