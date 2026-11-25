@@ -131,16 +131,16 @@ def test_sort_asc_returns_oldest_first(tmp_path: Path) -> None:
     assert _headlines(articles) == ["Wall Street a", "Wall Street b"]
 
 
-def test_article_shape_matches_alpaca(tmp_path: Path) -> None:
+def test_an_article_is_marked_titles_only_and_has_no_summary(tmp_path: Path) -> None:
     _day(tmp_path / "gkg", "2024-03-05", [_row("20240305093000", "Wall Street up", "http://x.com/wall", "x.com")])
     article = _provider(tmp_path).get_news(end=datetime(2024, 3, 5, 23, tzinfo=UTC), include_content=True)[0]
     assert article == {
         "id": "http://x.com/wall",
         "headline": "Wall Street up",
-        "summary": "",
         "source": "x.com",
         "created_at": "2024-03-05T09:30:00+00:00",
         "symbols": [],
+        "titles_only": True,
     }
 
 
