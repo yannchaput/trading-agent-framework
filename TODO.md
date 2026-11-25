@@ -2,11 +2,11 @@
 
 ## General
 
-* Add a parameter start/stop date and time window to the CLI for the backtest
 * Add a skill to review, challenge and validate the design of a strategy
 * Set the plugins claude-api and build-evals to enable evals
 * Implement a skill scanning the auto memory and session traces to get a finding
 * Set up a mlflow server for agent evaluation
+* ~~Add a parameter start/stop date and time window to the CLI for the backtest~~
 * ~~Fix pyright errors (consume tokens)~~
 * ~~Update claude.md so that simplify skill is always run before commit as pony-tail. Check if a hook would be possible. Add documentation by default~~
 * ~~create a PR template~~
@@ -73,9 +73,10 @@
 
 ### Bull Bear
 
-* Refactor bull bear into Langgraph like "pod_sectors"
+* Test with news off
+* ~~Refactor bull bear into Langgraph like "pod_sectors"~~
 * ~~Add the "character count" guardrails before submitting a note.~~
-* Merge the trim utilities of common in handoff with the one of bull-bear in "pipeline".
+* ~~Merge the trim utilities of common in handoff with the one of bull-bear in "pipeline".~~
 * ~~Verifier si le tools search_memory a ete utilisé et pourquoi, relevance of the answer vs query~~
 * ~~Retest a 1Y backtest with news 'off'~~
 * ~~Bump up research_tool_budget to 5 with news on~~
@@ -142,21 +143,6 @@ La suite :
 	1.	Au retour du worker, je relis le code et je lance ruff, pyright et les tests.
 	2.	Je vous propose ensuite de fusionner. Il faudra alors redémarrer les deux stratégies pour charger le nouveau code, avant mardi.
 ```
-
-### Bearish regime
-
-Goal: a second account that makes money on its own and, ideally, most when the market falls (bull_bear loses in falls).
-Details and sources: `docs/papers/bearish search papers.md`. Check the box once a strategy is tested.
-
-* [ ] Time-series momentum / trend following ("crisis alpha"): Hurst, Ooi & Pedersen, *A Century of Evidence on Trend-Following Investing* (67 markets, 1880-2016, positive in 8 of the 10 largest crises); Man/Oxford 1960-2015 (positive skew, more so for faster lookbacks). Code: pysystemtrade (pst-group), PyTrendFollow. Caveat: weak for about 4 years after a crisis starts.
-* [ ] Faber's 10-month SMA / GTAA: at each month end hold an asset class above its 10-month SMA, else cash. Test several rebalance dates (timing luck). Code: Concretum's Python implementation.
-* [ ] Dual Momentum (Antonacci): relative momentum picks the strongest asset, absolute momentum moves to bonds when the trend is negative. Lags the S&P 500 since 2009, ahead of it from 2008. Variant: Quantpedia 2007-2026 on commodity ETFs (DBA, DBB, DBE, DBP).
-* [ ] Keller's canary strategies (DAA, BAA, HAA): a canary universe (VWO, BND) with 13612W momentum triggers crash protection; BAA in SSRN 4166845. Code: HAApy, QuantConnect threads (results drop when trading the next open instead of the month-end close).
-* [ ] Defensive equity factors (quality, low volatility): smaller drawdowns in COVID and the GFC, but low volatility can still lose 60% of the market's fall (Man Group): a dampener, not a hedge.
-* [ ] Dynamic momentum (Daniel & Moskowitz, NBER w20439): forecast momentum's mean and variance to avoid the bear-market rebound crash (about doubles alpha and Sharpe). Simpler HSE variant: turn contrarian for 3 months after a crash.
-* Toolkits: R `AssetAllocation` (Ivy, Robust Asset Allocation, Dual Momentum, Adaptive Asset Allocation); Python `bt`, `backtesting.py`, Ilya Kipnis's PythonBacktesting.
-
----
 
 ## Archives
 

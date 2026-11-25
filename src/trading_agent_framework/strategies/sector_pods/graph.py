@@ -1,29 +1,32 @@
 """The sector_pods weekly graph: load last week, market facts, five parallel pods, risk, portfolio manager, execute.
 
-The nodes share one `PodsState`. Code nodes are the classes below; the agent nodes are `AgentNode`s built by the
-strategy. The graph stays linear: once a week is abandoned every agent node returns without running.
+The nodes share one `PodsState`. `SectorPodsReview` holds the code nodes as methods and wires them with the agent nodes
+(`AgentNode`s built by the strategy). An abandoned week leaves `market_facts` straight for `execute`.
 """
 
 import operator
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, replace
 from datetime import date
-from typing import Annotated, Any, Protocol, TypedDict
+from functools import partial
+from typing import Annotated, Any, TypedDict
 
 from trading_agent_framework.agents.graph import AgentNode, merge_dicts
+from trading_agent_framework.core import Strategy
+from trading_agent_framework.core.regime import REGIME_LABELS
 from trading_agent_framework.strategies.common.daily_bars import DailyBars, DataUnavailable
-from trading_agent_framework.strategies.common.portfolio import target_portfolio
+from trading_agent_framework.strategies.common.portfolio import TargetPortfolio, target_portfolio
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
-from trading_agent_framework.strategies.sector_pods.facts import etf_facts, outcome, week_return_pct
+from trading_agent_framework.strategies.sector_pods.facts import etf_facts, outcome, stress_view, week_return_pct
 from trading_agent_framework.strategies.sector_pods.handoff import UNAVAILABLE, check_weights, fill_book, unresearched
 from trading_agent_framework.strategies.sector_pods.params import SectorPodsParams
 from trading_agent_framework.strategies.sector_pods.pods import ALL_SYMBOLS, PODS
 from trading_agent_framework.strategies.sector_pods.store import StateStore, WeekState
+from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import BacktestError, BrokerError
 
 _SPY = "SPY"
-_REGIME_LABELS: dict[int | None, str] = {1: "bullish", 0: "neutral", -1: "bearish", None: "unknown"}
 
 
 class PodsState(TypedDict, total=False):
@@ -47,24 +50,9 @@ class PodsState(TypedDict, total=False):
     abandoned: str | None  # why the week was abandoned; None when completed
 
 
-class CodeNode(Protocol):
-    """A graph node: reads the shared state, returns the slots it writes."""
-
-    def __call__(self, state: PodsState) -> dict[str, Any]:
-        """Run the node."""
-        ...
-
-
-@dataclass(frozen=True)
-class GraphParts:
-    """The nodes `build_graph` wires together."""
-
-    load_previous: CodeNode
-    market_facts: CodeNode
-    pods: Mapping[str, AgentNode]
-    risk_manager: AgentNode
-    portfolio_manager: AgentNode
-    execute: CodeNode
+def market_date(strategy: Strategy) -> date:
+    """The session date: the strategy clock's now in market time (never the wall clock)."""
+    return strategy.clock.now().astimezone(MARKET_TZ).date()
 
 
 def _real(view: Any) -> Any:
@@ -97,70 +85,105 @@ def pm_reads(state: Mapping[str, Any]) -> dict[str, Any]:
     return {key: state.get(key) for key in keys} | {"unresearched": unresearched(state), "previous": _previous(state, "pm")}
 
 
-def skip_if_abandoned(node: CodeNode) -> CodeNode:
-    """Wrap an agent node so it does nothing once the week is abandoned."""
-
-    def guarded(state: PodsState) -> dict[str, Any]:
-        return {} if state.get("abandoned") else node(state)
-
-    return guarded
-
-
-def skip_pod_without_facts(key: str, node: CodeNode) -> CodeNode:
-    """Wrap a pod node so a pod with no ETF facts is not run and is recorded as unavailable."""
-
-    def guarded(state: PodsState) -> dict[str, Any]:
-        return node(state) if state.get("facts", {}).get(key) else {"pods": {key: UNAVAILABLE}}
-
-    return guarded
-
-
-class LoadPrevious:
-    """Node: put last completed week's views in the state."""
-
-    def __init__(self, store: StateStore) -> None:
-        """Read from `store`."""
-        self._store = store
-
-    def __call__(self, state: PodsState) -> dict[str, Any]:
-        """Return `{"previous": ...}`."""
-        return {"previous": self._store.load().previous}
-
-
-class MarketFacts:
-    """Node: today's date, regime label, holdings, per-ETF facts, the score of last week's views and the market `stress` (for the risk manager and PM)."""
+class SectorPodsReview:
+    """The weekly review: a LangGraph graph compiled once, run by `run`."""
 
     def __init__(
         self,
-        bars: DailyBars,
         *,
-        regime: Callable[[], int | None],
-        stress: Callable[[], dict[str, Any] | None],
-        holdings: Callable[[], dict[str, float]],
-        today: Callable[[], date],
-        on_warning: Callable[[str], None] | None = None,
+        strategy: Strategy,
+        params: SectorPodsParams,
+        store: StateStore,
+        rebalancer: Rebalancer,
+        bars: DailyBars,
+        log: RunLog,
+        pods: Mapping[str, AgentNode],
+        risk_manager: AgentNode,
+        portfolio_manager: AgentNode,
     ) -> None:
-        """Create the node.
+        """Wire the review and compile its graph.
 
         Args:
+            strategy: Gives the clock, the regime and the log the nodes report to.
+            params: Order limits and cash buffer.
+            store: Where the last completed week and the abandoned streak are kept.
+            rebalancer: Reads the holdings and places the orders.
             bars: Daily bars source.
-            regime: The strategy's regime (1, 0, -1 or None).
-            stress: The strategy's stress view (`facts.stress_view`), None without a reading.
-            holdings: Current weight of each held ETF.
-            today: The session date (never the wall clock).
-            on_warning: Told when last week's saved book cannot be read (no outcome is then given).
+            log: One record is appended per week that reached `execute`.
+            pods: The five pod agents by pod key.
+            risk_manager: The risk manager agent.
+            portfolio_manager: The portfolio manager agent.
         """
-        self._warn = on_warning or (lambda _message: None)
+        self._strategy = strategy
+        self._params = params
+        self._store = store
+        self._rebalancer = rebalancer
         self._bars = bars
-        self._regime = regime
-        self._stress = stress
-        self._holdings = holdings
-        self._today = today
+        self._log = log
+        self._pods = pods
+        self._risk_manager = risk_manager
+        self._portfolio_manager = portfolio_manager
+        self._graph = self._build_graph()
 
-    def __call__(self, state: PodsState) -> dict[str, Any]:
-        """Load the bars; abandon the week (`data: ...`) when they are unusable or no ETF has enough history."""
-        holdings = self._holdings()
-        base: dict[str, Any] = {"date": self._today().isoformat(), "regime": _REGIME_LABELS[self._regime()], "stress": self._stress(), "holdings": holdings}
+    def run(self) -> dict[str, Any]:
+        """Run one weekly review; returns the final state (`orders`, and `abandoned`: the reason, or None when completed)."""
+        return self._graph.invoke({})
+
+    def _build_graph(self) -> Any:
+        """Compile load_previous, market_facts, the pods in parallel, risk_manager, portfolio_manager, execute."""
+        from langgraph.graph import END, START, StateGraph
+
+        graph = StateGraph(PodsState)
+        # Node: reads last completed week's views (pods, risk, pm) from the store, for keep-or-trim and scoring. Put it in the State.
+        graph.add_node("load_previous", self._load_previous)
+        # Node: builds this week's date, regime, holdings, per-ETF facts, outcome and stress; may abandon the week.
+        graph.add_node("market_facts", self._market_facts)
+        # One node per pod, bound to its key so _run_pod knows which sleeve to research; they run in parallel.
+        for key in self._pods:
+            graph.add_node(key, partial(self._run_pod, key))
+        # Node: the risk manager reviews all pod views and records objections; it has no tools.
+        graph.add_node("risk_manager", partial(self._run_agent, self._risk_manager))
+        # Node: the portfolio manager turns the pod views and risk review into the target weights.
+        graph.add_node("portfolio_manager", partial(self._run_agent, self._portfolio_manager))
+        # Node: fills the book, trades it through the Rebalancer and records the week (or records the abandon).
+        graph.add_node("execute", self._execute)
+        # Edge: the graph starts by loading the previous week.
+        graph.add_edge(START, "load_previous")
+        # Edge: market facts are computed only after the previous week is loaded.
+        graph.add_edge("load_previous", "market_facts")
+        # Edge: after the facts, fan out to the five pods, or jump straight to execute if the week was abandoned.
+        graph.add_conditional_edges("market_facts", self._after_facts)
+        # Edge (list source = join): risk_manager starts only after all five pods have finished.
+        graph.add_edge(list(self._pods), "risk_manager")
+        # Edge: the portfolio manager decides only after risk has reviewed the pods.
+        graph.add_edge("risk_manager", "portfolio_manager")
+        # Edge: execute trades the book only after the portfolio manager has submitted it.
+        graph.add_edge("portfolio_manager", "execute")
+        # Edge: execute is the last step, so the graph ends after the week is recorded.
+        graph.add_edge("execute", END)
+        return graph.compile()
+
+    def _after_facts(self, state: PodsState) -> list[str]:
+        """Where `market_facts` leads: the five pods, or straight to `execute` when the week is abandoned."""
+        return ["execute"] if state.get("abandoned") else list(self._pods)
+
+    def _load_previous(self, state: PodsState) -> dict[str, Any]:
+        """Put last completed week's views in the state."""
+        return {"previous": self._store.load().previous}
+
+    def _market_facts(self, state: PodsState) -> dict[str, Any]:
+        """Today's date, regime label, holdings, per-ETF facts, the score of last week's views and the market `stress`.
+
+        Abandons the week (`data: ...`) when the bars are unusable or no ETF has enough history.
+        """
+        strategy = self._strategy
+        holdings = self._rebalancer.current_weights()
+        base: dict[str, Any] = {
+            "date": market_date(strategy).isoformat(),
+            "regime": "unknown" if strategy.regime is None else REGIME_LABELS[strategy.regime],
+            "stress": stress_view(strategy.regime_reading, strategy.market_fall),
+            "holdings": holdings,
+        }
         try:
             series = self._bars.load((*ALL_SYMBOLS, _SPY), list(holdings))
         except DataUnavailable as exc:
@@ -180,64 +203,53 @@ class MarketFacts:
             weights = {w["symbol"]: float(w["weight"]) for w in pm["weights"]}
             return outcome(weights, previous.get("pods") or {}, facts, week_return_pct(spy))
         except (KeyError, TypeError, ValueError, AttributeError) as exc:
-            self._warn(f"last week's book is unreadable, no outcome given: {type(exc).__name__}: {exc}")
+            self._strategy.log_warning(f"last week's book is unreadable, no outcome given: {type(exc).__name__}: {exc}")
             return {}
 
+    def _run_agent(self, node: AgentNode, state: PodsState) -> dict[str, Any]:
+        """Run an agent node on the week's state (LangGraph hands nodes the `PodsState`)."""
+        return node(state)
 
-class Execute:
-    """Node: re-check the PM's book, fill it to the invested target, trade it, save the week and write the run-log record."""
+    def _run_pod(self, key: str, state: PodsState) -> dict[str, Any]:
+        """Run one pod; a pod with no ETF facts is not run and is recorded as unavailable."""
+        if not state.get("facts", {}).get(key):
+            return {"pods": {key: UNAVAILABLE}}
+        return self._run_agent(self._pods[key], state)
 
-    def __init__(
-        self, store: StateStore, rebalancer: Rebalancer, log: RunLog, params: SectorPodsParams, *, on_info: Callable[[str], None], on_warning: Callable[[str], None], on_error: Callable[[str], None]
-    ) -> None:
-        """Create the node.
+    def _execute(self, state: PodsState) -> dict[str, Any]:
+        """Re-check the PM's book, fill it to the invested target, trade it, save the week and write the run-log record.
 
-        Args:
-            store: Where the week is saved.
-            rebalancer: Places the orders.
-            log: One record is appended per call.
-            params: Order limits and cash buffer.
-            on_info: Reports how far the book was filled.
-            on_warning: Reports an abandoned week that is not a failure of execution.
-            on_error: Reports a refused book or a broker failure.
+        Returns:
+            `{"orders", "abandoned"}`: the orders sent, and why the week is abandoned (None when completed).
         """
-        self._store = store
-        self._rebalancer = rebalancer
-        self._log = log
-        self._params = params
-        self._on_info = on_info
-        self._on_warning = on_warning
-        self._on_error = on_error
-
-    def __call__(self, state: PodsState) -> dict[str, Any]:
-        """Trade and save; returns `{"orders", "abandoned"}` (the reason, or None when completed)."""
         saved = self._store.load()
-        reason = state.get("abandoned")
-        orders: list[dict[str, Any]] = []
-        book: dict[str, float] | None = None
-        if reason is None:
-            reason, orders, book = self._trade(state)
-        elif reason:
-            self._on_warning(f"week abandoned: {reason}")
+        abandoned = state.get("abandoned")
+        if abandoned is None:
+            trade = self._trade(state)
+        else:
+            trade = {"abandoned": abandoned, "orders": [], "book": None}
+            if abandoned:
+                self._strategy.log_warning(f"week abandoned: {abandoned}")
+        reason = trade["abandoned"]
         if reason is None:
             week = WeekState(last_completed=state.get("date"), previous={"date": state.get("date"), "pods": state.get("pods"), "risk": state.get("risk"), "pm": state.get("pm")})
         else:
             week = replace(saved, abandoned_streak=saved.abandoned_streak + 1)
         self._store.save(week)
         record = {key: state.get(key) for key in ("date", "regime", "stress", "holdings", "facts", "outcome", "pods", "risk", "pm")}
-        self._log.append({**record, "book": book, "orders": orders, "errors": state.get("errors", []), "abandoned": reason, "abandoned_streak": week.abandoned_streak})
-        return {"orders": orders, "abandoned": reason}
+        self._log.append({**record, "book": trade["book"], "orders": trade["orders"], "errors": state.get("errors", []), "abandoned": reason, "abandoned_streak": week.abandoned_streak})
+        return {"orders": trade["orders"], "abandoned": reason}
 
-    def _trade(self, state: PodsState) -> tuple[str | None, list[dict[str, Any]], dict[str, float] | None]:
-        """Place the PM's book scaled to the invested target.
+    def _trade(self, state: PodsState) -> dict[str, Any]:
+        """Check the PM's book, fill it to the invested target and trade it.
 
         Returns:
-            Why the week is abandoned (None when it went out), the orders actually sent, and the weights traded (None when
-            nothing was traded because the book was refused).
+            `{"abandoned", "orders", "book"}`: why the week is abandoned (None when it went out), the orders actually sent, and
+            the weights traded (None when nothing was traded because the book was refused).
         """
         pm = state.get("pm")
         if not pm or pm.get("unavailable"):
-            return "the portfolio manager gave no book", [], None
+            return {"abandoned": "the portfolio manager gave no book", "orders": [], "book": None}
         weights: dict[str, float] = {}
         book: dict[str, float] = {}
         try:
@@ -250,24 +262,29 @@ class Execute:
         except Exception as exc:  # hostile or malformed book: abandon the week, never crash half way
             problem, target = f"unreadable book ({type(exc).__name__}: {exc})", None
         if target is None:
-            self._on_error(f"execute refused the book: {problem}")
-            return f"execution: {problem}", [], None
-        self._on_info(self._filled_line(sum(weights.values()), sum(book.values())))
+            self._strategy.log_error(f"execute refused the book: {problem}")
+            return {"abandoned": f"execution: {problem}", "orders": [], "book": None}
+        self._strategy.log_info(self._filled_line(sum(weights.values()), sum(book.values())))
+        return self._send_orders(target, book, state.get("holdings") or {})
+
+    def _send_orders(self, target: TargetPortfolio, book: dict[str, float], holdings: Mapping[str, float]) -> dict[str, Any]:
+        """Rebalance to `target` and say how it went; a broker failure or a book nobody accepted abandons the week."""
+        strategy = self._strategy
         try:
             self._rebalancer.rebalance(target)
         except (BrokerError, BacktestError) as exc:
             orders = [asdict(order) for order in self._rebalancer.placed]
-            self._on_error(f"rebalance failed after {len(orders)} orders: {exc}")
-            return f"execution: {exc}", orders, book
+            strategy.log_error(f"rebalance failed after {len(orders)} orders: {exc}")
+            return {"abandoned": f"execution: {exc}", "orders": orders, "book": book}
         orders = [asdict(order) for order in self._rebalancer.placed]
-        if not orders and self._trades_due(book, state.get("holdings") or {}):
+        if not orders and self._trades_due(book, holdings):
             if self._rebalancer.refused:
                 # `Rebalancer.rebalance` logs a refused order and goes on, so a broker that refuses everything returns normally.
-                self._on_error("execute: no order was accepted although the book needs trades")
-                return "execution: no order was accepted", [], book
+                strategy.log_error("execute: no order was accepted although the book needs trades")
+                return {"abandoned": "execution: no order was accepted", "orders": [], "book": book}
             # Nothing was sent and nothing refused: the rebalancer found nothing it could fund. The week is not a failure.
-            self._on_warning("execute: the rebalancer sent no order although the book needs trades: nothing could be funded")
-        return None, orders, book
+            strategy.log_warning("execute: the rebalancer sent no order although the book needs trades: nothing could be funded")
+        return {"abandoned": None, "orders": orders, "book": book}
 
     def _filled_line(self, submitted: float, filled: float) -> str:
         """The log line: how far `fill_book` took the PM's total, and when the caps held it under the target."""
@@ -282,26 +299,3 @@ class Execute:
         refused them all. SHV is left out of both sides: the PM never sets it and `holdings` drops the parking symbol.
         """
         return any(abs(weights.get(symbol, 0.0) - holdings.get(symbol, 0.0)) > self._params.rebalance_band for symbol in {*weights, *holdings})
-
-
-def build_graph(parts: GraphParts) -> Any:
-    """Compile the weekly flow: load_previous, market_facts, the pods in parallel, risk_manager, portfolio_manager, execute."""
-    from langgraph.graph import END, START, StateGraph
-
-    graph = StateGraph(PodsState)
-    graph.add_node("load_previous", parts.load_previous)
-    graph.add_node("market_facts", parts.market_facts)
-    for pod in PODS:
-        graph.add_node(pod.key, skip_if_abandoned(skip_pod_without_facts(pod.key, parts.pods[pod.key])))
-    graph.add_node("risk_manager", skip_if_abandoned(parts.risk_manager))
-    graph.add_node("portfolio_manager", skip_if_abandoned(parts.portfolio_manager))
-    graph.add_node("execute", parts.execute)
-    graph.add_edge(START, "load_previous")
-    graph.add_edge("load_previous", "market_facts")
-    for pod in PODS:
-        graph.add_edge("market_facts", pod.key)
-    graph.add_edge([pod.key for pod in PODS], "risk_manager")
-    graph.add_edge("risk_manager", "portfolio_manager")
-    graph.add_edge("portfolio_manager", "execute")
-    graph.add_edge("execute", END)
-    return graph.compile()

@@ -1,9 +1,9 @@
 import json
 import logging
+import sys
 import threading
 from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
-from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,7 @@ from trading_agent_framework.agents.graph import AgentNode
 from trading_agent_framework.agents.results import AgentRunResult
 from trading_agent_framework.agents.submit import NodeRecorder
 from trading_agent_framework.config.env import TradingMode
+from trading_agent_framework.core.regime import RegimeReading
 from trading_agent_framework.core.strategy import Strategy
 from trading_agent_framework.entities.account import AccountBalances
 from trading_agent_framework.entities.asset import Asset
@@ -24,22 +25,14 @@ from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.common.daily_bars import DailySeries, DataUnavailable
 from trading_agent_framework.strategies.common.rebalancer import Rebalancer
 from trading_agent_framework.strategies.common.run_log import RunLog
-from trading_agent_framework.strategies.sector_pods.graph import (
-    Execute,
-    GraphParts,
-    LoadPrevious,
-    MarketFacts,
-    PodsState,
-    build_graph,
-    pm_reads,
-    pod_reads,
-    risk_reads,
-)
+from trading_agent_framework.strategies.sector_pods.facts import stress_view
+from trading_agent_framework.strategies.sector_pods.graph import PodsState, SectorPodsReview, pm_reads, pod_reads, risk_reads
 from trading_agent_framework.strategies.sector_pods.handoff import (
     PM_SUBMIT,
     POD_SUBMIT,
     RISK_SUBMIT,
     UNAVAILABLE,
+    or_unavailable,
     pm_submit_tool,
     pod_submit_tool,
     risk_submit_tool,
@@ -65,11 +58,13 @@ def _series(index: int) -> DailySeries:
 class FakeBars:
     def __init__(self) -> None:
         self.error: DataUnavailable | None = None
+        self.short_history: set[str] = set()  # symbols with too few bars to get facts
 
     def load(self, universe: Sequence[str], held: Collection[str]) -> dict[str, DailySeries]:
         if self.error is not None:
             raise self.error
-        return {symbol: _series(index) for index, symbol in enumerate(universe)}
+        series = {symbol: _series(index) for index, symbol in enumerate(universe)}
+        return {symbol: DailySeries(closes=s.closes[:100], volumes=s.volumes[:100]) if symbol in self.short_history else s for symbol, s in series.items()}
 
 
 class RecordingBroker(FakeBroker):
@@ -138,7 +133,7 @@ def raises(tool: Callable[..., dict[str, Any]], ctx: Any) -> None:
 
 @dataclass
 class Harness:
-    graph: Any
+    review: SectorPodsReview
     broker: RecordingBroker
     bars: FakeBars
     agents: dict[str, FakeAgent]
@@ -151,7 +146,7 @@ class Harness:
     infos: list[str] = field(default_factory=list)
 
     def run(self) -> dict[str, Any]:
-        return self.graph.invoke({})
+        return self.review.run()
 
     def log_lines(self) -> list[dict[str, Any]]:
         return [json.loads(line) for line in self.log_path.read_text(encoding="utf-8").splitlines()] if self.log_path.exists() else []
@@ -160,7 +155,53 @@ class Harness:
         return [order.asset.symbol for order in self.broker.submitted]
 
 
-STRESS = {"early_warning": True, "regime_score": 2}
+READING = RegimeReading(
+    regime=1,
+    score=2,
+    spy=500.0,
+    sma=480.0,
+    high=510.0,
+    vix=22.0,
+    vix3m=20.0,
+    vix_median=15.0,
+    inverted=True,
+    vix_spike=False,
+    below_sma=False,
+    off_high=False,
+    episode_low=None,
+    blocked=False,
+)
+STRESS = stress_view(READING, True)
+
+
+def _logged_by_the_review() -> bool:
+    """Whether the `log_*` call being answered comes from the review's module, not from the rebalancer's."""
+    return sys._getframe(2).f_globals["__name__"] == SectorPodsReview.__module__
+
+
+class RecordingStrategy(Strategy):
+    """A `Strategy` that keeps what the review logs (not the rebalancer's order lines), so a test can read it."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.infos: list[str] = []
+        self.warnings: list[str] = []
+        self.errors: list[str] = []
+
+    def log_info(self, message: object) -> str:
+        if _logged_by_the_review():
+            self.infos.append(str(message))
+        return super().log_info(message)
+
+    def log_warning(self, message: object) -> str:
+        if _logged_by_the_review():
+            self.warnings.append(str(message))
+        return super().log_warning(message)
+
+    def log_error(self, message: object) -> str:
+        if _logged_by_the_review():
+            self.errors.append(str(message))
+        return super().log_error(message)
 
 
 def _harness(
@@ -171,7 +212,7 @@ def _harness(
     barrier: threading.Barrier | None = None,
     pm: Script | None = None,
     scripts: dict[str, Script] | None = None,
-    stress: Callable[[], dict[str, Any] | None] = lambda: STRESS,
+    reading: RegimeReading | None = READING,
 ) -> Harness:
     """Value 10,000; every ETF costs 50, SHV 100; `held` maps a symbol to shares."""
     params = SectorPodsParams()
@@ -180,7 +221,8 @@ def _harness(
     broker.positions = [Position(strategy_name="sector_pods", asset=Asset(symbol), quantity=Decimal(str(shares)), side=PositionSide.LONG) for symbol, shares in (held or {}).items()]
     invested = sum(shares * 50 for shares in (held or {}).values())
     broker.account = AccountBalances(cash=Decimal(str(10_000 - invested)), portfolio_value=Decimal(10_000), buying_power=Decimal(1_000_000))
-    strategy = Strategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
+    strategy = RecordingStrategy(broker, mode=TradingMode.PAPER, project_root=tmp_path)
+    strategy.regime, strategy.regime_reading, strategy.market_fall = 1, reading, None if reading is None else True
     rebalancer = Rebalancer(strategy, params)
     store = StateStore(tmp_path / "state.json", log=LOG)
     if state is not None:
@@ -213,24 +255,22 @@ def _harness(
             pod_submit_tool,
             POD_SUBMIT,
             pod_reads(pod.key),
-            lambda v, key=pod.key: {"pods": {key: UNAVAILABLE if v is None else v}},
+            lambda v, key=pod.key: {"pods": {key: or_unavailable(v)}},
         )
         for pod in PODS
     }
-    warnings: list[str] = []
-    errors: list[str] = []
-    infos: list[str] = []
-    parts = GraphParts(
-        load_previous=LoadPrevious(store),
-        market_facts=MarketFacts(bars, regime=lambda: 1, stress=stress, holdings=rebalancer.current_weights, today=lambda: date(2026, 11, 10), on_warning=warnings.append),
+    review = SectorPodsReview(
+        strategy=strategy,
+        params=params,
+        store=store,
+        rebalancer=rebalancer,
+        bars=bars,
+        log=RunLog(log_path),
         pods=pods,
-        risk_manager=make("risk_manager", no_objections, validate_risk(params), risk_submit_tool, RISK_SUBMIT, risk_reads, lambda v: {"risk": UNAVAILABLE if v is None else v}),
-        portfolio_manager=make(
-            "portfolio_manager", pm or weights({"XLK": 0.2, "XLV": 0.2}), validate_pm(params), pm_submit_tool, PM_SUBMIT, pm_reads, lambda v: {"pm": UNAVAILABLE if v is None else v}
-        ),
-        execute=Execute(store, rebalancer, RunLog(log_path), params, on_info=infos.append, on_warning=warnings.append, on_error=errors.append),
+        risk_manager=make("risk_manager", no_objections, validate_risk(params), risk_submit_tool, RISK_SUBMIT, risk_reads, lambda v: {"risk": or_unavailable(v)}),
+        portfolio_manager=make("portfolio_manager", pm or weights({"XLK": 0.2, "XLV": 0.2}), validate_pm(params), pm_submit_tool, PM_SUBMIT, pm_reads, lambda v: {"pm": or_unavailable(v)}),
     )
-    return Harness(build_graph(parts), broker, bars, agents, store, log_path, rebalancer, params, warnings, errors, infos)
+    return Harness(review, broker, bars, agents, store, log_path, rebalancer, params, strategy.warnings, strategy.errors, strategy.infos)
 
 
 def test_graph_runs_pods_in_parallel(tmp_path: Path) -> None:
@@ -319,6 +359,17 @@ def test_failed_pod_keeps_or_trims_its_sleeve(tmp_path: Path) -> None:
     assert "XLF" not in h.symbols()
 
 
+def test_a_pod_whose_etfs_have_no_history_is_unavailable_and_the_week_goes_on(tmp_path: Path) -> None:
+    h = _harness(tmp_path, pm=weights({"XLV": 0.2}))  # XLK cannot be raised: its pod gave no view
+    h.bars.short_history = set(PODS[0].sleeve)
+
+    final = h.run()
+
+    assert final["abandoned"] is None and final["pods"]["tech_pod"] == UNAVAILABLE
+    assert not h.agents["tech_pod"].contexts and not final.get("errors")
+    assert h.agents["risk_manager"].contexts and h.agents["portfolio_manager"].contexts
+
+
 def test_pm_unavailable_abandons_without_orders(tmp_path: Path) -> None:
     previous = {"date": "2026-11-03", "pods": {}, "risk": {}, "pm": {"weights": []}}
     h = _harness(tmp_path, state=WeekState(last_completed="2026-11-03", previous=previous), pm=does_nothing)
@@ -401,7 +452,7 @@ def test_a_book_already_held_within_the_band_completes_the_week_with_no_orders(t
 
 def test_execute_refuses_weights_that_break_the_limits(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
+    execute = h.review._execute
 
     def week(pm: dict[str, Any]) -> PodsState:
         return PodsState(abandoned=None, date="2026-11-10", regime="bullish", holdings={}, facts={}, pods={}, pm=pm)
@@ -438,7 +489,7 @@ def test_a_capped_book_trades_below_98_and_says_so(tmp_path: Path) -> None:
 
 def test_a_refused_book_records_no_book(tmp_path: Path) -> None:
     h = _harness(tmp_path)
-    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
+    execute = h.review._execute
     week = PodsState(abandoned=None, date="2026-11-10", regime="bullish", holdings={}, facts={}, pods={}, pm={"weights": [{"symbol": "XLK", "weight": 0.9}]})
 
     assert execute(week)["abandoned"].startswith("execution")
@@ -470,7 +521,7 @@ def test_refused_book_reports_no_orders_even_after_a_week_with_orders(tmp_path: 
     h = _harness(tmp_path)
     h.run()
     assert h.rebalancer.placed  # last week's orders are still on the long-lived rebalancer
-    execute = Execute(h.store, h.rebalancer, RunLog(h.log_path), h.params, on_info=h.infos.append, on_warning=h.warnings.append, on_error=h.errors.append)
+    execute = h.review._execute
     refused = PodsState(abandoned=None, date="2026-11-17", regime="bullish", holdings={}, facts={}, pods={}, pm={"weights": [{"symbol": "XLK", "weight": 0.9}]})
 
     result = execute(refused)
@@ -531,7 +582,7 @@ def test_the_review_log_records_stress(tmp_path: Path) -> None:
 
 
 def test_a_review_without_stress_records_null_and_completes(tmp_path: Path) -> None:
-    h = _harness(tmp_path, stress=lambda: None)
+    h = _harness(tmp_path, reading=None)
 
     final = h.run()
 

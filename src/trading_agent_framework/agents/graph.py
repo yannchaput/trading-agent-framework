@@ -85,13 +85,15 @@ class AgentNode:
     def _run(self, task: str, state: Mapping[str, Any], *, force_tool: str | None) -> str:
         """One agent run; returns why it left no submission (an empty submission is `"no valid submission"`)."""
         try:
-            self.agent.run(
+            result: AgentRunResult = self.agent.run(
                 task,
                 context=self.reads(state),
                 force_tool=force_tool,
                 tool_budget=self.tool_budget,
                 max_steps=self.max_steps,
             )
+            if result and result.output:
+                logger.log_info(f"[{self.name}] {result.output}")
         except AgentLoopError as exc:
             return f"loop: {exc}"
         except AgentError as exc:
