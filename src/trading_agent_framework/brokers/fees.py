@@ -3,6 +3,9 @@
 Pure: no I/O. Rates as of 2026-09-28 (Alpaca Brokerage Fee Schedule rev. 2026-09-17, SEC Fee
 Rate Advisory 2026-2). They are constants, so a backtest of an earlier period pays today's
 rates (the SEC fee was 0 before 2026-04-04). Every rounding and omission errs toward higher fees.
+
+Tastytrade clearing fees as of 2026-10-28 (Tastytrade "Commissions & Fees"). Its FINRA TAF waiver
+(2026-10-01 to 2026-12-31) is not modelled.
 """
 
 from __future__ import annotations
@@ -20,6 +23,8 @@ FINRA_TAF_MAX_PER_ORDER = Decimal("9.79")
 CAT_FEE_PER_SHARE = Decimal("0.000003")  # x shares, buys and sells
 IBKR_FIXED_PER_SHARE = Decimal("0.005")
 IBKR_FIXED_MIN_PER_ORDER = Decimal("1.00")
+TASTYTRADE_CLEARING_PER_SHARE = Decimal("0.0008")
+TASTYTRADE_FRACTIONAL_CLEARING_PER_ORDER = Decimal("0.10")
 
 _CENT = Decimal("0.01")
 
@@ -34,7 +39,10 @@ def _ibkr_commission(shares: Decimal) -> Decimal:
 
 
 def _tastytrade_commission(shares: Decimal) -> Decimal:
-    return Decimal(0)  # $0 to open and close stocks/ETFs
+    # $0 commission; the clearing fee is charged here. A fractional order pays the flat fee INSTEAD of the per-share one.
+    if shares % 1:
+        return TASTYTRADE_FRACTIONAL_CLEARING_PER_ORDER
+    return TASTYTRADE_CLEARING_PER_SHARE * shares
 
 
 COMMISSIONS: dict[BrokerKind, Callable[[Decimal], Decimal]] = {
@@ -53,7 +61,7 @@ class TradeFees:
 
 
 class TradingFeeFactory:
-    """One broker's fee model: its per-order commission plus the regulatory fees every broker passes on."""
+    """One broker's fee model: its per-order charge (commission or clearing fee) plus the regulatory fees every broker passes on."""
 
     def __init__(self, broker: BrokerKind) -> None:
         """Create the fee schedule of a broker.

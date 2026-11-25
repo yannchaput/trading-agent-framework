@@ -113,7 +113,7 @@ Set `BROKER=tastytrade` and `BROKER_API_IS_PAPER=false` in the strategy's **live
 `TASTYTRADE_CLIENT_SECRET`, `TASTYTRADE_REFRESH_TOKEN` and `TASTYTRADE_ACCOUNT_NUMBER`. Tastytrade handles
 orders, account and positions; prices, bars, the market calendar and news still come from Alpaca
 (`ALPACA_DATA_*`, `ALPACA_NEWS_*`). Backtests are unaffected (Yahoo or Alpaca data; `BROKER=tastytrade` in a
-backtest env file only picks the $0-commission fee schedule).
+backtest env file only picks the Tastytrade fee schedule).
 
 1. Create an OAuth application and a grant at my.tastytrade.com; the grant's refresh token never expires.
 2. Use a **cash** account: the broker refuses to trade live on a margin account.
@@ -164,8 +164,9 @@ not `datetime.now()`. A naive bound raises a `BacktestError` saying so.
 
 Fees default to the broker named by `BROKER` in the backtest env file (`alpaca`, `ibkr` or `tastytrade`;
 `alpaca` when unset): `brokers/fees.py`'s `TradingFeeFactory` charges each order the broker's
-commission (Alpaca and Tastytrade $0, IBKR Pro Fixed max($1, $0.005/share)) plus the regulatory fees every broker
-passes on (SEC and FINRA TAF on sells, CAT on both sides). The run's totals are in
+commission or clearing fee (Alpaca $0, IBKR Pro Fixed max($1, $0.005/share), Tastytrade $0.0008/share, or $0.10 flat
+instead for a fractional order) plus the regulatory fees every broker passes on (SEC and FINRA TAF on sells, CAT on
+both sides). The run's totals are in
 `settings.json["fees"]`. Calling the lower-level `run_backtest` directly with no `fees=` charges nothing.
 
 - **Data source**: defaults to `YahooBacktestData(start, end)` -- free daily OHLCV, no
