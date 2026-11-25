@@ -157,11 +157,11 @@ class BullBearStrategy(Strategy):
             research = only(sources, _RESEARCH_TOOLS if news else _RESEARCH_TOOLS - {"search_news"})
             self.agents.create(
                 name="researcher",
-                system_prompt=researcher_system(news),
+                system_prompt=researcher_system(news, self.settings.research_tool_budget),
                 tools=[*research, *text_tools(lambda: recorder.gate), submit["submit_note"]],
                 temperature=temperature,
                 # the budget counts search_news only; each statement is one cheap read the fact sheet cannot replace
-                budget=ToolBudget(exempt=("submit_note", "count_characters", "get_income_statement", "get_balance_sheet")),
+                budget=ToolBudget(exempt=("submit_note", "count_characters", "get_income_statement", "get_balance_sheet"), label_calls=True),
                 final_tools=["submit_note"],  # a recorded note ends the run: no closing turn to think the window full
                 compact_history=True,  # its tool loop (news, SEC) can grow the history: summarized at 80% of the window
                 max_output_tokens=cap,

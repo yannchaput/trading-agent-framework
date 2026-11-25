@@ -17,7 +17,7 @@ def _search_news(symbols: str = "", start: str | None = None, end: str | None = 
 @pytest.fixture(autouse=True)
 def _reset() -> None:
     _search_news.calls = []  # type: ignore[attr-defined]
-    _search_news.result = {"count": 0, "articles": []}  # type: ignore[attr-defined]
+    _search_news.result = {"facts": {"count": 0, "articles": []}}  # type: ignore[attr-defined]
 
 
 def _pinned(stock: str | None = "GGAL"):
@@ -33,7 +33,7 @@ def test_an_empty_symbol_is_pinned_to_the_stock_being_researched(given: str) -> 
     result = _pinned()(symbols=given)
 
     assert _searched() == ["GGAL"]  # not the market-wide news an empty filter returns
-    assert result["symbols_searched"] == "GGAL"
+    assert result["instructions"]["symbols_searched"] == "GGAL"
 
 
 @pytest.mark.parametrize("given", ["Grupo Galicia", "Gallo", "Hesai", "iShares JPMorgan EM Bond", "ggal"])
@@ -41,7 +41,7 @@ def test_a_company_name_or_a_lower_case_ticker_is_pinned_to_the_stock_being_rese
     result = _pinned()(symbols=given)
 
     assert _searched() == ["GGAL"]
-    assert result["symbols_searched"] == "GGAL"
+    assert result["instructions"]["symbols_searched"] == "GGAL"
 
 
 @pytest.mark.parametrize("given", ["GGAL", "NVDA", "NVDA,AMD", "BRK.B", "BF-B", "SPY, QQQ"])
@@ -49,14 +49,14 @@ def test_tickers_pass_through_untouched_and_without_a_marker(given: str) -> None
     result = _pinned()(symbols=given)
 
     assert _searched() == [given]  # another stock's ticker (a competitor, the market) is the model's call
-    assert "symbols_searched" not in result
+    assert "instructions" not in result
 
 
 def test_a_name_among_tickers_is_dropped_and_the_tickers_are_kept() -> None:
     result = _pinned()(symbols="NVDA,Nvidia Corp,AMD")
 
     assert _searched() == ["NVDA,AMD"]
-    assert result["symbols_searched"] == "NVDA,AMD"
+    assert result["instructions"]["symbols_searched"] == "NVDA,AMD"
 
 
 def test_the_other_arguments_are_forwarded() -> None:
@@ -69,7 +69,7 @@ def test_without_a_stock_being_researched_the_call_is_left_as_it_is() -> None:
     result = _pinned(stock=None)(symbols="")
 
     assert _searched() == [""]
-    assert "symbols_searched" not in result
+    assert "instructions" not in result
 
 
 def test_an_error_result_gets_no_marker() -> None:
@@ -86,3 +86,13 @@ def test_the_wrapper_is_the_same_tool_to_the_agent() -> None:
     assert wrapper.__name__ == _search_news.__name__  # the strategy test checks the real tool keeps the name `search_news`
     assert wrapper.__doc__ == _search_news.__doc__
     assert inspect.signature(wrapper) == inspect.signature(_search_news)  # the schema the model sees is unchanged
+
+
+def test_a_rewritten_search_says_so_in_instructions_and_leaves_the_facts_alone() -> None:
+    original = {"instructions": {"source": "Titles only"}, "facts": {"count": 1, "articles": [{"id": "a"}]}}
+    _search_news.result = original  # type: ignore[attr-defined]
+
+    result = _pinned()(symbols="Gallo")
+
+    assert result == {"instructions": {"symbols_searched": "GGAL", "source": "Titles only"}, "facts": {"count": 1, "articles": [{"id": "a"}]}}
+    assert original == {"instructions": {"source": "Titles only"}, "facts": {"count": 1, "articles": [{"id": "a"}]}}  # the tool's own answer is not mutated

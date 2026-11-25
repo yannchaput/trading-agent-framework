@@ -21,7 +21,7 @@ def pin_search_news(search_news: Callable[..., dict[str, Any]], *, stock: Callab
 
     A symbol list with no ticker in it (empty, a company name, a lower-case ticker) searches `stock()` instead; a name among
     tickers is dropped. Another stock's ticker (a competitor, SPY) is left alone. With no stock being researched the call
-    is passed on unchanged. A rewritten call's result gets `symbols_searched`, so the model sees what was searched.
+    is passed on unchanged. A rewritten call's answer gets `symbols_searched` in its `instructions` block, so the model sees what was searched.
     """
 
     def pinned(symbols: str = "", start: str | None = None, end: str | None = None, limit: int = 10, include_content: bool = False) -> dict[str, Any]:
@@ -34,7 +34,8 @@ def pin_search_news(search_news: Callable[..., dict[str, Any]], *, stock: Callab
                 searched = ",".join(tickers) or current
         result = search_news(searched, start, end, limit, include_content)
         if searched != symbols and "error" not in result:
-            return {**result, "symbols_searched": searched}
+            instructions = {"symbols_searched": searched, **result.get("instructions", {})}
+            return {"instructions": instructions, **{key: value for key, value in result.items() if key != "instructions"}}
         return result
 
     pinned.__name__ = search_news.__name__
