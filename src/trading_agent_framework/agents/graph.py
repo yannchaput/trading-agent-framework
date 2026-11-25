@@ -72,30 +72,37 @@ class AgentNode:
     def __call__(self, state: Mapping[str, Any]) -> dict[str, Any]:
         """Run the agent; retry once with the submit tool forced; else write the unavailable marker plus an error."""
         self.recorder.arm(state)
-        reason = self._run(self.task, state, force_tool=None)
-        if not self.recorder.submitted and not reason.startswith("loop:"):
-            logger.log_warning(f"[{self.name}] no valid {self.submit_tool}: retrying with it forced")
-            retry_task = f"{self.task}\n\nYour previous attempt ended without a valid {self.submit_tool} call. Call {self.submit_tool} now."
-            reason = self._run(retry_task, state, force_tool=self.submit_tool)
+        task, force_tool = self.task, None
+        reason = "no valid submission"
+        for attempt in range(2):
+            try:
+                result = self._run(task, state, force_tool=force_tool)
+                if result.output:
+                    logger.log_info(f"[{self.name}] {result.output}")
+            except AgentLoopError as exc:
+                reason = f"loop: {exc}"
+                break  # a loop is not retried
+            except AgentError as exc:
+                reason = f"agent failed: {exc}"
+            else:
+                reason = "no valid submission"
+            if self.recorder.submitted:
+                return self.write(self.recorder.submission)
+            if attempt == 0:
+                logger.log_warning(f"[{self.name}] no valid {self.submit_tool}: retrying with it forced")
+                task = f"{self.task}\n\nYour previous attempt ended without a valid {self.submit_tool} call. Call {self.submit_tool} now."
+                force_tool = self.submit_tool
         if self.recorder.submitted:
             return self.write(self.recorder.submission)
         logger.log_warning(f"[{self.name}] unavailable: {reason}")
         return {**self.write(None), "errors": [{"node": self.name, "error": reason}]}
 
-    def _run(self, task: str, state: Mapping[str, Any], *, force_tool: str | None) -> str:
-        """One agent run; returns why it left no submission (an empty submission is `"no valid submission"`)."""
-        try:
-            result: AgentRunResult = self.agent.run(
-                task,
-                context=self.reads(state),
-                force_tool=force_tool,
-                tool_budget=self.tool_budget,
-                max_steps=self.max_steps,
-            )
-            if result and result.output:
-                logger.log_info(f"[{self.name}] {result.output}")
-        except AgentLoopError as exc:
-            return f"loop: {exc}"
-        except AgentError as exc:
-            return f"agent failed: {exc}"
-        return "no valid submission"
+    def _run(self, task: str, state: Mapping[str, Any], *, force_tool: str | None) -> AgentRunResult:
+        """One agent run; raises `AgentLoopError` or `AgentError` when the agent fails."""
+        return self.agent.run(
+            task,
+            context=self.reads(state),
+            force_tool=force_tool,
+            tool_budget=self.tool_budget,
+            max_steps=self.max_steps,
+        )
