@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
+from trading_agent_framework.agents import ToolBudget
 from trading_agent_framework.agents.tools.market_data import market_data_tools
 from trading_agent_framework.backtesting.data.yahoo import YahooBacktestData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
@@ -94,7 +95,7 @@ class BillAckmanStrategy(Strategy):
                 system_prompt=SHORT_SELLER_SYSTEM,
                 tools=[*fundamentals_tools(self), *news_tools(self), *market_data_tools(self), submit["submit_verdicts"]],
                 temperature=temperature,
-                exempt_tools=["submit_verdicts"],  # its per-review tool budget never blocks the submission
+                budget=ToolBudget(exempt=("submit_verdicts",)),  # its per-review tool budget never blocks the submission
             )
             self.agents.create(name="trader", system_prompt=TRADER_SYSTEM, tools=[submit["submit_portfolio"]], temperature=temperature)
         except ConfigurationError as exc:

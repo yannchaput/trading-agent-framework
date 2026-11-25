@@ -10,6 +10,7 @@ review cadence. The no-news researcher gets the fact sheet without the sources r
 from __future__ import annotations
 
 from trading_agent_framework.agents.tools.text import count_step
+from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 _ENGLISH = "Write everything in English: your notes, arguments, reasons and every tool argument, even if a source you read drifts into another language."
 
@@ -43,8 +44,8 @@ _FACT_SHEET = f"{_FIGURES} {_SOURCES_RULE}"
 _SUBMIT_RULE = "If the tool returns an error, read it and call it again with a corrected argument. Once it returns status recorded, reply with one line and call no other tool."
 
 
-def researcher_system(news: bool) -> str:
-    """The researcher's prompt, with or without its news tool."""
+def researcher_system(news: bool, search_budget: int) -> str:
+    """The researcher's prompt, with or without its news tool; `search_budget` is the number of `search_news` calls it may make."""
     look_for = (
         "Look for what the figures cannot show or explain: what the company itself reported or filed (results, guidance, "
         "share issuance, going-concern doubts, covenant breaches, restatements, impairments) and what the latest filings "
@@ -55,6 +56,13 @@ def researcher_system(news: bool) -> str:
         "latest filings show"
     )
     search_rule = "In every search_news call pass this stock's ticker in symbols (the symbol on the fact sheet): never leave it empty and never use the company name. " if news else ""
+    budget_rule = (
+        f"You may make at most {search_budget} search_news calls (the statement tools and submit_note do not count). "
+        "Each search_news answer has two blocks: `instructions` (what to do, including `tool_call`, which says which call it was) "
+        "and `facts` (what you may use): follow the instructions and write the note from the facts. "
+        if news
+        else ""
+    )
     return (
         "You are the researcher of a long-only stock portfolio that buys strong momentum stocks. You receive one stock at a "
         "time and gather the facts a bull and a bear will argue from. Do not trade and do not give an opinion.\n\n"
@@ -64,6 +72,7 @@ def researcher_system(news: bool) -> str:
         "total debt) when you need a figure the fact sheet lacks. Your tool calls are limited: spend them on what matters "
         "most for this stock. "
         f"{search_rule}"
+        f"{budget_rule}"
         "Write facts only, each with its date, and no recommendation. For each fact, say who reported it: "
         "the company (a release, a filing, guidance) or others (analysts, media). Do not repeat the fact sheet's "
         "numbers. If you find nothing useful, say so in one line.\n\n"
@@ -72,7 +81,7 @@ def researcher_system(news: bool) -> str:
     )
 
 
-RESEARCHER_SYSTEM = researcher_system(news=True)
+RESEARCHER_SYSTEM = researcher_system(news=True, search_budget=BullBearParams.research_tool_budget)
 
 BULL_SYSTEM = (
     "You are the bull. Argue for buying the strongest stocks. Do not trade.\n\n"

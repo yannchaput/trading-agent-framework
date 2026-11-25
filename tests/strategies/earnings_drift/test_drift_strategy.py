@@ -89,7 +89,7 @@ def test_initialize_creates_the_agent_with_order_and_research_tools(tmp_path: Pa
     [created] = manager.created
     names = [tool.__name__ for tool in created["tools"]]
     assert created["name"] == "drift" and names[:4] == list(ORDER_TOOLS) and "search_news" in names and "get_filing_document" in names
-    assert created["exempt_tools"] == list(ORDER_TOOLS) and created["temperature"] == 0.3
+    assert created["budget"].exempt == tuple(ORDER_TOOLS) and created["temperature"] == 0.3
 
 
 def test_baseline_mode_creates_no_agent_and_warns(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

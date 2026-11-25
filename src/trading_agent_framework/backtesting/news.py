@@ -1,7 +1,7 @@
 """Historical news for backtests from the GDELT GKG cache (`cache/gdelt/gkg_stockmarket/`), behind `NewsProvider`.
 
 Alpaca's news archive starts on 2026-04-29, so a backtest simulating an earlier date gets nothing from it. This
-module answers those dates from GDELT's cached stock-market articles (title, url, domain only: no summary, no body).
+module answers those dates from GDELT's cached stock-market articles (title, url, domain only: no summary, no body; each article is marked `titles_only`).
 Every article is stamped with the earliest time GDELT knew it (`stamp`), so cutting the window at `end` keeps the
 no-look-ahead guarantee.
 """
@@ -150,7 +150,7 @@ class GdeltNewsProvider:
             sort: `"asc"` for oldest first, else newest first.
 
         Returns:
-            One Alpaca-shaped dict per article (`id`, `headline`, `summary`, `source`, `created_at`, `symbols`).
+            One Alpaca-shaped dict per article (`id`, `headline`, `source`, `created_at`, `symbols`, `titles_only`: no summary).
 
         Raises:
             BrokerError: If the cache directory does not exist.
@@ -179,9 +179,13 @@ class GdeltNewsProvider:
 
 
 def _article(row: dict[str, str], symbols: list[str]) -> dict[str, object]:
-    """One cache row in Alpaca's article shape; `symbols` are the requested tickers its title matched."""
+    """One cache row in Alpaca's article shape, without a summary and marked `titles_only`; `symbols` are the requested tickers its title matched.
+
+    The marker is how the source says it has titles only: `search_news` turns it into an instruction for the model
+    and removes it from the facts it hands over.
+    """
     created = datetime.strptime(row["stamp"], _STAMP_FORMAT).replace(tzinfo=UTC)
-    return {"id": row["url"], "headline": row["title"], "summary": "", "source": row["domain"], "created_at": created.isoformat(), "symbols": symbols}
+    return {"id": row["url"], "headline": row["title"], "source": row["domain"], "created_at": created.isoformat(), "symbols": symbols, "titles_only": True}
 
 
 class CutoffNewsProvider:

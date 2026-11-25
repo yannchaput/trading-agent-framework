@@ -10,6 +10,9 @@ from typing import Protocol
 class NewsProvider(Protocol):
     """A source of lean news articles (`id`, `headline`, `summary`, `source`, `created_at`, `symbols`, optional `content`).
 
+    A source with titles only (GDELT) has no `summary` and sets `titles_only: True` on every article, which
+    `search_news` turns into an instruction for the model (`agents/tools/news.py`).
+
     `sort` orders the articles by the provider's sort key (Alpaca: the article's update time, about its creation time
     for a wire) BEFORE `limit` cuts the list: `None` is the provider's default
     (Alpaca: newest first), `"asc"` oldest first, `"desc"` newest first. A caller that needs the first articles after

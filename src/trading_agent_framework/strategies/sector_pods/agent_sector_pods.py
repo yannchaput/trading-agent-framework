@@ -12,6 +12,7 @@ from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from trading_agent_framework.agents import ToolBudget
 from trading_agent_framework.agents.graph import AgentNode
 from trading_agent_framework.agents.submit import NodeRecorder
 from trading_agent_framework.agents.tools import only
@@ -144,7 +145,7 @@ class SectorPodsStrategy(Strategy):
             system_prompt=system,
             tools=[*tools, *text_tools(lambda: recorder.gate), _SUBMIT_TOOLS[submit](recorder, params)],
             temperature=params.agent_temperature,
-            exempt_tools=[submit, "count_characters", *exempt],
+            budget=ToolBudget(exempt=(submit, "count_characters", *exempt)),
             final_tools=[submit],
             max_output_tokens=params.max_output_tokens,
             thinking_token_budget=params.thinking_token_budget,

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
+import pytest
+from langchain_core.messages import AIMessage, ToolCall
 from tests.fakes import FakeBroker, FakeClock, FakeNewsClient, FakeTradingClient, et, make_alpaca_news_article
 
 from trading_agent_framework.agents.tools.news import MAX_CONTENT_LIMIT, TITLES_ONLY_NOTE, news_tools
@@ -59,8 +62,8 @@ def test_search_news_returns_articles_from_the_broker() -> None:
 
     result = tool(symbols="SPY,QQQ")
 
-    assert result["count"] == 1
-    assert result["articles"][0]["headline"] == "Rates cut"
+    assert result["facts"]["count"] == 1
+    assert result["facts"]["articles"][0]["headline"] == "Rates cut"
     [request] = news.news_requests
     assert request.symbols == "SPY,QQQ"
 
@@ -71,7 +74,7 @@ def test_search_news_works_with_any_broker_that_provides_news() -> None:
 
     result = tool(symbols="SPY")
 
-    assert result == {"count": 1, "articles": [{"id": 1, "headline": "Stub headline", "summary": "Stub summary"}]}
+    assert result == {"facts": {"count": 1, "articles": [{"id": 1, "headline": "Stub headline", "summary": "Stub summary"}]}}
     assert provider.calls[0]["symbols"] == ["SPY"]
     assert provider.calls[0]["end"] == _now()
 
@@ -231,7 +234,7 @@ def test_a_failed_search_is_not_cached() -> None:
     tool = _tool(_provider_strategy(provider))
     with agent_call_context(run_id="run-1"):
         assert "error" in tool(symbols="SPY")
-        assert tool(symbols="SPY")["count"] == 1
+        assert tool(symbols="SPY")["facts"]["count"] == 1
 
 
 def test_outside_an_agent_run_every_search_queries_the_provider() -> None:
@@ -243,32 +246,75 @@ def test_outside_an_agent_run_every_search_queries_the_provider() -> None:
     assert len(provider.calls) == 2
 
 
-def test_search_news_notes_titles_only_results() -> None:
-    articles = [{"id": "u1", "headline": "A", "summary": ""}, {"id": "u2", "headline": "B", "summary": None}]
+def _marked(article_id: str) -> dict[str, object]:
+    """An article as GdeltNewsProvider returns it: no summary, marked titles-only."""
+    return {"id": article_id, "headline": article_id.upper(), "titles_only": True}
+
+
+@pytest.mark.parametrize("include_content", [False, True])
+def test_marked_articles_get_the_titles_only_instruction_on_any_call(include_content: bool) -> None:
+    tool = _tool(_provider_strategy(_ArticlesProvider([_marked("a"), _marked("b")])))
+
+    result = tool(symbols="VKTX", include_content=include_content)
+
+    assert result["instructions"] == {"source": TITLES_ONLY_NOTE}
+    assert list(result) == ["instructions", "facts"]  # the instructions come first
+
+
+def test_facts_hold_count_and_articles_without_the_marker() -> None:
+    provider = _ArticlesProvider([_marked("a"), _marked("b")])
+
+    result = _tool(_provider_strategy(provider))(symbols="VKTX")
+
+    assert result["facts"] == {"count": 2, "articles": [{"id": "a", "headline": "A"}, {"id": "b", "headline": "B"}]}
+    assert provider.articles[0]["titles_only"] is True  # the provider's own dicts are not touched
+
+
+def test_unmarked_articles_get_no_instruction_even_with_an_empty_summary() -> None:
+    articles: list[dict[str, object]] = [{"id": "b1", "headline": "A", "summary": ""}]
 
     result = _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
 
-    assert result["note"] == TITLES_ONLY_NOTE
-    assert result["count"] == 2
+    assert result == {"facts": {"count": 1, "articles": articles}}
 
 
-def test_search_news_adds_no_note_when_any_article_has_text() -> None:
-    articles = [{"id": "u1", "headline": "A", "summary": ""}, {"id": "b2", "headline": "B", "summary": "Text."}]
+def test_a_mixed_answer_gets_no_titles_only_instruction() -> None:
+    articles: list[dict[str, object]] = [_marked("a"), {"id": "b2", "headline": "B", "summary": "Text."}]
 
-    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
+    result = _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX")
 
-
-def test_search_news_counts_content_as_text() -> None:
-    articles = [{"id": "b1", "headline": "A", "summary": "", "content": "<p>Body</p>"}]
-
-    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX", include_content=True)
+    assert "instructions" not in result
+    assert result["facts"]["count"] == 2
 
 
-def test_search_news_adds_no_note_without_articles() -> None:
-    assert _tool(_provider_strategy(_ArticlesProvider([])))(symbols="VKTX") == {"count": 0, "articles": []}
+def test_an_empty_answer_has_facts_only() -> None:
+    assert _tool(_provider_strategy(_ArticlesProvider([])))(symbols="VKTX") == {"facts": {"count": 0, "articles": []}}
 
 
-def test_search_news_adds_no_note_when_content_was_not_requested() -> None:
-    articles = [{"id": "b1", "headline": "A", "summary": ""}]
+def test_errors_stay_flat() -> None:
+    tool = _tool(_provider_strategy(lookup_error=BrokerError("news API down")))
 
-    assert "note" not in _tool(_provider_strategy(_ArticlesProvider(articles)))(symbols="VKTX")
+    assert tool(symbols="VKTX") == {"error": "news API down"}
+
+
+def test_a_repeated_identical_search_gets_its_own_label_and_the_cached_answer_is_untouched() -> None:
+    from tests.fakes import FakeToolCallingChatModel
+
+    from trading_agent_framework.agents import ToolBudget
+    from trading_agent_framework.agents.config import LLMCredentials
+    from trading_agent_framework.agents.manager import AgentManager
+
+    provider = _ArticlesProvider([_marked("a")])
+    tool = _tool(_provider_strategy(provider))
+    search = ToolCall(name="search_news", args={"symbols": "VKTX"}, id="c1")
+    turns = [AIMessage(content="", tool_calls=[search]), AIMessage(content="", tool_calls=[{**search, "id": "c2"}]), AIMessage(content="done")]
+    manager = AgentManager(lambda: LLMCredentials(base_url="http://localhost:8000/v1", api_key="k", default_model="qwen3-8b"))
+    handle = manager.create(name="r", system_prompt="x", model=FakeToolCallingChatModel(messages=iter(turns)), tools=[tool], budget=ToolBudget(label_calls=True))
+    with agent_call_context(run_id="run-1"):
+        cached = tool(symbols="VKTX")  # fills the run's memo: both calls of the agent below get this same answer
+
+    result = handle.run("go", run_id="run-1", tool_budget=7)
+
+    labels = [json.loads(call.result)["instructions"]["tool_call"] for call in result.tool_calls]
+    assert labels == ["search_news call 1 of 7", "search_news call 2 of 7"]
+    assert cached["instructions"] == {"source": TITLES_ONLY_NOTE}  # no label leaked into the cached answer

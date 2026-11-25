@@ -58,11 +58,11 @@ def main() -> int:
     [search_news] = news_tools(strategy)
 
     result = search_news(symbols="SPY,QQQ", limit=5)
-    print(f"search_news(SPY,QQQ) -> count={result.get('count')}")
+    print(f"search_news(SPY,QQQ) -> count={result.get('facts', {}).get('count')}")
     _check("error" not in result, f"search_news returned an error: {result.get('error')}")
-    _check(result["count"] >= 0, "search_news returned a negative count")
-    if result["articles"]:
-        print(f"first headline: {result['articles'][0]['headline']}")
+    _check(result["facts"]["count"] >= 0, "search_news returned a negative count")
+    if result["facts"]["articles"]:
+        print(f"first headline: {result['facts']['articles'][0]['headline']}")
 
     print("\nPASS: search_news returned without error.")
     return 0

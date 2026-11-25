@@ -17,6 +17,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from trading_agent_framework.agents import ToolBudget
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
 from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
@@ -97,7 +98,7 @@ class EarningsDriftStrategy(Strategy):
                     system_prompt=DRIFT_SYSTEM,
                     tools=[*desk_tools(self.desk), *research_tools(self)],
                     temperature=self.settings.agent_temperature,
-                    exempt_tools=list(ORDER_TOOLS),
+                    budget=ToolBudget(exempt=tuple(ORDER_TOOLS)),
                 )
             else:
                 self.log_warning("guardrail baseline: agent disabled, baseline mode (every gated candidate is bought at the default trail)")

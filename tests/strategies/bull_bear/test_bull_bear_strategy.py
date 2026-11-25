@@ -212,14 +212,25 @@ def test_the_researcher_ends_with_a_budget_exempt_submit_and_every_agent_uses_th
 
     strategy.initialize()
 
-    exempt = {created["name"]: created.get("exempt_tools") for created in agents.created}
+    exempt = {created["name"]: created["budget"].exempt for created in agents.created}
     assert exempt == {
-        "researcher": ["submit_note", "count_characters", "get_income_statement", "get_balance_sheet"],
-        "bull": ["submit_bull_case", "count_characters"],
-        "bear": ["submit_bear_case", "count_characters"],
-        "judge": ["submit_verdicts", "count_characters"],
+        "researcher": ("submit_note", "count_characters", "get_income_statement", "get_balance_sheet"),
+        "bull": ("submit_bull_case", "count_characters"),
+        "bear": ("submit_bear_case", "count_characters"),
+        "judge": ("submit_verdicts", "count_characters"),
     }
     assert {created["temperature"] for created in agents.created} == {0.1}
+
+
+def test_only_the_researcher_labels_its_counted_calls_and_is_told_its_budget(tmp_path: Path) -> None:
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_tool_budget=5))
+
+    strategy.initialize()
+
+    labelled = {created["name"]: created["budget"].label_calls for created in agents.created}
+    assert labelled == {"researcher": True, "bull": False, "bear": False, "judge": False}
+    researcher = next(created for created in agents.created if created["name"] == "researcher")
+    assert "at most 5 search_news calls" in " ".join(researcher["system_prompt"].split())
 
 
 def test_a_backtest_starts_with_no_saved_state_and_paper_keeps_it(tmp_path: Path) -> None:
@@ -386,7 +397,7 @@ def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expect
 
     result = search(symbols="Grupo Galicia")
 
-    assert result["symbols_searched"] == "GGAL"
+    assert result["instructions"]["symbols_searched"] == "GGAL"
 
 
 def test_every_count_tool_stops_counting_after_two_counts_in_an_armed_stage(tmp_path: Path) -> None:

@@ -105,9 +105,9 @@ def test_each_pod_gets_its_own_news_and_macro_tools(tmp_path: Path) -> None:
     assert set(tools["risk_manager"]) == {"count_characters", "submit_risk_review"}
     assert all("count_characters" in agent_tools for agent_tools in tools.values())
     assert by_name["tech_pod"]["final_tools"] == ["submit_pod_view"]
-    assert by_name["tech_pod"]["exempt_tools"] == ["submit_pod_view", "count_characters"]
+    assert by_name["tech_pod"]["budget"].exempt == ("submit_pod_view", "count_characters")
     # remember_lesson is outside the memory budget: three searches used to spend it, so no lesson was ever stored
-    assert by_name["portfolio_manager"]["exempt_tools"] == ["submit_target_weights", "count_characters", "remember_lesson"]
+    assert by_name["portfolio_manager"]["budget"].exempt == ("submit_target_weights", "count_characters", "remember_lesson")
     assert by_name["portfolio_manager"]["final_tools"] == ["submit_target_weights"]
 
 

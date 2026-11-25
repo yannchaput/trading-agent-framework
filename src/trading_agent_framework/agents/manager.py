@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +143,20 @@ def _warn_if_budget_reached(agent_name: str, budget: int, response: Any) -> None
         pass
 
 
+@dataclass(frozen=True)
+class ToolBudget:
+    """How an agent's per-run tool budget (`AgentHandle.run(tool_budget=N)`) treats its tools.
+
+    Attributes:
+        exempt: Tools the budget never counts or refuses, typically the one the agent must end with. Without a
+            per-run budget this changes nothing.
+        label_calls: Whether each counted call's answer says which call it was, as `"<tool> call k of N"`.
+    """
+
+    exempt: tuple[str, ...] = ()
+    label_calls: bool = False
+
+
 def _tool_budget_message(budget: int, blocked_tool: str, exempt_tools: Sequence[str]) -> str:
     """The error a call past the budget gets instead of running; names only the caller's own tools."""
     spent = f"tool budget of {budget} calls spent; {blocked_tool} was not run."
@@ -183,7 +198,7 @@ class AgentHandle:
         run are left unforced.
 
         `tool_budget`, when given, caps this run's tool calls: past it, every tool but the agent's
-        `exempt_tools` (see `AgentManager.create`) returns an `{"error": ...}` without running, so the
+        the exempt tools (`ToolBudget`, see `AgentManager.create`) returns an `{"error": ...}` without running, so the
         model finishes with what it has instead of overflowing its context. Each run starts a fresh count.
 
         `max_steps`, when given, is LangGraph's `recursion_limit` for this run, which counts supersteps (rounds in which
@@ -318,8 +333,8 @@ class AgentManager:
 
         return force_tool_choice
 
-    def _tool_budget_middleware(self, tool_names: Sequence[str], exempt_tools: Sequence[str], final_tools: Sequence[str] = ()) -> Any:
-        """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `exempt_tools`.
+    def _tool_budget_middleware(self, tool_names: Sequence[str], budget: ToolBudget, final_tools: Sequence[str] = ()) -> Any:
+        """LangChain's `ToolCallLimitMiddleware`, for every agent: past `AgentHandle.run(tool_budget=N)` calls in a run, refuse every tool but `budget.exempt`.
 
         `AgentHandle.run` sets `run_limit` for the run (`None` between runs: nothing is refused). The base class
         counts in `after_model`, on the one graph thread, and injects an error `ToolMessage` for each call past
@@ -331,9 +346,9 @@ class AgentManager:
         one to finish with), else its exempt tools.
         """
         from langchain.agents.middleware.tool_call_limit import ToolCallLimitMiddleware
-        from langchain_core.messages import ToolMessage
+        from langchain_core.messages import AIMessage, ToolMessage
 
-        exempt = tuple(exempt_tools)
+        exempt = budget.exempt
         finish = tuple(final_tools) or exempt
         counted = frozenset(tool_names) - frozenset(exempt)
 
@@ -344,13 +359,50 @@ class AgentManager:
                 """Start with a zero limit; `AgentHandle.run` sets the real limit for each run."""
                 super().__init__(run_limit=0)  # the base class wants a limit; `AgentHandle.run` sets the real one per run
                 self.run_limit = None
+                self._labels: dict[str, str] = {}  # tool call id -> its "<tool> call k of N", set in `after_model`, used when the call has run
 
             def _matches_tool_filter(self, tool_call: Any) -> bool:
                 """Whether the tool call counts against the budget."""
                 return tool_call["name"] in counted
 
+            def _number_calls(self, state: Any) -> None:
+                """Give each counted call of the model's turn that the budget allows its number, in request order.
+
+                Runs in `after_model`, on the one graph thread and before any of the turn's tools starts, so parallel
+                calls get consecutive numbers whichever finishes first. Counts like the base class: the run's earlier
+                counted calls (refused ones included) come first, and a call past the limit gets no number.
+                """
+                last = next((message for message in reversed(state["messages"]) if isinstance(message, AIMessage)), None)
+                count = state.get("run_tool_call_count", {}).get("__all__", 0)
+                for call in last.tool_calls if last else ():
+                    if not self._matches_tool_filter(call):
+                        continue
+                    count += 1
+                    if count > self.run_limit:
+                        break
+                    if call["id"] is not None:  # a call without an id still counts, but its answer cannot be matched to a label
+                        self._labels[call["id"]] = f"{call['name']} call {count} of {self.run_limit}"
+
+            def wrap_tool_call(self, request: Any, handler: Callable[[Any], Any]) -> Any:
+                """Run the tool call; a numbered call's answer, when it is a JSON object, gets `instructions.tool_call` first."""
+                result = handler(request)
+                label = self._labels.pop(request.tool_call["id"], None)
+                if label is None or not isinstance(result, ToolMessage) or not isinstance(result.content, str):
+                    return result
+                try:
+                    answer = json.loads(result.content)
+                except ValueError:
+                    return result
+                instructions = answer.get("instructions", {}) if isinstance(answer, dict) else None
+                if not isinstance(instructions, dict):
+                    return result
+                labelled = {"instructions": {"tool_call": label, **instructions}, **{key: value for key, value in answer.items() if key != "instructions"}}
+                return result.model_copy(update={"content": json.dumps(labelled, ensure_ascii=False)})
+
             def after_model(self, state: Any, runtime: Any) -> Any:
                 """Apply the budget after each model turn."""
+                if budget.label_calls and self.run_limit is not None:
+                    self._number_calls(state)
                 update = super().after_model(state, runtime)
                 # 'update' is None when the model didn't call any tool, or when the run limit is None (between runs).
                 # If it did call a tool, but the run limit was reached, the code below replace the base's generic refusal with one that names the agent's own tools and the ones it must finish with.
@@ -519,7 +571,7 @@ class AgentManager:
         tools: Sequence[Callable[..., Any] | BaseTool] | None = None,
         timeout_seconds: float | None = None,
         temperature: float | None = None,
-        exempt_tools: Sequence[str] | None = None,
+        budget: ToolBudget | None = None,
         final_tools: Sequence[str] | None = None,
         compact_history: bool = False,
         max_output_tokens: int | None = None,
@@ -539,8 +591,8 @@ class AgentManager:
         a pre-built `BaseChatModel` keeps its own sampling settings. The telemetry summary records the
         temperature the chat model actually has.
 
-        `exempt_tools` names the tools a per-run `tool_budget` (see `AgentHandle.run`) never refuses,
-        typically the tool the agent must end with; without a budget it changes nothing.
+        `budget` (default: every tool counted, no labels) says how a per-run `tool_budget` (see `AgentHandle.run`)
+        treats the agent's tools: which ones it never counts or refuses (see `ToolBudget`).
 
         `final_tools` names the tools whose successful call ends the run: the model is not asked for another
         turn (see `_final_tools_middleware`). For an agent whose job is to hand one result over, not for a
@@ -586,7 +638,7 @@ class AgentManager:
 
             glm_format = _is_glm_model(getattr(chat_model, "model_name", None))
             tool_list = list(tools or [])
-            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], exempt_tools or (), final_tools or ())
+            limiter = self._tool_budget_middleware([_tool_name(tool) for tool in tool_list], budget or ToolBudget(), final_tools or ())
             stack = [
                 self._tool_call_repair_middleware(glm_format=glm_format),
                 self._forced_tool_choice_middleware(),
