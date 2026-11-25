@@ -209,3 +209,14 @@ def test_a_window_wider_than_31_days_is_cut_to_the_31_days_before_end(tmp_path: 
     _day(tmp_path / "gkg", "2024-03-01", [_row("20240301100000", "Wall Street four days ago")])
     articles = _provider(tmp_path).get_news(start=datetime(2023, 3, 5, tzinfo=UTC), end=datetime(2024, 3, 5, 12, tzinfo=UTC), sort="asc")
     assert _headlines(articles) == ["Wall Street four days ago"]
+
+
+def test_a_day_file_without_columns_reads_as_an_empty_day(tmp_path: Path) -> None:
+    # The cache holds 636-byte day files with no columns at all (2025-06-15..07-01): they must not break the search.
+    _day(tmp_path / "gkg", "2025-06-14", [_row("20250614120000", "Wall Street rallies (NASDAQ:AAPL)")])
+    empty = tmp_path / "gkg" / "2025" / "2025-06-15.parquet"
+    pd.DataFrame().to_parquet(empty)
+
+    articles = _provider(tmp_path).get_news(["AAPL"], start=datetime(2025, 6, 14, tzinfo=UTC), end=datetime(2025, 6, 15, 23, tzinfo=UTC))
+
+    assert _headlines(articles) == ["Wall Street rallies (NASDAQ:AAPL)"]

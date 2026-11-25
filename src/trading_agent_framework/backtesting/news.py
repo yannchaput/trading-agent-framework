@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import pandas as pd
+import pyarrow.parquet as pq
 
 from trading_agent_framework.brokers.news import NewsProvider
 from trading_agent_framework.utils.errors import BrokerError
@@ -93,10 +94,11 @@ def _load_names(path: Path) -> dict[str, str]:
 def _day_frame(root: Path, day: date) -> pd.DataFrame:
     """One cached UTC day: columns `stamp, domain, url, title`, titles filled from URLs, rows without a title dropped.
 
-    Cached because a backtest asks for the same days many times. A missing day file (GDELT has gaps) gives an empty frame.
+    Cached because a backtest asks for the same days many times. A missing day file (GDELT has gaps) gives an empty frame,
+    and so does a day file without a `stamp` column (the cache holds no-column files for 2025-06-15..07-01).
     """
     path = root / f"{day:%Y}" / f"{day:%Y-%m-%d}.parquet"
-    if not path.exists():
+    if not path.exists() or "stamp" not in pq.read_schema(path).names:
         return pd.DataFrame(columns=["stamp", "domain", "url", "title"])
     frame = pd.read_parquet(path, columns=["stamp", "domain", "url", "title"])
     frame["title"] = frame["title"].where(frame["title"].notna(), frame["url"].map(slug_title))
