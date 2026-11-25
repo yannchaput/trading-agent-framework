@@ -134,19 +134,32 @@ class SectorPodsReview:
         from langgraph.graph import END, START, StateGraph
 
         graph = StateGraph(PodsState)
+        # Node: reads last completed week's views (pods, risk, pm) from the store, for keep-or-trim and scoring. Put it in the State.
         graph.add_node("load_previous", self._load_previous)
+        # Node: builds this week's date, regime, holdings, per-ETF facts, outcome and stress; may abandon the week.
         graph.add_node("market_facts", self._market_facts)
+        # One node per pod, bound to its key so _run_pod knows which sleeve to research; they run in parallel.
         for key in self._pods:
             graph.add_node(key, partial(self._run_pod, key))
+        # Node: the risk manager reviews all pod views and records objections; it has no tools.
         graph.add_node("risk_manager", partial(self._run_agent, self._risk_manager))
+        # Node: the portfolio manager turns the pod views and risk review into the target weights.
         graph.add_node("portfolio_manager", partial(self._run_agent, self._portfolio_manager))
+        # Node: fills the book, trades it through the Rebalancer and records the week (or records the abandon).
         graph.add_node("execute", self._execute)
+        # Edge: the graph starts by loading the previous week.
         graph.add_edge(START, "load_previous")
+        # Edge: market facts are computed only after the previous week is loaded.
         graph.add_edge("load_previous", "market_facts")
+        # Edge: after the facts, fan out to the five pods, or jump straight to execute if the week was abandoned.
         graph.add_conditional_edges("market_facts", self._after_facts)
+        # Edge (list source = join): risk_manager starts only after all five pods have finished.
         graph.add_edge(list(self._pods), "risk_manager")
+        # Edge: the portfolio manager decides only after risk has reviewed the pods.
         graph.add_edge("risk_manager", "portfolio_manager")
+        # Edge: execute trades the book only after the portfolio manager has submitted it.
         graph.add_edge("portfolio_manager", "execute")
+        # Edge: execute is the last step, so the graph ends after the week is recorded.
         graph.add_edge("execute", END)
         return graph.compile()
 
