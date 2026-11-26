@@ -806,7 +806,7 @@ class Strategy:
             resolved_source = data_source(warmup_start, resolved_end)
         if timestep != "day":
             floor_start = resolved_start - timedelta(days=warmup_calendar_days(DAILY_WARMUP_FLOOR))
-            resolved_source.load([Asset(self.benchmark_symbol)], floor_start, resolved_end, "day")
+            resolved_source.load([Asset(resolved_benchmark)], floor_start, resolved_end, "day")
         return run_backtest(
             self,
             start=resolved_start,

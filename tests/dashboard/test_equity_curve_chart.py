@@ -12,6 +12,7 @@ from trading_agent_framework.dashboard.components.charts import (
     benchmark_equity,
     drawdown_chart,
     equity_curve_chart,
+    monthly_returns_heatmap,
 )
 
 T0 = datetime(2026, 9, 1, 20, 0, tzinfo=UTC)
@@ -127,3 +128,29 @@ def test_drawdown_and_equity_span_the_same_dates_even_when_the_regime_starts_ear
     assert tuple(pd.Timestamp(x) for x in equity.layout.xaxis.range) == tuple(pd.Timestamp(x) for x in drawdown.layout.xaxis.range)
     assert pd.Timestamp(drawdown.layout.xaxis.range[0]) == pd.Timestamp(DATES[0])
     assert pd.Timestamp(drawdown.layout.xaxis.range[1]) == pd.Timestamp(DATES[-1])
+
+
+def test_drawdown_takes_the_budget_as_the_first_peak() -> None:
+    """A first-session loss was invisible: the first close was its own peak, while the Max DD card counted it."""
+    fig = drawdown_chart(EQUITY, benchmark=benchmark_equity(CUMULATIVE, 1100.0), budget=1100.0)
+
+    # strategy: 1000 is already under the 1100 budget; SPY starts on it: 1100, 1210, 1045, 1155
+    assert list(_trace(fig, "Drawdown %").y) == pytest.approx([-100 / 1100 * 100, 0.0, -50 / 1100 * 100, 0.0])
+    assert list(_trace(fig, "SPY Drawdown %").y) == pytest.approx([0.0, 0.0, -165 / 1210 * 100, -55 / 1210 * 100])
+
+
+def test_monthly_heatmap_measures_the_first_month_from_the_budget() -> None:
+    """The first month was missing: it had no month-end before it to be measured from."""
+    equity = [{"date": "2026-01-30", "value": 1100.0}, {"date": "2026-02-27", "value": 1210.0}]
+
+    fig = monthly_returns_heatmap(equity, budget=1000.0)
+
+    heatmap = cast(Any, fig.data)[0]
+    assert list(heatmap.x) == ["Jan", "Feb"]
+    assert list(heatmap.z[0]) == pytest.approx([10.0, 10.0])
+
+
+def test_monthly_heatmap_shows_a_run_shorter_than_two_months() -> None:
+    fig = monthly_returns_heatmap([{"date": "2026-11-03", "value": 1010.0}], budget=1000.0)
+
+    assert list(cast(Any, fig.data)[0].z[0]) == pytest.approx([1.0])
