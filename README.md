@@ -362,6 +362,35 @@ Adapted from lumibot's idea-meritocracy leveraged ETF example; not affiliated wi
 
 Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.com/agents_example_citadel_sector_pods.html). Not affiliated with Citadel. Each week five pods run in parallel, one per group of sector ETFs, and score every ETF of their sleeve from -2 to +2 from price facts (returns, strength against SPY, volatility, distance from the 200-day average), news and macro data. A risk manager then raises objections (crowding, macro, drawdown, reversal) and the portfolio manager sets the target weights, also seeing how last week's book did. Code enforces the limits twice, in the submit tool and again before trading: 25% per ETF, 40% per pod, 98% in total (the rest is cash); an ETF whose pod gave no view can only be kept or cut. Money not allocated is parked in SHV. **Use an account that holds only this strategy's positions:** every long position that is not one of the 27 ETFs or SHV is sold on the first rebalance. A week that cannot complete (no portfolio manager book, unusable data, or a broker that accepts no order) trades nothing and a backtest stops after 3 such weeks in a row. Run `uv run agent sector_pods backtesting` (default window `PredefinedWindow.MONTH_LATEST`, about 10 weekly reviews; for the full history set `SEMI_DECADE_LATEST` in `SectorPodsStrategy.parameters`); each run writes `reviews.jsonl` (one line per weekly review) next to its report.
 
+### 📈 `fallout_defensive_swing` — Tactical XLP + XLU swing for a volatile stretch (no LLM)
+
+| Field | Value |
+| --- | --- |
+| **File** | `strategies/fallout_defensive_swing/agent_fallout_defensive_swing.py` (`FalloutDefensiveSwingStrategy`) |
+| **Model** | none |
+| **Agents** | none |
+| **Tools** | none |
+| **Asset universe** | XLP and XLU (consumer staples and utilities), 50/50 |
+| **Frequency** | hourly, 10:30-15:30 ET |
+| **Trading modes** | backtest, live (no Alpaca paper run: its fees and fills are not Tastytrade's) |
+| **Benchmark** | SPY |
+| **Env file** | `env/.env.fallout_defensive_swing.<mode>`: `BROKER=tastytrade`, `ALPACA_DATA_*`, plus `TASTYTRADE_*` in live |
+
+**The rule:**
+1. Buy the mix with the spendable cash, half in each ETF (fractional market orders).
+2. Sell everything once its value, less the sell fees, is at least the cost of the buy (fees included) + 1%.
+3. Buy back once the two prices are on average 1% or more under the prices they were sold at.
+4. Never sell before the last sale has settled (the next day banks are open): on a cash account, what unsettled proceeds bought must not be sold before then.
+
+**Conditions of applicability** — a short-term tactic, not an all-weather strategy:
+
+- **Use it** in a short, volatile stretch with no clear trend (it was designed with the VIX near 28, November 2026), on a cash account holding only this strategy, with a **daily check** and a **manual stop** when the turbulence ends.
+- **Not in a rising market:** after a sale it waits for a 1% dip that may never come. Over the 3-year study it was invested only 5% of the time (+4.7%, against +33% for holding the mix).
+- **Not in a long fall:** there is no stop-loss. It holds until +1%; the longest hold in the study of the +1% rule was 232 days.
+- **The evidence is thin:** in the study, 3-25 November 2026 made +$40.34 on $768 (4 sales, worst drawdown -0.8%), against +$12.72 for holding the mix. That is three weeks, and the 1% buy-back was chosen after seeing them.
+
+Run `uv run agent fallout_defensive_swing backtesting` (default window 3-25 November 2026, Alpaca minute bars, the fees of `BROKER`) or `uv run agent fallout_defensive_swing live`. **Before the first live run**, check one fractional buy and sale by hand on the account, and leave no XLP or XLU behind (any leftover is taken as the strategy's position). **On the first live buy**, check that the next hourly line says `holding`: if it keeps saying an order is still open, the account stream is not reporting fills, so check the account and restart. Stopping the process leaves the positions as they are.
+
 ### 📈 `congress_trades` — Copy Nancy Pelosi's disclosed stock holdings (researcher, portfolio manager, trader)
 
 | Field | Value |
