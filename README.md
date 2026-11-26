@@ -377,13 +377,13 @@ Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.c
 **The rule:**
 1. Buy the mix with the spendable cash, half in each ETF (fractional market orders).
 2. Sell everything once its value, less the sell fees, is at least the cost of the buy (fees included) + 1%.
-3. Buy back once the two prices are on average 1% or more under the prices they were sold at, or after 5 trading days in cash (`cash_reset_days`; a market holiday counts), whatever the price.
+3. Buy back once the two prices are on average 1% or more under the prices they were sold at, or after 10 trading days in cash (`cash_reset_days`; a market holiday counts), whatever the price.
 4. Never sell before the last sale has settled (the next day banks are open): on a cash account, what unsettled proceeds bought must not be sold before then.
 
 **Conditions of applicability** — a short-term tactic, not an all-weather strategy:
 
 - **Use it** in a short, volatile stretch with no clear trend (it was designed with the VIX near 28, November 2026), on a cash account holding only this strategy, with a **daily check** and a **manual stop** when the turbulence ends.
-- **Not in a rising market:** after a sale it can sit in cash, then buy back higher. The 3-year study predates the 5-day reset: waiting for the dip with no limit, it was invested only 5% of the time (+4.7%, against +33% for holding the mix).
+- **Not in a rising market:** after a sale it can sit in cash, then buy back higher. The 3-year study predates the 10-day reset: waiting for the dip with no limit, it was invested only 5% of the time (+4.7%, against +33% for holding the mix).
 - **Not in a long fall:** there is no stop-loss. It holds until +1%; the longest hold in the study of the +1% rule was 232 days.
 - **The evidence is thin:** in the study, 3-25 November 2026 made +$40.34 on $768 (4 sales, worst drawdown -0.8%), against +$12.72 for holding the mix. That is three weeks, and the 1% buy-back was chosen after seeing them.
 

@@ -36,7 +36,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         "symbols": ["XLP", "XLU"],
         "take_profit": Decimal("0.01"),
         "buyback_dip": Decimal("0.01"),
-        "cash_reset_days": 5,  # trading days in cash before buying back without the dip; None never does
+        "cash_reset_days": 10,  # trading days in cash before buying back without the dip; None never does
         "budget": 768,
         "benchmark_symbol": "SPY",
         "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
