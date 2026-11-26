@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import date, time
+from datetime import date, datetime, time
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
@@ -39,7 +39,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         "budget": 768,
         "benchmark_symbol": "SPY",
         "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
-        "backtesting_end": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[1],
+        "backtesting_end": datetime(2026, 11, 25, tzinfo=MARKET_TZ),
     }
 
     def __init__(self, broker: Broker, *, mode: TradingMode = TradingMode.PAPER, fees: TradingFeeFactory | None = None, **kwargs: Any) -> None:

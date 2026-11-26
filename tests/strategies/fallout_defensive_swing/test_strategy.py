@@ -4,10 +4,12 @@ import logging
 from datetime import date
 from decimal import Decimal as D
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import BrokerKind, TradingMode
 from trading_agent_framework.entities import AccountBalances, Asset, Order, OrderEvent, OrderSide, Position, PositionSide
@@ -304,7 +306,7 @@ def test_a_missing_price_does_nothing(tmp_path: Path, caplog: pytest.LogCaptureF
 
 
 def test_backtest_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    seen: dict[str, object] = {}
+    seen: dict[str, Any] = {}
     monkeypatch.setattr("trading_agent_framework.core.strategy.Strategy.run_backtesting", lambda self, **kwargs: seen.update(kwargs))
     strategy = _strategy(_broker(), tmp_path)
 
@@ -312,7 +314,7 @@ def test_backtest_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
     assert seen["timestep"] == "minute" and seen["agent_telemetry"] is False
     assert seen["data_source"].__name__ == "AlpacaBacktestData"
-    assert strategy.resolved_window() == (et(2026, 11, 3, 0), et(2026, 11, 25, 0))
+    assert strategy.resolved_window() == (backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0], et(2026, 11, 25, 0))
     assert strategy.parameters["budget"] == 768
 
 
