@@ -16,6 +16,7 @@ from trading_agent_framework.strategies.cross_momentum import CrossMomentumStrat
 from trading_agent_framework.strategies.cross_momentum.utils import load_cross_momentum_universe
 from trading_agent_framework.strategies.earnings_drift import EarningsDriftStrategy
 from trading_agent_framework.strategies.earnings_drift.parameters import DriftParams
+from trading_agent_framework.strategies.fallout_defensive_swing import FalloutDefensiveSwingStrategy
 from trading_agent_framework.strategies.insider_trades import InsiderTradesStrategy
 from trading_agent_framework.strategies.news_builtin import NewsBinaryStrategy
 from trading_agent_framework.strategies.ray_dalio import RayDalioStrategy
@@ -36,6 +37,7 @@ class Strategies(StrEnum):
     CROSS_MOMENTUM = auto()
     EARNINGS_DRIFT = auto()
     EARNINGS_DRIFT_BASELINE = auto()
+    FALLOUT_DEFENSIVE_SWING = auto()
     INSIDER_TRADES = auto()
     NEWS_BINARY = auto()
     RAY_DALIO = auto()
@@ -94,6 +96,11 @@ def _build_sector_pods(broker: Broker, mode: TradingMode, parameters: Mapping[st
     return SectorPodsStrategy(broker=broker, mode=mode, parameters=parameters)
 
 
+def _build_fallout_defensive_swing(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
+    """Build the fallout_defensive_swing strategy (a fixed ETF mix: no universe file)."""
+    return FalloutDefensiveSwingStrategy(broker=broker, mode=mode, parameters=parameters)
+
+
 def _build_congress_trades(broker: Broker, mode: TradingMode, parameters: Mapping[str, Any]) -> Strategy | None:
     """Build the congress-trades strategy."""
     return CongressTradesStrategy(broker=broker, mode=mode, parameters=parameters)
@@ -129,6 +136,7 @@ _STRATEGY_BUILDERS: dict[Strategies, StrategyBuilder] = {
     Strategies.CROSS_MOMENTUM: _build_cross_momentum,
     Strategies.EARNINGS_DRIFT: _build_earnings_drift,
     Strategies.EARNINGS_DRIFT_BASELINE: _build_earnings_drift_baseline,
+    Strategies.FALLOUT_DEFENSIVE_SWING: _build_fallout_defensive_swing,
     Strategies.INSIDER_TRADES: _build_insider_trades,
     Strategies.NEWS_BINARY: _build_news_binary,
     Strategies.RAY_DALIO: _build_ray_dalio,

@@ -39,6 +39,7 @@ def test_strategy_names_are_the_cli_names() -> None:
         "cross_momentum",
         "earnings_drift",
         "earnings_drift_baseline",
+        "fallout_defensive_swing",
         "insider_trades",
         "news_binary",
         "ray_dalio",
