@@ -18,9 +18,10 @@ from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities import Order, OrderSide
-from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide
+from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import TradingFrameworkError
 
 ORDER_WAIT_SECONDS = 300  # a market order fills in seconds; after this it is canceled and retried at a later tick
 _SHARE_STEP = Decimal("0.000001")
@@ -67,16 +68,17 @@ class FalloutDefensiveSwingStrategy(Strategy):
         symbols = self.parameters["symbols"]
         session = self.clock.now().astimezone(MARKET_TZ).date()
         held = {p.asset.symbol: p.quantity for p in self.get_positions() if p.asset.symbol in symbols and p.quantity > 0}
+        latest = {asset.symbol: price for asset, price in self.get_last_prices(symbols).items()}
         prices: dict[str, Decimal] = {}
         for symbol in symbols:
-            price = self.get_last_price(symbol)
+            price = latest[symbol]
             if price is None:
                 self.log_warning(f"no price for {symbol}: nothing is done this hour")
                 return
             prices[symbol] = price
         value = sum((quantity * prices[symbol] for symbol, quantity in held.items()), Decimal(0))
         state = self._reconcile(held, prices, value, session)
-        sell_fees = sum((self.fees.fees(buy_shares=Decimal(0), sell_shares=q, buy_value=Decimal(0), sell_value=q * prices[s]).sell for s, q in held.items()), Decimal(0))
+        sell_fees = sum((self._sell_fee(quantity, quantity * prices[symbol]) for symbol, quantity in held.items()), Decimal(0))
         action = decide(
             state,
             value=value,
@@ -117,28 +119,30 @@ class FalloutDefensiveSwingStrategy(Strategy):
             if quantity <= 0:
                 self.log_warning(f"no cash to buy {symbol}")
                 continue
-            order = self.submit_order(self.create_order(symbol, quantity, OrderSide.BUY))
-            self._wait_or_cancel(order)
-            orders.append(order)
+            order = self._send(symbol, quantity, OrderSide.BUY)
+            if order is not None:
+                self._wait_or_cancel(order)
+                orders.append(order)
         if self.broker.tracker.get_active_orders():
             return  # still open: saving now could miss a later fill; a later tick adopts what the account holds
         basis = Decimal(0)
         for order in orders:
             if order.filled_quantity > 0:
-                cost = order.filled_quantity * self._fill_price(order, prices)
-                basis += cost + self.fees.fees(buy_shares=order.filled_quantity, sell_shares=Decimal(0), buy_value=cost, sell_value=Decimal(0)).buy
+                cost = order.filled_quantity * (order.avg_fill_price or prices[order.asset.symbol])
+                basis += cost + self._buy_fee(order.filled_quantity, cost)
         if basis > 0:
             self.store.save(replace(state, phase=Phase.HOLDING, basis=basis, selling=False))
 
     def _sell(self, state: SwingState, held: Mapping[str, Decimal], prices: Mapping[str, Decimal], session: date) -> None:
         """Sell everything held; if only part fills, `selling` stays set and the rest goes at the next allowed tick."""
-        orders = [self.submit_order(self.create_order(symbol, quantity, OrderSide.SELL)) for symbol, quantity in held.items()]
+        orders = [order for symbol, quantity in held.items() if (order := self._send(symbol, quantity, OrderSide.SELL)) is not None]
         for order in orders:
             self._wait_or_cancel(order)
-        sold = {o.asset.symbol: self._fill_price(o, prices) for o in orders if o.filled_quantity > 0}
-        if not sold or self.broker.tracker.get_active_orders():
+        sold = {o.asset.symbol: o.avg_fill_price or prices[o.asset.symbol] for o in orders if o.filled_quantity > 0}
+        if not sold:
             return
-        complete = all(order.is_filled() for order in orders)
+        # saved even with an order still open: ticks wait for it, and losing the record of what was sold would leave the rest stuck
+        complete = len(orders) == len(held) and all(order.is_filled() for order in orders)
         earlier = state.sale_prices if state.selling else {}  # the legs an unfinished sale already sold
         self.store.save(
             replace(
@@ -150,28 +154,40 @@ class FalloutDefensiveSwingStrategy(Strategy):
             )
         )
 
+    def _buy_fee(self, shares: Decimal, value: Decimal) -> Decimal:
+        """Fees of one buy order."""
+        return self.fees.fees(buy_shares=shares, sell_shares=Decimal(0), buy_value=value, sell_value=Decimal(0)).buy
+
+    def _sell_fee(self, shares: Decimal, value: Decimal) -> Decimal:
+        """Fees of one sell order."""
+        return self.fees.fees(buy_shares=Decimal(0), sell_shares=shares, buy_value=Decimal(0), sell_value=value).sell
+
+    def _send(self, symbol: str, quantity: Decimal, side: OrderSide) -> Order | None:
+        """Submit a market order; None, with a warning, when it raises, so the tick still records the other leg."""
+        try:
+            return self.submit_order(self.create_order(symbol, quantity, side))
+        except TradingFrameworkError as exc:
+            self.log_warning(f"submitting {side} {symbol} failed (check the account): {exc}")
+            return None
+
     def _wait_or_cancel(self, order: Order) -> None:
         """Wait for a final status, canceling an order that takes too long."""
         if self.wait_for_order_execution(order, ORDER_WAIT_SECONDS):
             return
         self.log_warning(f"{order.side} {order.asset.symbol} not final after {ORDER_WAIT_SECONDS}s: canceling it")
-        self.cancel_order(order)
+        try:
+            self.cancel_order(order)
+        except TradingFrameworkError as exc:
+            self.log_warning(f"could not cancel {order.side} {order.asset.symbol} (it may have filled): {exc}. If later ticks keep reporting an open order, check the account and restart")
+            return
         self.wait_for_order_execution(order, ORDER_WAIT_SECONDS)
-
-    @staticmethod
-    def _fill_price(order: Order, prices: Mapping[str, Decimal]) -> Decimal:
-        """Average price of the fills; the tick's price when the broker reported none."""
-        filled = sum((t.quantity for t in order.transactions), Decimal(0))
-        if filled == 0:
-            return prices[order.asset.symbol]
-        return sum((t.quantity * t.price for t in order.transactions), Decimal(0)) / filled
 
     def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal]) -> str:
         """One line saying where the strategy stands and what it does."""
         if state.phase is Phase.HOLDING and state.basis is not None:
-            detail = f", value after sell fees {net_value:.2f} / target {state.basis * (1 + self.parameters['take_profit']):.2f}"
+            detail = f", value after sell fees {net_value:.2f} / target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
         elif state.phase is Phase.CASH:
-            ratio = sum(prices[s] / sold for s, sold in state.sale_prices.items()) / len(state.sale_prices)
+            ratio = mean_price_ratio(prices, state.sale_prices)
             detail = f", price vs last sale {ratio - 1:+.2%} / buy-back at {-self.parameters['buyback_dip']:+.2%}"
         else:
             detail = ""

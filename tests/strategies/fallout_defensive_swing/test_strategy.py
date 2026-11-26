@@ -12,6 +12,7 @@ from trading_agent_framework.config.env import BrokerKind, TradingMode
 from trading_agent_framework.entities import AccountBalances, Asset, Order, OrderEvent, OrderSide, Position, PositionSide
 from trading_agent_framework.strategies.fallout_defensive_swing import FalloutDefensiveSwingStrategy
 from trading_agent_framework.strategies.fallout_defensive_swing.rule import Phase, SwingState
+from trading_agent_framework.utils.errors import BrokerError
 from trading_agent_framework.utils.strategy_factory import Strategies, build_strategy
 
 NAME = "fallout_defensive_swing"
@@ -31,12 +32,24 @@ class FillingBroker(FakeBroker):
         self.account = AccountBalances(cash=D(768), portfolio_value=D(768), buying_power=D(768))
         self.stuck: set[str] = set()
         self.ignores_cancel = False
+        self.cancel_fails = False
+        self.rejected: set[str] = set()
         clock.on_wait = self.process_orders
 
-    def hold(self, xlp: str, xlu: str, *, cash: str = "0") -> None:
+    def _submit_order(self, order: Order) -> Order:
+        if order.asset.symbol in self.rejected:
+            raise BrokerError("rejected")
+        return super()._submit_order(order)
+
+    def cancel_order(self, order: Order) -> None:
+        if self.cancel_fails:
+            raise BrokerError("cannot cancel")
+        super().cancel_order(order)
+
+    def hold(self, xlp: str, xlu: str) -> None:
         for symbol, quantity in (("XLP", D(xlp)), ("XLU", D(xlu))):
             self._move(symbol, quantity)
-        self._set_cash(D(cash))
+        self._set_cash(D(0))
 
     def quantity(self, symbol: str) -> D:
         return next((p.quantity for p in self.positions if p.asset.symbol == symbol), D(0))
@@ -53,6 +66,7 @@ class FillingBroker(FakeBroker):
         assert order.quantity is not None
         sign = 1 if order.side is OrderSide.BUY else -1
         price = self.last_prices[order.asset.symbol] * (1 + sign * D("0.0002"))
+        order.avg_fill_price = price
         self.tracker.process_trade_event(order, OrderEvent.FILLED, price=price, filled_quantity=order.quantity)
         self._move(order.asset.symbol, sign * order.quantity)
         self._set_cash(self.account.cash - sign * price * order.quantity)
@@ -230,6 +244,51 @@ def test_while_an_order_is_still_open_nothing_is_saved_and_ticks_do_nothing(tmp_
     assert len(broker.submitted) == 2
     assert strategy.store.load() == SwingState()
     assert "still open" in caplog.text
+
+
+def test_a_sell_the_broker_refuses_still_records_the_leg_sold_and_the_rest_goes_next_session(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    broker = _broker()
+    broker.hold("3.8", "7.6")
+    broker.rejected = {"XLU"}
+    strategy = _strategy(broker, tmp_path, _holding())
+
+    strategy.on_trading_iteration()
+
+    state = strategy.store.load()
+    assert (state.phase, state.selling, state.sale_prices, state.last_sale_session) == (Phase.HOLDING, True, {"XLP": D("99.98")}, TODAY)
+    assert "submitting sell XLU failed" in caplog.text
+
+    broker.rejected = set()
+    broker.clock.advance(24 * 3600)  # type: ignore[attr-defined]
+    strategy.on_trading_iteration()
+
+    assert strategy.store.load().phase is Phase.CASH
+    assert broker.positions == []
+
+
+def test_a_buy_the_broker_refuses_keeps_what_the_other_leg_really_cost(tmp_path: Path) -> None:
+    broker = _broker()
+    broker.rejected = {"XLU"}
+    strategy = _strategy(broker, tmp_path)
+
+    strategy.on_trading_iteration()
+
+    state = strategy.store.load()
+    assert state.phase is Phase.HOLDING
+    assert state.basis == D(768) - broker.account.cash + D("0.11")
+
+
+def test_a_cancel_that_fails_still_records_the_leg_sold(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    broker = _broker()
+    broker.hold("3.8", "7.6")
+    broker.stuck, broker.cancel_fails = {"XLU"}, True
+    strategy = _strategy(broker, tmp_path, _holding())
+
+    strategy.on_trading_iteration()
+
+    state = strategy.store.load()
+    assert (state.phase, state.selling, state.last_sale_session) == (Phase.HOLDING, True, TODAY)
+    assert "could not cancel" in caplog.text
 
 
 def test_a_missing_price_does_nothing(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

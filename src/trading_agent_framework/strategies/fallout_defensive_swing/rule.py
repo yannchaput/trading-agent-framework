@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from enum import StrEnum, auto
 
@@ -44,6 +44,29 @@ class SwingState:
     selling: bool = False
 
 
+def _banks_closed(day: date) -> bool:
+    """Columbus Day and Veterans Day: the exchanges trade but nothing settles."""
+    columbus = day.month == 10 and day.weekday() == 0 and 8 <= day.day <= 14
+    veterans = day.month == 11 and (day.day == 11 or (day.day == 12 and day.weekday() == 0))  # a Sunday one moves to Monday
+    return columbus or veterans
+
+
+def _settled(sale: date, session: date) -> bool:
+    """Whether the proceeds of a sale made on `sale` have settled on the trading day `session` (T+1)."""
+    between = (sale + timedelta(days=n) for n in range(1, (session - sale).days + 1))
+    return any(day.weekday() < 5 and not _banks_closed(day) for day in between)
+
+
+def sell_target(basis: Decimal, take_profit: Decimal) -> Decimal:
+    """Value, net of sell fees, at which the mix is sold."""
+    return basis * (1 + take_profit)
+
+
+def mean_price_ratio(prices: Mapping[str, Decimal], sale_prices: Mapping[str, Decimal]) -> Decimal:
+    """Mean over the sold ETFs of today's price divided by the price it was sold at."""
+    return sum((prices[symbol] / sold for symbol, sold in sale_prices.items()), Decimal(0)) / len(sale_prices)
+
+
 def decide(
     state: SwingState,
     *,
@@ -72,10 +95,9 @@ def decide(
         return Action.BUY
     if state.phase is Phase.HOLDING:
         # Cash account: a sale's proceeds settle the next day, and what they bought must not be sold before then.
-        if state.last_sale_session is not None and session <= state.last_sale_session:
+        if state.last_sale_session is not None and not _settled(state.last_sale_session, session):
             return Action.HOLD
         assert state.basis is not None  # every path into HOLDING sets it
-        reached = value - sell_fees >= state.basis * (1 + take_profit)
+        reached = value - sell_fees >= sell_target(state.basis, take_profit)
         return Action.SELL if state.selling or reached else Action.HOLD
-    ratios = [prices[symbol] / sold for symbol, sold in state.sale_prices.items()]
-    return Action.BUY if sum(ratios) / len(ratios) <= 1 - buyback_dip else Action.HOLD
+    return Action.BUY if mean_price_ratio(prices, state.sale_prices) <= 1 - buyback_dip else Action.HOLD

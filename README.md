@@ -380,7 +380,7 @@ Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.c
 1. Buy the mix with the spendable cash, half in each ETF (fractional market orders).
 2. Sell everything once its value, less the sell fees, is at least the cost of the buy (fees included) + 1%.
 3. Buy back once the two prices are on average 1% or more under the prices they were sold at.
-4. Never sell on the day of the last sale: on a cash account, what unsettled proceeds bought must not be sold before they settle.
+4. Never sell before the last sale has settled (the next day banks are open): on a cash account, what unsettled proceeds bought must not be sold before then.
 
 **Conditions of applicability** — a short-term tactic, not an all-weather strategy:
 
@@ -389,7 +389,7 @@ Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.c
 - **Not in a long fall:** there is no stop-loss. It holds until +1%; the longest hold in the study of the +1% rule was 232 days.
 - **The evidence is thin:** in the study, 3-25 November 2026 made +$40.34 on $768 (4 sales, worst drawdown -0.8%), against +$12.72 for holding the mix. That is three weeks, and the 1% buy-back was chosen after seeing them.
 
-Run `uv run agent fallout_defensive_swing backtesting` (default window 3-25 November 2026, Alpaca minute bars, the fees of `BROKER`) or `uv run agent fallout_defensive_swing live`. **Before the first live run**, check one fractional buy and sale by hand on the account. Stopping the process leaves the positions as they are.
+Run `uv run agent fallout_defensive_swing backtesting` (default window 3-25 November 2026, Alpaca minute bars, the fees of `BROKER`) or `uv run agent fallout_defensive_swing live`. **Before the first live run**, check one fractional buy and sale by hand on the account, and leave no XLP or XLU behind (any leftover is taken as the strategy's position). **On the first live buy**, check that the next hourly line says `holding`: if it keeps saying an order is still open, the account stream is not reporting fills, so check the account and restart. Stopping the process leaves the positions as they are.
 
 ### 📈 `congress_trades` — Copy Nancy Pelosi's disclosed stock holdings (researcher, portfolio manager, trader)
 

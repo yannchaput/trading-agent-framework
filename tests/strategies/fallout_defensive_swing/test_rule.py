@@ -4,6 +4,8 @@ from datetime import date, timedelta
 from decimal import Decimal as D
 from typing import Any
 
+import pytest
+
 from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide
 
 TODAY = date(2026, 11, 30)
@@ -63,3 +65,19 @@ def test_cash_above_the_dip_holds() -> None:
 
 def test_cash_at_the_dip_buys() -> None:
     assert _decide(_cash(), prices={"XLP": D("99"), "XLU": D("49.5")}) is Action.BUY  # mean ratio 0.99
+
+
+@pytest.mark.parametrize(
+    ("sold", "session", "expected"),
+    [
+        (date(2027, 10, 8), date(2027, 10, 11), Action.HOLD),  # Columbus Day: the market trades, nothing settles
+        (date(2027, 10, 8), date(2027, 10, 12), Action.SELL),
+        (date(2026, 11, 10), date(2026, 11, 11), Action.HOLD),  # Veterans Day
+        (date(2026, 11, 10), date(2026, 11, 12), Action.SELL),
+        (date(2029, 11, 9), date(2029, 11, 12), Action.HOLD),  # Veterans Day on a Sunday: banks close on Monday
+        (date(2026, 11, 25), date(2026, 11, 27), Action.SELL),  # an exchange holiday in between changes nothing
+        (date(2026, 11, 20), date(2026, 11, 23), Action.SELL),  # Friday sale, Monday session
+    ],
+)
+def test_no_sale_before_the_last_sale_has_settled(sold: date, session: date, expected: Action) -> None:
+    assert _decide(_holding(last_sale=sold), value=D("800"), session=session) is expected
