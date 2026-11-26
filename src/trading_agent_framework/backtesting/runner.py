@@ -297,23 +297,17 @@ def _run(
     # and broke equity.parquet's benchmark join outright (see `report.write_equity`).
     session_equity_samples = _session_equity_samples(broker.ledger.equity, sessions)
 
-    report.write_equity(run_dir, session_equity_samples, benchmark_by_time)
+    report.write_equity(run_dir, session_equity_samples, benchmark_by_time, budget=budget)
     report.write_trades(run_dir, broker.ledger)
     report.write_indicators(run_dir, broker.ledger)
 
     session_equity = _session_equity_series(session_equity_samples)
-    portfolio_returns = session_equity.pct_change().dropna()
-    benchmark_returns = benchmark_series.pct_change().dropna() if benchmark_series is not None else None
-
-    if benchmark_returns is not None:
-        # `portfolio_returns` and `benchmark_returns` are both meant to be one row per
-        # trading session at this point (see `_session_equity_samples`'s docstring), but
-        # they come from two independent sources (the ledger vs. `data_source.bars`) --
-        # a silent index mismatch here would misalign `compute_metrics`'s alpha/beta/
-        # correlation/information-ratio math without either series looking obviously
-        # wrong on its own. Align explicitly so any such mismatch degrades to "fewer
-        # overlapping rows" instead of "wrong rows paired together".
-        portfolio_returns, benchmark_returns = portfolio_returns.align(benchmark_returns, join="inner")
+    # The first session's return is measured from the budget, as the benchmark's is from its previous close.
+    portfolio_returns = report.returns_from_budget(session_equity, budget)
+    # The two series come from independent sources (the ledger vs. `data_source.bars`): the benchmark keeps only the
+    # rows that are portfolio sessions, so a mismatch never pairs the wrong rows. One with no close before the run
+    # lacks the first session; the strategy's own returns must keep it.
+    benchmark_returns = benchmark_series.pct_change().reindex(portfolio_returns.index).dropna() if benchmark_series is not None else None
 
     # `portfolio_returns`/`benchmark_returns` are always the session-reduced (one row
     # per trading day) series built above, never raw `timestep`-cadence bars -- so

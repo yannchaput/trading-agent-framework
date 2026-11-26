@@ -238,7 +238,7 @@ def _equity_samples() -> list[EquitySample]:
 
 def test_load_portfolio_breakdown_reads_equity_parquet(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
-    report.write_equity(run_dir, _equity_samples())
+    report.write_equity(run_dir, _equity_samples(), budget=Decimal(10000))
 
     breakdown = load_portfolio_breakdown(_ref(run_dir))
 
@@ -256,7 +256,7 @@ def test_load_portfolio_breakdown_returns_none_when_equity_parquet_missing(tmp_p
 
 def test_load_equity_curve_reads_portfolio_value_from_equity_parquet(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
-    report.write_equity(run_dir, _equity_samples())
+    report.write_equity(run_dir, _equity_samples(), budget=Decimal(10000))
 
     curve = load_equity_curve(_ref(run_dir))
 
@@ -268,7 +268,7 @@ def test_load_equity_curve_reads_portfolio_value_from_equity_parquet(tmp_path: P
 
 def test_load_run_populates_equity_curve_from_equity_parquet(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
-    report.write_equity(run_dir, _equity_samples())
+    report.write_equity(run_dir, _equity_samples(), budget=Decimal(10000))
     report.write_settings(run_dir, _settings_payload())
     metrics = dict.fromkeys(METRIC_SET_FIELDS - {"raw"}, 0.0)
     metrics["raw"] = {}
@@ -285,7 +285,7 @@ def test_load_run_populates_equity_curve_from_equity_parquet(tmp_path: Path) -> 
 def test_load_cumulative_returns_uses_the_persisted_benchmark_columns(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
     benchmark = {NOW: Decimal("400.0"), LATER: Decimal("404.0")}
-    report.write_equity(run_dir, _equity_samples(), benchmark)
+    report.write_equity(run_dir, _equity_samples(), benchmark, budget=Decimal(10000))
     report.write_settings(run_dir, _settings_payload(benchmark_symbol="QQQ"))
 
     result = load_cumulative_returns(_ref(run_dir))
@@ -299,7 +299,7 @@ def test_load_cumulative_returns_uses_the_persisted_benchmark_columns(tmp_path: 
 
 def test_load_cumulative_returns_handles_a_benchmark_less_run_without_network_access(tmp_path: Path) -> None:
     run_dir = _run_dir(tmp_path)
-    report.write_equity(run_dir, _equity_samples())  # no benchmark passed
+    report.write_equity(run_dir, _equity_samples(), budget=Decimal(10000))  # no benchmark passed
     report.write_settings(run_dir, _settings_payload())
 
     result = load_cumulative_returns(_ref(run_dir))

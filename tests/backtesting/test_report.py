@@ -146,7 +146,7 @@ def _flatten_values(value: object) -> list[object]:
 
 
 def test_write_equity_produces_a_parquet_file_with_the_expected_columns(tmp_path: Path) -> None:
-    path = report.write_equity(tmp_path, _session_equity())
+    path = report.write_equity(tmp_path, _session_equity(), budget=Decimal(10000))
     assert path == tmp_path / "equity.parquet"
     df = pd.read_parquet(path)
     for column in ("portfolio_value", "cash", "positions_value", "return"):
@@ -165,7 +165,7 @@ def test_write_equity_joins_the_benchmark_series_by_session_close(tmp_path: Path
     """
     benchmark = {NOW: Decimal("400.0"), LATER: Decimal("404.0")}
     samples = _session_equity()
-    path = report.write_equity(tmp_path, samples, benchmark)
+    path = report.write_equity(tmp_path, samples, benchmark, budget=Decimal(10000))
     df = pd.read_parquet(path)
 
     assert list(df["benchmark_close"]) == [400.0, 404.0]
@@ -192,7 +192,7 @@ def test_write_equity_leaves_benchmark_null_when_a_row_is_not_at_a_benchmark_bar
         ),
         *_session_equity(),
     ]
-    path = report.write_equity(tmp_path, off_session, {NOW: Decimal("400.0"), LATER: Decimal("404.0")})
+    path = report.write_equity(tmp_path, off_session, {NOW: Decimal("400.0"), LATER: Decimal("404.0")}, budget=Decimal(10000))
     df = pd.read_parquet(path)
 
     assert df["benchmark_close"].notna().sum() == 2  # the off-session row got nothing
@@ -257,7 +257,7 @@ def test_write_settings_wraps_non_finite_floats_instead_of_raising_raw_value_err
 
 
 def test_write_equity_with_no_sessions_produces_a_valid_empty_file(tmp_path: Path) -> None:
-    path = report.write_equity(tmp_path, [])
+    path = report.write_equity(tmp_path, [], budget=Decimal(10000))
     df = pd.read_parquet(path)
     for column in ("portfolio_value", "cash", "positions_value", "return", "benchmark_close"):
         assert column in df.columns
@@ -291,3 +291,14 @@ def test_write_indicators_with_empty_ledger_produces_a_valid_empty_file(tmp_path
     for column in ("datetime", "name", "value", "color", "style", "plot_name"):
         assert column in df.columns
     assert len(df) == 0
+
+
+def test_write_equity_measures_the_first_session_from_the_budget_and_the_previous_benchmark_close(tmp_path: Path) -> None:
+    benchmark = {NOW - timedelta(days=1): Decimal(320), NOW: Decimal(400), LATER: Decimal(404)}
+
+    path = report.write_equity(tmp_path, _session_equity(), benchmark, budget=Decimal(8000))
+
+    df = pd.read_parquet(path)
+    assert len(df) == 2  # the earlier benchmark close is a base, not a row
+    assert df["return"].iloc[0] == pytest.approx(0.25)
+    assert df["benchmark_return"].iloc[0] == pytest.approx(0.25)

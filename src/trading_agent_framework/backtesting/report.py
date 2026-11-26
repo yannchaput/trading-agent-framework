@@ -20,10 +20,13 @@ from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from trading_agent_framework.backtesting.ledger import EquitySample, Ledger
 from trading_agent_framework.utils.errors import BacktestDataError
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 # Mirrors the real dashboard's MetricSet Pydantic model field names (design spec,
 # section 6.4/6.5; kept in sync with tests/backtesting/dashboard_contract.py's
@@ -174,10 +177,17 @@ _TRADE_COLUMNS = (
 _INDICATOR_COLUMNS = ("datetime", "name", "value", "color", "style", "plot_name")
 
 
+def returns_from_budget(values: pd.Series, budget: Decimal) -> pd.Series:
+    """Per-session fractional returns, the first one measured from `budget`: shared by equity.parquet and metrics.json."""
+    return values / values.shift(fill_value=float(budget)) - 1
+
+
 def write_equity(
     run_dir: Path,
     equity: Sequence[EquitySample],
     benchmark: dict[datetime, Decimal] | None = None,
+    *,
+    budget: Decimal,
 ) -> Path:
     """Write equity.parquet from an ALREADY SESSION-REDUCED equity series.
 
@@ -200,6 +210,9 @@ def write_equity(
        (and none at all once `minutes_after_closing` moved them), leaving
        `benchmark_close` null on most rows and `benchmark_return` -- a `pct_change`
        across those holes -- null on ALL of them.
+
+    The first row's `return` is measured from `budget`. `benchmark_return` is taken over the whole `benchmark` series, so the
+    first row's is measured from the close before the run (null when `benchmark` starts on that row).
     """
     import pandas as pd
 
@@ -214,8 +227,8 @@ def write_equity(
         for sample in equity
     ]
     df = pd.DataFrame(rows, columns=_EQUITY_COLUMNS).set_index("datetime").sort_index()
-    df["return"] = df["portfolio_value"].pct_change()
-    df["benchmark_return"] = df["benchmark_close"].pct_change() if benchmark else pd.Series(dtype="float64")
+    df["return"] = returns_from_budget(cast("pd.Series", df["portfolio_value"]), budget)
+    df["benchmark_return"] = pd.Series(benchmark, dtype="float64").sort_index().pct_change().reindex(df.index) if benchmark else pd.Series(dtype="float64")
     return _write_parquet(run_dir / "equity.parquet", df)
 
 

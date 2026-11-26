@@ -106,3 +106,17 @@ def test_compute_metrics_never_raises_on_a_constant_return_series() -> None:
     flat = pd.Series([0.0, 0.0, 0.0, 0.0, 0.0], index=dates)
     result = compute_metrics(flat, flat, timestep="day", risk_free_rate=0.0)
     assert result["beta"] == 0.0
+
+
+def test_compute_metrics_counts_a_loss_on_the_first_return_as_a_drawdown() -> None:
+    """The curve's first peak is the starting capital, not the value after the first return."""
+    returns = pd.Series([-0.10, 0.01], index=pd.date_range("2026-01-05", periods=2, freq="D"))
+
+    result = compute_metrics(returns, returns, timestep="day", risk_free_rate=0.0)
+
+    for side in ("strategy", "benchmark"):
+        assert result[f"max_drawdown_{side}"] == pytest.approx(-0.10)
+        assert result[f"calmar_{side}"] == pytest.approx(result[f"cagr_{side}"] / 0.10)
+        assert result[f"longest_dd_days_{side}"] == 2
+        assert result[f"recovery_factor_{side}"] == pytest.approx((0.90 * 1.01 - 1) / 0.10)
+    assert result["raw"]["summary_tables"]["drawdowns"][0]["max_drawdown"] == pytest.approx(-0.10)
