@@ -191,9 +191,7 @@ both sides). The run's totals are in
   database accumulates across runs, so delete it by hand when it grows -- it is separate from
   `memory.sqlite`, so agent memory is untouched.
 - **No look-ahead, structurally**: every price the strategy can see is gated by
-  `clock.now()` -- a bar is visible only after it has *closed*. See
-  `docs/superpowers/specs/2026-09-12-backtesting-framework-design.md` for the full
-  design and its guarantees.
+  `clock.now()` -- a bar is visible only after it has *closed*.
 
 ### 📊 Strategy Dashboard
 
