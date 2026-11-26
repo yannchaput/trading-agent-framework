@@ -186,7 +186,7 @@ def page_detail():
         spy_equity = benchmark_equity(cum_ret, s.budget if s else 10000.0)
         st.plotly_chart(equity_curve_chart(run.equity_curve, breakdown=breakdown, indicators=indicators, benchmark=spy_equity), width="stretch")
         st.subheader("Drawdown")
-        st.plotly_chart(drawdown_chart(bpv or run.equity_curve, benchmark=spy_equity), width="stretch")
+        st.plotly_chart(drawdown_chart(bpv or run.equity_curve, benchmark=spy_equity, budget=s.budget if s else None), width="stretch")
 
         # Rolling metric charts — use daily returns from load_cumulative_returns
         if cum_ret and cum_ret.get("strategy_daily_returns"):
@@ -249,10 +249,10 @@ def page_detail():
 
         st.subheader("Monthly Returns Heatmap")
         st.caption(
-            "Monthly returns are computed from `portfolio_value at end of month M / portfolio_value at end of month M-1 − 1`.\n\n"
+            "Monthly returns are computed from `portfolio_value at end of month M / portfolio_value at end of month M-1 − 1`; the first month is measured from the budget.\n\n"
             "Cash flow are accounted for, so monthly returns are not simply the sum of daily returns."
         )
-        st.plotly_chart(monthly_returns_heatmap(bpv or run.equity_curve), width="stretch")
+        st.plotly_chart(monthly_returns_heatmap(bpv or run.equity_curve, budget=s.budget if s else None), width="stretch")
 
         st.subheader("Distribution of Monthly Returns")
         st.caption(

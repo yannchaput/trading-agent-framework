@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from decimal import Decimal as D
 from pathlib import Path
@@ -319,3 +320,17 @@ def test_the_factory_builds_it() -> None:
     broker = FakeBroker(FakeClock(et(2026, 11, 30, 10, 30)), strategy_name=NAME)
 
     assert isinstance(build_strategy(Strategies(NAME), broker, TradingMode.BACKTESTING), FalloutDefensiveSwingStrategy)
+
+
+def test_each_order_event_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    strategy = _strategy(_broker(), tmp_path)
+    order = strategy.create_order("XLP", D(2), OrderSide.SELL)
+    caplog.set_level(logging.INFO)
+
+    strategy.on_new_order(order)
+    strategy.on_partially_filled_order(None, order, D(100), D(1), 1)
+    strategy.on_filled_order(None, order, D(101), D(2), 1)
+
+    assert "submitted sell XLP 2" in caplog.text
+    assert "partially filled sell XLP 1 at 100" in caplog.text
+    assert "filled sell XLP 2 at 101" in caplog.text

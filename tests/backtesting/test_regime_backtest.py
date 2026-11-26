@@ -80,7 +80,7 @@ def test_a_daily_run_widens_the_warmup_to_the_regime_history(tmp_path: Path, mon
 
 @pytest.mark.parametrize("requested", [0, 10, 400])
 @pytest.mark.parametrize("as_instance", [False, True])
-def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_regime_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, as_instance: bool) -> None:
+def test_a_minute_run_keeps_its_warmup_and_preloads_only_its_benchmarks_daily_window(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, requested: int, as_instance: bool) -> None:
     captured: dict[str, object] = {}
     windows: list[tuple[datetime, datetime]] = []
     monkeypatch.setattr("trading_agent_framework.backtesting.runner.run_backtest", lambda strategy, **kwargs: captured.update(kwargs))
@@ -89,7 +89,7 @@ def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_re
     source = FakeBacktestDataSource()
     data_source = source if as_instance else (lambda window_start, window_end: windows.append((window_start, window_end)) or source)
 
-    # The runner's benchmark argument stays as given; the regime reads `strategy.benchmark_symbol` (SPY).
+    # The runner reads the daily closes of the benchmark this run reports against, so that one is preloaded.
     _strategy(tmp_path, start).run_backtesting(
         start=start,
         end=end,
@@ -105,7 +105,7 @@ def test_a_minute_run_keeps_its_warmup_and_preloads_only_the_benchmarks_daily_re
     assert captured["data_source"] is source
     if not as_instance:
         assert windows == [(start - timedelta(days=warmup_calendar_days(requested)), end)]  # constructor window not widened
-    assert source.load_calls == [(SPY,)]
+    assert source.load_calls == [(Asset("QQQ"),)]
     assert source.load_timesteps == ["day"]
     assert source.load_windows == [(start - timedelta(days=warmup_calendar_days(DAILY_WARMUP_FLOOR)), end)]
 

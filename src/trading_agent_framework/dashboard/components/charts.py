@@ -190,19 +190,20 @@ def equity_curve_chart(
     return fig
 
 
-def _drawdown_pct(values: Any) -> Any:
-    """Percent below the running peak of `values` (0 at a new high, negative under it)."""
-    running_max = np.maximum.accumulate(values)
+def _drawdown_pct(values: Any, budget: float | None) -> Any:
+    """Percent below the running peak of `values` (0 at a new high, negative under it); the peak starts at `budget`."""
+    running_max = np.maximum(np.maximum.accumulate(values), budget or 0)
     return (values - running_max) / running_max * 100
 
 
-def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchmark: dict[str, Any] | None = None) -> go.Figure:
+def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchmark: dict[str, Any] | None = None, budget: float | None = None) -> go.Figure:
     """Build a drawdown chart from equity curve data.
 
     Args:
         equity: ``{"date", "value"}`` rows.
         title: Chart title.
         benchmark: Optional :func:`benchmark_equity` output; its own drawdown is overlaid as a dashed line.
+        budget: Starting capital, the first peak of both lines (as in the Max Drawdown metric); omitted, each line's first value.
     """
     if not equity:
         fig = go.Figure()
@@ -216,7 +217,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchm
         return go.Figure()
 
     values = cast(Any, df["value"].values)
-    drawdown = _drawdown_pct(values)
+    drawdown = _drawdown_pct(values, budget)
 
     x_vals = df["date"] if "date" in df.columns else list(range(len(drawdown)))
     fig = go.Figure()
@@ -235,7 +236,7 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchm
         fig.add_trace(
             go.Scatter(
                 x=benchmark["dates"],
-                y=_drawdown_pct(np.asarray(benchmark["values"], dtype=float)),
+                y=_drawdown_pct(np.asarray(benchmark["values"], dtype=float), budget),
                 mode="lines",
                 name=f"{benchmark['label']} Drawdown %",
                 line=dict(color=_BENCHMARK_COLOR, width=1.5, dash="dash"),
@@ -258,9 +259,15 @@ def drawdown_chart(equity: list[dict[str, Any]], title: str = "Drawdown", benchm
     return fig
 
 
-def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly Returns") -> go.Figure:
-    """Build a monthly returns heatmap from equity curve data."""
-    if not equity or len(equity) < 2:
+def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly Returns", budget: float | None = None) -> go.Figure:
+    """Build a monthly returns heatmap from equity curve data.
+
+    Args:
+        equity: ``{"date", "value"}`` rows.
+        title: Chart title.
+        budget: Starting capital, which the first month is measured from; omitted, that month is left out.
+    """
+    if not equity:
         fig = go.Figure()
         fig.add_annotation(text="Not enough data for heatmap", showarrow=False)
         return fig
@@ -273,7 +280,7 @@ def monthly_returns_heatmap(equity: list[dict[str, Any]], title: str = "Monthly 
     df["date"] = pd.to_datetime(df["date"])
     df = df.set_index("date").sort_index()
     monthly = df["value"].resample("ME").last()
-    returns = monthly.pct_change(fill_method=None).dropna() * 100
+    returns = (monthly / monthly.shift(fill_value=budget or None) - 1).dropna() * 100
 
     if returns.empty:
         fig = go.Figure()
