@@ -1,4 +1,4 @@
-"""fallout_defensive_swing: hold a defensive ETF mix, sell it at a small profit, buy it back after a dip. No LLM.
+"""fallout_defensive_swing: hold a defensive ETF mix, sell it at a small profit, buy it back after a dip or a few days. No LLM.
 
 Every hour `rule.decide` picks buy, sell or hold. Built for a cash account: it never sells on the session of its last sale,
 because what a sale's unsettled proceeds bought must not be sold before they settle.
@@ -20,7 +20,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities import Order, OrderSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target
+from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, dip_reached, mean_price_ratio, sell_target, trading_days_since
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
@@ -36,6 +36,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         "symbols": ["XLP", "XLU"],
         "take_profit": Decimal("0.01"),
         "buyback_dip": Decimal("0.01"),
+        "cash_reset_days": 5,  # trading days in cash before buying back without the dip; None never does
         "budget": 768,
         "benchmark_symbol": "SPY",
         "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
@@ -89,8 +90,9 @@ class FalloutDefensiveSwingStrategy(Strategy):
             session=session,
             take_profit=self.parameters["take_profit"],
             buyback_dip=self.parameters["buyback_dip"],
+            cash_reset_days=self.parameters["cash_reset_days"],
         )
-        self.log_info(self._describe(state, action, value - sell_fees, prices))
+        self.log_info(self._describe(state, action, value - sell_fees, prices, session))
         if action is Action.BUY:
             self._buy(state, prices)
         elif action is Action.SELL:
@@ -210,13 +212,15 @@ class FalloutDefensiveSwingStrategy(Strategy):
             return
         self.wait_for_order_execution(order, ORDER_WAIT_SECONDS)
 
-    def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal]) -> str:
+    def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal], session: date) -> str:
         """One line saying where the strategy stands and what it does."""
         if state.phase is Phase.HOLDING and state.basis is not None:
             detail = f", value after sell fees {net_value:.2f} ON a target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
         elif state.phase is Phase.CASH:
             ratio = mean_price_ratio(prices, state.sale_prices)
             detail = f", price vs last sale {ratio - 1:+.2%} / buy-back at {-self.parameters['buyback_dip']:+.2%}"
+            if action is Action.BUY and state.last_sale_session is not None and not dip_reached(prices, state.sale_prices, self.parameters["buyback_dip"]):
+                detail += f", reset after {trading_days_since(state.last_sale_session, session)} trading days in cash"
         else:
             detail = ""
         return f"Phase [{state.phase}]{detail} -> {action}"

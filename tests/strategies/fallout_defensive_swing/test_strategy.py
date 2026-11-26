@@ -336,3 +336,14 @@ def test_each_order_event_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
     assert "submitted sell XLP 2" in caplog.text
     assert "partially filled sell XLP 1 at 100" in caplog.text
     assert "filled sell XLP 2 at 101" in caplog.text
+
+
+def test_a_reset_buy_says_so_in_the_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    broker = _broker()
+    strategy = _strategy(broker, tmp_path, SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=date(2026, 11, 20)))
+    caplog.set_level(logging.INFO)
+
+    strategy.on_trading_iteration()
+
+    assert [o.side for o in broker.submitted] == [OrderSide.BUY, OrderSide.BUY]
+    assert "reset after 6 trading days in cash" in caplog.text

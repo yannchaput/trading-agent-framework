@@ -51,10 +51,21 @@ def _banks_closed(day: date) -> bool:
     return columbus or veterans
 
 
+def _weekdays_after(sale: date, session: date) -> list[date]:
+    """Weekdays after the sale session, up to and including `session`."""
+    days = (sale + timedelta(days=n) for n in range(1, (session - sale).days + 1))
+    return [day for day in days if day.weekday() < 5]
+
+
 def _settled(sale: date, session: date) -> bool:
     """Whether the proceeds of a sale made on `sale` have settled on the trading day `session` (T+1)."""
-    between = (sale + timedelta(days=n) for n in range(1, (session - sale).days + 1))
-    return any(day.weekday() < 5 and not _banks_closed(day) for day in between)
+    return any(not _banks_closed(day) for day in _weekdays_after(sale, session))
+
+
+def trading_days_since(sale: date, session: date) -> int:
+    """Trading days after the sale session, up to and including `session`."""
+    # shortcut: a market holiday counts as a trading day; use the market calendar if one day early ever matters
+    return len(_weekdays_after(sale, session))
 
 
 def sell_target(basis: Decimal, take_profit: Decimal) -> Decimal:
@@ -67,6 +78,11 @@ def mean_price_ratio(prices: Mapping[str, Decimal], sale_prices: Mapping[str, De
     return sum((prices[symbol] / sold for symbol, sold in sale_prices.items()), Decimal(0)) / len(sale_prices)
 
 
+def dip_reached(prices: Mapping[str, Decimal], sale_prices: Mapping[str, Decimal], buyback_dip: Decimal) -> bool:
+    """Whether the mix has fallen `buyback_dip` or more under the prices it was sold at."""
+    return mean_price_ratio(prices, sale_prices) <= 1 - buyback_dip
+
+
 def decide(
     state: SwingState,
     *,
@@ -76,6 +92,7 @@ def decide(
     session: date,
     take_profit: Decimal,
     buyback_dip: Decimal,
+    cash_reset_days: int | None,
 ) -> Action:
     """Choose this tick's action.
 
@@ -87,6 +104,7 @@ def decide(
         session: Today's market date.
         take_profit: Gain over the basis, net of sell fees, that triggers a sale (0.01 = 1%).
         buyback_dip: Mean fall below the sale prices that triggers the buy-back.
+        cash_reset_days: Trading days in cash after which the mix is bought back whatever the price; None never does.
 
     Returns:
         BUY, SELL or HOLD.
@@ -100,4 +118,6 @@ def decide(
         assert state.basis is not None  # every path into HOLDING sets it
         reached = value - sell_fees >= sell_target(state.basis, take_profit)
         return Action.SELL if state.selling or reached else Action.HOLD
-    return Action.BUY if mean_price_ratio(prices, state.sale_prices) <= 1 - buyback_dip else Action.HOLD
+    # the state file does not require the date in CASH: without one there is nothing to count from, so only the dip buys
+    expired = cash_reset_days is not None and state.last_sale_session is not None and trading_days_since(state.last_sale_session, session) >= cash_reset_days
+    return Action.BUY if expired or dip_reached(prices, state.sale_prices, buyback_dip) else Action.HOLD
