@@ -222,7 +222,7 @@ def test_the_researcher_ends_with_a_budget_exempt_submit_and_every_agent_uses_th
     assert {created["temperature"] for created in agents.created} == {0.1}
 
 
-def test_only_the_researcher_labels_its_counted_calls_and_is_told_its_budget(tmp_path: Path) -> None:
+def test_only_the_researcher_labels_its_counted_calls_and_its_prompt_states_no_budget(tmp_path: Path) -> None:
     strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_tool_budget=5))
 
     strategy.initialize()
@@ -230,7 +230,7 @@ def test_only_the_researcher_labels_its_counted_calls_and_is_told_its_budget(tmp
     labelled = {created["name"]: created["budget"].label_calls for created in agents.created}
     assert labelled == {"researcher": True, "bull": False, "bear": False, "judge": False}
     researcher = next(created for created in agents.created if created["name"] == "researcher")
-    assert "at most 5 search_news calls" in " ".join(researcher["system_prompt"].split())
+    assert "search_news calls" not in researcher["system_prompt"]
 
 
 def test_a_backtest_starts_with_no_saved_state_and_paper_keeps_it(tmp_path: Path) -> None:

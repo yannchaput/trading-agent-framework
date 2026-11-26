@@ -3,7 +3,6 @@ from __future__ import annotations
 import pytest
 
 from trading_agent_framework.strategies.bull_bear import prompts
-from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 
 
 @pytest.mark.parametrize(
@@ -72,7 +71,7 @@ def test_every_agent_reads_the_fundamentals_fields_and_the_sources_rule() -> Non
     )
     # the no-news researcher reads the figures but not the sources rule, which speaks of news (it must say nothing of news)
     for field in fields:
-        assert field in prompts.researcher_system(False, 7)
+        assert field in prompts.researcher_system(False)
     for system in (prompts.RESEARCHER_SYSTEM, prompts.BULL_SYSTEM, prompts.BEAR_SYSTEM, prompts.JUDGE_SYSTEM):
         text = " ".join(system.split())
         for field in fields:
@@ -129,7 +128,7 @@ def test_the_judge_puts_a_stock_out_on_a_fundamental_risk_not_on_news_from_other
 
 @pytest.mark.parametrize("news", [True, False])
 def test_the_researcher_reads_the_figures_and_looks_for_what_explains_them(news: bool) -> None:
-    text = " ".join(prompts.researcher_system(news, 7).split())
+    text = " ".join(prompts.researcher_system(news).split())
 
     assert "The fact sheet already gives the latest SEC figures against a year earlier" in text
     assert "what the company itself reported or filed" in text
@@ -140,7 +139,7 @@ def test_the_researcher_reads_the_figures_and_looks_for_what_explains_them(news:
 
 @pytest.mark.parametrize("news", [True, False])
 def test_the_researcher_says_who_reported_each_fact(news: bool) -> None:
-    text = " ".join(prompts.researcher_system(news, 7).split())
+    text = " ".join(prompts.researcher_system(news).split())
 
     assert "say who reported it: the company (a release, a filing, guidance) or others (analysts, media)" in text
 
@@ -204,8 +203,8 @@ def test_the_researcher_reads_the_prior_year_and_is_not_asked_for_a_trend_it_can
 
 
 def test_the_researcher_without_news_is_not_told_about_news() -> None:
-    assert "news" in prompts.researcher_system(True, 7) and "news" not in prompts.researcher_system(False, 7).lower()
-    assert prompts.RESEARCHER_SYSTEM == prompts.researcher_system(True, BullBearParams.research_tool_budget)
+    assert "news" in prompts.researcher_system(True) and "news" not in prompts.researcher_system(False).lower()
+    assert prompts.RESEARCHER_SYSTEM == prompts.researcher_system(True)
 
 
 def test_neither_the_bear_nor_the_judge_has_the_lasting_consequence_escape() -> None:
@@ -305,10 +304,10 @@ def test_the_evidence_rules_hold_for_the_strength_as_for_the_verdict() -> None:
 
 
 def test_the_researcher_is_told_to_search_news_by_the_stocks_ticker() -> None:
-    text = " ".join(prompts.researcher_system(True, 7).split())
+    text = " ".join(prompts.researcher_system(True).split())
 
     assert "ticker in symbols" in text and "never leave it empty" in text and "company name" in text
-    assert "ticker in symbols" not in prompts.researcher_system(False, 7)  # no news tool, nothing to say about it
+    assert "ticker in symbols" not in prompts.researcher_system(False)  # no news tool, nothing to say about it
 
 
 @pytest.mark.parametrize(
@@ -328,15 +327,16 @@ def test_every_task_prompt_asks_for_the_count_and_quotes_only_the_stated_limits(
     assert "held" not in task and "weight_pct" not in task and "forced" not in task.lower()
 
 
-def test_the_researcher_is_told_its_search_budget_and_the_two_blocks() -> None:
-    text = " ".join(prompts.researcher_system(True, 7).split())
+def test_the_researcher_is_told_the_two_blocks_but_not_its_search_budget() -> None:
+    # A stated budget reads as a target (see `researcher_system`'s docstring).
+    text = " ".join(prompts.researcher_system(True).split())
 
-    assert "at most 7 search_news calls" in text
+    assert "search_news calls" not in text and "at most" not in text
     assert "instructions" in text and "facts" in text and "tool_call" in text
     assert "write the note from the facts" in text
 
 
 def test_a_researcher_without_news_is_told_no_search_budget() -> None:
-    text = " ".join(prompts.researcher_system(False, 7).split())
+    text = " ".join(prompts.researcher_system(False).split())
 
     assert "search_news" not in text and "instructions" not in text
