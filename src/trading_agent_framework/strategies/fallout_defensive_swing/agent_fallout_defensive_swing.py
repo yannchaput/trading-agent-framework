@@ -18,6 +18,7 @@ from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities import Order, OrderSide
+from trading_agent_framework.entities.position import Position
 from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -93,6 +94,32 @@ class FalloutDefensiveSwingStrategy(Strategy):
             self._buy(state, prices)
         elif action is Action.SELL:
             self._sell(state, held, prices, session)
+
+    def on_new_order(self, order: Order) -> None:
+        """Called when the broker accepts an order."""
+        self.log_info(f"submitted {order.side} {order.asset.symbol} {order.quantity}")
+
+    def on_partially_filled_order(
+        self,
+        position: Position | None,
+        order: Order,
+        price: Decimal,
+        quantity: Decimal,
+        multiplier: int,
+    ) -> None:
+        """Called on each partial fill; `quantity` is the size of this fill."""
+        self.log_info(f"partially filled {order.side} {order.asset.symbol} {quantity} at {price}")
+
+    def on_filled_order(
+        self,
+        position: Position | None,
+        order: Order,
+        price: Decimal,
+        quantity: Decimal,
+        multiplier: int,
+    ) -> None:
+        """Called when an order is completely filled."""
+        self.log_info(f"filled {order.side} {order.asset.symbol} {quantity} at {price}")
 
     def _reconcile(self, held: Mapping[str, Decimal], prices: dict[str, Decimal], value: Decimal, session: date) -> SwingState:
         """The saved state, corrected to what the account holds (restart, manual trade, late fill)."""
@@ -185,13 +212,13 @@ class FalloutDefensiveSwingStrategy(Strategy):
     def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal]) -> str:
         """One line saying where the strategy stands and what it does."""
         if state.phase is Phase.HOLDING and state.basis is not None:
-            detail = f", value after sell fees {net_value:.2f} / target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
+            detail = f", value after sell fees {net_value:.2f} ON a target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
         elif state.phase is Phase.CASH:
             ratio = mean_price_ratio(prices, state.sale_prices)
             detail = f", price vs last sale {ratio - 1:+.2%} / buy-back at {-self.parameters['buyback_dip']:+.2%}"
         else:
             detail = ""
-        return f"{state.phase}{detail} -> {action}"
+        return f"Phase [{state.phase}]{detail} -> {action}"
 
     def run_backtesting(self, **overrides: Any):
         """Backtest over the class `parameters` window on Alpaca minute bars."""

@@ -100,6 +100,8 @@ def _format_duration(delta: timedelta) -> str:
 class Strategy:
     """Base class for strategies, with lumibot's hook names and signatures."""
 
+    # Time between on_trading_iteration() calls. Accepted: a positive int (minutes) or "<n><unit>", unit S (seconds),
+    # M or T (minutes), H (hours), D (one iteration every n sessions), any case: 5, "30S", "5M", "2H", "1D"
     sleeptime: int | str = "1M"
     # Triggers before_market_opens() hook 60 minutes before the session opens (e.g., 9:00 AM ET for a 10 AM open)
     minutes_before_opening: int = 60
