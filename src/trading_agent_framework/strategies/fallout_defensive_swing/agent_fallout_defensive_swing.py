@@ -8,11 +8,12 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import replace
-from datetime import date, datetime, time
+from datetime import date, time
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
+from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
@@ -37,8 +38,8 @@ class FalloutDefensiveSwingStrategy(Strategy):
         "buyback_dip": Decimal("0.01"),
         "budget": 768,
         "benchmark_symbol": "SPY",
-        "backtesting_start": datetime(2026, 11, 3, tzinfo=MARKET_TZ),
-        "backtesting_end": datetime(2026, 11, 25, tzinfo=MARKET_TZ),
+        "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
+        "backtesting_end": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[1],
     }
 
     def __init__(self, broker: Broker, *, mode: TradingMode = TradingMode.PAPER, fees: TradingFeeFactory | None = None, **kwargs: Any) -> None:
