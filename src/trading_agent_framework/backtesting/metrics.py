@@ -4,9 +4,9 @@ The only module importing `vectorbt`, and
 only inside `compute_metrics` -- importing `backtesting.metrics` at module level must
 never pull vectorbt in.
 
-vectorbt's `returns` accessor computes Sharpe/Sortino/Calmar/Omega/max-drawdown/
-annualised-return/annualised-volatility -- the ratios it is built for. Alpha/Beta/
-correlation/R^2/Treynor/information-ratio/skew/kurtosis/win-rates/recovery-factor are
+vectorbt's `returns` accessor computes Sharpe/Sortino/Omega/annualised-return/
+annualised-volatility -- the ratios it is built for. Max drawdown and Calmar are
+computed here (see `_drawdown`). Alpha/Beta/correlation/R^2/Treynor/information-ratio/skew/kurtosis/win-rates/recovery-factor are
 plain closed-form statistics (linear regression, pandas' own `.skew()`/`.kurt()`),
 computed directly rather than guessed through an uncertain vectorbt method name.
 `raw.summary_tables` carries the yearly-returns and drawdown tables `metrics.json`
@@ -18,7 +18,7 @@ returns with sqrt(365)/365 rather than the standard sqrt(252)/252 trading-day
 convention the rest of this codebase (and the golden-value tests) use. Passing
 `year_freq="{periods}{unit}"` alongside a matching per-bar `freq="1{unit}"` pins
 `accessor.ann_factor` to exactly `periods` (252 for "day"), which is what makes
-`sharpe_ratio`/`annualized`/`annualized_volatility`/`calmar_ratio`/`sortino_ratio`
+`sharpe_ratio`/`annualized`/`annualized_volatility`/`sortino_ratio`
 match the hand-computed formulas. Also: `sharpe_ratio(risk_free=...)`,
 `omega_ratio(risk_free=...)`, and `sortino_ratio(required_return=...)` all treat their
 threshold argument as a *per-period* rate (subtracted directly from each return, per
@@ -48,7 +48,7 @@ def compute_metrics(
     timestep: str,
     risk_free_rate: float,
 ) -> dict[str, Any]:
-    """`returns`/`benchmark_returns`: daily fractional returns, float64, no NaNs (the caller drops the first row of a pct_change() series).
+    """`returns`/`benchmark_returns`: daily fractional returns, float64, no NaNs (the first strategy return is measured from the budget).
 
     Returns a flat dict keyed
     exactly by the dashboard's `MetricSet` field names, plus `raw.summary_tables`.
@@ -68,9 +68,7 @@ def compute_metrics(
         "cagr_strategy": float(accessor.annualized()),
         "sharpe_strategy": float(accessor.sharpe_ratio(risk_free=daily_rf)),
         "sortino_strategy": float(accessor.sortino_ratio(required_return=daily_rf)),
-        "calmar_strategy": float(accessor.calmar_ratio()),
         "omega_strategy": float(accessor.omega_ratio(risk_free=daily_rf)),
-        "max_drawdown_strategy": float(accessor.max_drawdown()),
         "volatility_strategy": float(accessor.annualized_volatility()),
         "skew_strategy": float(cast(float, returns.skew())),
         "kurtosis_strategy": float(cast(float, returns.kurt())),
@@ -78,6 +76,7 @@ def compute_metrics(
     }
     metrics.update(_drawdown_stats(returns, suffix="strategy"))
     metrics.update(_monthly_win_pct(returns, suffix="strategy"))
+    metrics["calmar_strategy"] = _calmar(metrics["cagr_strategy"], metrics["max_drawdown_strategy"])
 
     if benchmark_returns is not None and not benchmark_returns.empty:
         bm_accessor = benchmark_returns.vbt.returns(freq=freq, year_freq=year_freq)
@@ -87,9 +86,7 @@ def compute_metrics(
                 "cagr_benchmark": float(bm_accessor.annualized()),
                 "sharpe_benchmark": float(bm_accessor.sharpe_ratio(risk_free=daily_rf)),
                 "sortino_benchmark": float(bm_accessor.sortino_ratio(required_return=daily_rf)),
-                "calmar_benchmark": float(bm_accessor.calmar_ratio()),
                 "omega_benchmark": float(bm_accessor.omega_ratio(risk_free=daily_rf)),
-                "max_drawdown_benchmark": float(bm_accessor.max_drawdown()),
                 "volatility_benchmark": float(bm_accessor.annualized_volatility()),
                 "skew_benchmark": float(cast(float, benchmark_returns.skew())),
                 "kurtosis_benchmark": float(cast(float, benchmark_returns.kurt())),
@@ -98,6 +95,7 @@ def compute_metrics(
         )
         metrics.update(_drawdown_stats(benchmark_returns, suffix="benchmark"))
         metrics.update(_monthly_win_pct(benchmark_returns, suffix="benchmark"))
+        metrics["calmar_benchmark"] = _calmar(metrics["cagr_benchmark"], metrics["max_drawdown_benchmark"])
         metrics.update(_relative_stats(returns, benchmark_returns, periods, risk_free_rate))
 
     metrics["raw"] = {
@@ -109,19 +107,33 @@ def compute_metrics(
     return metrics
 
 
-def _drawdown_stats(returns: pd.Series, *, suffix: str) -> dict[str, float]:
+def _drawdown(returns: pd.Series) -> tuple[pd.Series, pd.Series]:
+    """`(curve, drawdown)` of a growth-of-1 curve.
+
+    The starting capital is the first peak, so a loss on the first return counts (vectorbt's own drawdown ignores it).
+    """
     curve = (1 + returns).cumprod()
-    drawdown = curve / curve.cummax() - 1
+    return curve, curve / curve.cummax().clip(lower=1) - 1
+
+
+def _drawdown_stats(returns: pd.Series, *, suffix: str) -> dict[str, float]:
+    curve, drawdown = _drawdown(returns)
     underwater = drawdown < 0
     longest = _longest_run(underwater)
     avg_dd = float(drawdown[underwater].mean()) if underwater.any() else 0.0
     max_dd = float(drawdown.min())
     recovery_factor = float(curve.iloc[-1] - 1) / abs(max_dd) if max_dd != 0 else 0.0
     return {
+        f"max_drawdown_{suffix}": max_dd,
         f"longest_dd_days_{suffix}": float(longest),
         f"avg_drawdown_{suffix}": avg_dd,
         f"recovery_factor_{suffix}": recovery_factor,
     }
+
+
+def _calmar(cagr: float, max_drawdown: float) -> float:
+    """CAGR over the max drawdown; NaN (written as null) without one."""
+    return cagr / abs(max_drawdown) if max_drawdown else float("nan")
 
 
 def _longest_run(mask: pd.Series) -> int:
@@ -203,8 +215,7 @@ def _yearly_table(returns: pd.Series, benchmark_returns: pd.Series | None) -> li
 
 
 def _drawdown_table(returns: pd.Series) -> list[dict[str, Any]]:
-    curve = (1 + returns).cumprod()
-    drawdown = curve / curve.cummax() - 1
+    _, drawdown = _drawdown(returns)
     underwater = drawdown < 0
     rows: list[dict[str, Any]] = []
     start = None
@@ -227,7 +238,7 @@ def _drawdown_table(returns: pd.Series) -> list[dict[str, Any]]:
         rows.append(
             {
                 "start": str(start.date()),
-                "end": str(drawdown.index[-1].date()),
+                "end": str(cast(Any, drawdown.index[-1]).date()),
                 "max_drawdown": round(float(window.min()), 6),
                 "days": int(len(window)),
             }

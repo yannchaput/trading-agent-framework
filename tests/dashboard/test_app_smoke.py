@@ -40,7 +40,7 @@ def _build_full_run(base: Path) -> Path:
     )
     ledger.record_line(IndicatorLine(time=NOW, name="sma_200", value=Decimal("148.5"), color=None, style="solid", plot_name="default_plot"))
 
-    report.write_equity(run_dir, ledger.equity, {NOW: Decimal("400.0"), LATER: Decimal("404.0")})
+    report.write_equity(run_dir, ledger.equity, {NOW: Decimal("400.0"), LATER: Decimal("404.0")}, budget=Decimal(10000))
     report.write_trades(run_dir, ledger)
     report.write_indicators(run_dir, ledger)
 

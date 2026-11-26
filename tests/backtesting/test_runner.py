@@ -332,8 +332,9 @@ def test_run_backtest_computes_returns_at_session_cadence_not_raw_sample_cadence
     # budget; from the fill's session onward, it's settled cash plus the 5-share
     # position revalued at that session's own closing price.
     expected_equity = [10000.0 if session.close < fill_time else float(cash_after_fill + 5 * Decimal(str(close))) for session, close in zip(sessions, aapl_closes, strict=True)]
-    expected_returns = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])).pct_change().dropna()
-    assert len(expected_returns) == len(sessions) - 1  # one return per day-over-day session gap
+    expected_values = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions]))
+    expected_returns = expected_values / expected_values.shift(fill_value=10000.0) - 1  # the first one from the budget
+    assert len(expected_returns) == len(sessions)  # one return per session
 
     expected_total_return = float((1 + expected_returns).prod() - 1)
     expected_cagr = (1 + expected_total_return) ** (252 / len(expected_returns)) - 1
@@ -386,7 +387,7 @@ def test_run_backtest_annualizes_metrics_at_session_cadence_even_with_a_minute_t
     )
 
     total_return = result.metrics["total_return_strategy"]
-    n = len(sessions) - 1  # one return per day-over-day session gap
+    n = len(sessions)  # one return per session
     expected_cagr = (1 + total_return) ** (252 / n) - 1  # day-cadence annualization, NOT 98280/n
 
     assert result.metrics["cagr_strategy"] == pytest.approx(expected_cagr, rel=1e-6)
@@ -439,6 +440,41 @@ def test_run_backtest_fetches_the_benchmark_at_daily_cadence_even_with_a_minute_
     assert result.metrics["total_return_benchmark"] == pytest.approx(expected_total_return_benchmark, rel=1e-9)
 
 
+def test_run_backtest_total_returns_include_the_first_session(tmp_path: Path) -> None:
+    """The first session was dropped: returns started at its close, not at the budget (benchmark: not at the previous close)."""
+    history = _sessions(date(2026, 3, 2), 5)  # the first one is before the window
+    sessions = history[1:]
+    source = FakeBacktestDataSource()
+    source.set_sessions(history)
+    # Minute bars: the order sent at day 1's open skips the forming 9:31 bar and fills on the next one.
+    minutes = [sessions[0].open + timedelta(minutes=1), sessions[0].open + timedelta(minutes=2), *(s.close for s in sessions)]
+    aapl = pd.DataFrame({"open": 150.0, "high": 160.0, "low": 140.0, "close": [150.0, 150.0, 156.0, 152.0, 154.0, 155.0], "volume": 1000.0}, index=pd.DatetimeIndex(minutes, name="timestamp"))
+    source.set_bars(AAPL, aapl)
+    source.set_bars(SPY, _bars(history, [400.0, 410.0, 412.0, 411.0, 415.0]))
+
+    start = sessions[0].open - timedelta(hours=1)
+    strategy = _placeholder_strategy(BuyOnceStrategy, tmp_path, start)
+    result = run_backtest(
+        strategy,
+        start=start,
+        end=sessions[-1].close,
+        budget=Decimal(8000),
+        data_source=source,
+        benchmark="SPY",
+        timestep="minute",
+        slippage=Decimal(0),
+        risk_free_rate=0.0,
+    )
+
+    equity = pd.read_parquet(result.run_dir / "equity.parquet")
+    values = equity["portfolio_value"]
+    assert values.iloc[0] > 8000  # premise: something happened on day 1
+    assert equity["return"].iloc[0] == pytest.approx(values.iloc[0] / 8000 - 1)
+    assert result.metrics["total_return_strategy"] == pytest.approx(values.iloc[-1] / 8000 - 1)
+    assert equity["benchmark_return"].iloc[0] == pytest.approx(410.0 / 400.0 - 1)
+    assert result.metrics["total_return_benchmark"] == pytest.approx(415.0 / 400.0 - 1)
+
+
 def _equity_parquet_for(tmp_path: Path, strategy_cls: type[Strategy], session_count: int = 6):
     """Run a real `run_backtest` over `session_count` sessions and return
     `(equity_dataframe, sessions)`.
@@ -474,12 +510,11 @@ def _assert_session_cadence_equity(equity: pd.DataFrame, sessions: list[MarketSe
     # One row per trading session -- NOT one per clock advance.
     assert len(equity) == len(sessions)
     assert list(equity.index) == [pd.Timestamp(s.close) for s in sessions]
-    # Every session's row carries a benchmark close, and every session-over-session
-    # gap therefore yields a real benchmark return (only the first row's pct_change
-    # is legitimately NaN).
+    # Every session has a return (the first from the budget) and a benchmark close. These fixtures have no benchmark
+    # close before the window, so only the first benchmark return is legitimately NaN.
     assert equity["benchmark_close"].notna().sum() == len(sessions)
     assert equity["benchmark_return"].notna().sum() == len(sessions) - 1
-    assert equity["return"].notna().sum() == len(sessions) - 1
+    assert equity["return"].notna().sum() == len(sessions)
 
 
 def test_run_backtest_writes_a_session_cadence_equity_parquet_with_a_fully_joined_benchmark(
@@ -601,7 +636,8 @@ def test_run_backtest_session_cadence_survives_nonzero_minutes_after_closing(tmp
     expected_equity = [10000.0 if session.close < fill_time else float(cash_after_fill + 5 * Decimal(str(close))) for session, close in zip(sessions, aapl_closes, strict=True)]
     assert expected_equity == [10000.0, 10000.0, pytest.approx(10005.0), pytest.approx(10015.0)]
 
-    expected_returns = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions])).pct_change().dropna()
+    expected_values = pd.Series(expected_equity, index=pd.DatetimeIndex([s.close for s in sessions]))
+    expected_returns = expected_values / expected_values.shift(fill_value=10000.0) - 1  # the first one from the budget
     expected_total_return = float((1 + expected_returns).prod() - 1)
     expected_cagr = (1 + expected_total_return) ** (252 / len(expected_returns)) - 1
 

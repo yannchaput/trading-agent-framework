@@ -32,6 +32,7 @@ def _equity(run_dir: Path, rows: list[tuple[int, str, str, str]]) -> None:
     report.write_equity(
         run_dir,
         [EquitySample(time=datetime(2026, 1, day, 21, tzinfo=UTC), portfolio_value=Decimal(pv), cash=Decimal(cash), positions_value=Decimal(pos)) for day, pv, cash, pos in rows],
+        budget=Decimal(10000),
     )
 
 
