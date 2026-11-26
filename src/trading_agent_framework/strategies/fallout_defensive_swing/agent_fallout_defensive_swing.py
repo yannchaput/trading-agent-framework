@@ -19,7 +19,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities import Order, OrderSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, dip_reached, mean_price_ratio, sell_target, trading_days_since
+from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target, trading_days_since
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
@@ -91,8 +91,11 @@ class FalloutDefensiveSwingStrategy(Strategy):
             buyback_dip=self.parameters["buyback_dip"],
             cash_reset_days=self.parameters["cash_reset_days"],
         )
-        self.log_info(self._describe(state, action, value - sell_fees, prices, session))
-        if action is Action.BUY:
+        self.log_info(self._describe(state, action, value - sell_fees, prices))
+        if action is Action.RESET:
+            assert state.last_sale_session is not None  # `decide` counts the reset from it
+            self.log_warning(f"Strategy resets after {trading_days_since(state.last_sale_session, session)} days without trading activity")
+        if action in (Action.BUY, Action.RESET):
             self._buy(state, prices)
         elif action is Action.SELL:
             self._sell(state, held, prices, session)
@@ -211,15 +214,13 @@ class FalloutDefensiveSwingStrategy(Strategy):
             return
         self.wait_for_order_execution(order, ORDER_WAIT_SECONDS)
 
-    def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal], session: date) -> str:
+    def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal]) -> str:
         """One line saying where the strategy stands and what it does."""
         if state.phase is Phase.HOLDING and state.basis is not None:
             detail = f", value after sell fees {net_value:.2f} ON a target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
         elif state.phase is Phase.CASH:
             ratio = mean_price_ratio(prices, state.sale_prices)
             detail = f", price vs last sale {ratio - 1:+.2%} / buy-back at {-self.parameters['buyback_dip']:+.2%}"
-            if action is Action.BUY and state.last_sale_session is not None and not dip_reached(prices, state.sale_prices, self.parameters["buyback_dip"]):
-                detail += f", reset after {trading_days_since(state.last_sale_session, session)} trading days in cash"
         else:
             detail = ""
         return f"Phase [{state.phase}]{detail} -> {action}"

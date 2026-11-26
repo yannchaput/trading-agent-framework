@@ -21,6 +21,7 @@ class Action(StrEnum):
     """What a tick does."""
 
     BUY = auto()
+    RESET = auto()  # buys like BUY, but only because the money sat in cash too long
     SELL = auto()
     HOLD = auto()
 
@@ -107,7 +108,7 @@ def decide(
         cash_reset_days: Trading days in cash after which the mix is bought back whatever the price; None never does.
 
     Returns:
-        BUY, SELL or HOLD.
+        BUY, RESET, SELL or HOLD.
     """
     if state.phase is Phase.FRESH:
         return Action.BUY
@@ -120,4 +121,6 @@ def decide(
         return Action.SELL if state.selling or reached else Action.HOLD
     # the state file does not require the date in CASH: without one there is nothing to count from, so only the dip buys
     expired = cash_reset_days is not None and state.last_sale_session is not None and trading_days_since(state.last_sale_session, session) >= cash_reset_days
-    return Action.BUY if expired or dip_reached(prices, state.sale_prices, buyback_dip) else Action.HOLD
+    if dip_reached(prices, state.sale_prices, buyback_dip):
+        return Action.BUY
+    return Action.RESET if expired else Action.HOLD

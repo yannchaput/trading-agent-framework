@@ -340,10 +340,24 @@ def test_each_order_event_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
 
 def test_a_reset_buy_says_so_in_the_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     broker = _broker()
-    strategy = _strategy(broker, tmp_path, SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=date(2026, 11, 16)))  # the 10th trading day is today
+    # sold 11 trading days ago: one past the 10-day reset
+    strategy = _strategy(broker, tmp_path, SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=date(2026, 11, 13)))
     caplog.set_level(logging.INFO)
 
     strategy.on_trading_iteration()
 
     assert [o.side for o in broker.submitted] == [OrderSide.BUY, OrderSide.BUY]
-    assert "reset after 10 trading days in cash" in caplog.text
+    assert "-> reset" in caplog.text
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("Strategy resets after 11 days without trading activity" in m for m in warnings)
+
+
+def test_a_dip_buy_back_warns_of_no_reset(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    broker = _broker()
+    broker.last_prices = {"XLP": D(99), "XLU": D("49.5")}
+    strategy = _strategy(broker, tmp_path, SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=date(2026, 11, 16)))
+
+    strategy.on_trading_iteration()
+
+    assert [o.side for o in broker.submitted] == [OrderSide.BUY, OrderSide.BUY]
+    assert "Strategy resets" not in caplog.text
