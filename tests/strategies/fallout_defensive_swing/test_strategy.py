@@ -251,7 +251,7 @@ def test_backtest_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     strategy.run_backtesting()
 
     assert seen["timestep"] == "minute" and seen["agent_telemetry"] is False
-    assert getattr(seen["data_source"], "__name__") == "AlpacaBacktestData"
+    assert seen["data_source"].__name__ == "AlpacaBacktestData"
     assert strategy.resolved_window() == (et(2026, 11, 3, 0), et(2026, 11, 25, 0))
     assert strategy.parameters["budget"] == 768
 

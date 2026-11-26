@@ -50,15 +50,40 @@ Logic: `FRESH` -> `BUY`. `HOLDING` -> `HOLD` if `last_sale_session is not None a
 - [ ] **Step 1: Write the failing tests** (`D = Decimal`, `TODAY = date(2026, 11, 30)`, defaults `take_profit=D("0.01")`, `buyback_dip=D("0.01")`)
 
 ```python
-def test_fresh_buys(): assert _decide(SwingState()) is Action.BUY
-def test_holding_below_target_holds(): assert _decide(_holding(), value=D("775.90"), sell_fees=D("0.24")) is Action.HOLD
-def test_holding_at_target_net_of_fees_sells(): assert _decide(_holding(), value=D("776.00"), sell_fees=D("0.24")) is Action.SELL
-def test_no_sale_on_the_last_sale_session(): assert _decide(_holding(last_sale=TODAY), value=D("800")) is Action.HOLD
-def test_sale_allowed_the_next_session(): assert _decide(_holding(last_sale=TODAY - timedelta(days=1)), value=D("800")) is Action.SELL
-def test_unfinished_sale_sells_the_rest_whatever_the_price(): assert _decide(_holding(selling=True, last_sale=TODAY - timedelta(days=3)), value=D("700")) is Action.SELL
-def test_unfinished_sale_still_waits_for_settlement(): assert _decide(_holding(selling=True, last_sale=TODAY), value=D("700")) is Action.HOLD
-def test_cash_above_the_dip_holds(): assert _decide(_cash(), prices={"XLP": D("99.5"), "XLU": D("49.5")}) is Action.HOLD   # mean ratio 0.995
-def test_cash_at_the_dip_buys(): assert _decide(_cash(), prices={"XLP": D("99"), "XLU": D("49.5")}) is Action.BUY        # mean ratio 0.99
+def test_fresh_buys():
+    assert _decide(SwingState()) is Action.BUY
+
+
+def test_holding_below_target_holds():
+    assert _decide(_holding(), value=D("775.90"), sell_fees=D("0.24")) is Action.HOLD
+
+
+def test_holding_at_target_net_of_fees_sells():
+    assert _decide(_holding(), value=D("776.00"), sell_fees=D("0.24")) is Action.SELL
+
+
+def test_no_sale_on_the_last_sale_session():
+    assert _decide(_holding(last_sale=TODAY), value=D("800")) is Action.HOLD
+
+
+def test_sale_allowed_the_next_session():
+    assert _decide(_holding(last_sale=TODAY - timedelta(days=1)), value=D("800")) is Action.SELL
+
+
+def test_unfinished_sale_sells_the_rest_whatever_the_price():
+    assert _decide(_holding(selling=True, last_sale=TODAY - timedelta(days=3)), value=D("700")) is Action.SELL
+
+
+def test_unfinished_sale_still_waits_for_settlement():
+    assert _decide(_holding(selling=True, last_sale=TODAY), value=D("700")) is Action.HOLD
+
+
+def test_cash_above_the_dip_holds():
+    assert _decide(_cash(), prices={"XLP": D("99.5"), "XLU": D("49.5")}) is Action.HOLD  # mean ratio 0.995
+
+
+def test_cash_at_the_dip_buys():
+    assert _decide(_cash(), prices={"XLP": D("99"), "XLU": D("49.5")}) is Action.BUY  # mean ratio 0.99
 ```
 
 with `_holding(**kw)` = `SwingState(phase=Phase.HOLDING, basis=D("768"), ...)` and `_cash()` = `SwingState(phase=Phase.CASH, sale_prices={"XLP": D("100"), "XLU": D("50")}, last_sale_session=TODAY - timedelta(days=1))`; `_decide` fills the unused keyword arguments with neutral values (`value=D("768")`, `sell_fees=D(0)`, `prices={"XLP": D("100"), "XLU": D("50")}`, `session=TODAY`).
