@@ -316,6 +316,7 @@ def test_backtest_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     assert seen["data_source"].__name__ == "AlpacaBacktestData"
     assert strategy.resolved_window() == (backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0], et(2026, 11, 25, 0))
     assert strategy.parameters["budget"] == 768
+    assert strategy.parameters["cash_reset_days"] == 10
 
 
 def test_the_factory_builds_it() -> None:
@@ -336,3 +337,14 @@ def test_each_order_event_is_logged(tmp_path: Path, caplog: pytest.LogCaptureFix
     assert "submitted sell XLP 2" in caplog.text
     assert "partially filled sell XLP 1 at 100" in caplog.text
     assert "filled sell XLP 2 at 101" in caplog.text
+
+
+def test_a_reset_buy_says_so_in_the_log(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    broker = _broker()
+    strategy = _strategy(broker, tmp_path, SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=date(2026, 11, 16)))  # the 10th trading day is today
+    caplog.set_level(logging.INFO)
+
+    strategy.on_trading_iteration()
+
+    assert [o.side for o in broker.submitted] == [OrderSide.BUY, OrderSide.BUY]
+    assert "reset after 10 trading days in cash" in caplog.text
