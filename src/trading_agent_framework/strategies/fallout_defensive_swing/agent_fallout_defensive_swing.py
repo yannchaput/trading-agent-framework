@@ -13,7 +13,6 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 from trading_agent_framework.backtesting.data.alpaca import AlpacaBacktestData
-from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.base import Broker
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import TradingMode
@@ -39,7 +38,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         "cash_reset_days": 10,  # trading days in cash before buying back without the dip; None never does
         "budget": 768,
         "benchmark_symbol": "SPY",
-        "backtesting_start": backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0],
+        "backtesting_start": datetime(2026, 11, 3, tzinfo=MARKET_TZ),
         "backtesting_end": datetime(2026, 11, 25, tzinfo=MARKET_TZ),
     }
 
