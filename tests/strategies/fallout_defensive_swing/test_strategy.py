@@ -9,7 +9,6 @@ from typing import Any
 import pytest
 from tests.fakes import FakeBroker, FakeClock, et
 
-from trading_agent_framework.backtesting.time_window import PredefinedWindow, backtest_window
 from trading_agent_framework.brokers.fees import TradingFeeFactory
 from trading_agent_framework.config.env import BrokerKind, TradingMode
 from trading_agent_framework.entities import AccountBalances, Asset, Order, OrderEvent, OrderSide, Position, PositionSide
@@ -314,7 +313,7 @@ def test_backtest_defaults(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
 
     assert seen["timestep"] == "minute" and seen["agent_telemetry"] is False
     assert seen["data_source"].__name__ == "AlpacaBacktestData"
-    assert strategy.resolved_window() == (backtest_window(PredefinedWindow.BI_YEAR_LATEST)[0], et(2026, 11, 25, 0))
+    assert strategy.resolved_window() == (et(2026, 11, 3, 0), et(2026, 11, 25, 0))
     assert strategy.parameters["budget"] == 768
     assert strategy.parameters["cash_reset_days"] == 10
 
