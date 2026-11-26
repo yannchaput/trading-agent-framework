@@ -94,8 +94,8 @@ def test_cash_without_a_dip_holds_before_the_reset_day() -> None:
     assert _decide(_cash(FRIDAY), session=date(2026, 11, 26), cash_reset_days=5) is Action.HOLD
 
 
-def test_cash_without_a_dip_buys_on_the_reset_day() -> None:
-    assert _decide(_cash(FRIDAY), session=date(2026, 11, 27), cash_reset_days=5) is Action.BUY
+def test_cash_without_a_dip_resets_on_the_reset_day() -> None:
+    assert _decide(_cash(FRIDAY), session=date(2026, 11, 27), cash_reset_days=5) is Action.RESET
 
 
 def test_without_a_reset_cash_waits_for_the_dip() -> None:
