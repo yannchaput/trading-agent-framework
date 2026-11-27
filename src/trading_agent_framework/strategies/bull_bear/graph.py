@@ -83,7 +83,7 @@ class AgentLookup(Protocol):
 
 
 class AgentLooped(StageAbandoned):
-    """An agent run used up its step limit: raised at once, with no forced retry. The review is abandoned, except for the researcher, whose stock only loses its note."""
+    """A bull, bear or judge run used up its step limit: the review is abandoned at once, with no forced retry."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -420,7 +420,8 @@ class BullBearReview:
         Attempt 1 runs `task` as is. If it records no valid submission, attempt 2 runs a fresh agent run (same `run_id`)
         with `retry_prompt` (quoting the rejection, or saying the agent ended without the tool) and `tool` forced, so the
         model must call it. On success the submit tool is a final tool, so the run ends without a closing model turn.
-        `AgentLoopError` is not retried: it raises `AgentLooped` at once.
+        `AgentLoopError` raises `AgentLooped` at once for the bull, bear and judge; for the researcher a loop is a failure
+        like any other (forced retry, then abandonment).
 
         Args:
             agent_name: key into `self._agents` (`"researcher"`, `"bull"`, `"bear"` or `"judge"`).
@@ -433,7 +434,7 @@ class BullBearReview:
             None. The accepted submission is in `self._recorder.submission`.
 
         Raises:
-            AgentLooped: the run hit the step limit (`AgentLoopError`); no retry.
+            AgentLooped: a bull, bear or judge run hit the step limit (`AgentLoopError`); no retry.
             StageAbandoned: neither attempt recorded a valid `tool` call.
         """
         agent = self._agents[agent_name]
@@ -453,9 +454,13 @@ class BullBearReview:
                 for i, tool_call in enumerate(result.tool_calls):
                     self._strategy.log_debug(f"[{agent_name}] tool_call_{i}: {tool_call}")
             except AgentLoopError as exc:
-                # The run reached the maximum number of steps: the model looped. The review is abandoned, no retry: a retry would only loop again.
+                # The run reached the maximum number of steps: the model looped. A debater's loop abandons the review at once.
+                # A researcher's first loop gets the forced retry: its first call must be the submit, so it cannot re-send
+                # `count_characters` again (MU, FIX, DFTX lost their notes that way in the 2026-11-26 backtest).
                 self._strategy.log_error(f"[{agent_name}] run stopped as a loop (too many steps): {exc}")
-                raise AgentLooped(agent_name, str(exc)) from exc
+                if agent_name != "researcher":
+                    raise AgentLooped(agent_name, str(exc)) from exc
+                error = str(exc)
             except AgentError as exc:
                 # Any other failure than AgentLoopError: the run will trigger a retry with a force submission.
                 error = str(exc)

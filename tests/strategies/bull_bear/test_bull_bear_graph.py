@@ -576,17 +576,38 @@ def test_an_agent_that_loops_abandons_the_review_at_once_with_an_error_log_and_n
     assert h.store.load().abandoned_streak == 1
 
 
-def test_a_researcher_that_loops_costs_that_stock_its_note_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_a_researcher_that_loops_gets_a_forced_retry_that_keeps_the_note(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     h = _harness(tmp_path)
     researcher = h.agents["researcher"]
-    researcher.overrides = [_loops]  # the first stock's run loops, the others work
+    researcher.overrides = [_loops]  # the first stock's first run loops (2026-11-26 run: count_characters re-sent until the step limit)
 
     with caplog.at_level(logging.INFO):
         outcome = h.run()
 
     assert outcome.completed
-    assert len(researcher.calls) == len(h.agents["bull"].calls[0]["context"]["stocks"])  # one run per stock: the looping one was not retried
-    assert [stock["note"] for stock in h.agents["bull"].calls[0]["context"]["stocks"]][0] == UNAVAILABLE_NOTE
+    stocks = h.agents["bull"].calls[0]["context"]["stocks"]
+    assert len(researcher.calls) == len(stocks) + 1  # the looping run, then its forced retry
+    retry = researcher.calls[1]
+    assert retry["force_tool"] == "submit_note" and "60 steps" in retry["task"] and retry["run_id"] == researcher.calls[0]["run_id"]
+    assert stocks[0]["note"] != UNAVAILABLE_NOTE
+    (line,) = h.log_lines()
+    assert line["notes"]["failed"] == []
+    errors = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records if record.levelno == logging.ERROR]
+    assert any("[researcher]" in message and "60 steps" in message for message in errors)  # the loop is still logged
+
+
+def test_a_researcher_whose_forced_retry_loops_too_costs_that_stock_its_note_not_the_review(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    h = _harness(tmp_path)
+    researcher = h.agents["researcher"]
+    researcher.overrides = [_loops, _loops]  # the first stock's run and its forced retry both loop, the others work
+
+    with caplog.at_level(logging.INFO):
+        outcome = h.run()
+
+    assert outcome.completed
+    stocks = h.agents["bull"].calls[0]["context"]["stocks"]
+    assert len(researcher.calls) == len(stocks) + 1  # one retry, no third run
+    assert stocks[0]["note"] == UNAVAILABLE_NOTE
     (line,) = h.log_lines()
     assert line["abandoned"] is False and line["notes"]["failed"] == ["S00"]
     messages = [re.sub(r"\x1b\[[0-9;]*m", "", record.getMessage()) for record in caplog.records]
