@@ -1,6 +1,6 @@
-"""fallout_defensive_swing: hold a defensive ETF mix, sell it at a small profit, buy it back after a dip or a few days. No LLM.
+"""fallout_defensive_swing: hold a defensive ETF mix, sell it once a rise turns down, buy it back after a dip or a few days. No LLM.
 
-Every hour `rule.decide` picks buy, sell or hold. Built for a cash account: it never sells on the session of its last sale,
+Every 30 minutes `rule.decide` picks buy, sell or hold. Built for a cash account: it never sells on the session of its last sale,
 because what a sale's unsettled proceeds bought must not be sold before they settle.
 """
 
@@ -19,7 +19,7 @@ from trading_agent_framework.config.env import TradingMode
 from trading_agent_framework.core import Strategy
 from trading_agent_framework.entities import Order, OrderSide
 from trading_agent_framework.entities.position import Position
-from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target, trading_days_since
+from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, mean_price_ratio, sell_target, trading_days_since, updated_peak
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.clock import MARKET_TZ
 from trading_agent_framework.utils.errors import TradingFrameworkError
@@ -29,11 +29,12 @@ _SHARE_STEP = Decimal("0.000001")
 
 
 class FalloutDefensiveSwingStrategy(Strategy):
-    """Equal parts of a few defensive ETFs: sold at +`take_profit` net of fees, bought back `buyback_dip` lower."""
+    """Equal parts of a few defensive ETFs: sold on a `trail` fall after +`take_profit`, bought back `buyback_dip` lower."""
 
     parameters = {
         "symbols": ["XLP", "XLU"],
         "take_profit": Decimal("0.01"),
+        "trail": Decimal("0.01"),  # fall under the peak that sells once `take_profit` was reached; None sells at it
         "buyback_dip": Decimal("0.01"),
         "cash_reset_days": 10,  # trading days in cash before buying back without the dip; None never does
         "budget": 768,
@@ -56,13 +57,13 @@ class FalloutDefensiveSwingStrategy(Strategy):
         self.fees = fees if fees is not None else TradingFeeFactory.from_env()
 
     def initialize(self) -> None:
-        """Tick hourly from 10:30 market time and open the state file (a backtest starts from an empty one)."""
-        self.sleeptime = "60M"
+        """Tick every 30 minutes from 10:30 market time and open the state file (a backtest starts from an empty one)."""
+        self.sleeptime = "30M"
         self.iteration_start_time = time(10, 30)
         self.store = StateStore(self.state_file(), log=self._log, fresh=self.is_backtesting)
 
     def on_trading_iteration(self) -> None:
-        """One hourly check: read the account, correct the saved state, then buy, sell or hold."""
+        """One check: read the account, correct the saved state, then buy, sell or hold."""
         open_orders = self.broker.tracker.get_active_orders()
         if open_orders:
             self.log_warning(f"{len(open_orders)} order(s) still open: nothing is done until they are final")
@@ -75,12 +76,17 @@ class FalloutDefensiveSwingStrategy(Strategy):
         for symbol in symbols:
             price = latest[symbol]
             if price is None:
-                self.log_warning(f"no price for {symbol}: nothing is done this hour")
+                self.log_warning(f"no price for {symbol}: nothing is done this tick")
                 return
             prices[symbol] = price
         value = sum((quantity * prices[symbol] for symbol, quantity in held.items()), Decimal(0))
         state = self._reconcile(held, prices, value, session)
         sell_fees = sum((self._sell_fee(quantity, quantity * prices[symbol]) for symbol, quantity in held.items()), Decimal(0))
+        net_value = value - sell_fees
+        peak = None if self.parameters["trail"] is None else updated_peak(state, net_value, self.parameters["take_profit"])
+        if peak != state.peak:
+            state = replace(state, peak=peak)
+            self.store.save(state)
         action = decide(
             state,
             value=value,
@@ -90,8 +96,9 @@ class FalloutDefensiveSwingStrategy(Strategy):
             take_profit=self.parameters["take_profit"],
             buyback_dip=self.parameters["buyback_dip"],
             cash_reset_days=self.parameters["cash_reset_days"],
+            trail=self.parameters["trail"],
         )
-        self.log_info(self._describe(state, action, value - sell_fees, prices))
+        self.log_info(self._describe(state, action, net_value, prices))
         if action is Action.RESET:
             assert state.last_sale_session is not None  # `decide` counts the reset from it
             self.log_warning(f"Strategy resets after {trading_days_since(state.last_sale_session, session)} days without trading activity")
@@ -163,7 +170,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
                 cost = order.filled_quantity * (order.avg_fill_price or prices[order.asset.symbol])
                 basis += cost + self._buy_fee(order.filled_quantity, cost)
         if basis > 0:
-            self.store.save(replace(state, phase=Phase.HOLDING, basis=basis, selling=False))
+            self.store.save(replace(state, phase=Phase.HOLDING, basis=basis, selling=False, peak=None))
 
     def _sell(self, state: SwingState, held: Mapping[str, Decimal], prices: Mapping[str, Decimal], session: date) -> None:
         """Sell everything held; if only part fills, `selling` stays set and the rest goes at the next allowed tick."""
@@ -216,7 +223,10 @@ class FalloutDefensiveSwingStrategy(Strategy):
 
     def _describe(self, state: SwingState, action: Action, net_value: Decimal, prices: Mapping[str, Decimal]) -> str:
         """One line saying where the strategy stands and what it does."""
-        if state.phase is Phase.HOLDING and state.basis is not None:
+        trail = self.parameters["trail"]
+        if state.phase is Phase.HOLDING and state.basis is not None and trail is not None and state.peak is not None:
+            detail = f", value after sell fees {net_value:.2f}, peak {state.peak:.2f}, sells at {state.peak * (1 - trail):.2f} if above {state.basis:.2f}"
+        elif state.phase is Phase.HOLDING and state.basis is not None:
             detail = f", value after sell fees {net_value:.2f} ON a target {sell_target(state.basis, self.parameters['take_profit']):.2f}"
         elif state.phase is Phase.CASH:
             ratio = mean_price_ratio(prices, state.sale_prices)

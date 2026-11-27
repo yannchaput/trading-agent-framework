@@ -12,7 +12,7 @@ from trading_agent_framework.strategies.common.json_state import InvalidState, J
 from trading_agent_framework.strategies.fallout_defensive_swing.rule import Phase, SwingState
 from trading_agent_framework.utils.log import ColorLogger
 
-STATE_VERSION = 1
+STATE_VERSION = 2  # 2 added `peak`; a version-1 file loads without one, keeping its basis
 
 
 def _amount(value: Any) -> Decimal:
@@ -27,12 +27,14 @@ def _amount(value: Any) -> Decimal:
 
 def _decode(raw: dict[str, Any]) -> SwingState:
     phase, basis, last_sale = Phase(raw["phase"]), raw["basis"], raw["last_sale_session"]
+    peak = raw.get("peak")
     state = SwingState(
         phase=phase,
         basis=None if basis is None else _amount(basis),
         sale_prices={symbol: _amount(price) for symbol, price in raw["sale_prices"].items()},
         last_sale_session=None if last_sale is None else date.fromisoformat(last_sale),
         selling=raw["selling"],
+        peak=None if peak is None else _amount(peak),
     )
     # the two things `decide` relies on
     if not isinstance(state.selling, bool) or (phase is Phase.HOLDING and state.basis is None) or (phase is Phase.CASH and not state.sale_prices):
@@ -52,4 +54,4 @@ class StateStore(JsonStateStore[SwingState]):
             fresh: Delete any existing file first, so a backtest never inherits the last run's state.
         """
         # `atomic_write_json` writes Decimal and date through `str`, which `_decode` reads back
-        super().__init__(path, version=STATE_VERSION, empty=SwingState, decode=_decode, encode=asdict, log=log, fresh=fresh)
+        super().__init__(path, version=STATE_VERSION, accepts={1, STATE_VERSION}, empty=SwingState, decode=_decode, encode=asdict, log=log, fresh=fresh)

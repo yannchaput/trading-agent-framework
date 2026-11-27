@@ -369,14 +369,14 @@ Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.c
 | **Agents** | none |
 | **Tools** | none |
 | **Asset universe** | XLP and XLU (consumer staples and utilities), 50/50 |
-| **Frequency** | hourly, 10:30-15:30 ET |
+| **Frequency** | every 30 minutes from 10:30 ET |
 | **Trading modes** | backtest, live (no Alpaca paper run: its fees and fills are not Tastytrade's) |
 | **Benchmark** | SPY |
 | **Env file** | `env/.env.fallout_defensive_swing.<mode>`: `BROKER=tastytrade`, `ALPACA_DATA_*`, plus `TASTYTRADE_*` in live |
 
 **The rule:**
 1. Buy the mix with the spendable cash, half in each ETF (fractional market orders).
-2. Sell everything once its value, less the sell fees, is at least the cost of the buy (fees included) + 1%.
+2. Once its value, less the sell fees, has reached the cost of the buy (fees included) + 1%, keep it and remember the highest value seen. Sell everything when a later check finds it 1% (`trail`) or more under that high, only if it is still above the cost. `trail = None` sells at +1% instead.
 3. Buy back once the two prices are on average 1% or more under the prices they were sold at, or after 10 trading days in cash (`cash_reset_days`; a market holiday counts), whatever the price.
 4. Never sell before the last sale has settled (the next day banks are open): on a cash account, what unsettled proceeds bought must not be sold before then.
 
@@ -384,10 +384,10 @@ Inspired by [lumibot's Citadel sector pods example](https://lumibot.lumiwealth.c
 
 - **Use it** in a short, volatile stretch with no clear trend (it was designed with the VIX near 28, November 2026), on a cash account holding only this strategy, with a **daily check** and a **manual stop** when the turbulence ends.
 - **Not in a rising market:** after a sale it can sit in cash, then buy back higher. The 3-year study predates the 10-day reset: waiting for the dip with no limit, it was invested only 5% of the time (+4.7%, against +33% for holding the mix).
-- **Not in a long fall:** there is no stop-loss. It holds until +1%; the longest hold in the study of the +1% rule was 232 days.
-- **The evidence is thin:** in the study, 3-25 November 2026 made +$40.34 on $768 (4 sales, worst drawdown -0.8%), against +$12.72 for holding the mix. That is three weeks, and the 1% buy-back was chosen after seeing them.
+- **Not in a long fall:** there is no stop-loss. It holds until +1% (after that, a fall under the cost holds too); the longest hold in the study of the old sell-at-+1% rule was 232 days.
+- **The evidence is thin:** in the study of the old sell-at-+1% rule, 3-25 November 2026 made +$40.34 on $768 (4 sales, worst drawdown -0.8%), against +$12.72 for holding the mix. That is three weeks, and the 1% buy-back was chosen after seeing them.
 
-Run `uv run agent fallout_defensive_swing backtesting` (default window 3-25 November 2026, Alpaca minute bars, the fees of `BROKER`) or `uv run agent fallout_defensive_swing live`. **Before the first live run**, check one fractional buy and sale by hand on the account, and leave no XLP or XLU behind (any leftover is taken as the strategy's position). **On the first live buy**, check that the next hourly line says `holding`: if it keeps saying an order is still open, the account stream is not reporting fills, so check the account and restart. Stopping the process leaves the positions as they are.
+Run `uv run agent fallout_defensive_swing backtesting` (default window 3-25 November 2026, Alpaca minute bars, the fees of `BROKER`) or `uv run agent fallout_defensive_swing live`. **Before the first live run**, check one fractional buy and sale by hand on the account, and leave no XLP or XLU behind (any leftover is taken as the strategy's position). **On the first live buy**, check that the next status line says `holding`: if it keeps saying an order is still open, the account stream is not reporting fills, so check the account and restart. Stopping the process leaves the positions as they are.
 
 ### 📈 `congress_trades` — Copy Nancy Pelosi's disclosed stock holdings (researcher, portfolio manager, trader)
 
