@@ -342,3 +342,57 @@ def test_a_yahoo_outage_warns_and_keeps_the_pnl_plot(env_dir: Path, monkeypatch:
     assert len(at.get("plotly_chart")) == 1
     (warning,) = at.warning
     assert "Could not load the daily returns" in warning.value
+
+
+TASTY_KEYS = "DASHBOARD_DISPLAY=true\nBROKER=tastytrade\nBROKER_API_IS_PAPER=false\nTASTYTRADE_CLIENT_SECRET=c\nTASTYTRADE_REFRESH_TOKEN=r\nTASTYTRADE_ACCOUNT_NUMBER=5WX00000\n"
+
+
+def test_a_tastytrade_strategy_is_named_as_such_and_shows_every_metric(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (env_dir / ".env.alpha.live").write_text(TASTY_KEYS, encoding="utf-8")
+    at, calls = _run(_live_script, monkeypatch, PNL)
+
+    assert not at.exception and not at.warning
+    assert calls == [("alpha", "live")]
+    assert "alpha · live Tastytrade account" in [c.value for c in at.caption]
+    assert len(at.get("plotly_chart")) == 2
+    assert at.dataframe[0].value["symbol"].tolist() == ["AAA"]
+
+
+def test_tastytrades_own_unrealized_figure_is_explained_by_the_fees(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    (env_dir / ".env.alpha.live").write_text(TASTY_KEYS, encoding="utf-8")
+    at, _ = _run(_live_script, monkeypatch, dataclasses.replace(PNL, unrealized_now=29.8))
+
+    (caption,) = [c.value for c in at.caption if "Tastytrade's average open price" in c.value]
+    assert "+$30.00" in caption and "fees" in caption and "FIFO" not in caption
+
+
+def test_a_tastytrade_error_is_shown_not_raised(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.utils.errors import BrokerError
+
+    (env_dir / ".env.alpha.live").write_text(TASTY_KEYS, encoding="utf-8")
+    at, _ = _run(_live_script, monkeypatch, BrokerError("Tastytrade GET /x: 500"))
+
+    assert not at.exception
+    assert "Could not reach Tastytrade" in at.error[0].value
+
+
+def test_a_failed_tastytrade_equity_fetch_warns_and_keeps_the_pnl_plot(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from trading_agent_framework.utils.errors import BrokerError
+
+    (env_dir / ".env.alpha.live").write_text(TASTY_KEYS, encoding="utf-8")
+    at, _ = _run(_live_script, monkeypatch, PNL, bases=BrokerError("Tastytrade GET /x: 500"))
+
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 1
+    assert "Could not load the daily returns" in at.warning[0].value
+
+
+def test_uncounted_cash_entries_are_warned(env_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import dataclasses
+
+    at, _ = _run(_paper_script, monkeypatch, dataclasses.replace(PNL, ignored=["2026-12-01 Withholding -0.18"]))
+
+    (warning,) = at.warning
+    assert "2026-12-01 Withholding -0.18" in warning.value and "not counted" in warning.value

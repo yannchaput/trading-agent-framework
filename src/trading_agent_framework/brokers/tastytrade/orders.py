@@ -288,7 +288,7 @@ _TIME_IN_FORCE_BACK: dict[str, tuple[TimeInForce, bool]] = {
 }
 
 
-_SIDES: dict[str, OrderSide] = {
+ACTION_SIDES: dict[str, OrderSide] = {
     "Buy to Open": OrderSide.BUY,
     "Buy to Close": OrderSide.BUY,
     "Sell to Open": OrderSide.SELL,
@@ -324,7 +324,7 @@ def parse_order(data: Mapping[str, Any], strategy_name: str) -> Order:
         tif = (TimeInForce.DAY, False)
     time_in_force, extended = tif
     action = leg.get("action")
-    side = _SIDES.get(action) if isinstance(action, str) else None
+    side = ACTION_SIDES.get(action) if isinstance(action, str) else None
     if side is None:
         raise BrokerError(f"Tastytrade order {data.get('id')} has an unknown action: {action!r}")
     asset = Asset(from_tastytrade_symbol(str(leg.get("symbol") or data.get("underlying-symbol"))))

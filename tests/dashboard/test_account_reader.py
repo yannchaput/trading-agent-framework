@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.timeframe import TimeFrame
-from tests.fakes import FakeStockHistoricalDataClient, bar_payload, make_alpaca_position
+from tests.fakes import FakeStockHistoricalDataClient, FakeTastytradeSession, bar_payload, make_alpaca_position, make_tt_position
 
 from trading_agent_framework.dashboard import account_reader
 from trading_agent_framework.dashboard.pnl import Dividend, Fee
@@ -25,7 +25,7 @@ def _env(env_dir: Path, name: str, body: str) -> None:
     (env_dir / name).write_text(body, encoding="utf-8")
 
 
-def test_strategies_are_the_alpaca_env_files_of_the_mode(tmp_path: Path) -> None:
+def test_strategies_are_the_alpaca_and_tastytrade_env_files_of_the_mode(tmp_path: Path) -> None:
     _env(tmp_path, ".env.alpha.paper", "BROKER=alpaca\n" + SHOWN + KEYS)
     _env(tmp_path, ".env.beta.paper", SHOWN + KEYS)  # no BROKER: alpaca
     _env(tmp_path, ".env.gamma.paper", "BROKER=ibkr\n" + SHOWN)
@@ -33,7 +33,9 @@ def test_strategies_are_the_alpaca_env_files_of_the_mode(tmp_path: Path) -> None
     _env(tmp_path, ".env.alpha.backtesting", "BROKER=alpaca\n" + SHOWN + KEYS)
     _env(tmp_path, ".env.example", SHOWN + KEYS)
 
-    assert account_reader.strategies_for_mode("paper", tmp_path) == ["alpha", "beta"]
+    _env(tmp_path, ".env.delta.paper", "BROKER= Tastytrade\n" + SHOWN)
+
+    assert account_reader.strategies_for_mode("paper", tmp_path) == ["alpha", "beta", "delta"]
     assert account_reader.strategies_for_mode("live", tmp_path) == ["alpha"]
 
 
@@ -73,9 +75,9 @@ def test_the_endpoint_is_the_one_the_keys_file_selects_whatever_the_file_name(tm
     _env(tmp_path, ".env.alpha.live", KEYS)
     _env(tmp_path, ".env.beta.paper", KEYS)
 
-    assert account_reader.account_is_paper("alpha", "paper", tmp_path) is False
-    assert account_reader.account_is_paper("alpha", "live", tmp_path) is True
-    assert account_reader.account_is_paper("beta", "paper", tmp_path) is True
+    assert account_reader.account_settings("alpha", "paper", tmp_path).is_paper is False
+    assert account_reader.account_settings("alpha", "live", tmp_path).is_paper is True
+    assert account_reader.account_settings("beta", "paper", tmp_path).is_paper is True
 
 
 def test_blank_keys_raise_a_configuration_error_without_the_values(tmp_path: Path) -> None:
@@ -320,3 +322,86 @@ def test_load_return_bases_reads_the_equity_history_and_spys_closes() -> None:
 
     assert dict(bases.equity) == {date(2026, 10, 12): 1000.0}
     assert dict(bases.benchmark) == {date(2026, 10, 9): 100.0, date(2026, 10, 12): 101.0}
+
+
+TASTY = (
+    "BROKER=tastytrade\nBROKER_API_IS_PAPER=false\nTASTYTRADE_CLIENT_SECRET=tt-secret\nTASTYTRADE_REFRESH_TOKEN=tt-token\n"
+    "TASTYTRADE_ACCOUNT_NUMBER=5WX00000\nALPACA_DATA_API_KEY=data-key\nALPACA_DATA_API_SECRET=data-secret\n"
+)
+
+
+def _tasty_sessions(monkeypatch: pytest.MonkeyPatch) -> list[FakeTastytradeSession]:
+    """Answer the account reader with the shared fake; returns the sessions it built."""
+    session = FakeTastytradeSession()
+    trade = {
+        "transaction-type": "Trade",
+        "instrument-type": "Equity",
+        "action": "Buy to Open",
+        "symbol": "XLP",
+        "quantity": "2",
+        "price": "90",
+        "value": "180.0",
+        "value-effect": "Debit",
+        "net-value": "180.1",
+        "net-value-effect": "Debit",
+        "executed-at": "2026-11-27T16:53:29.670Z",
+    }
+    position = {**make_tt_position(symbol="XLP", quantity="2", average_open_price="90"), "mark-price": "91"}
+    session.responses = {
+        ("GET", "/accounts/5WX00000/transactions"): {
+            "items": [trade, {"transaction-type": "Money Movement", "transaction-sub-type": "Credit Interest", "net-value": "0.05", "net-value-effect": "Credit", "transaction-date": "2026-11-27"}]
+        },
+        ("GET", "/accounts/5WX00000/positions"): {"items": [position]},
+        ("GET", "/accounts/5WX00000/balance-snapshots"): {"items": [{"snapshot-date": "2026-11-25", "time-of-day": "EOD", "net-liquidating-value": "100.0"}]},
+    }
+    built: list[FakeTastytradeSession] = []
+
+    def build(settings: object) -> FakeTastytradeSession:
+        built.append(session)
+        return session
+
+    monkeypatch.setattr(account_reader, "TastytradeSession", build)
+    monkeypatch.setattr(account_reader, "build_stock_data_client", lambda creds: FakeStockHistoricalDataClient())
+    return built
+
+
+def test_a_tastytrade_strategys_endpoint_is_the_one_its_file_selects(tmp_path: Path) -> None:
+    _env(tmp_path, ".env.alpha.live", TASTY)
+
+    settings = account_reader.account_settings("alpha", "live", tmp_path)
+
+    assert (settings.kind, settings.is_paper) == ("tastytrade", False)
+
+
+def test_blank_tastytrade_keys_raise_without_the_values(tmp_path: Path) -> None:
+    _env(tmp_path, ".env.alpha.live", "BROKER=tastytrade\nTASTYTRADE_CLIENT_SECRET=s3cret\n")
+
+    with pytest.raises(ConfigurationError, match="TASTYTRADE_REFRESH_TOKEN") as excinfo:
+        account_reader.account_settings("alpha", "live", tmp_path)
+
+    assert "s3cret" not in str(excinfo.value)
+
+
+def test_load_strategy_pnl_reads_a_tastytrade_account_with_the_files_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(tmp_path, ".env.alpha.live", TASTY)
+    built = _tasty_sessions(monkeypatch)
+
+    pnl = account_reader.load_strategy_pnl("alpha", "live", tmp_path, date(2026, 11, 27))
+
+    assert pnl.days == [{"date": "2026-11-27", "realized": 0.0, "unrealized": 1.9, "change": 1.9}]  # 2 x 91 - (180 + 0.10 fee)
+    assert (pnl.unrealized_now, pnl.broker_unrealized, pnl.mismatches) == (1.9, 2.0, [])
+    assert pnl.ignored == ["2026-11-27 Credit Interest 0.05"]
+    (session,) = built
+    assert session.closed
+    assert "tt-secret" not in str(os.environ)
+
+
+def test_load_strategy_return_bases_reads_tastytrades_equity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _env(tmp_path, ".env.alpha.live", TASTY)
+    built = _tasty_sessions(monkeypatch)
+    monkeypatch.setattr(account_reader, "YahooDailyBars", lambda history: FakeBenchmarkBars({}))
+
+    bases = account_reader.load_strategy_return_bases("alpha", "live", tmp_path, date(2026, 11, 27), date(2026, 11, 27))
+
+    assert bases.equity == {date(2026, 11, 25): 100.0}
+    assert built[0].closed

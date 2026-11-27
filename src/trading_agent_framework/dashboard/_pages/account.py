@@ -1,4 +1,4 @@
-"""Live and Paper tabs: one strategy's realized and unrealized P&L per day, rebuilt from its Alpaca account."""
+"""Live and Paper tabs: one strategy's realized and unrealized P&L per day, rebuilt from its Alpaca or Tastytrade account."""
 
 from __future__ import annotations
 
@@ -16,10 +16,16 @@ from trading_agent_framework.dashboard.components.charts import account_pnl_char
 from trading_agent_framework.dashboard.components.metric_cards import render_metric_card
 from trading_agent_framework.dashboard.pnl import AccountPnl, ReturnBases, daily_returns_pct, days_between
 from trading_agent_framework.utils.clock import MARKET_TZ
-from trading_agent_framework.utils.errors import ConfigurationError, YahooDataError
+from trading_agent_framework.utils.errors import BrokerError, ConfigurationError, YahooDataError
+
+# Why the broker's unrealized figure differs from the replay's, which keeps the cost the realized P&L uses.
+_BROKER_COST_BASIS = {
+    "alpaca": "Alpaca's own unrealized figure is {figure}: it keeps a FIFO cost basis for positions held overnight, while this page keeps the average cost the realized P&L uses.",
+    "tastytrade": "At Tastytrade's average open price the unrealized figure is {figure}: that price leaves out the fees, while this page's average cost, the one the realized P&L uses, counts them.",
+}
 
 
-@st.cache_data(show_spinner="Fetching the account from Alpaca...", ttl="5m", max_entries=32)
+@st.cache_data(show_spinner="Fetching the account from the broker...", ttl="5m", max_entries=32)
 def _account_pnl(strategy: str, mode: str, today: date) -> AccountPnl:
     # Keyed by name, mode and day only: the keys are re-read from the env file inside, never cached or shown.
     return account_reader.load_strategy_pnl(strategy, mode, account_reader.default_env_dir(), today)
@@ -34,6 +40,7 @@ def _problems(pnl: AccountPnl) -> list[str]:
     problems = [f"{symbol}: the fills give {replayed:g} shares, the broker holds {held:g}" for symbol, replayed, held in pnl.mismatches]
     problems += [f"{symbol}: {qty:g} shares sold with no recorded buy (their P&L is missing)" for symbol, qty in pnl.unmatched_sales.items()]
     problems += [f"{symbol}: no daily close, left out of the unrealized P&L before today" for symbol in pnl.unpriced]
+    problems += [f"cash entry not counted in the P&L: {entry}" for entry in pnl.ignored]
     return problems
 
 
@@ -71,7 +78,7 @@ def _render_returns(strategy: str, mode: str, pnl: AccountPnl, start: date, end:
     """
     try:
         bases = _return_bases(strategy, mode, date.fromisoformat(pnl.days[0]["date"]), datetime.now(MARKET_TZ).date())
-    except (APIError, RequestException, YahooDataError) as exc:
+    except (APIError, RequestException, BrokerError, YahooDataError) as exc:
         st.warning(f"Could not load the daily returns: {exc}")
         return
     st.plotly_chart(account_returns_chart(days_between(daily_returns_pct(pnl.days, bases), start, end), account_reader.BENCHMARK_SYMBOL), width="stretch")
@@ -110,7 +117,7 @@ def page_account(mode: str) -> None:
     st.title(mode.capitalize())
     strategies = account_reader.strategies_for_mode(mode, account_reader.default_env_dir())
     if not strategies:
-        st.info(f"No strategy to show for {mode} on Alpaca: add DASHBOARD_DISPLAY=true to an env/.env.<strategy>.{mode} file with BROKER=alpaca.")
+        st.info(f"No strategy to show for {mode}: add DASHBOARD_DISPLAY=true to an env/.env.<strategy>.{mode} file with BROKER=alpaca or tastytrade.")
         return
 
     # The choice is kept under a plain session key: Streamlit drops the widget's own state on a run that does not
@@ -130,16 +137,20 @@ def page_account(mode: str) -> None:
 
     try:
         # The account the keys really hit, which the env file's name may not say (BROKER_API_IS_PAPER).
-        is_paper = account_reader.account_is_paper(strategy, mode, account_reader.default_env_dir())
-        st.caption(f"{strategy} · {'paper' if is_paper else 'live'} Alpaca account")
+        settings = account_reader.account_settings(strategy, mode, account_reader.default_env_dir())
+        is_paper, name = settings.is_paper, settings.kind.value.capitalize()
+        st.caption(f"{strategy} · {'paper' if is_paper else 'live'} {name} account")
         if is_paper != (mode == "paper"):
-            st.warning(f"env/.env.{strategy}.{mode} points at the {'PAPER' if is_paper else 'LIVE'} Alpaca account (BROKER_API_IS_PAPER={'true' if is_paper else 'false'}), not a {mode} one.")
+            st.warning(f"env/.env.{strategy}.{mode} points at the {'PAPER' if is_paper else 'LIVE'} {name} account (BROKER_API_IS_PAPER={'true' if is_paper else 'false'}), not a {mode} one.")
         pnl = _account_pnl(strategy, mode, datetime.now(MARKET_TZ).date())
     except ConfigurationError as exc:
         st.error(f"env/.env.{strategy}.{mode}: {exc}")
         return
     except (APIError, RequestException) as exc:
-        st.error(f"Could not reach Alpaca: {exc}")
+        st.error(f"Could not reach Alpaca: {exc}")  # also a Tastytrade strategy's daily closes
+        return
+    except BrokerError as exc:
+        st.error(f"Could not reach Tastytrade: {exc}")  # only its reader raises this
         return
 
     if not pnl.days and not pnl.positions:
@@ -156,10 +167,7 @@ def page_account(mode: str) -> None:
     if len(days) != len(pnl.days):
         st.caption(f"Realized covers {start} to {end}; unrealized is the open positions now, whatever the window.")
     if abs(pnl.unrealized_now - pnl.broker_unrealized) > 0.005:
-        st.caption(
-            f"Alpaca's own unrealized figure is {signed_usd(pnl.broker_unrealized)}: it keeps a FIFO cost basis for positions "
-            "held overnight, while this page keeps the average cost the realized P&L uses."
-        )
+        st.caption(_BROKER_COST_BASIS[settings.kind].format(figure=signed_usd(pnl.broker_unrealized)))
     if pnl.days:
         st.plotly_chart(account_pnl_chart(days), width="stretch")
         st.caption(
@@ -172,7 +180,7 @@ def page_account(mode: str) -> None:
         st.info("No fill history in this account: only today's unrealized P&L is known.")
     problems = _problems(pnl)
     if problems:
-        st.warning("The fills do not fully explain the account:\n\n" + "\n".join(f"- {p}" for p in problems))
+        st.warning("The figures may not fully explain the account:\n\n" + "\n".join(f"- {p}" for p in problems))
     _render_positions(pnl)
 
 
