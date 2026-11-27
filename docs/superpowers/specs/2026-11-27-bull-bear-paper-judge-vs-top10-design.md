@@ -76,3 +76,8 @@ paper number was computed (first commit made after the read, with `git add -f`: 
 
 Script: `scripts/bull_bear/paper_judge_vs_top10.py` (reuses `forward_returns`, `newey_west_t`, `fetch_opens`).
 Final read: at >= 13 weekly reviews with a matured 5-session window.
+
+## Amendment 2026-11-27 (after the interim read, approved by the user)
+
+The final read scores **exactly the first 13** weekly reviews (2026-10-20 onward), not ">= 13": rerunning at 14 or 15
+could otherwise give a different answer. The thresholds are unchanged.

@@ -46,7 +46,7 @@ def gaps(reviews, opens, calendar, horizon):
 
 def main():
     """Print each weekly gap, the t-stats and what the frozen rule says."""
-    reviews = weekly_reviews()
+    reviews = weekly_reviews()[:MIN_REVIEWS]  # the final read is exactly the first 13 (amendment in the spec)
     opens, calendar = fetch_opens([reviews], today=date.today())
     print(f"weekly paper reviews: {len(reviews)} ({reviews[0]['date']} .. {reviews[-1]['date']})")
     for horizon in (5, 20):
