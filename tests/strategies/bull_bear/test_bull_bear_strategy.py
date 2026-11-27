@@ -100,7 +100,7 @@ def test_it_iterates_every_session_at_noon_and_never_scores_the_parking_symbol(t
 
 
 def test_initialize_creates_the_four_agents_with_only_their_own_tools(tmp_path: Path) -> None:
-    strategy, agents = _strategy(tmp_path)
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=True))
 
     strategy.initialize()
 
@@ -200,10 +200,10 @@ def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_sour
     assert strategy.parameters["research_news"] is False
 
 
-def test_research_news_is_on_by_default_and_recorded_in_the_parameters(tmp_path: Path) -> None:
+def test_research_news_is_off_by_default_and_recorded_in_the_parameters(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
 
-    assert strategy.settings.research_news is True and strategy.parameters["research_news"] is True
+    assert strategy.settings.research_news is False and strategy.parameters["research_news"] is False
     assert strategy.parameters["stock_weight"] == 0.098  # recorded in settings.json
 
 
@@ -253,7 +253,7 @@ def test_a_missing_sec_user_agent_refuses_to_start(tmp_path: Path, monkeypatch: 
 
 
 def test_a_broker_without_a_news_source_refuses_to_start(tmp_path: Path) -> None:
-    strategy, agents = _strategy(tmp_path)
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=True))
     strategy.broker.news = None  # type: ignore[attr-defined]
 
     with pytest.raises(FatalStrategyError, match="news provider"):
@@ -263,7 +263,7 @@ def test_a_broker_without_a_news_source_refuses_to_start(tmp_path: Path) -> None
 
 
 def test_a_news_source_that_cannot_be_built_refuses_to_start_with_the_reason(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    strategy, _ = _strategy(tmp_path, mode=TradingMode.BACKTESTING)
+    strategy, _ = _strategy(tmp_path, settings=BullBearParams(research_news=True), mode=TradingMode.BACKTESTING)
 
     def missing() -> None:
         raise BrokerError("no news source available for backtesting: ALPACA_NEWS_API_KEY is not set")
@@ -388,7 +388,7 @@ def test_a_full_fill_is_logged_with_its_size_price_and_the_orders_size(tmp_path:
 
 
 def test_the_researchers_search_news_is_pinned_to_the_stock_whose_note_is_expected(tmp_path: Path) -> None:
-    strategy, agents = _strategy(tmp_path)
+    strategy, agents = _strategy(tmp_path, settings=BullBearParams(research_news=True))
     strategy.initialize()
     researcher = next(created for created in agents.created if created["name"] == "researcher")
     search = next(tool for tool in researcher["tools"] if tool.__name__ == "search_news")
