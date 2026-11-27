@@ -19,7 +19,7 @@ def test_the_defaults_are_the_specs_and_valid() -> None:
     assert params.max_book_size * params.stock_weight == pytest.approx(params.investable)  # a full book is fully invested
     assert (params.rebalance_time, params.rebalance_weekday, params.parking_symbol) == ("12:00", 1, "SHV")
     assert params.reentry_cooldown_reviews == 4
-    assert params.research_news is False
+    assert params.research_news is True
     assert params.research_tool_budget == 7  # counts only search_news: the statements and submit_note are exempt
     assert params.max_agent_steps == 60  # the worst normal run, a researcher using its 7 searches, both statements and its submit, needs a limit of 35; each rejected resubmission adds 3
     assert (params.note_max_chars, params.note_hard_max_chars) == (500, 800)  # the researcher is asked for 500, a note up to 800 is kept

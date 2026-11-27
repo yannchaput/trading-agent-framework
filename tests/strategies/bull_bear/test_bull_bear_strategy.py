@@ -200,10 +200,10 @@ def test_with_research_news_off_the_researcher_has_no_news_tool_and_no_news_sour
     assert strategy.parameters["research_news"] is False
 
 
-def test_research_news_is_off_by_default_and_recorded_in_the_parameters(tmp_path: Path) -> None:
+def test_research_news_is_on_by_default_and_recorded_in_the_parameters(tmp_path: Path) -> None:
     strategy, _ = _strategy(tmp_path)
 
-    assert strategy.settings.research_news is False and strategy.parameters["research_news"] is False
+    assert strategy.settings.research_news is True and strategy.parameters["research_news"] is True
     assert strategy.parameters["stock_weight"] == 0.098  # recorded in settings.json
 
 
