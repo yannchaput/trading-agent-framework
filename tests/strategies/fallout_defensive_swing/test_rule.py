@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, trading_days_since, updated_peak
+from trading_agent_framework.strategies.fallout_defensive_swing.rule import Action, Phase, SwingState, decide, trading_days_since
 
 TODAY = date(2026, 11, 30)
 FRIDAY = date(2026, 11, 20)
@@ -21,13 +21,12 @@ def _decide(state: SwingState, **overrides: Any) -> Action:
         "take_profit": D("0.01"),
         "buyback_dip": D("0.01"),
         "cash_reset_days": None,
-        "trail": None,
     }
     return decide(state, **{**arguments, **overrides})
 
 
-def _holding(*, last_sale: date | None = None, selling: bool = False, peak: D | None = None) -> SwingState:
-    return SwingState(phase=Phase.HOLDING, basis=D("768"), last_sale_session=last_sale, selling=selling, peak=peak)
+def _holding(*, last_sale: date | None = None, selling: bool = False) -> SwingState:
+    return SwingState(phase=Phase.HOLDING, basis=D("768"), last_sale_session=last_sale, selling=selling)
 
 
 def _cash(last_sale: date | None = TODAY - timedelta(days=1)) -> SwingState:
@@ -115,45 +114,3 @@ def test_holding_never_resets() -> None:
 
 def test_cash_without_a_sale_date_only_waits_for_the_dip() -> None:
     assert _decide(_cash(None), session=date(2027, 11, 26), cash_reset_days=5) is Action.HOLD
-
-
-TRAIL = D("0.01")
-TARGET_PCT = D("0.01")  # on a basis of 768 the target is 775.68
-
-
-def test_peak_stays_unset_below_the_target() -> None:
-    assert updated_peak(_holding(), D("775"), TARGET_PCT) is None
-
-
-def test_peak_is_set_at_the_target() -> None:
-    assert updated_peak(_holding(), D("776"), TARGET_PCT) == D("776")
-
-
-def test_peak_only_rises() -> None:
-    assert updated_peak(_holding(peak=D("780")), D("778"), TARGET_PCT) == D("780")
-    assert updated_peak(_holding(peak=D("780")), D("785"), TARGET_PCT) == D("785")
-
-
-def test_peak_is_untouched_in_cash() -> None:
-    assert updated_peak(_cash(), D("900"), TARGET_PCT) is None
-
-
-def test_armed_above_the_trail_holds() -> None:
-    assert _decide(_holding(peak=D("780")), value=D("773"), trail=TRAIL) is Action.HOLD  # trigger 772.20
-
-
-def test_armed_at_the_trail_sells() -> None:
-    assert _decide(_holding(peak=D("780")), value=D("772.20"), trail=TRAIL) is Action.SELL
-
-
-@pytest.mark.parametrize("value", [D("768"), D("760")])
-def test_armed_under_the_trail_but_not_above_the_basis_holds(value: D) -> None:
-    assert _decide(_holding(peak=D("776")), value=value, trail=D("0.02")) is Action.HOLD
-
-
-def test_not_armed_never_sells_with_a_trail() -> None:
-    assert _decide(_holding(), value=D("800"), trail=TRAIL) is Action.HOLD
-
-
-def test_armed_sale_still_waits_for_settlement() -> None:
-    assert _decide(_holding(last_sale=TODAY, peak=D("780")), value=D("770"), trail=TRAIL) is Action.HOLD

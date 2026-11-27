@@ -1,4 +1,4 @@
-"""The fallout_defensive_swing decision: a pure function of the saved state and the hour's numbers."""
+"""The fallout_defensive_swing decision: a pure function of the saved state and the tick's numbers."""
 
 from __future__ import annotations
 
@@ -36,7 +36,6 @@ class SwingState:
         sale_prices: Price each ETF was last sold at.
         last_sale_session: Market date of the last sale.
         selling: A sale was started and some of the mix is still held.
-        peak: Highest value after sell fees seen since the mix reached the sell target; None before that.
     """
 
     phase: Phase = Phase.FRESH
@@ -44,7 +43,6 @@ class SwingState:
     sale_prices: dict[str, Decimal] = field(default_factory=dict)
     last_sale_session: date | None = None
     selling: bool = False
-    peak: Decimal | None = None
 
 
 def _banks_closed(day: date) -> bool:
@@ -76,13 +74,6 @@ def sell_target(basis: Decimal, take_profit: Decimal) -> Decimal:
     return basis * (1 + take_profit)
 
 
-def updated_peak(state: SwingState, net_value: Decimal, take_profit: Decimal) -> Decimal | None:
-    """The peak after seeing `net_value` (after sell fees): starts at the sell target, then only rises while holding."""
-    if state.phase is not Phase.HOLDING or state.basis is None or net_value < sell_target(state.basis, take_profit):
-        return state.peak
-    return net_value if state.peak is None else max(state.peak, net_value)
-
-
 def mean_price_ratio(prices: Mapping[str, Decimal], sale_prices: Mapping[str, Decimal]) -> Decimal:
     """Mean over the sold ETFs of today's price divided by the price it was sold at."""
     return sum((prices[symbol] / sold for symbol, sold in sale_prices.items()), Decimal(0)) / len(sale_prices)
@@ -103,7 +94,6 @@ def decide(
     take_profit: Decimal,
     buyback_dip: Decimal,
     cash_reset_days: int | None,
-    trail: Decimal | None,
 ) -> Action:
     """Choose this tick's action.
 
@@ -113,10 +103,9 @@ def decide(
         sell_fees: Estimated fees of selling all of it now.
         prices: Last price of each ETF.
         session: Today's market date.
-        take_profit: Gain over the basis, net of sell fees, that triggers a sale (0.01 = 1%); with a `trail`, it starts it.
+        take_profit: Gain over the basis, net of sell fees, that triggers a sale (0.01 = 1%).
         buyback_dip: Mean fall below the sale prices that triggers the buy-back.
         cash_reset_days: Trading days in cash after which the mix is bought back whatever the price; None never does.
-        trail: Fall under the saved `peak` that sells, if the value is still above the basis; None sells at the target.
 
     Returns:
         BUY, RESET, SELL or HOLD.
@@ -128,11 +117,7 @@ def decide(
         if state.last_sale_session is not None and not _settled(state.last_sale_session, session):
             return Action.HOLD
         assert state.basis is not None  # every path into HOLDING sets it
-        net = value - sell_fees
-        if trail is None:
-            reached = net >= sell_target(state.basis, take_profit)
-        else:  # never under the basis: a fall past it waits (no stop-loss)
-            reached = state.peak is not None and net <= state.peak * (1 - trail) and net > state.basis
+        reached = value - sell_fees >= sell_target(state.basis, take_profit)
         return Action.SELL if state.selling or reached else Action.HOLD
     # the state file does not require the date in CASH: without one there is nothing to count from, so only the dip buys
     expired = cash_reset_days is not None and state.last_sale_session is not None and trading_days_since(state.last_sale_session, session) >= cash_reset_days

@@ -88,8 +88,8 @@ def _broker() -> FillingBroker:
     return FillingBroker(FakeClock(et(2026, 11, 30, 10, 30)))
 
 
-def _strategy(broker: FillingBroker, tmp_path: Path, state: SwingState | None = None, parameters: dict[str, Any] | None = None) -> FalloutDefensiveSwingStrategy:
-    strategy = FalloutDefensiveSwingStrategy(broker, mode=TradingMode.PAPER, project_root=tmp_path, fees=TradingFeeFactory(BrokerKind.TASTYTRADE), parameters=parameters)
+def _strategy(broker: FillingBroker, tmp_path: Path, state: SwingState | None = None) -> FalloutDefensiveSwingStrategy:
+    strategy = FalloutDefensiveSwingStrategy(broker, mode=TradingMode.PAPER, project_root=tmp_path, fees=TradingFeeFactory(BrokerKind.TASTYTRADE))
     strategy.initialize()
     if state is not None:
         strategy.store.save(state)
@@ -129,7 +129,7 @@ def test_first_tick_buys_the_mix_in_equal_parts_and_saves_the_basis(tmp_path: Pa
 def test_at_the_target_on_a_later_session_sells_everything(tmp_path: Path) -> None:
     broker = _broker()
     broker.hold("3.8", "7.6")  # worth 760 at 100 / 50: above 750 * 1.01 + fees
-    strategy = _strategy(broker, tmp_path, _holding(last_sale=YESTERDAY), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding(last_sale=YESTERDAY))
 
     strategy.on_trading_iteration()
 
@@ -143,7 +143,7 @@ def test_at_the_target_on_a_later_session_sells_everything(tmp_path: Path) -> No
 def test_no_sale_on_the_session_of_the_last_sale(tmp_path: Path) -> None:
     broker = _broker()
     broker.hold("3.8", "7.6")
-    strategy = _strategy(broker, tmp_path, _holding(last_sale=TODAY), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding(last_sale=TODAY))
 
     strategy.on_trading_iteration()
 
@@ -192,7 +192,7 @@ def test_one_sell_not_filled_stays_selling_and_the_next_session_sells_the_rest(t
     broker = _broker()
     broker.hold("3.8", "7.6")
     broker.stuck = {"XLU"}
-    strategy = _strategy(broker, tmp_path, _holding(), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding())
 
     strategy.on_trading_iteration()
 
@@ -215,7 +215,7 @@ def test_a_sale_that_fills_nothing_is_not_forced_later(tmp_path: Path) -> None:
     broker = _broker()
     broker.hold("3.8", "7.6")
     broker.stuck = {"XLP", "XLU"}
-    strategy = _strategy(broker, tmp_path, _holding(), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding())
 
     strategy.on_trading_iteration()
 
@@ -252,7 +252,7 @@ def test_a_sell_the_broker_refuses_still_records_the_leg_sold_and_the_rest_goes_
     broker = _broker()
     broker.hold("3.8", "7.6")
     broker.rejected = {"XLU"}
-    strategy = _strategy(broker, tmp_path, _holding(), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding())
 
     strategy.on_trading_iteration()
 
@@ -284,7 +284,7 @@ def test_a_cancel_that_fails_still_records_the_leg_sold(tmp_path: Path, caplog: 
     broker = _broker()
     broker.hold("3.8", "7.6")
     broker.stuck, broker.cancel_fails = {"XLU"}, True
-    strategy = _strategy(broker, tmp_path, _holding(), parameters={"trail": None})
+    strategy = _strategy(broker, tmp_path, _holding())
 
     strategy.on_trading_iteration()
 
@@ -361,54 +361,3 @@ def test_a_dip_buy_back_warns_of_no_reset(tmp_path: Path, caplog: pytest.LogCapt
 
     assert [o.side for o in broker.submitted] == [OrderSide.BUY, OrderSide.BUY]
     assert "Strategy resets" not in caplog.text
-
-
-def test_a_tick_at_the_target_arms_and_saves_the_peak_without_selling(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
-    caplog.set_level(logging.INFO)
-    broker = _broker()
-    broker.hold("3.8", "7.6")  # 760 against a basis of 750: past the 757.50 target
-    strategy = _strategy(broker, tmp_path, _holding(last_sale=YESTERDAY))
-
-    strategy.on_trading_iteration()
-
-    assert broker.submitted == []
-    peak = strategy.store.load().peak
-    assert peak is not None and D("759") < peak < D("760")  # 760 less the sell fees
-    assert "peak" in caplog.text
-
-
-def test_a_tick_under_the_trail_sells(tmp_path: Path) -> None:
-    broker = _broker()
-    broker.hold("3.8", "7.6")
-    held = SwingState(phase=Phase.HOLDING, basis=D(750), last_sale_session=YESTERDAY, peak=D(775))  # about 2% above 760
-    strategy = _strategy(broker, tmp_path, held)
-
-    strategy.on_trading_iteration()
-
-    assert [o.side for o in broker.submitted] == [OrderSide.SELL, OrderSide.SELL]
-
-
-def test_a_buy_clears_the_peak(tmp_path: Path) -> None:
-    broker = _broker()
-    broker.last_prices = {"XLP": D(99), "XLU": D("49.5")}
-    cash = SwingState(phase=Phase.CASH, sale_prices={"XLP": D(100), "XLU": D(50)}, last_sale_session=YESTERDAY, peak=D(775))
-    strategy = _strategy(broker, tmp_path, cash)
-
-    strategy.on_trading_iteration()
-
-    assert strategy.store.load().phase is Phase.HOLDING
-    assert strategy.store.load().peak is None
-
-
-def test_an_adopted_mix_does_not_keep_the_previous_cycles_peak(tmp_path: Path) -> None:
-    broker = _broker()
-    broker.hold("3.8", "7.6")  # bought back by a late fill or by hand: worth 760
-    cash = SwingState(phase=Phase.CASH, sale_prices={"XLP": D(103), "XLU": D(52)}, last_sale_session=YESTERDAY, peak=D(800))
-    strategy = _strategy(broker, tmp_path, cash)
-
-    strategy.on_trading_iteration()
-    broker.last_prices = {"XLP": D("100.3"), "XLU": D("50.15")}  # +0.3%: under the target, but far under the old peak
-    strategy.on_trading_iteration()
-
-    assert broker.submitted == []
-    assert strategy.store.load().peak is None

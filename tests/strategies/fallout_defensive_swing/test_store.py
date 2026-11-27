@@ -9,7 +9,7 @@ from trading_agent_framework.strategies.fallout_defensive_swing.rule import Phas
 from trading_agent_framework.strategies.fallout_defensive_swing.store import StateStore
 from trading_agent_framework.utils.log import ColorLogger
 
-SAVED = SwingState(phase=Phase.HOLDING, basis=D("768.00"), sale_prices={"XLP": D("92.28")}, last_sale_session=date(2026, 11, 4), selling=True, peak=D("780.5"))
+SAVED = SwingState(phase=Phase.HOLDING, basis=D("768.00"), sale_prices={"XLP": D("92.28")}, last_sale_session=date(2026, 11, 4), selling=True)
 
 
 def _store(path: Path, *, fresh: bool = False) -> StateStore:
@@ -53,10 +53,3 @@ def test_a_fresh_store_ignores_an_existing_file(tmp_path: Path) -> None:
     _store(path).save(SAVED)
 
     assert _store(path, fresh=True).load() == SwingState()
-
-
-def test_a_version_1_file_loads_without_a_peak(tmp_path: Path) -> None:
-    path = tmp_path / "state.json"
-    path.write_text('{"version": 1, "phase": "holding", "basis": "768", "sale_prices": {}, "last_sale_session": null, "selling": false}')
-
-    assert _store(path).load() == SwingState(phase=Phase.HOLDING, basis=D("768"))
