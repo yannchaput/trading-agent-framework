@@ -8,7 +8,14 @@ Run from the repo root: uv run python scripts/bull_bear/score_variants.py [--sel
 import math
 import statistics
 import sys
+from bisect import bisect_left
+from datetime import date, timedelta
 from itertools import pairwise
+from pathlib import Path
+from typing import cast
+
+import pandas as pd
+from rank_only_stress import CLOSES, SLEEVE, TOP_N, WEIGHTS, WINDOWS, load_data, max_drawdown, simulate
 
 from trading_agent_framework.strategies.common.scoring import (
     MomentumRow,
@@ -17,10 +24,18 @@ from trading_agent_framework.strategies.common.scoring import (
     momentum_score,
     score_stock,
 )
+from trading_agent_framework.strategies.common.universe_history import month_universe
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 
 VARIANTS = ("today", "vol_scaled", "residual", "high_52w", "r3_skip")
 RESIDUAL_SESSIONS = 36 * 21 + 1
+LONG_HISTORY = 800  # sessions read per stock: residual momentum needs RESIDUAL_SESSIONS
+DEV = (date(2005, 1, 1), date(2015, 12, 31))
+HOLDOUT = (date(2016, 1, 1), date(2026, 11, 24))
+# The cached bars start in 2003-06, so no stock has RESIDUAL_SESSIONS before 2006-06-02: residual and its own
+# `today` book start here in development.
+RESIDUAL_DEV_START = date(2006, 7, 1)
+OUT = Path("cache/stress_2005/score_variants_equity.csv")
 
 
 def residual_score(closes: list[float], spy: list[float]) -> float | None:
@@ -82,6 +97,100 @@ def advance_cooldown(cooldown: dict[str, int], sold: set[str], reviews: int = 4)
     return left | dict.fromkeys(sold, reviews)
 
 
+def ranked(day: date, held: set[str], listed: list[str], frames: dict[str, pd.DataFrame], sessions: list[date], variant: str) -> list[str]:
+    """The listed symbols today's filters keep for a trade on `day`, best first on the variant's score.
+
+    The filters, the held volatility exemption and the no-look-ahead slicing are those of
+    `rank_only_stress.ranked_symbols`; only the sort key changes. Only sessions strictly before `day` are read.
+    """
+    previous = sessions[bisect_left(sessions, day) - 1]
+    exempt = {**CONFIG, "max_volatility": math.inf}
+    spy = frames["SPY"]["close"].to_dict()
+    keys = {}
+    for symbol in listed:
+        frame = frames.get(symbol)
+        if frame is None:
+            continue
+        end = bisect_left(frame.index, day)
+        if end == 0 or frame.index[end - 1] != previous:
+            continue
+        past = frame.iloc[max(0, end - LONG_HISTORY) : end]
+        recent = past.iloc[-CLOSES:]
+        row = score_stock(
+            symbol,
+            recent["close"].tolist(),
+            recent["volume"].tolist(),
+            exempt if symbol in held else CONFIG,
+            traded_closes=recent["traded_close"].tolist(),
+            traded_volumes=recent["traded_volume"].tolist(),
+        )
+        if row is None:
+            continue
+        both = [(close, spy[d]) for d, close in zip(past.index, past["close"].tolist(), strict=True) if d in spy]
+        value = variant_score(variant, row, [c for c, _ in both], [m for _, m in both])
+        if value is not None:
+            keys[symbol] = sort_key(value, row.score)
+    return sorted(keys, key=keys.__getitem__)
+
+
+def window_stats(equity: pd.Series) -> dict[str, float]:
+    """CAGR, daily Sharpe (no risk-free rate), max drawdown, and the worst fall inside each stress window covered."""
+    first, last = cast("date", equity.index[0]), cast("date", equity.index[-1])
+    years = (last - first).days / 365.25
+    daily = equity.pct_change().dropna()
+    stats = {
+        "cagr": float((equity.iloc[-1] / equity.iloc[0]) ** (1 / years) - 1),
+        "sharpe": float(daily.mean() / daily.std() * math.sqrt(252)),
+        "max_dd": max_drawdown(equity)[0],
+    }
+    for label, (start, stop) in WINDOWS.items():
+        part = cast("pd.Series", equity[(equity.index >= start) & (equity.index <= stop)])
+        if len(part):
+            stats[label] = max_drawdown(part)[0]
+    return stats
+
+
+def passes(stats: dict[str, float], base: dict[str, float]) -> bool:
+    """The user's rule: a higher CAGR than today's and a Sharpe no lower."""
+    return stats["cagr"] > base["cagr"] and stats["sharpe"] >= base["sharpe"]
+
+
+def run(variant: str, first: date, last: date, data: tuple) -> tuple[pd.Series, dict[str, float]]:
+    """A fresh book from `first` to `last` ranked on `variant`: its equity and its stats."""
+    history, frames, sessions = data
+    window = [day for day in sessions if first <= day <= last]
+    books: list[list[str]] = []
+    counts: list[int] = []
+
+    def picks(day: date, held: set[str]) -> list[str]:
+        order = ranked(day, held, month_universe(history, day, exclude={SLEEVE}), frames, sessions, variant)
+        counts.append(len(order))
+        books.append(order[:TOP_N])
+        return books[-1]
+
+    equity = simulate(frames, window, picks, WEIGHTS[0])
+    stats = window_stats(equity)
+    stats["ranked"] = sum(counts) / len(counts)
+    stats["turnover"] = statistics.mean(len(set(now) - set(before)) / TOP_N for before, now in pairwise(books))
+    return equity, stats
+
+
+def table(title: str, results: dict[str, dict[str, float]]) -> None:
+    """Print one markdown row of stats per book."""
+    columns = list(dict.fromkeys(key for stats in results.values() for key in stats))
+    print(f"\n### {title}\n\n| Book | {' | '.join(columns)} |")
+    print("|" + "---|" * (len(columns) + 1))
+    for name, stats in results.items():
+        cells = []
+        for key in columns:
+            value = stats.get(key)
+            if value is None:
+                cells.append("-")
+            else:
+                cells.append(f"{value:.2f}" if key == "sharpe" else f"{value:.0f}" if key == "ranked" else f"{value:.1%}")
+        print(f"| {name} | {' | '.join(cells)} |", flush=True)
+
+
 def _from_months(returns: list[float]) -> list[float]:
     """Daily closes whose every 21-session step compounds to the given monthly return."""
     closes = [100.0]
@@ -129,12 +238,63 @@ def self_check() -> None:
     picks = book_picks(names, {"X", "Y"}, {"Z": 1})
     assert picks == [*names[1:10], "X"], picks
     assert advance_cooldown({"Z": 1, "W": 3}, {"Y"}) == {"W": 2, "Y": 4}
+    assert passes({"cagr": 0.2, "sharpe": 1.0}, {"cagr": 0.1, "sharpe": 1.0})
+    assert not passes({"cagr": 0.2, "sharpe": 0.9}, {"cagr": 0.1, "sharpe": 1.0})
+    assert not passes({"cagr": 0.1, "sharpe": 1.5}, {"cagr": 0.1, "sharpe": 1.0})
+
+    days = [date(2023, 1, 1) + timedelta(days=i) for i in range(301)]
+
+    def stock(drift: float, on: list[date]) -> pd.DataFrame:
+        close = [20.0 * (1 + drift) ** i * (1.001 if i % 2 else 1.0) for i in range(len(on))]
+        return pd.DataFrame({"close": close, "volume": 5e6, "traded_close": close, "traded_volume": 5e6}, index=on)
+
+    frames = {"UP": stock(0.002, days), "FLAT": stock(0.0005, days), "HALT": stock(0.003, days[:-2]), "SPY": stock(0.001, days)}
+    frames["UP"].loc[days[-1], ["close", "traded_close"]] = 0.01  # the trade day's bar must not be read
+    listed = ["FLAT", "UP", "HALT"]
+    assert ranked(days[-1], set(), listed, frames, days, "today") == ["UP", "FLAT"]  # HALT: no previous-session bar
+    assert ranked(days[-1], set(), listed, frames, days, "high_52w") == ["UP", "FLAT"]
+    assert ranked(days[-1], set(), listed, frames, days, "residual") == []  # under 757 sessions
     print("self-check ok")
 
 
 def main() -> None:
-    """Run both windows and print the verdicts."""
-    raise NotImplementedError
+    """Run development for every variant, then the holdout once for those that passed, and print the verdicts."""
+    self_check()
+    data = load_data()
+    curves: dict[str, pd.Series] = {}
+    dev: dict[str, dict[str, float]] = {}
+    passed = []
+    for variant in VARIANTS:
+        first = RESIDUAL_DEV_START if variant == "residual" else DEV[0]
+        curves[f"dev {variant}"], dev[variant] = run(variant, first, DEV[1], data)
+        base = dev["today"]
+        if variant == "residual":
+            curves["dev today from 2006-07"], base = run("today", first, DEV[1], data)
+            dev["today from 2006-07"] = base
+        if variant != "today" and passes(dev[variant], base):
+            passed.append(variant)
+        table(f"Development, after {variant}", dev)
+    print(f"\nPassed development: {passed or 'none'}")
+    stress = pd.read_csv("cache/stress_2005/equity.csv", index_col=0)["0.098"]
+    stress.index = pd.Index([date.fromisoformat(str(day)) for day in stress.index])
+    stress = cast("pd.Series", stress[(stress.index >= DEV[0]) & (stress.index <= DEV[1])])
+    expected = window_stats(stress)["cagr"]
+    print(f"Sanity: today dev CAGR {dev['today']['cagr']:.2%}, stress test curve {expected:.2%}")
+    assert abs(dev["today"]["cagr"] - expected) < 0.01, "today does not reproduce the stress test's book"
+    holdout: dict[str, dict[str, float]] = {}
+    if passed:
+        for variant in ["today", *passed]:
+            curves[f"holdout {variant}"], holdout[variant] = run(variant, *HOLDOUT, data)
+        table("Holdout 2016-2026", holdout)
+    for variant in VARIANTS[1:]:
+        if variant not in passed:
+            verdict = "FAILED development"
+        elif passes(holdout[variant], holdout["today"]):
+            verdict = "KEPT"
+        else:
+            verdict = "FAILED holdout"
+        print(f"{variant}: {verdict}")
+    pd.DataFrame(curves).sort_index().to_csv(OUT)
 
 
 if __name__ == "__main__":
