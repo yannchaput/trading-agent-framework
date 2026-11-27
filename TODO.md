@@ -55,13 +55,13 @@
 * ~~Add a column with slippage and fees in dashboard~~
 * ~~Track P&L as an indicator and display it in the trade chart. Compute should happen at the dashboard level to track entry point (buy)~~
 * ~~Review  Agent table pivot format to be consistent with all strategies~~
-* Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts
+* ~~Dashboard: Live/Paper tabs list Alpaca strategies only; add Tastytrade accounts~~
 * ~~Draw SPY daily P&L in the live/paper P&L plot~~
 
 #### News fetch
 
-* Update the news_search tool: all news earlier than April 2026 are fetched from GEDLT cache. After it's Alpaca.
-* Add a warning in the logs where no news are returned
+* ~~Update the news_search tool: all news earlier than April 2026 are fetched from GEDLT cache. After it's Alpaca.~~
+* ~~Add a warning in the logs where no news are returned~~
 
 
 ### Cross sectional momentum
@@ -73,7 +73,20 @@
 
 ### Bull Bear
 
-* Test with news off
+From the 2026-11-24 assessment (docs/), ranked by priority:
+
+1. ~~Leakage check, no GPU: split the 5Y and COVID judge-vs-top-10 gap and the bull conviction spread before/after Qwen 3.8's knowledge edge (~2025-04). Edge only before it = memory, not skill.~~ => No sign of memory: no edge in 2020-2023 (COVID, 2022), edge back in 2026 after the cutoff; the 2Y pre/post gap is one bad stretch (2025-05..12). Item 2 still needed for 2024-09..2025-04.
+2. Anonymized replay: `anonymize` flag on the fact sheet (ticker -> "Stock 07", no `company`, keep sector/industry so the model does not guess), judge + bull + bear on ~30 pre-2025 reviews, with a rerun arm. Keep/drop rule fixed first (e.g. keeps >= 70% of the judge-minus-top-10 gap).
+3. Paper run after the model's cutoff (>= 3 months): score the judge against the rank-only top-10 shadow book rebuilt from `reviews.jsonl` (no code: ranks are logged). The only truly out-of-sample proof.
+4. Survivorship-free universe: rebuild the point-in-time history with delisted names from EODHD and measure the residual bias on the no-LLM book.
+5. Long stress test of the rank-only engine (no LLM, 2005-2026: 2008, 2015-16, 2018 Q4, 2022): worst drawdown of the base book, to know the real risk before live money.
+6. Score variants on the no-LLM book (shared with cross_momentum): vol-scaled or residual momentum, 52-week-high proximity, skip the last month in R(3). Rule fixed first, one untouched holdout window.
+7. Average 2-3 bull/bear ratings per stock (majority vote), the one idea left open by the judge-signal study; GPU replay with a rule fixed first.
+8. Point-in-time sector: SEC SIC code instead of yfinance's sector of today.
+9. Move the run history out of `bull_bear/CLAUDE.md` (31 KB loaded every session) into `docs/`, keep the rules.
+10. Move the order-logging hooks copied in bull_bear and sector_pods to `strategies/common`.
+
+* ~~Test with news off~~
 * ~~Refactor bull bear into Langgraph like "pod_sectors"~~
 * ~~Add the "character count" guardrails before submitting a note.~~
 * ~~Merge the trim utilities of common in handoff with the one of bull-bear in "pipeline".~~
@@ -86,8 +99,8 @@
 
 ### Citadel Pod Sector
 
-* Simplify Langgraph code (cf Ray Dalio)
-* Log the AgentRunResult
+* ~~Simplify Langgraph code (cf Ray Dalio)~~
+* ~~Log the AgentRunResult~~
 * ~~Run the fist baseline (on 1 month)~~
 
 ### Ray Dalio
