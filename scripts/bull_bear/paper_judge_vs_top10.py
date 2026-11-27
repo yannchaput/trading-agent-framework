@@ -57,12 +57,15 @@ def main():
         if len(rows) < 2:
             continue
         diffs = [j - t for _, j, t in rows]
+        mean_gap = statistics.mean(diffs)
         t_stat = newey_west_t(diffs, lags=max(0, math.ceil(horizon / 5) - 1))
-        print(f"  mean gap {statistics.mean(diffs):+.2%}  t {t_stat:+.2f}" if t_stat is not None else f"  mean gap {statistics.mean(diffs):+.2%}  t n/a")
+        t_text = "n/a" if t_stat is None else f"{t_stat:+.2f}"
+        print(f"  mean gap {mean_gap:+.2%}  t {t_text}")
         if horizon == 5:
-            judge_c, top_c = math.prod(1 + j for _, j, _ in rows) - 1, math.prod(1 + t for _, _, t in rows) - 1
+            judge_c = math.prod(1 + j for _, j, _ in rows) - 1
+            top_c = math.prod(1 + t for _, _, t in rows) - 1
             print(f"  compounded: judge {judge_c:+.2%}  top10 {top_c:+.2%}")
-            passes = statistics.mean(diffs) > 0 and t_stat is not None and t_stat >= 1 and judge_c > top_c
+            passes = mean_gap > 0 and t_stat is not None and t_stat >= 1 and judge_c > top_c
             status = "FINAL" if len(rows) >= MIN_REVIEWS else f"INTERIM ({len(rows)}/{MIN_REVIEWS} reviews, not a verdict)"
             print(f"  rule: {'keep judge' if passes else 'rank-only'}  [{status}]")
 

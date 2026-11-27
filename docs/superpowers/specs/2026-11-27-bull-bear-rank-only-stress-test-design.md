@@ -63,11 +63,13 @@ download batching and resume. Yahoo rate limits or more than 1% absent symbols s
   risk for less return, even with a survivor-biased candidate pool.
 - French's top momentum decile (delisted names included, different rules) fell -56% to -58%: the 10-stock book
   fell much further than a diversified momentum portfolio.
-- Survivorship: only 32-37% of today's pool has bars in 2005-2009. Companies that later disappeared are missing, so
-  the real figures are probably worse (not measured).
-- Checks: a separate cost-free weekly recompute from `books.csv` (stocks only) gives -78.5% over the full period.
-  Inside 2008-06..2011-10 it gives -73.8% (trough 2011-08-09) against -78.9%; the cause of that gap was not
-  isolated (weekly marks, no SHV, no costs).
+- Survivorship: the candidate pool holds only today's listings. Only 32-37% of it has bars in 2005-2009, mostly
+  later listings, so that figure does not count the companies that died. How much, and in which direction, their
+  absence moves this book is not measured (TODO item 4). The "optimistic" wording of the rule above was an
+  assumption; a rejection should not be read as a floor.
+- Checks: a separate cost-free weekly recompute from `books.csv` (stocks only) gives -78.5%, over the full period
+  and inside 2008-06..2011-10 alike (trough 2011-10-04). The independent review's daily recompute, without costs or
+  SHV, gives -78.1% with the simulation's dates. It found no bad data in the names held over 2008-06..2011-10.
 - Data: the largest held one-day moves (below) are mostly biotech names and were not checked against a news source.
   The 2192 non-positive price rows are in CBIO and RCAT, never held.
 - Cross-check with the 2026-11-12 rebuilt book (-46.4% over 2020-01..2021-05, a different book): -47.9% here.
