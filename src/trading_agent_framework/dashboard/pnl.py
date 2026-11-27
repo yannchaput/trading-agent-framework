@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any
 
@@ -131,10 +131,12 @@ class AccountPnl:
 
     `unrealized` is a level (the open positions' P&L at the close) and `realized` that day's flow, so neither is the
     day's P&L: `change` is `realized` plus the move of `unrealized` since the previous day (from 0 before the first fill).
-    `unrealized_now` is on the replay's average cost, the basis of the realized P&L; `broker_unrealized` is Alpaca's
-    own figure (it re-bases overnight positions to compressed FIFO, so the two differ after a partial sale).
+    `unrealized_now` is on the replay's average cost, the basis of the realized P&L; `broker_unrealized` is on
+    the broker's cost basis: Alpaca's own figure (it re-bases overnight positions to compressed FIFO, so the two differ
+    after a partial sale) or, for Tastytrade, which sends none, the move from its average open price (no fees in it).
     `mismatches`: `(symbol, replayed shares, broker shares)` where the fills do not explain the positions;
-    `unmatched_sales`: shares sold with no held shares to cost them against; `unpriced`: held symbols with no close.
+    `unmatched_sales`: shares sold with no held shares to cost them against; `unpriced`: held symbols with no close;
+    `ignored`: the broker's cash entries that are in none of these figures, as text.
     """
 
     days: list[dict[str, Any]]
@@ -145,6 +147,7 @@ class AccountPnl:
     mismatches: list[tuple[str, float, float]]
     unmatched_sales: dict[str, float]
     unpriced: list[str]
+    ignored: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,4 +1,4 @@
-"""A strategy's Alpaca account for the Live and Paper tabs: env-file discovery, credentials and read-only fetches.
+"""A strategy's Alpaca or Tastytrade account for the Live and Paper tabs: env-file discovery, credentials and read-only fetches.
 
 Streamlit-free. Keys are read with `dotenv_values` -- never `load_dotenv` -- so one strategy's keys never reach
 `os.environ` and switching strategies cannot mix accounts.
@@ -7,6 +7,8 @@ Streamlit-free. Keys are read with `dotenv_values` -- never `load_dotenv` -- so 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import closing
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
@@ -17,7 +19,9 @@ from alpaca.data.timeframe import TimeFrame
 from dotenv import dotenv_values
 
 from trading_agent_framework.brokers.alpaca.client import build_stock_data_client, build_trading_client
-from trading_agent_framework.config.env import AlpacaCredentials, find_project_root
+from trading_agent_framework.brokers.tastytrade.client import TastytradeSession
+from trading_agent_framework.config.env import AlpacaCredentials, BrokerKind, BrokerSettings, TastytradeSettings, find_project_root
+from trading_agent_framework.dashboard import tastytrade_reader
 from trading_agent_framework.dashboard.pnl import AccountPnl, BrokerPosition, Dividend, Fee, Fill, ReturnBases, daily_account_pnl, market_day
 from trading_agent_framework.strategies.common.yahoo_daily_bars import HISTORY_BARS, YahooDailyBars
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -41,13 +45,14 @@ def _env_values(path: Path) -> dict[str, str]:
 
 
 _DISPLAY_VALUES = frozenset({"true", "1", "yes"})
+_DASHBOARD_BROKERS = frozenset({BrokerKind.ALPACA, BrokerKind.TASTYTRADE})
 
 
 def strategies_for_mode(mode: str, env_dir: Path) -> list[str]:
-    """The strategies trading on Alpaca that the dashboard shows.
+    """The strategies trading on Alpaca or Tastytrade that the dashboard shows.
 
-    A strategy qualifies when it has an `env_dir/.env.<strategy>.<mode>` file trading on Alpaca (no `BROKER` means alpaca)
-    and opted in with `DASHBOARD_DISPLAY=true` (missing means hidden: a retired strategy keeps its file off the picker).
+    A strategy qualifies when it has an `env_dir/.env.<strategy>.<mode>` file trading on one of them (no `BROKER` means
+    alpaca) and opted in with `DASHBOARD_DISPLAY=true` (missing means hidden: a retired strategy keeps its file off the picker).
     """
     if not env_dir.is_dir():
         return []
@@ -57,23 +62,42 @@ def strategies_for_mode(mode: str, env_dir: Path) -> list[str]:
         values = _env_values(path)
         broker = (values.get("BROKER") or "alpaca").strip().lower()
         displayed = values.get("DASHBOARD_DISPLAY", "").strip().lower() in _DISPLAY_VALUES
-        if broker == "alpaca" and displayed:
+        if broker in _DASHBOARD_BROKERS and displayed:
             names.append(path.name[len(prefix) : -len(suffix)])
     return sorted(names)
 
 
-def load_account_credentials(strategy: str, mode: str, env_dir: Path) -> tuple[AlpacaCredentials, AlpacaCredentials]:
-    """The trading and the market-data keys of `env_dir/.env.<strategy>.<mode>`."""
+def _strategy_env(strategy: str, mode: str, env_dir: Path) -> dict[str, str]:
+    """The values of `env_dir/.env.<strategy>.<mode>`."""
     path = env_dir / f".env.{strategy}.{mode}"
     if not path.is_file():
         raise ConfigurationError(f"{path} not found")
-    values = _env_values(path)
+    return _env_values(path)
+
+
+def load_account_credentials(strategy: str, mode: str, env_dir: Path) -> tuple[AlpacaCredentials, AlpacaCredentials]:
+    """The Alpaca trading and market-data keys of `env_dir/.env.<strategy>.<mode>`."""
+    values = _strategy_env(strategy, mode, env_dir)
     return AlpacaCredentials.for_trading(env=values), AlpacaCredentials.for_data(env=values)
 
 
-def account_is_paper(strategy: str, mode: str, env_dir: Path) -> bool:
-    """Whether the strategy's trading keys hit Alpaca's paper endpoint (`BROKER_API_IS_PAPER`), whatever its mode."""
-    return load_account_credentials(strategy, mode, env_dir)[0].is_paper
+def _tastytrade_settings(values: dict[str, str]) -> TastytradeSettings:
+    """The file's Tastytrade keys and account."""
+    return TastytradeSettings.from_env(BrokerSettings.from_env(values).is_paper, env=values)
+
+
+def account_settings(strategy: str, mode: str, env_dir: Path) -> BrokerSettings:
+    """The broker the strategy trades on, and whether its keys hit that broker's paper (Tastytrade: sandbox) endpoint, whatever its mode.
+
+    Raises `ConfigurationError`, naming the variable, when that broker's keys are missing.
+    """
+    values = _strategy_env(strategy, mode, env_dir)
+    settings = BrokerSettings.from_env(values)
+    if settings.kind == BrokerKind.TASTYTRADE:
+        _tastytrade_settings(values)
+    else:
+        AlpacaCredentials.for_trading(env=values)
+    return settings
 
 
 PAGE_SIZE = 100  # Alpaca's maximum for /account/activities
@@ -215,8 +239,13 @@ def to_broker_position(position: Position) -> BrokerPosition:
 
 def load_account_pnl(trading: AccountTradingClient, data: AccountDataClient, today: date) -> AccountPnl:
     """The account's daily P&L: its fills and fees, the daily closes of every symbol it traded, its positions now."""
-    fills, fees, dividends = fetch_activities(trading)
     positions = [to_broker_position(p) for p in trading.get_all_positions()]
+    return _replay(fetch_activities(trading), positions, data, today)
+
+
+def _replay(activities: tuple[list[Fill], list[Fee], list[Dividend]], positions: list[BrokerPosition], data: AccountDataClient, today: date) -> AccountPnl:
+    """Replay a broker's activities against the daily closes of every symbol it traded."""
+    fills, fees, dividends = activities
     closes: dict[str, dict[date, float]] = {}
     if fills:
         first_day = min(market_day(f.time) for f in fills)
@@ -230,7 +259,15 @@ def load_return_bases(trading: AccountTradingClient, benchmark: BenchmarkBars, f
 
 
 def load_strategy_pnl(strategy: str, mode: str, env_dir: Path, today: date) -> AccountPnl:
-    """The daily P&L of the strategy's Alpaca account, fetched now."""
+    """The daily P&L of the strategy's broker account, fetched now. The daily closes are Alpaca's for every broker."""
+    values = _strategy_env(strategy, mode, env_dir)
+    if BrokerSettings.from_env(values).kind == BrokerKind.TASTYTRADE:
+        data = cast(AccountDataClient, build_stock_data_client(AlpacaCredentials.for_data(env=values)))
+        settings = _tastytrade_settings(values)
+        with closing(TastytradeSession(settings)) as session:
+            activities, ignored = tastytrade_reader.fetch_transactions(session, settings.account_number)
+            pnl = _replay(activities, tastytrade_reader.fetch_positions(session, settings.account_number), data, today)
+        return replace(pnl, ignored=ignored)
     trading_creds, data_creds = load_account_credentials(strategy, mode, env_dir)
     trading = cast(AccountTradingClient, build_trading_client(trading_creds))
     data = cast(AccountDataClient, build_stock_data_client(data_creds))
@@ -239,8 +276,14 @@ def load_strategy_pnl(strategy: str, mode: str, env_dir: Path, today: date) -> A
 
 def load_strategy_return_bases(strategy: str, mode: str, env_dir: Path, first_day: date, today: date) -> ReturnBases:
     """The equity and benchmark closes the strategy's daily % are measured against, fetched now."""
+    # One Yahoo bar per session: enough of them to reach back a week before the first day.
+    benchmark = YahooDailyBars(history=max(HISTORY_BARS, (today - first_day).days + _BASE_DAYS))
+    values = _strategy_env(strategy, mode, env_dir)
+    if BrokerSettings.from_env(values).kind == BrokerKind.TASTYTRADE:
+        settings = _tastytrade_settings(values)
+        with closing(TastytradeSession(settings)) as session:
+            equity = tastytrade_reader.fetch_equity_snapshots(session, settings.account_number, first_day - timedelta(days=_BASE_DAYS), today)
+        return ReturnBases(equity=equity, benchmark=fetch_benchmark_closes(benchmark, first_day, today))
     trading_creds, _ = load_account_credentials(strategy, mode, env_dir)
     trading = cast(AccountTradingClient, build_trading_client(trading_creds))
-    # One Yahoo bar per session: enough of them to reach back a week before the first day.
-    history = max(HISTORY_BARS, (today - first_day).days + _BASE_DAYS)
-    return load_return_bases(trading, YahooDailyBars(history=history), first_day, today)
+    return load_return_bases(trading, benchmark, first_day, today)
