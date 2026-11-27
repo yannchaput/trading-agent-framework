@@ -398,3 +398,17 @@ def test_a_buy_clears_the_peak(tmp_path: Path) -> None:
 
     assert strategy.store.load().phase is Phase.HOLDING
     assert strategy.store.load().peak is None
+
+
+def test_an_adopted_mix_does_not_keep_the_previous_cycles_peak(tmp_path: Path) -> None:
+    broker = _broker()
+    broker.hold("3.8", "7.6")  # bought back by a late fill or by hand: worth 760
+    cash = SwingState(phase=Phase.CASH, sale_prices={"XLP": D(103), "XLU": D(52)}, last_sale_session=YESTERDAY, peak=D(800))
+    strategy = _strategy(broker, tmp_path, cash)
+
+    strategy.on_trading_iteration()
+    broker.last_prices = {"XLP": D("100.3"), "XLU": D("50.15")}  # +0.3%: under the target, but far under the old peak
+    strategy.on_trading_iteration()
+
+    assert broker.submitted == []
+    assert strategy.store.load().peak is None

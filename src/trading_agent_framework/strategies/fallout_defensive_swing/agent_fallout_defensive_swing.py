@@ -138,7 +138,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         state = self.store.load()
         if held and state.phase is not Phase.HOLDING:
             self.log_warning(f"the account holds the mix but the state says {state.phase}: adopting it with a basis of {value:.2f}")
-            state = replace(state, phase=Phase.HOLDING, basis=value, selling=False)
+            state = replace(state, phase=Phase.HOLDING, basis=value, selling=False, peak=None)  # a new cycle: an old high would sell it at once
         elif not held and state.phase is Phase.HOLDING:
             # Sold outside this tick, perhaps today: dated today so that nothing bought now is sold before tomorrow.
             self.log_warning("the state says holding but the account has none of the mix: adopting cash, buy-back below today's prices")
