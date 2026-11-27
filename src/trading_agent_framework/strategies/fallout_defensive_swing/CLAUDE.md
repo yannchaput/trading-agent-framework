@@ -2,7 +2,7 @@
 
 > Nested `CLAUDE.md`; project-wide rules are in the root `CLAUDE.md`. Conditions of applicability: `README.md`. Design: `docs/superpowers/specs/2026-11-26-fallout-defensive-swing-design.md`.
 
-- `rule.py` -- pure `decide(state, ...) -> Action`; `store.py` -- the `SwingState` JSON (`data/fallout_defensive_swing_state_<mode>.json`); `agent_fallout_defensive_swing.py` -- the hourly tick and the orders.
+- `rule.py` -- pure `decide(state, ...) -> Action`; `store.py` -- the `SwingState` JSON (`data/fallout_defensive_swing_state_<mode>.json`); `agent_fallout_defensive_swing.py` -- the 30-minute tick and the orders.
 - **Settlement guard:** no sale until the last sale has settled: a later session, with at least one day since the sale on which banks are open (Columbus Day and Veterans Day trade but do not settle). It is checked before `selling`, so a retried sale obeys it too. Never remove it: it prevents a good-faith violation on a cash account.
 - **Cash reset:** in cash, `decide` returns `RESET` (a buy, with a warning naming the days in cash) and the mix is bought back at market once `cash_reset_days` (10; `None` turns it off) trading days have passed since the last sale, dip or not; a dip still buys earlier. Days are weekdays after the sale session (`rule.trading_days_since`), so a holiday counts and the reset can come a day early. Added because a backtest from 2024-09 sold on 2025-04-22 and never bought again. 10 beat 5 in backtests ending 2026-11-25, on weak evidence: the three start dates make the same trades from 2025-07-18, and one 188-session hold explains much of the gap.
 - **The saved state is corrected from the account on every tick.** Mix held but phase not holding: adopt it, basis = market value. Phase holding but nothing held: cash, sale prices = today's, `last_sale_session` = today (the sale may have been today, so nothing bought now is sold before tomorrow).
@@ -13,3 +13,4 @@
 - Known limit: if the account stream reports nothing, the order stays open in the tracker and every tick waits; a restart recovers (the tick adopts the account).
 - Known limit: if one leg is sold by hand while holding, the basis still covers both, so the target is not reached; sell the other leg by hand too.
 - **Do not tune the thresholds to a backtest.** +1% / 1% dip were picked on 3-25 November 2026; no stop-loss because a 2% stop did worse in every study run.
+- **No trailing exit (tested 2026-11-27, rejected):** selling on a 0.5-2% fall under the peak after +1% returned less than selling at +1% in all four windows ending 2026-11-25 (fewer sales, holds up to ~250 days). Ticks went from 60 to 30 minutes then; today's rule did a little better at 30 (weak evidence: overlapping windows).

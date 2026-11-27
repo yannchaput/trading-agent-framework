@@ -100,10 +100,10 @@ def _holding(*, last_sale: date | None = None) -> SwingState:
     return SwingState(phase=Phase.HOLDING, basis=D(750), last_sale_session=last_sale)
 
 
-def test_initialize_ticks_hourly_from_1030(tmp_path: Path) -> None:
+def test_initialize_ticks_every_30_minutes_from_1030(tmp_path: Path) -> None:
     strategy = _strategy(_broker(), tmp_path)
 
-    assert strategy.sleeptime == "60M"
+    assert strategy.sleeptime == "30M"
     assert f"{strategy.iteration_start_time:%H:%M}" == "10:30"
     assert strategy.state_file().name == "fallout_defensive_swing_state_paper.json"
 

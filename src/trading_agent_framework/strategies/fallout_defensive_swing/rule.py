@@ -1,4 +1,4 @@
-"""The fallout_defensive_swing decision: a pure function of the saved state and the hour's numbers."""
+"""The fallout_defensive_swing decision: a pure function of the saved state and the tick's numbers."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 """fallout_defensive_swing: hold a defensive ETF mix, sell it at a small profit, buy it back after a dip or a few days. No LLM.
 
-Every hour `rule.decide` picks buy, sell or hold. Built for a cash account: it never sells on the session of its last sale,
+Every 30 minutes `rule.decide` picks buy, sell or hold. Built for a cash account: it never sells on the session of its last sale,
 because what a sale's unsettled proceeds bought must not be sold before they settle.
 """
 
@@ -56,13 +56,13 @@ class FalloutDefensiveSwingStrategy(Strategy):
         self.fees = fees if fees is not None else TradingFeeFactory.from_env()
 
     def initialize(self) -> None:
-        """Tick hourly from 10:30 market time and open the state file (a backtest starts from an empty one)."""
-        self.sleeptime = "60M"
+        """Tick every 30 minutes from 10:30 market time and open the state file (a backtest starts from an empty one)."""
+        self.sleeptime = "30M"
         self.iteration_start_time = time(10, 30)
         self.store = StateStore(self.state_file(), log=self._log, fresh=self.is_backtesting)
 
     def on_trading_iteration(self) -> None:
-        """One hourly check: read the account, correct the saved state, then buy, sell or hold."""
+        """One check: read the account, correct the saved state, then buy, sell or hold."""
         open_orders = self.broker.tracker.get_active_orders()
         if open_orders:
             self.log_warning(f"{len(open_orders)} order(s) still open: nothing is done until they are final")
@@ -75,7 +75,7 @@ class FalloutDefensiveSwingStrategy(Strategy):
         for symbol in symbols:
             price = latest[symbol]
             if price is None:
-                self.log_warning(f"no price for {symbol}: nothing is done this hour")
+                self.log_warning(f"no price for {symbol}: nothing is done this tick")
                 return
             prices[symbol] = price
         value = sum((quantity * prices[symbol] for symbol, quantity in held.items()), Decimal(0))
