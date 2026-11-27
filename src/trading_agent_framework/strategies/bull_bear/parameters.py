@@ -63,7 +63,7 @@ class BullBearParams:
     min_trade_pct: float = 0.005  # smallest order
     parking_symbol: str = "SHV"  # where unspent money goes
     research_tool_budget: int = 7  # search_news calls per researcher run; the statement tools and submit_note are exempt
-    research_news: bool = False  # the researcher's news tool; False for the news-off comparison run
+    research_news: bool = True  # the researcher's news tool; False for the news-off comparison run
     # LangGraph steps one agent run may take before it counts as a loop and abandons the review: a model resubmitting a rejected
     # call for ever. LangGraph supersteps: a tool call is a round trip of 3, a run takes 3 x calls + 5 at worst, so a normal run
     # needs a limit of at most 35 (the researcher using its 7 searches, both statements and its submit, 10 calls); a rejected resubmission adds 3.
