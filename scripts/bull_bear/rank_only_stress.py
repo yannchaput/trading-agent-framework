@@ -11,7 +11,7 @@ import shutil
 import sys
 import zipfile
 from bisect import bisect_left
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from datetime import date, timedelta
 from pathlib import Path
 from typing import cast
@@ -21,7 +21,7 @@ import requests
 
 from trading_agent_framework.backtesting.data.yahoo import extract_ticker_frame, parse_yahoo_frame, yfinance_download
 from trading_agent_framework.strategies.common.batch_us_stock_universe import download_batch, ensure_universe_history
-from trading_agent_framework.strategies.common.scoring import rank, score_stock
+from trading_agent_framework.strategies.common.scoring import MomentumRow, rank, score_stock
 from trading_agent_framework.strategies.common.universe_history import UniverseHistory, month_universe
 from trading_agent_framework.strategies.cross_momentum.parameters import CONFIG
 
@@ -107,15 +107,14 @@ def max_drawdown(equity: pd.Series) -> tuple[float, date, date]:
     return float(falls.min()), equity.loc[:trough].idxmax(), trough
 
 
-def ranked_symbols(day: date, held: set[str], listed: list[str], frames: dict[str, pd.DataFrame], sessions: list[date]) -> list[str]:
-    """The listed symbols bull_bear's ranking keeps for a trade on `day`, best first.
+def eligible(day: date, held: set[str], listed: list[str], frames: dict[str, pd.DataFrame], sessions: list[date], history: int = CLOSES) -> Iterator[tuple[str, MomentumRow, pd.DataFrame]]:
+    """(symbol, momentum row, its last `history` sessions) of each listed symbol bull_bear's filters keep for a trade on `day`.
 
-    Only sessions strictly before `day` are read, and a symbol needs a bar on the last of them. A held symbol is exempt
-    from max_volatility, as in bull_bear; one that left the list is not ranked.
+    Only sessions strictly before `day` are read, and a symbol needs a bar on the last of them. The row is scored on the
+    last `CLOSES` of them. A held symbol is exempt from max_volatility, as in bull_bear; one that left the list is not seen.
     """
     previous = sessions[bisect_left(sessions, day) - 1]
     exempt = {**CONFIG, "max_volatility": math.inf}
-    rows = []
     for symbol in listed:
         frame = frames.get(symbol)
         if frame is None:
@@ -123,18 +122,23 @@ def ranked_symbols(day: date, held: set[str], listed: list[str], frames: dict[st
         end = bisect_left(frame.index, day)
         if end == 0 or frame.index[end - 1] != previous:
             continue
-        past = frame.iloc[max(0, end - CLOSES) : end]
+        past = frame.iloc[max(0, end - history) : end]
+        recent = past.iloc[-CLOSES:]
         row = score_stock(
             symbol,
-            past["close"].tolist(),
-            past["volume"].tolist(),
+            recent["close"].tolist(),
+            recent["volume"].tolist(),
             exempt if symbol in held else CONFIG,
-            traded_closes=past["traded_close"].tolist(),
-            traded_volumes=past["traded_volume"].tolist(),
+            traded_closes=recent["traded_close"].tolist(),
+            traded_volumes=recent["traded_volume"].tolist(),
         )
         if row is not None:
-            rows.append(row)
-    return [ranked.row.symbol for ranked in rank(rows)]
+            yield symbol, row, past
+
+
+def ranked_symbols(day: date, held: set[str], listed: list[str], frames: dict[str, pd.DataFrame], sessions: list[date]) -> list[str]:
+    """The listed symbols bull_bear's ranking keeps for a trade on `day` (see `eligible`), best first."""
+    return [ranked.row.symbol for ranked in rank(row for _, row, _ in eligible(day, held, listed, frames, sessions))]
 
 
 def _load_bars(path: Path) -> pd.DataFrame:
