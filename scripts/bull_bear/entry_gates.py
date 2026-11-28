@@ -5,26 +5,26 @@ Spec: docs/superpowers/specs/2026-11-28-earnings-profitability-gates-design.md
 Run from the repo root: uv run python scripts/bull_bear/entry_gates.py [--self-check | --fetch] (fetch before the first run)
 """
 
-import json
-import os
-import pickle
 import statistics
 import sys
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable, Mapping
+from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+import httpx
 import pandas as pd
 import score_variants
 from dotenv import load_dotenv
 from rank_only_stress import CACHE, SLEEVE, TOP_N, WEIGHTS, load_data, simulate
 from score_variants import book_picks, passes, ranked, table, window_stats
 
-from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
-from trading_agent_framework.fundamentals.sec import older_pages, parse_company_tickers, unit_rows
+from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient, default_client
+from trading_agent_framework.fundamentals.sec import INCOME_STATEMENT_TAGS, older_pages, unit_rows
+from trading_agent_framework.strategies.bill_ackman.screen.annual_figures import MAX_FISCAL_YEAR_DAYS, MIN_FISCAL_YEAR_DAYS
 from trading_agent_framework.strategies.common.universe_history import month_universe
 from trading_agent_framework.strategies.earnings_drift.events import earnings_events, reaction_date
 from trading_agent_framework.utils.clock import MARKET_TZ
@@ -35,7 +35,6 @@ Instant = tuple[date, date, float]  # period end, filed, value (USD)
 Signals = dict[str, list]  # "reactions": (usable from, return), "gross": Row, "assets": Instant
 Reader = Callable[[str], tuple[list[Mapping[str, Any]], dict[str, Any]]]  # symbol -> (submissions payloads, us-gaap facts)
 SEC_CACHE = Path("cache/sec")
-SIGNALS = CACHE / "entry_gates_signals.pkl"
 ENV_FILE = "env/.env.earnings_drift_baseline.backtesting"  # holds SEC_EDGAR_USER_AGENT
 FILINGS_SINCE = date(2004, 8, 1)  # 8-K item 2.02 starts here
 GATES = {  # gate: (development, holdout); company facts are too thin for profitability before 2012
@@ -46,7 +45,7 @@ STALE_SESSIONS = 126  # an earnings reaction older than this counts as missing
 STALE_DAYS = 548  # 18 months: an annual report older than this counts as missing
 ANNUAL_FORMS = frozenset({"10-K"})
 REVENUE_TAGS = ("Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax")
-COST_TAGS = ("CostOfRevenue", "CostOfGoodsAndServicesSold")
+COST_TAGS = tuple(INCOME_STATEMENT_TAGS["cost_of_revenue"])
 
 
 def reaction(closes: dict[date, float], spy: dict[date, float], sessions: list[date], r: date) -> tuple[date, float] | None:
@@ -77,12 +76,12 @@ def earnings_value(reactions: list[tuple[date, float]], day: date, sessions: lis
 
 
 def annual_rows(gaap: dict[str, Any], tag: str) -> list[Row]:
-    """The 10-K rows of `tag` that cover a fiscal year (350-380 days): quarters and year-to-date rows are left out."""
+    """The 10-K rows of `tag` that cover a fiscal year: quarters and year-to-date rows are left out."""
     rows = []
     for fact in unit_rows(gaap, tag, "USD", ANNUAL_FORMS):
         if fact.get("start"):
             start, end = date.fromisoformat(fact["start"]), date.fromisoformat(fact["end"])
-            if 350 <= (end - start).days <= 380:
+            if MIN_FISCAL_YEAR_DAYS <= (end - start).days <= MAX_FISCAL_YEAR_DAYS:
                 rows.append((start, end, date.fromisoformat(fact["filed"]), float(fact["val"])))
     return rows
 
@@ -100,10 +99,7 @@ def gross_profit_rows(gaap: dict[str, Any]) -> list[Row]:
     """
 
     def first_of(tags: tuple[str, ...]) -> dict[tuple[date, date, date], float]:
-        found: dict[tuple[date, date, date], float] = {}
-        for tag in reversed(tags):  # the first tag is written last, so it wins
-            found.update({row[:3]: row[3] for row in annual_rows(gaap, tag)})
-        return found
+        return {row[:3]: row[3] for tag in reversed(tags) for row in annual_rows(gaap, tag)}  # the first tag wins
 
     reported = first_of(("GrossProfit",))
     revenue, cost = first_of(REVENUE_TAGS), first_of(COST_TAGS)
@@ -118,9 +114,10 @@ def gpa_value(gross: list[Row], assets: list[Instant], day: date) -> float | Non
         return None
     _, end, filed, value = max(public, key=lambda row: (row[1], row[2]))
     balance = [(f, v) for e, f, v in assets if e == end and f < day]
-    if (day - filed).days > STALE_DAYS or not balance or max(balance)[1] <= 0:
+    if (day - filed).days > STALE_DAYS or not balance:
         return None
-    return value / max(balance)[1]
+    total = max(balance)[1]  # the latest-filed figure
+    return value / total if total > 0 else None
 
 
 def blocked(gate: str, values: dict[str, float | None]) -> frozenset[str]:
@@ -157,33 +154,25 @@ def signals(symbols: list[str], frames: dict[str, pd.DataFrame], sessions: list[
 
 
 def cached_reader() -> Reader:
-    """A reader of what `fetch` left in `SEC_CACHE`; it never touches the network."""
-    tickers = json.loads((SEC_CACHE / "company_tickers.json").read_text())
-
-    def load(*parts: str) -> dict[str, Any] | None:
-        path = SEC_CACHE.joinpath(*parts)
-        return json.loads(path.read_text()) if path.exists() else None
+    """A reader of what `fetch` left in `SEC_CACHE`: the SEC client with a transport that answers 404 to any request."""
+    offline = httpx.MockTransport(lambda request: httpx.Response(404))
+    client = SecEdgarClient("offline cache reader", SEC_CACHE, transport=offline)
 
     def read(symbol: str) -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
+        payloads: list[Mapping[str, Any]] = []
+        gaap: dict[str, Any] = {}
         try:
-            cik = parse_company_tickers(tickers, symbol)
-        except ValueError:
-            return [], {}
-        recent = load("submissions", f"CIK{cik}.json")
-        pages = [load("submissions", name) for name in older_pages(recent, FILINGS_SINCE)] if recent else []
-        facts = load("companyfacts", f"CIK{cik}.json") or {}
-        return [payload for payload in [recent, *pages] if payload], facts.get("facts", {}).get("us-gaap", {})
+            cik = client.ticker_to_cik(symbol)
+        except FundamentalsNotFoundError:
+            return payloads, gaap
+        with suppress(FundamentalsNotFoundError):
+            recent = client.get_submissions_payload(cik)
+            payloads = [recent, *(client.get_submissions_page(name) for name in older_pages(recent, FILINGS_SINCE))]
+        with suppress(FundamentalsNotFoundError):
+            gaap = client.get_company_facts_payload(cik).get("facts", {}).get("us-gaap", {})
+        return payloads, gaap
 
     return read
-
-
-def load_signals(symbols: list[str], frames: dict[str, pd.DataFrame], sessions: list[date]) -> dict[str, Signals]:
-    """`signals` from the SEC cache, saved once to `SIGNALS` (`fetch` removes the file)."""
-    if SIGNALS.exists():
-        return pickle.loads(SIGNALS.read_bytes())
-    found = signals(symbols, frames, sessions, cached_reader())
-    SIGNALS.write_bytes(pickle.dumps(found))
-    return found
 
 
 def fetch(symbols: list[str]) -> None:
@@ -194,7 +183,7 @@ def fetch(symbols: list[str]) -> None:
     load_dotenv(ENV_FILE)
     done = {"mapped": 0, "submissions": 0, "facts": 0}
     failures: list[str] = []
-    with SecEdgarClient(os.environ.get("SEC_EDGAR_USER_AGENT", ""), SEC_CACHE) as client:
+    with default_client(Path(".")) as client:
         for number, symbol in enumerate(symbols, 1):
             now = datetime.now(UTC)
             try:
@@ -217,7 +206,6 @@ def fetch(symbols: list[str]) -> None:
                 failures.append(f"{symbol} facts: {exc}")
             if number % 100 == 0:
                 print(f"{number}/{len(symbols)} {done}, {len(failures)} failures", flush=True)
-    SIGNALS.unlink(missing_ok=True)
     print("\n".join(failures))
     print(f"fetched {len(symbols)} symbols: {done}, {len(failures)} failures", flush=True)
 
@@ -229,11 +217,6 @@ def signal_values(gate: str, symbols: list[str], day: date, series: dict[str, Si
         return {s: earnings_value(series.get(s, empty)["reactions"], day, sessions) for s in symbols}
     assert gate == "profitability", gate
     return {s: gpa_value(series.get(s, empty)["gross"], series.get(s, empty)["assets"], day) for s in symbols}
-
-
-def gated_picks(gate: str | None, order: list[str], held: set[str], values: dict[str, float | None]) -> list[str]:
-    """bull_bear's book on the full ranking `order`; `gate` (None: no gate) only removes names that may enter."""
-    return book_picks(order, held, blocked=blocked(gate, values) if gate else frozenset())
 
 
 def run(gate: str, apply: bool, first: date, last: date, data: tuple, series: dict[str, Signals], orders: dict) -> tuple[pd.Series, dict[str, float], dict]:
@@ -253,13 +236,14 @@ def run(gate: str, apply: bool, first: date, last: date, data: tuple, series: di
             orders[key] = ranked(day, held, month_universe(history, day, exclude={SLEEVE}), frames, sessions, "today")
         order = orders[key]
         values = signal_values(gate, order, day, series, sessions)
+        refusals = blocked(gate, values)
         candidates = [s for s in order[: score_variants.BOOK.retention_rank] if s not in held]
-        refused[0] += len(blocked(gate, values) & set(candidates))
+        refused[0] += len(refusals & set(candidates))
         refused[1] += len(candidates)
         year = missing.setdefault(day.year, [0, 0])
         year[0] += sum(value is None for value in values.values())
         year[1] += len(values)
-        books.append(gated_picks(gate if apply else None, order, held, values))
+        books.append(book_picks(order, held, blocked=refusals if apply else frozenset()))  # only new entries are refused
         return books[-1]
 
     equity = simulate(frames, window, picks, WEIGHTS[0])
@@ -273,27 +257,38 @@ def run(gate: str, apply: bool, first: date, last: date, data: tuple, series: di
 
 def compare(gate: str, title: str, window: tuple[date, date], data: tuple, series: dict[str, Signals], orders: dict, curves: dict) -> tuple:
     """Run the ungated and the gated book on `window`, print their table and return (ungated stats, gated stats)."""
-    results = {}
+    results, coverage = {}, {}
     for name, apply in (("today", False), (gate, True)):
-        curves[f"{title} {name}"], results[name], missing = run(gate, apply, *window, data, series, orders)
+        curves[f"{title} {name}"], results[name], coverage[name] = run(gate, apply, *window, data, series, orders)
     table(title, results)
-    if gate == "earnings" and window == score_variants.DEV:
-        # The score-variant study's ungated book on this window: CAGR 0.5%, Sharpe 0.20.
-        assert abs(results["today"]["cagr"] - 0.005) < 0.001 and abs(results["today"]["sharpe"] - 0.20) < 0.006, results["today"]
-    print("Names with no signal, by year: " + ", ".join(f"{year} {m / n:.0%}" for year, (m, n) in sorted(missing.items())), flush=True)
+    by_year = sorted(coverage[gate].items())
+    print("Names with no signal, by year (gated book): " + ", ".join(f"{year} {m / n:.0%}" for year, (m, n) in by_year), flush=True)
     return results["today"], results[gate]
+
+
+def check_baseline(stats: dict[str, float]) -> None:
+    """The ungated 2005-2015 book must be the score-variant study's `today` book (`score_variants.py --book-rules`)."""
+    curves = pd.read_csv(CACHE / "score_variants_book_rules_equity.csv", index_col=0)
+    saved = cast("pd.Series", curves["Real book rules, 2005-2015 today"]).dropna()
+    saved.index = pd.Index([date.fromisoformat(str(day)) for day in saved.index])
+    expected = window_stats(saved)
+    for key, tolerance in (("cagr", 0.001), ("sharpe", 0.005)):
+        assert abs(stats[key] - expected[key]) < tolerance, f"ungated {key} {stats[key]:.4f}, score-variant study {expected[key]:.4f}"
+    print(f"Baseline check: CAGR {stats['cagr']:.2%} and Sharpe {stats['sharpe']:.2f} match the score-variant study", flush=True)
 
 
 def main() -> None:
     """For each gate: development, then its holdout only if it passed; print the verdicts and save the curves."""
     data = load_data()
     _, frames, sessions = data
-    series = load_signals(sorted(set(frames) - {"SPY", SLEEVE}), frames, sessions)
+    series = signals(sorted(set(frames) - {"SPY", SLEEVE}), frames, sessions, cached_reader())
     curves: dict[str, pd.Series] = {}
     orders: dict = {}
     verdicts = {}
     for gate, (dev, holdout) in GATES.items():
         base, gated = compare(gate, f"{gate}, development {dev[0].year}-{dev[1].year}", dev, data, series, orders, curves)
+        if dev == score_variants.DEV:
+            check_baseline(base)
         if not passes(gated, base):
             verdicts[gate] = "FAILED development"
             continue
@@ -388,9 +383,10 @@ def self_check() -> None:
     series = {"BAD": {"reactions": [(d[12], -0.05)], "gross": [], "assets": []}, "GOOD": {"reactions": [(d[12], 0.02)], "gross": [], "assets": []}}
     values = signal_values("earnings", order, trade_day, series, d)
     assert values == {"BAD": -0.05, "GOOD": 0.02, "NONE": None}
-    assert gated_picks(None, order, set(), values)[0] == "BAD"
-    assert gated_picks("earnings", order, set(), values) == ["GOOD", "NONE"]
-    assert gated_picks("earnings", order, {"BAD"}, values) == order == gated_picks(None, order, {"BAD"}, values)
+    refusals = blocked("earnings", values)
+    assert book_picks(order, set()) == order
+    assert book_picks(order, set(), blocked=refusals) == ["GOOD", "NONE"]
+    assert book_picks(order, {"BAD"}, blocked=refusals) == order == book_picks(order, {"BAD"})
     assert signal_values("profitability", ["GOOD"], date(2011, 6, 1), {"GOOD": {"reactions": [], "gross": gross, "assets": assets}}, d) == {"GOOD": 0.2}
     score_variants.self_check()
 
