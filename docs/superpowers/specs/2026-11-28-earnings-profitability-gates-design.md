@@ -173,6 +173,14 @@ the 2019-2026 holdout that rejects the gate is mostly unaffected. One day sample
 ### Limits
 
 - Candidate pool = today's listings; today's ticker-to-CIK map; dead companies missing.
+- **Filing history can start late (found by the final review, checked on the pool).** Of the 1,666 pool names with bars
+  before 2015, 149 have no earnings reaction until more than 2 years after their bars start (from 2005) and 241 have
+  none at all (for any reason). Some are large companies whose ticker now maps to a newer CIK, most likely a
+  holding-company re-registration (AA 2017, CI 2019, APA 2021, BG and BLK 2024, XOM 2026; XOM also has no asset rows).
+  Missing = allowed, so both gates are weaker than designed, mostly in development. Not look-ahead.
+- The 18-month limit counts from the filing date: a later 10-K that repeats an old year as a comparative can make it
+  look fresh when the newer year is missing under the listed tags (2 of 1,177 valued names on 2022-06-01, 0 of 691 on
+  2015-06-02; the reviewer's figures).
 - Profitability was "missing" (allowed in) for 61% of eligible names in development and 46% in the holdout, so it is
   a partial gate.
 - One market path per window, no significance test; 2016-2026 had already been seen for this book (not for these
