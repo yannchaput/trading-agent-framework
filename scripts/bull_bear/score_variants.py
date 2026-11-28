@@ -2,13 +2,14 @@
 
 Spec: docs/superpowers/specs/2026-11-28-momentum-score-variants-design.md
 
-Run from the repo root: uv run python scripts/bull_bear/score_variants.py [--self-check]
+Run from the repo root: uv run python scripts/bull_bear/score_variants.py [--self-check | --book-rules VARIANT...]
 """
 
 import math
 import statistics
 import sys
 from bisect import bisect_left
+from collections.abc import Callable
 from datetime import date, timedelta
 from itertools import pairwise
 from pathlib import Path
@@ -155,17 +156,38 @@ def passes(stats: dict[str, float], base: dict[str, float]) -> bool:
     return stats["cagr"] > base["cagr"] and stats["sharpe"] >= base["sharpe"]
 
 
-def run(variant: str, first: date, last: date, data: tuple) -> tuple[pd.Series, dict[str, float]]:
-    """A fresh book from `first` to `last` ranked on `variant`: its equity and its stats."""
+def real_book(rank_fn: Callable[[date, set[str]], list[str]], top_n: int = TOP_N, keep_rank: int = 35) -> Callable[[date, set[str]], list[str]]:
+    """The picks of bull_bear's book without the judge, carrying its cooldown from one rebalance to the next."""
+    cooldown: dict[str, int] = {}
+
+    def picks(day: date, held: set[str]) -> list[str]:
+        nonlocal cooldown
+        chosen = book_picks(rank_fn(day, held), held, cooldown, top_n, keep_rank)
+        cooldown = advance_cooldown(cooldown, held - set(chosen))
+        return chosen
+
+    return picks
+
+
+def run(variant: str, first: date, last: date, data: tuple, real_rules: bool = False) -> tuple[pd.Series, dict[str, float]]:
+    """A fresh book from `first` to `last` ranked on `variant`: its equity and its stats.
+
+    `real_rules` holds with bull_bear's book rules (`real_book`) instead of resetting to the top `TOP_N`.
+    """
     history, frames, sessions = data
     window = [day for day in sessions if first <= day <= last]
     books: list[list[str]] = []
     counts: list[int] = []
 
-    def picks(day: date, held: set[str]) -> list[str]:
+    def order_for(day: date, held: set[str]) -> list[str]:
         order = ranked(day, held, month_universe(history, day, exclude={SLEEVE}), frames, sessions, variant)
         counts.append(len(order))
-        books.append(order[:TOP_N])
+        return order
+
+    book = real_book(order_for) if real_rules else lambda day, held: order_for(day, held)[:TOP_N]
+
+    def picks(day: date, held: set[str]) -> list[str]:
+        books.append(book(day, held))
         return books[-1]
 
     equity = simulate(frames, window, picks, WEIGHTS[0])
@@ -254,7 +276,31 @@ def self_check() -> None:
     assert ranked(days[-1], set(), listed, frames, days, "today") == ["UP", "FLAT"]  # HALT: no previous-session bar
     assert ranked(days[-1], set(), listed, frames, days, "high_52w") == ["UP", "FLAT"]
     assert ranked(days[-1], set(), listed, frames, days, "residual") == []  # under 757 sessions
+    order = {1: ["B"], 2: ["A", "B"]}  # A is sold at rebalance 1 and tops the ranking from rebalance 2 on
+    book = real_book(lambda day, held: order[min(day.day, 2)], top_n=1, keep_rank=1)
+    held, bought = {"A"}, []
+    for number in range(1, 7):
+        held = set(book(date(2024, 1, number), held))
+        bought.append("A" in held)
+    assert bought == [False, False, False, False, False, True], bought
     print("self-check ok")
+
+
+def book_rules(kept: list[str]) -> None:
+    """Step 2: `today` and the kept variants under bull_bear's real book rules, same pass rule on both windows."""
+    data = load_data()
+    won = {variant: True for variant in kept}
+    curves: dict[str, pd.Series] = {}
+    for title, window in (("Real book rules, 2005-2015", DEV), ("Real book rules, 2016-2026", HOLDOUT)):
+        results: dict[str, dict[str, float]] = {}
+        for variant in ["today", *kept]:
+            curves[f"{title} {variant}"], results[variant] = run(variant, *window, data, real_rules=True)
+        table(title, results)
+        for variant in kept:
+            won[variant] &= passes(results[variant], results["today"])
+    for variant, passed in won.items():
+        print(f"{variant} under the real book rules: {'KEPT' if passed else 'FAILED'}")
+    pd.DataFrame(curves).sort_index().to_csv(OUT.with_name("score_variants_book_rules_equity.csv"))
 
 
 def main() -> None:
@@ -300,5 +346,8 @@ def main() -> None:
 if __name__ == "__main__":
     if "--self-check" in sys.argv:
         self_check()
+    elif "--book-rules" in sys.argv:
+        self_check()
+        book_rules(sys.argv[sys.argv.index("--book-rules") + 1 :])
     else:
         main()

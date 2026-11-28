@@ -35,6 +35,27 @@ Caveats: `vol_scaled`'s holdout margin is small (CAGR +1.3 points, Sharpe +0.09)
 turnover (22% vs 17% of the book a week, already charged at 5 bps); no significance test; today's-listing candidate
 pool (missing dead companies likely flatter `today`); no judge, no real book rules yet (step 2).
 
+## Step 2: bull_bear's real book rules (2026-11-28, `--book-rules vol_scaled`)
+
+### Real book rules, 2005-2015
+
+| Book | cagr | sharpe | max_dd | 2008-09 | 2015-16 | ranked | turnover |
+|---|---|---|---|---|---|---|---|
+| today | -1.0% | 0.15 | -68.0% | -68.0% | -36.6% | 607 | 5.5% |
+| vol_scaled | -1.2% | 0.11 | -66.4% | -66.3% | -26.8% | 606 | 7.5% |
+
+### Real book rules, 2016-2026
+
+| Book | cagr | sharpe | max_dd | 2015-16 | 2018 Q4 | 2020 | 2022 | ranked | turnover |
+|---|---|---|---|---|---|---|---|---|---|
+| today | 27.7% | 0.79 | -50.0% | -34.1% | -39.8% | -50.0% | -30.3% | 1033 | 4.7% |
+| vol_scaled | 28.8% | 0.88 | -42.7% | -22.6% | -31.2% | -42.7% | -26.9% | 1033 | 7.1% |
+vol_scaled under the real book rules: FAILED
+
+**Final verdict: no variant is kept.** `vol_scaled` passes 2016-2026 (+1.1 CAGR points, Sharpe 0.88 vs 0.79) but
+fails 2005-2015 (CAGR -1.2% vs -1.0%, Sharpe 0.11 vs 0.15). Today's score stays. Under both books it had a smaller
+drawdown than today's on every window; the user's goal (choice A) is return, so drawdown does not decide.
+
 ## Full run log
 
 ```
