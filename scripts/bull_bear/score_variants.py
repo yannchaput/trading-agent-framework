@@ -79,13 +79,15 @@ def variant_score(name: str, row: MomentumRow, closes: list[float], spy: list[fl
     return value if value is not None and math.isfinite(value) else None
 
 
-def book_picks(ranked: list[str], held: set[str], top_n: int = BOOK.max_book_size, keep_rank: int = BOOK.retention_rank) -> list[str]:
+def book_picks(ranked: list[str], held: set[str], top_n: int = BOOK.max_book_size, keep_rank: int = BOOK.retention_rank, blocked: frozenset[str] = frozenset()) -> list[str]:
     """bull_bear's book rule without the judge: keep holdings ranked within `keep_rank`, fill to `top_n` from the top.
+
+    `blocked` names may not enter; a holding among them stays.
 
     No re-entry cooldown: in bull_bear only a judge sale starts one, and every sale here is a forced exit.
     """
     kept = [s for s in ranked[:keep_rank] if s in held]
-    new = [s for s in ranked if s not in held]
+    new = [s for s in ranked if s not in held and s not in blocked]
     return sorted(kept + new[: top_n - len(kept)], key=ranked.index)
 
 
