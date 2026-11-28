@@ -2,20 +2,46 @@
 
 Spec: docs/superpowers/specs/2026-11-28-earnings-profitability-gates-design.md
 
-Run from the repo root: uv run python scripts/bull_bear/entry_gates.py [--self-check | --fetch]
+Run from the repo root: uv run python scripts/bull_bear/entry_gates.py [--self-check | --fetch] (fetch before the first run)
 """
 
+import json
+import os
+import pickle
+import statistics
+import sys
 from bisect import bisect_left, bisect_right
-from datetime import date, timedelta
+from collections.abc import Callable, Mapping
+from datetime import UTC, date, datetime, timedelta
+from itertools import pairwise
+from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import score_variants
-from score_variants import book_picks
+from dotenv import load_dotenv
+from rank_only_stress import CACHE, SLEEVE, TOP_N, WEIGHTS, load_data, simulate
+from score_variants import book_picks, passes, ranked, table, window_stats
 
-from trading_agent_framework.fundamentals.sec import unit_rows
+from trading_agent_framework.fundamentals.edgar_client import SecEdgarClient
+from trading_agent_framework.fundamentals.sec import older_pages, parse_company_tickers, unit_rows
+from trading_agent_framework.strategies.common.universe_history import month_universe
+from trading_agent_framework.strategies.earnings_drift.events import earnings_events, reaction_date
+from trading_agent_framework.utils.clock import MARKET_TZ
+from trading_agent_framework.utils.errors import FundamentalsError, FundamentalsNotFoundError
 
 Row = tuple[date, date, date, float]  # period start, period end, filed, value (USD)
 Instant = tuple[date, date, float]  # period end, filed, value (USD)
+Signals = dict[str, list]  # "reactions": (usable from, return), "gross": Row, "assets": Instant
+Reader = Callable[[str], tuple[list[Mapping[str, Any]], dict[str, Any]]]  # symbol -> (submissions payloads, us-gaap facts)
+SEC_CACHE = Path("cache/sec")
+SIGNALS = CACHE / "entry_gates_signals.pkl"
+ENV_FILE = "env/.env.earnings_drift_baseline.backtesting"  # holds SEC_EDGAR_USER_AGENT
+FILINGS_SINCE = date(2004, 8, 1)  # 8-K item 2.02 starts here
+GATES = {  # gate: (development, holdout); company facts are too thin for profitability before 2012
+    "earnings": (score_variants.DEV, score_variants.HOLDOUT),
+    "profitability": ((date(2012, 1, 1), date(2018, 12, 31)), (date(2019, 1, 1), date(2026, 11, 24))),
+}
 STALE_SESSIONS = 126  # an earnings reaction older than this counts as missing
 STALE_DAYS = 548  # 18 months: an annual report older than this counts as missing
 ANNUAL_FORMS = frozenset({"10-K"})
@@ -109,6 +135,174 @@ def blocked(gate: str, values: dict[str, float | None]) -> frozenset[str]:
     return frozenset(sorted(known, key=lambda symbol: (known[symbol], symbol))[: len(known) // 3])
 
 
+def signals(symbols: list[str], frames: dict[str, pd.DataFrame], sessions: list[date], read: Reader) -> dict[str, Signals]:
+    """Each symbol's earnings reactions (sorted by usable-from session) and its annual gross-profit and asset rows.
+
+    A symbol without bars or without cached filings gets empty lists: its signals are missing.
+    """
+    spy = frames["SPY"]["close"].to_dict()
+    found = {}
+    for symbol in symbols:
+        payloads, gaap = read(symbol)
+        closes = frames[symbol]["close"].to_dict() if symbol in frames else {}
+        reactions = []
+        for event in earnings_events(symbol, payloads):
+            first = bisect_left(sessions, event.accepted_at.astimezone(MARKET_TZ).date())
+            day = reaction_date(event.accepted_at, sessions[first : first + 2])  # the filing day or the next session
+            one = reaction(closes, spy, sessions, day) if day is not None else None
+            if one is not None:
+                reactions.append(one)
+        found[symbol] = {"reactions": sorted(reactions), "gross": gross_profit_rows(gaap), "assets": instant_rows(gaap, "Assets")}
+    return found
+
+
+def cached_reader() -> Reader:
+    """A reader of what `fetch` left in `SEC_CACHE`; it never touches the network."""
+    tickers = json.loads((SEC_CACHE / "company_tickers.json").read_text())
+
+    def load(*parts: str) -> dict[str, Any] | None:
+        path = SEC_CACHE.joinpath(*parts)
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def read(symbol: str) -> tuple[list[Mapping[str, Any]], dict[str, Any]]:
+        try:
+            cik = parse_company_tickers(tickers, symbol)
+        except ValueError:
+            return [], {}
+        recent = load("submissions", f"CIK{cik}.json")
+        pages = [load("submissions", name) for name in older_pages(recent, FILINGS_SINCE)] if recent else []
+        facts = load("companyfacts", f"CIK{cik}.json") or {}
+        return [payload for payload in [recent, *pages] if payload], facts.get("facts", {}).get("us-gaap", {})
+
+    return read
+
+
+def load_signals(symbols: list[str], frames: dict[str, pd.DataFrame], sessions: list[date]) -> dict[str, Signals]:
+    """`signals` from the SEC cache, saved once to `SIGNALS` (`fetch` removes the file)."""
+    if SIGNALS.exists():
+        return pickle.loads(SIGNALS.read_bytes())
+    found = signals(symbols, frames, sessions, cached_reader())
+    SIGNALS.write_bytes(pickle.dumps(found))
+    return found
+
+
+def fetch(symbols: list[str]) -> None:
+    """Download each symbol's filing list (with the older pages back to `FILINGS_SINCE`) and company facts into `SEC_CACHE`.
+
+    Cached files younger than 7 days are kept. A failure is printed and counted, never raised.
+    """
+    load_dotenv(ENV_FILE)
+    done = {"mapped": 0, "submissions": 0, "facts": 0}
+    failures: list[str] = []
+    with SecEdgarClient(os.environ.get("SEC_EDGAR_USER_AGENT", ""), SEC_CACHE) as client:
+        for number, symbol in enumerate(symbols, 1):
+            now = datetime.now(UTC)
+            try:
+                cik = client.ticker_to_cik(symbol)
+            except FundamentalsNotFoundError:
+                failures.append(f"{symbol}: no CIK")
+                continue
+            done["mapped"] += 1
+            try:
+                recent = client.get_submissions_payload(cik, as_of=now, max_age_days=7)
+                for name in older_pages(recent, FILINGS_SINCE):
+                    client.get_submissions_page(name)
+                done["submissions"] += 1
+            except FundamentalsError as exc:
+                failures.append(f"{symbol} submissions: {exc}")
+            try:
+                client.get_company_facts_payload(cik, as_of=now, max_age_days=7)
+                done["facts"] += 1
+            except FundamentalsError as exc:
+                failures.append(f"{symbol} facts: {exc}")
+            if number % 100 == 0:
+                print(f"{number}/{len(symbols)} {done}, {len(failures)} failures", flush=True)
+    SIGNALS.unlink(missing_ok=True)
+    print("\n".join(failures))
+    print(f"fetched {len(symbols)} symbols: {done}, {len(failures)} failures", flush=True)
+
+
+def signal_values(gate: str, symbols: list[str], day: date, series: dict[str, Signals], sessions: list[date]) -> dict[str, float | None]:
+    """Each symbol's `gate` signal as known before a trade on `day`; None when missing."""
+    empty: Signals = {"reactions": [], "gross": [], "assets": []}
+    if gate == "earnings":
+        return {s: earnings_value(series.get(s, empty)["reactions"], day, sessions) for s in symbols}
+    assert gate == "profitability", gate
+    return {s: gpa_value(series.get(s, empty)["gross"], series.get(s, empty)["assets"], day) for s in symbols}
+
+
+def gated_picks(gate: str | None, order: list[str], held: set[str], values: dict[str, float | None]) -> list[str]:
+    """bull_bear's book on the full ranking `order`; `gate` (None: no gate) only removes names that may enter."""
+    return book_picks(order, held, blocked=blocked(gate, values) if gate else frozenset())
+
+
+def run(gate: str, apply: bool, first: date, last: date, data: tuple, series: dict[str, Signals], orders: dict) -> tuple[pd.Series, dict[str, float], dict]:
+    """A fresh book from `first` to `last`, gated when `apply`: (equity, stats, {year: [names with no signal, names]}).
+
+    `gate` is also given for the ungated book, so that both report the same signal's coverage.
+    """
+    history, frames, sessions = data
+    window = [day for day in sessions if first <= day <= last]
+    books: list[list[str]] = []
+    refused = [0, 0]  # blocked, non-holdings among the top `retention_rank`
+    missing: dict[int, list[int]] = {}
+
+    def picks(day: date, held: set[str]) -> list[str]:
+        key = (day, frozenset(held))  # holdings are exempt from the volatility filter, so the order depends on them
+        if key not in orders:
+            orders[key] = ranked(day, held, month_universe(history, day, exclude={SLEEVE}), frames, sessions, "today")
+        order = orders[key]
+        values = signal_values(gate, order, day, series, sessions)
+        candidates = [s for s in order[: score_variants.BOOK.retention_rank] if s not in held]
+        refused[0] += len(blocked(gate, values) & set(candidates))
+        refused[1] += len(candidates)
+        year = missing.setdefault(day.year, [0, 0])
+        year[0] += sum(value is None for value in values.values())
+        year[1] += len(values)
+        books.append(gated_picks(gate if apply else None, order, held, values))
+        return books[-1]
+
+    equity = simulate(frames, window, picks, WEIGHTS[0])
+    stats = window_stats(equity)
+    stats["turnover"] = statistics.mean(len(set(now) - set(before)) / TOP_N for before, now in pairwise(books))
+    stats["held"] = statistics.mean(len(book) for book in books)
+    stats["blocked"] = refused[0] / refused[1]
+    stats["missing"] = sum(m for m, _ in missing.values()) / sum(n for _, n in missing.values())
+    return equity, stats, missing
+
+
+def compare(gate: str, title: str, window: tuple[date, date], data: tuple, series: dict[str, Signals], orders: dict, curves: dict) -> tuple:
+    """Run the ungated and the gated book on `window`, print their table and return (ungated stats, gated stats)."""
+    results = {}
+    for name, apply in (("today", False), (gate, True)):
+        curves[f"{title} {name}"], results[name], missing = run(gate, apply, *window, data, series, orders)
+    table(title, results)
+    if gate == "earnings" and window == score_variants.DEV:
+        # The score-variant study's ungated book on this window: CAGR 0.5%, Sharpe 0.20.
+        assert abs(results["today"]["cagr"] - 0.005) < 0.001 and abs(results["today"]["sharpe"] - 0.20) < 0.006, results["today"]
+    print("Names with no signal, by year: " + ", ".join(f"{year} {m / n:.0%}" for year, (m, n) in sorted(missing.items())), flush=True)
+    return results["today"], results[gate]
+
+
+def main() -> None:
+    """For each gate: development, then its holdout only if it passed; print the verdicts and save the curves."""
+    data = load_data()
+    _, frames, sessions = data
+    series = load_signals(sorted(set(frames) - {"SPY", SLEEVE}), frames, sessions)
+    curves: dict[str, pd.Series] = {}
+    orders: dict = {}
+    verdicts = {}
+    for gate, (dev, holdout) in GATES.items():
+        base, gated = compare(gate, f"{gate}, development {dev[0].year}-{dev[1].year}", dev, data, series, orders, curves)
+        if not passes(gated, base):
+            verdicts[gate] = "FAILED development"
+            continue
+        base, gated = compare(gate, f"{gate}, holdout {holdout[0].year}-{holdout[1].year}", holdout, data, series, orders, curves)
+        verdicts[gate] = "KEPT" if passes(gated, base) else "FAILED holdout"
+    print("\n" + "\n".join(f"{gate}: {verdict}" for gate, verdict in verdicts.items()), flush=True)
+    pd.DataFrame(curves).sort_index().to_csv(CACHE / "entry_gates_equity.csv")
+
+
 def self_check() -> None:
     """Assert the signals, the gates and the blocked fill rule on hand-worked cases."""
     d = [date(2020, 1, 1) + timedelta(days=i) for i in range(200)]
@@ -171,8 +365,39 @@ def self_check() -> None:
     assert book_picks(["A", "B", "C"], set(), top_n=2, blocked=frozenset({"A"})) == ["B", "C"]
     assert book_picks(["A", "B", "C"], {"A"}, top_n=2, blocked=frozenset({"A", "B"})) == ["A", "C"]
     assert book_picks(["A", "B"], set(), top_n=2, blocked=frozenset({"A", "B"})) == []
+
+    def filings(*rows: tuple[str, str, str]) -> dict[str, Any]:
+        columns = {"form": [r[0] for r in rows], "items": [r[1] for r in rows], "acceptanceDateTime": [r[2] for r in rows]}
+        return {"filings": {"recent": {**columns, "accessionNumber": [f"A{i}" for i in range(len(rows))]}}}
+
+    payload = filings(
+        ("8-K", "2.02,9.01", "2020-01-10T21:05:00.000Z"),  # 16:05 ET: reacts on the 11th
+        ("8-K", "2.02", "2020-01-20T13:00:00.000Z"),  # 08:00 ET: reacts the same day
+        ("8-K/A", "2.02", "2020-01-30T13:00:00.000Z"),
+        ("10-Q", "", "2020-02-01T13:00:00.000Z"),
+    )
+    frames = {"A": pd.DataFrame({"close": [100.0 + i for i in range(200)]}, index=d), "SPY": pd.DataFrame({"close": 100.0}, index=d)}
+    got_signals = signals(["A", "NOBARS"], frames, d, lambda symbol: ([payload], k) if symbol == "A" else ([], {}))
+    # d[10] is 2020-01-11: usable two sessions later, return from close(d[8]) to close(d[11]).
+    assert [day for day, _ in got_signals["A"]["reactions"]] == [d[12], d[21]], got_signals["A"]["reactions"]
+    assert abs(got_signals["A"]["reactions"][0][1] - (111 / 108 - 1)) < 1e-12
+    assert got_signals["A"]["gross"] == gross and got_signals["A"]["assets"] == assets
+    assert got_signals["NOBARS"] == {"reactions": [], "gross": [], "assets": []}
+    # The rank-1 name had a bad release: the earnings book refuses it entry, but never sells it.
+    trade_day, order = d[22], ["BAD", "GOOD", "NONE"]
+    series = {"BAD": {"reactions": [(d[12], -0.05)], "gross": [], "assets": []}, "GOOD": {"reactions": [(d[12], 0.02)], "gross": [], "assets": []}}
+    values = signal_values("earnings", order, trade_day, series, d)
+    assert values == {"BAD": -0.05, "GOOD": 0.02, "NONE": None}
+    assert gated_picks(None, order, set(), values)[0] == "BAD"
+    assert gated_picks("earnings", order, set(), values) == ["GOOD", "NONE"]
+    assert gated_picks("earnings", order, {"BAD"}, values) == order == gated_picks(None, order, {"BAD"}, values)
+    assert signal_values("profitability", ["GOOD"], date(2011, 6, 1), {"GOOD": {"reactions": [], "gross": gross, "assets": assets}}, d) == {"GOOD": 0.2}
     score_variants.self_check()
 
 
 if __name__ == "__main__":
     self_check()
+    if "--fetch" in sys.argv:
+        fetch(sorted(set(load_data()[1]) - {"SPY", SLEEVE}))
+    elif "--self-check" not in sys.argv:
+        main()

@@ -156,7 +156,7 @@ def table(title: str, results: dict[str, dict[str, float]]) -> None:
     columns = list(dict.fromkeys(key for stats in results.values() for key in stats))
     print(f"\n### {title}\n\n| Book | {' | '.join(columns)} |")
     print("|" + "---|" * (len(columns) + 1))
-    formats = {"sharpe": "{:.2f}", "ranked": "{:.0f}"}
+    formats = {"sharpe": "{:.2f}", "ranked": "{:.0f}", "held": "{:.1f}"}
     for name, stats in results.items():
         cells = [formats.get(key, "{:.1%}").format(stats[key]) if key in stats else "-" for key in columns]
         print(f"| {name} | {' | '.join(cells)} |", flush=True)
