@@ -8,16 +8,14 @@ Run from the repo root: uv run python scripts/bull_bear/score_variants.py [--sel
 import math
 import statistics
 import sys
-from bisect import bisect_left
-from collections.abc import Callable
 from datetime import date, timedelta
 from itertools import pairwise
-from pathlib import Path
 from typing import cast
 
 import pandas as pd
-from rank_only_stress import CLOSES, SLEEVE, TOP_N, WEIGHTS, WINDOWS, load_data, max_drawdown, simulate
+from rank_only_stress import CACHE, SLEEVE, TOP_N, WEIGHTS, WINDOWS, eligible, load_data, max_drawdown, simulate
 
+from trading_agent_framework.strategies.bull_bear.parameters import BullBearParams
 from trading_agent_framework.strategies.common.scoring import (
     MomentumRow,
     annualized_volatility,
@@ -36,7 +34,8 @@ HOLDOUT = (date(2016, 1, 1), date(2026, 11, 24))
 # The cached bars start in 2003-06, so no stock has RESIDUAL_SESSIONS before 2006-06-02: residual and its own
 # `today` book start here in development.
 RESIDUAL_DEV_START = date(2006, 7, 1)
-OUT = Path("cache/stress_2005/score_variants_equity.csv")
+OUT = CACHE / "score_variants_equity.csv"
+BOOK = BullBearParams()
 
 
 def residual_score(closes: list[float], spy: list[float]) -> float | None:
@@ -80,58 +79,29 @@ def variant_score(name: str, row: MomentumRow, closes: list[float], spy: list[fl
     return value if value is not None and math.isfinite(value) else None
 
 
-def sort_key(variant: float, today: float) -> tuple[float, float]:
-    """Best first on the variant's score, ties by today's (many stocks sit exactly at their 52-week high)."""
-    return -variant, -today
+def book_picks(ranked: list[str], held: set[str], top_n: int = BOOK.max_book_size, keep_rank: int = BOOK.retention_rank) -> list[str]:
+    """bull_bear's book rule without the judge: keep holdings ranked within `keep_rank`, fill to `top_n` from the top.
 
-
-def book_picks(ranked: list[str], held: set[str], cooldown: dict[str, int], top_n: int = 10, keep_rank: int = 35) -> list[str]:
-    """bull_bear's book rule without the judge: keep holdings ranked within `keep_rank`, fill to `top_n` from the top."""
+    No re-entry cooldown: in bull_bear only a judge sale starts one, and every sale here is a forced exit.
+    """
     kept = [s for s in ranked[:keep_rank] if s in held]
-    new = [s for s in ranked if s not in held and s not in cooldown]
+    new = [s for s in ranked if s not in held]
     return sorted(kept + new[: top_n - len(kept)], key=ranked.index)
-
-
-def advance_cooldown(cooldown: dict[str, int], sold: set[str], reviews: int = 4) -> dict[str, int]:
-    """One rebalance later: old blocks run down, and the names just sold are blocked for the next `reviews` ones."""
-    left = {s: n - 1 for s, n in cooldown.items() if n > 1}
-    return left | dict.fromkeys(sold, reviews)
 
 
 def ranked(day: date, held: set[str], listed: list[str], frames: dict[str, pd.DataFrame], sessions: list[date], variant: str) -> list[str]:
     """The listed symbols today's filters keep for a trade on `day`, best first on the variant's score.
 
-    The filters, the held volatility exemption and the no-look-ahead slicing are those of
-    `rank_only_stress.ranked_symbols`; only the sort key changes. Only sessions strictly before `day` are read.
+    Filters and no-look-ahead slicing are `rank_only_stress.eligible`'s; only the sort key differs from today's.
     """
-    previous = sessions[bisect_left(sessions, day) - 1]
-    exempt = {**CONFIG, "max_volatility": math.inf}
     spy = frames["SPY"]["close"].to_dict()
     keys = {}
-    for symbol in listed:
-        frame = frames.get(symbol)
-        if frame is None:
-            continue
-        end = bisect_left(frame.index, day)
-        if end == 0 or frame.index[end - 1] != previous:
-            continue
-        past = frame.iloc[max(0, end - LONG_HISTORY) : end]
-        recent = past.iloc[-CLOSES:]
-        row = score_stock(
-            symbol,
-            recent["close"].tolist(),
-            recent["volume"].tolist(),
-            exempt if symbol in held else CONFIG,
-            traded_closes=recent["traded_close"].tolist(),
-            traded_volumes=recent["traded_volume"].tolist(),
-        )
-        if row is None:
-            continue
+    for symbol, row, past in eligible(day, held, listed, frames, sessions, LONG_HISTORY):
         both = [(close, spy[d]) for d, close in zip(past.index, past["close"].tolist(), strict=True) if d in spy]
         value = variant_score(variant, row, [c for c, _ in both], [m for _, m in both])
         if value is not None:
-            keys[symbol] = sort_key(value, row.score)
-    return sorted(keys, key=keys.__getitem__)
+            keys[symbol] = (value, row.score)  # ties by today's score: many stocks sit exactly at their 52-week high
+    return sorted(keys, key=keys.__getitem__, reverse=True)
 
 
 def window_stats(equity: pd.Series) -> dict[str, float]:
@@ -156,38 +126,20 @@ def passes(stats: dict[str, float], base: dict[str, float]) -> bool:
     return stats["cagr"] > base["cagr"] and stats["sharpe"] >= base["sharpe"]
 
 
-def real_book(rank_fn: Callable[[date, set[str]], list[str]], top_n: int = TOP_N, keep_rank: int = 35) -> Callable[[date, set[str]], list[str]]:
-    """The picks of bull_bear's book without the judge, carrying its cooldown from one rebalance to the next."""
-    cooldown: dict[str, int] = {}
-
-    def picks(day: date, held: set[str]) -> list[str]:
-        nonlocal cooldown
-        chosen = book_picks(rank_fn(day, held), held, cooldown, top_n, keep_rank)
-        cooldown = advance_cooldown(cooldown, held - set(chosen))
-        return chosen
-
-    return picks
-
-
 def run(variant: str, first: date, last: date, data: tuple, real_rules: bool = False) -> tuple[pd.Series, dict[str, float]]:
     """A fresh book from `first` to `last` ranked on `variant`: its equity and its stats.
 
-    `real_rules` holds with bull_bear's book rules (`real_book`) instead of resetting to the top `TOP_N`.
+    `real_rules` holds with bull_bear's book rules (`book_picks`) instead of resetting to the top `TOP_N`.
     """
     history, frames, sessions = data
     window = [day for day in sessions if first <= day <= last]
     books: list[list[str]] = []
     counts: list[int] = []
 
-    def order_for(day: date, held: set[str]) -> list[str]:
+    def picks(day: date, held: set[str]) -> list[str]:
         order = ranked(day, held, month_universe(history, day, exclude={SLEEVE}), frames, sessions, variant)
         counts.append(len(order))
-        return order
-
-    book = real_book(order_for) if real_rules else lambda day, held: order_for(day, held)[:TOP_N]
-
-    def picks(day: date, held: set[str]) -> list[str]:
-        books.append(book(day, held))
+        books.append(book_picks(order, held) if real_rules else order[:TOP_N])
         return books[-1]
 
     equity = simulate(frames, window, picks, WEIGHTS[0])
@@ -202,14 +154,9 @@ def table(title: str, results: dict[str, dict[str, float]]) -> None:
     columns = list(dict.fromkeys(key for stats in results.values() for key in stats))
     print(f"\n### {title}\n\n| Book | {' | '.join(columns)} |")
     print("|" + "---|" * (len(columns) + 1))
+    formats = {"sharpe": "{:.2f}", "ranked": "{:.0f}"}
     for name, stats in results.items():
-        cells = []
-        for key in columns:
-            value = stats.get(key)
-            if value is None:
-                cells.append("-")
-            else:
-                cells.append(f"{value:.2f}" if key == "sharpe" else f"{value:.0f}" if key == "ranked" else f"{value:.1%}")
+        cells = [formats.get(key, "{:.1%}").format(stats[key]) if key in stats else "-" for key in columns]
         print(f"| {name} | {' | '.join(cells)} |", flush=True)
 
 
@@ -252,14 +199,11 @@ def self_check() -> None:
     assert up is not None and up > 0 and down is not None and down < 0
     assert variant_score("residual", row, winner[1:], spy[1:]) is None  # 756 closes
 
-    tied = [("low", 1.0, 0.1), ("far", 0.9, 5.0), ("high", 1.0, 0.9)]
-    assert [name for name, v, t in sorted(tied, key=lambda x: sort_key(x[1], x[2]))] == ["high", "low", "far"]
-
     names = [f"N{i}" for i in range(1, 50)]
-    names[29], names[39], names[0] = "X", "Y", "Z"  # ranks 30, 40, 1
-    picks = book_picks(names, {"X", "Y"}, {"Z": 1})
-    assert picks == [*names[1:10], "X"], picks
-    assert advance_cooldown({"Z": 1, "W": 3}, {"Y"}) == {"W": 2, "Y": 4}
+    names[29], names[39] = "X", "Y"  # ranks 30 and 40
+    picks = book_picks(names, {"X", "Y"})
+    assert picks == [*names[:9], "X"], picks
+
     assert passes({"cagr": 0.2, "sharpe": 1.0}, {"cagr": 0.1, "sharpe": 1.0})
     assert not passes({"cagr": 0.2, "sharpe": 0.9}, {"cagr": 0.1, "sharpe": 1.0})
     assert not passes({"cagr": 0.1, "sharpe": 1.5}, {"cagr": 0.1, "sharpe": 1.0})
@@ -276,13 +220,9 @@ def self_check() -> None:
     assert ranked(days[-1], set(), listed, frames, days, "today") == ["UP", "FLAT"]  # HALT: no previous-session bar
     assert ranked(days[-1], set(), listed, frames, days, "high_52w") == ["UP", "FLAT"]
     assert ranked(days[-1], set(), listed, frames, days, "residual") == []  # under 757 sessions
-    order = {1: ["B"], 2: ["A", "B"]}  # A is sold at rebalance 1 and tops the ranking from rebalance 2 on
-    book = real_book(lambda day, held: order[min(day.day, 2)], top_n=1, keep_rank=1)
-    held, bought = {"A"}, []
-    for number in range(1, 7):
-        held = set(book(date(2024, 1, number), held))
-        bought.append("A" in held)
-    assert bought == [False, False, False, False, False, True], bought
+    # A forced exit starts no cooldown (only a judge sale does, in bull_bear/graph.py): A is bought back at once.
+    assert book_picks(["B"], {"A"}, top_n=1, keep_rank=1) == ["B"]
+    assert book_picks(["A", "B"], {"B"}, top_n=1, keep_rank=1) == ["A"]
     print("self-check ok")
 
 
@@ -321,7 +261,7 @@ def main() -> None:
             passed.append(variant)
         table(f"Development, after {variant}", dev)
     print(f"\nPassed development: {passed or 'none'}")
-    stress = pd.read_csv("cache/stress_2005/equity.csv", index_col=0)["0.098"]
+    stress = pd.read_csv(CACHE / "equity.csv", index_col=0)[f"{WEIGHTS[0]:.3f}"]
     stress.index = pd.Index([date.fromisoformat(str(day)) for day in stress.index])
     stress = cast("pd.Series", stress[(stress.index >= DEV[0]) & (stress.index <= DEV[1])])
     expected = window_stats(stress)["cagr"]

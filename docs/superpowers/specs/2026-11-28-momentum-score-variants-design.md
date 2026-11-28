@@ -38,7 +38,7 @@ holdings exempt, `min_trading_days` 250) and today's ranking otherwise.
    `load_data`, `rebalance_days` and point-in-time ranking: top 10 weekly, 9.8% each, rest in SHV, 5 bps.
    Isolates the score.
 2. **Chosen as step 2, only for a variant that passes step 1's holdout:** bull_bear's real book rules
-   (holdings kept to rank 35, 4-review cooldown after an exit), to check the gain survives them.
+   (holdings kept to rank 35, 4-review cooldown after an exit -- wrong, see the Step 2 correction), to check the gain survives them.
 3. Dropped: judge-in-the-loop replay (GPU, noise too large for a score change).
 
 ## Windows and rule
@@ -101,6 +101,31 @@ pool (missing dead companies likely flatter `today`); no judge, no real book rul
 
 ## Step 2: bull_bear's real book rules (2026-11-28, `--book-rules vol_scaled`)
 
+**Correction made after seeing results.** This spec said "4-review cooldown after an exit". That is wrong: in
+`bull_bear/graph.py` only a judge sale starts a cooldown; a forced exit (rank past 35, unranked) starts none, and a
+book without a judge sells only through forced exits. So the live rule here is: keep to rank 35, no cooldown. Found
+by the cleanup review; step 2 was rerun with the same pass rule. Step 1 was rerun too and is identical.
+
+### Real book rules, 2005-2015
+
+| Book | cagr | sharpe | max_dd | 2008-09 | 2015-16 | ranked | turnover |
+|---|---|---|---|---|---|---|---|
+| today | 0.5% | 0.20 | -65.8% | -65.8% | -36.6% | 607 | 5.6% |
+| vol_scaled | -1.1% | 0.12 | -66.4% | -66.4% | -26.6% | 606 | 7.5% |
+
+### Real book rules, 2016-2026
+
+| Book | cagr | sharpe | max_dd | 2015-16 | 2018 Q4 | 2020 | 2022 | ranked | turnover |
+|---|---|---|---|---|---|---|---|---|---|
+| today | 30.7% | 0.84 | -46.0% | -34.1% | -39.8% | -46.0% | -30.3% | 1033 | 4.7% |
+| vol_scaled | 27.9% | 0.86 | -43.5% | -21.6% | -30.9% | -43.5% | -26.9% | 1033 | 7.2% |
+
+**Final verdict: no variant is kept; today's score stays.** `vol_scaled` fails both windows: 2005-2015 CAGR -1.1% vs
+0.5% (Sharpe 0.12 vs 0.20), 2016-2026 CAGR 27.9% vs 30.7% (Sharpe 0.86 vs 0.84). It keeps a smaller drawdown than
+today's in 2016-2026 (-43.5% vs -46.0%) but not in 2005-2015 (-66.4% vs -65.8%).
+
+### Superseded: step 2 with the wrong cooldown (every sale blocked for 4 reviews)
+
 ### Real book rules, 2005-2015
 
 | Book | cagr | sharpe | max_dd | 2008-09 | 2015-16 | ranked | turnover |
@@ -114,8 +139,5 @@ pool (missing dead companies likely flatter `today`); no judge, no real book rul
 |---|---|---|---|---|---|---|---|---|---|
 | today | 27.7% | 0.79 | -50.0% | -34.1% | -39.8% | -50.0% | -30.3% | 1033 | 4.7% |
 | vol_scaled | 28.8% | 0.88 | -42.7% | -22.6% | -31.2% | -42.7% | -26.9% | 1033 | 7.1% |
-vol_scaled under the real book rules: FAILED
 
-**Final verdict: no variant is kept.** `vol_scaled` passes 2016-2026 (+1.1 CAGR points, Sharpe 0.88 vs 0.79) but
-fails 2005-2015 (CAGR -1.2% vs -1.0%, Sharpe 0.11 vs 0.15). Today's score stays. Under both books it had a smaller
-drawdown than today's on every window; the user's goal (choice A) is return, so drawdown does not decide.
+(`vol_scaled` failed then too, on 2005-2015 only.)
